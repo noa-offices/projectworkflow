@@ -140,8 +140,47 @@ async function prepareSlideImagesForExport(slide: HTMLElement, slideNumber: numb
 
 export function PresentationPptxExportButton() {
   const [isExporting, setIsExporting] = useState(false);
+  const [isNativeExporting, setIsNativeExporting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  async function handleNativeExport() {
+    const pathSegments = window.location.pathname.split("/").filter(Boolean);
+    const quotationsIndex = pathSegments.indexOf("quotations");
+    const quotationId = quotationsIndex >= 0 ? pathSegments[quotationsIndex + 1] : null;
+    if (!quotationId) {
+      setErrorMessage("Unable to identify the quotation for this PPTX export.");
+      return;
+    }
+
+    setIsNativeExporting(true);
+    setErrorMessage(null);
+    setStatusMessage("Preparing editable PPTX...");
+
+    try {
+      const response = await fetch(`/api/quotations/${encodeURIComponent(quotationId)}/presentation-pptx`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error || "Failed to export editable PPTX.");
+      }
+
+      const content = await response.blob();
+      const disposition = response.headers.get("content-disposition") || "";
+      const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1] || "quotation-presentation.pptx";
+      const downloadUrl = URL.createObjectURL(content);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(downloadUrl);
+      setStatusMessage("Editable PPTX exported.");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to export editable PPTX.");
+    } finally {
+      setIsNativeExporting(false);
+      window.setTimeout(() => setStatusMessage(null), 1500);
+    }
+  }
 
   async function handleExport() {
     setIsExporting(true);
@@ -222,14 +261,25 @@ export function PresentationPptxExportButton() {
 
   return (
     <div className="flex flex-col items-start gap-2 print:hidden">
-      <button
-        type="button"
-        disabled={isExporting}
-        onClick={handleExport}
-        className="inline-flex h-10 items-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-400"
-      >
-        {isExporting ? "Exporting PPTX..." : "Export PPTX"}
-      </button>
+      <p className="text-xs text-amber-700">PPTX uses saved settings. Save first.</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={isNativeExporting || isExporting}
+          onClick={handleNativeExport}
+          className="inline-flex h-10 items-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-400"
+        >
+          {isNativeExporting ? "Exporting PPTX..." : "Export PPTX"}
+        </button>
+        <button
+          type="button"
+          disabled={isNativeExporting || isExporting}
+          onClick={handleExport}
+          className="inline-flex h-10 items-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-400"
+        >
+          {isExporting ? "Exporting Image PPTX..." : "Image PPTX (not editable)"}
+        </button>
+      </div>
       {statusMessage ? <p className="text-xs text-zinc-500">{statusMessage}</p> : null}
       {errorMessage ? <p className="text-xs text-red-700">{errorMessage}</p> : null}
     </div>

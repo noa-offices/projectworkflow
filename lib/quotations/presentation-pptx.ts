@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import PptxGenJS from "pptxgenjs";
+import sharp from "sharp";
 import { FALLBACK_COMPANY_PROFILE } from "@/lib/company-profile";
 import { formatBrandOriginSupplier, specificationWithoutDuplicateCode } from "@/lib/quotations/format-quotation-row";
 import type {
@@ -50,7 +51,256 @@ const RECT_SHAPE: Parameters<PptxSlide["addShape"]>[0] = "rect";
 const PPTX_LAYOUT_A4 = "A4_LANDSCAPE";
 const SLIDE_W = 11.69;
 const SLIDE_H = 8.27;
+const USE_ARIAL_FALLBACK = false;
+// Windows family names (name ID 1) from the official Geist static TTF name tables.
+const GEIST_FONTS = {
+  light: USE_ARIAL_FALLBACK ? "Arial" : "Geist Light",
+  regular: USE_ARIAL_FALLBACK ? "Arial" : "Geist",
+  medium: USE_ARIAL_FALLBACK ? "Arial" : "Geist Medium",
+  semibold: USE_ARIAL_FALLBACK ? "Arial" : "Geist SemiBold",
+} as const;
+const SINGLE_PRODUCT_LAYOUT = {
+  width: 11.6929, // PresentationPage: 297mm
+  height: 8.2677, // PresentationPage: 210mm
+  pxPerInch: 96, // CSS reference pixel
+  ptPerPx: 0.75, // CSS px to PowerPoint pt
+  zero: 0, // margin-0 / top-left origin
+  one: 1, // one CSS border pixel / first item number
+  columns: 2, // grid-cols-2
+  leftFraction: 1.65, // grid-cols-[1.65fr_0.9fr]
+  rightFraction: 0.9, // grid-cols-[1.65fr_0.9fr]
+  leftPaddingX: 36, // px-9
+  leftPaddingY: 32, // py-8
+  rightPaddingX: 32, // px-8
+  rightPaddingY: 36, // py-9
+  headingZone: 220, // grid-rows-[220px_auto_1fr_96px]
+  footerZone: 96, // grid-rows: 96px, h-[96px]
+  gap2: 2, // mt-0.5
+  gap4: 4, // mt-1 / gap-y-1
+  gap8: 8, // mt-2 / gap-2 / p-2
+  gap12: 12, // mt-3 / pt-3 / gap-y-3 / px-3
+  gap16: 16, // mt-4 / gap-4 / px-4
+  gap20: 20, // mt-5 / pb-5 / pt-5 / gap-x-5
+  gap24: 24, // gap-6 / gap-x-6
+  labelPx: 10, // text-[10px]
+  labelLinePx: 15, // text-[10px], inherited normal line-height 1.5
+  labelTracking: 0.24, // tracking-[0.24em]
+  badgeTracking: 0.2, // tracking-[0.2em]
+  titlePx: 24, // text-2xl
+  titleLinePx: 32, // text-2xl default line-height
+  detailTitlePx: 30, // text-3xl
+  detailTitleLinePx: 36, // text-3xl default line-height
+  titleTracking: -0.025, // tracking-tight
+  titleLines: 2, // clampStyle(2)
+  bodyPx: 14, // text-sm
+  bodyLinePx: 24, // leading-6
+  bodyDefaultLinePx: 20, // text-sm default line-height
+  summaryLines: 2, // clampStyle(2)
+  specificationLines: 5, // clampStyle(5)
+  emptySpecificationLinePx: 28, // leading-7
+  finishLimit: 4, // compactFinishes.slice(0, 4)
+  finishSwatchPx: 28, // h-7 w-7 / grid-cols-[28px_1fr]
+  finishRadiusPx: 8, // rounded-lg
+  finishLabelPx: 9, // text-[9px]
+  finishLabelLinePx: 13.5, // text-[9px], inherited normal line-height 1.5
+  finishTracking: 0.16, // tracking-[0.16em]
+  finishValuePx: 11, // text-[11px]
+  finishValueLinePx: 16, // leading-4
+  finishValueLines: 2, // clampStyle(2)
+  moreTracking: 0.18, // tracking-[0.18em]
+  optionalPx: 9, // left title badge text-[9px]
+  optionalPaddingX: 6, // px-1.5
+  optionalPaddingY: 2, // py-0.5
+  optionalLineFactor: 1.5, // inherited normal line-height
+  badgeRadius: 0.5, // rounded-full: radius bounded by half the height
+  averageGlyphEm: 0.6, // intrinsic badge/area width approximation; native text metrics differ
+  placeholderMinHeightMm: 120, // min-h-[120mm]
+  placeholderMaxWidthPx: 448, // max-w-md
+  placeholderLines: 3, // clampStyle(3)
+  imageBounds: {
+    current: { width: 0.82, height: 0.72 }, // presentationImageBoundsClass: w-[82%] h-[72%]
+    medium: { width: 0.72, height: 0.62 }, // w-[72%] h-[62%]
+    small: { width: 0.62, height: 0.52 }, // w-[62%] h-[52%]
+  },
+  positionDefault: 50, // object-position / transform-origin: 50% 50%
+  percent: 100, // CSS percentage denominator
+  scaleDefault: 1, // PresentationImageStage: scale(1)
+  half: 0.5, // CSS half-leading: (line-height - font-size) / 2
+  glyphSpaceEm: 0.25, // approximate Geist metrics for CSS intrinsic wrapping
+  glyphNarrowEm: 0.25, // approximate narrow glyph width
+  glyphNormalEm: 0.5, // approximate lowercase glyph width
+  glyphUpperEm: 0.65, // approximate uppercase/digit width
+  glyphWideEm: 0.85, // approximate wide glyph width
+  imageHeader: {
+    pngLength: 24, pngSignatureLength: 8, pngWidth: 16, pngHeight: 20, // PNG IHDR offsets
+    jpegMinimum: 4, jpegStart: 2, marker: 0xff, startOfImage: 0xd8, // JPEG SOI / marker prefix
+    endOfImage: 0xd9, startOfScan: 0xda, stuffed: 0x00, temporary: 0x01, // JPEG markers without dimensions
+    restartStart: 0xd0, restartEnd: 0xd7, // standalone JPEG restart markers
+    segmentLengthBytes: 2, frameHeight: 3, frameWidth: 5, frameMinimum: 7, // JPEG SOF segment offsets
+    frames: [0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf], // JPEG SOF markers
+  },
+  edgeTrim: {
+    maximumPercent: 0.01, // remove at most 1% from each image edge
+    minimumBrightness: 220, // light-grey / white CSS-hidden edge strip
+    maximumChannelDifference: 12, // neutral strip: R, G, and B remain close
+    minimumAlpha: 250, // opaque edge strip only
+    maximumTransparentAlpha: 5, // transparent pixels just inside a partial-height edge strip
+    insideColumns: 3, // inspect a few columns inside the outer 1% strip
+  },
+  white: "FFFFFF", // bg-white
+  panel: "F3F4F6", // bg-[#f3f4f6]
+  dark: "09090B", // text-zinc-950
+  text: "18181B", // text-zinc-900
+  summary: "3F3F46", // text-zinc-700
+  muted: "52525B", // text-zinc-600
+  label: "71717A", // text-zinc-500
+  lightLabel: "A1A1AA", // text-zinc-400
+  border: "E4E4E7", // border-zinc-200
+  badgeBorder: "D4D4D8", // border-zinc-300
+  panelBorder: "DEDFE1", // border-zinc-900/10 over #f3f4f6
+  finishBackground: "FAFAFB", // bg-white/55 over #f3f4f6
+  swatchBackground: "F4F4F5", // gradient fallback start #f4f4f5
+  redText: "B91C1C", // text-red-700
+  redBorder: "FCA5A5", // border-red-300
+  redBackground: "FEF2F2", // bg-red-50
+  skyText: "0369A1", // text-sky-700
+  skyBorder: "7DD3FC", // border-sky-300
+  skyBackground: "F0F9FF", // bg-sky-50
+} as const;
 const PAGE_MARGIN = 0.55;
+// Browser CSS dimensions are kept in px; these renderers convert only at the PPTX boundary.
+const COVER_LAYOUT = {
+  width: 1122.5184, // 297mm at 96px/in
+  height: 793.6992, // 210mm at 96px/in
+  px: 96, // CSS px per inch
+  pt: 0.75, // CSS px to pt
+  zero: 0, // zero inner margins / origin
+  one: 1, // h-px / border
+  two: 2, // grid-cols-2 / half-leading
+  pad: 48, // px-12 py-12
+  sideX: 36, // px-9
+  sideY: 40, // py-10
+  leftFr: 1.5, // grid-cols-[1.5fr_0.7fr]
+  rightFr: 0.7, // grid-cols-[1.5fr_0.7fr]
+  blackWidth: 0.3, // w-[30%]
+  radialWidth: 0.44, // w-[44%]
+  radialStop: 0.55, // transparent_55%
+  gradientAngle: 130, // linear-gradient(130deg,...)
+  gradientStop: 0.44, // #f8fafc 44%, #ffffff 44%
+  radialOpacity: 0.08, // rgba(39,39,42,0.08)
+  pngWidth: 2339, // requested ~200dpi background
+  pngHeight: 1654, // requested ~200dpi background
+  fullTurn: 180, // degrees to radians
+  gap4: 4, // mt-1
+  gap8: 8, // mt-2
+  gap12: 12, // gap-3 / py-3
+  gap16: 16, // mt-4 / px-4 / gap-4
+  gap28: 28, // pt-7
+  gap32: 32, // mt-8 / pt-8
+  gap40: 40, // mt-10 / gap-10
+  labelSize: 11, // text-[11px]
+  labelLine: 16.5, // normal 1.5 line-height
+  labelTracking: 0.32, // tracking-[0.32em]
+  smallSize: 10, // text-[10px]
+  smallLine: 15, // normal 1.5 line-height
+  smallTracking: 0.24, // tracking-[0.24em]
+  titleSize: 56, // text-[56px]
+  titleLeading: 1.02, // leading-[1.02]
+  titleTracking: -0.04, // tracking-[-0.04em]
+  paragraphSize: 18, // text-lg
+  paragraphLine: 32, // leading-8
+  paragraphMax: 672, // max-w-2xl
+  projectSize: 24, // text-2xl
+  projectLeading: 1.25, // leading-tight
+  bodySize: 14, // text-sm
+  bodyLine: 20, // text-sm default line-height
+  contactLine: 24, // leading-6
+  preparedTracking: 0.16, // tracking-[0.16em]
+  lineWidth: 56, // w-14
+  cardLeftFr: 1.1, // grid-cols-[1.1fr_0.9fr]
+  cardRightFr: 0.9, // grid-cols-[1.1fr_0.9fr]
+  cardRadius: 16, // rounded-2xl
+  logoWidth: 150, // max-w-[150px]
+  logoHeight: 56, // max-h-14
+  glyphEm: 0.52, // intrinsic text-width estimate (PowerPoint/browser metrics differ)
+  white: "FFFFFF", // bg-white
+  black: "09090B", // bg-zinc-950
+  dark: "09090B", // text-zinc-950
+  text: "18181B", // text-zinc-900
+  grey: "52525B", // text-zinc-600
+  label: "71717A", // text-zinc-500
+  light: "A1A1AA", // text-zinc-400
+  border: "E4E4E7", // border-zinc-200
+  lightBorder: "D4D4D8", // bg-zinc-300
+  white45: "787879", // text-white/45 over zinc-950
+  white70: "B5B5B6", // text-white/70 over zinc-950
+  white90: "E6E6E7", // text-white/90 over zinc-950
+  whiteBorder: "222224", // border-white/10 over zinc-950
+  cardTransparency: 20, // bg-white/80
+  channelWhite: 255, // brightness-0 invert: white RGB, preserve alpha
+} as const;
+const CLOSING_LAYOUT = { ...COVER_LAYOUT }; // same cover/closing CSS family
+const DESIGN_LAYOUT = {
+  ...COVER_LAYOUT,
+  padY: 44, // py-11
+  columnGap: 48, // gap-12
+  leftFr: 0.9, // grid-cols-[0.9fr_1.1fr]
+  rightFr: 1.1, // grid-cols-[0.9fr_1.1fr]
+  columnPadding: 40, // pr-10
+  titleSize: 48, // text-5xl
+  titleLine: 48, // text-5xl default line-height
+  titleGap: 20, // mt-5
+  ruleWidth: 80, // w-20
+  paragraphSize: 16, // text-base
+  paragraphLine: 28, // leading-7
+  paragraphMax: 384, // max-w-sm
+  itemColumns: 2, // grid-cols-2
+  itemRows: 4, // eight items in two columns
+  itemGapX: 32, // gap-x-8
+  itemGapY: 20, // gap-y-5
+  itemPadding: 16, // pt-4
+  itemTitle: 16, // text-base
+  itemTitleLine: 24, // text-base default line-height
+  itemTitleTracking: 0.12, // tracking-[0.12em]
+  numberTracking: 0.22, // tracking-[0.22em]
+} as const;
+const MAIN_AREA_LAYOUT = {
+  ...COVER_LAYOUT,
+  sidebar: 96, // w-24
+  left: 144, // pl-36
+  right: 56, // px-14
+  titleSize: 60, // text-6xl
+  titleTracking: -0.045, // tracking-[-0.045em]
+  titleGap: 28, // mt-7
+  paragraphMax: 768, // max-w-3xl
+  ruleWidth: 64, // w-16
+  badgeTracking: 0.24, // tracking-[0.24em]
+  visualPad: 16, // p-4
+  visualLabelTracking: 0.22, // tracking-[0.22em]
+  background: "FFFFFF", // PPT-3 explicit white-page requirement overrides CSS #f4f6f8
+} as const;
+const AREA_LAYOUT = { ...MAIN_AREA_LAYOUT }; // same area/section CSS geometry
+const editorialBackgroundCache = new Map<"cover" | "design", Promise<string>>();
+
+function editorialBackground(family: "cover" | "design") {
+  let cached = editorialBackgroundCache.get(family);
+  if (!cached) {
+    const l = COVER_LAYOUT;
+    const angle = l.gradientAngle * Math.PI / l.fullTurn;
+    const dx = Math.sin(angle), dy = -Math.cos(angle);
+    const length = Math.abs(l.width * dx) + Math.abs(l.height * dy);
+    const x1 = (l.width - dx * length) / l.two, y1 = (l.height - dy * length) / l.two;
+    const x2 = (l.width + dx * length) / l.two, y2 = (l.height + dy * length) / l.two;
+    const radialWidth = l.width * l.radialWidth;
+    const radius = Math.hypot(radialWidth, l.height) * l.radialStop;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${l.width}" height="${l.height}" viewBox="0 0 ${l.width} ${l.height}"><defs><linearGradient id="linear" gradientUnits="userSpaceOnUse" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"><stop offset="0" stop-color="#eef2f5"/><stop offset="${l.gradientStop}" stop-color="#f8fafc"/><stop offset="${l.gradientStop}" stop-color="#ffffff"/><stop offset="1" stop-color="#ffffff"/></linearGradient><radialGradient id="radial" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="${radius}"><stop offset="0" stop-color="#27272a" stop-opacity="${l.radialOpacity}"/><stop offset="1" stop-color="#27272a" stop-opacity="0"/></radialGradient></defs><rect width="${l.width}" height="${l.height}" fill="url(#linear)"/>${family === "cover" ? `<rect width="${radialWidth}" height="${l.height}" fill="url(#radial)"/>` : ""}</svg>`;
+    cached = sharp(Buffer.from(svg)).resize(l.pngWidth, l.pngHeight).png().toBuffer()
+      .then((png) => `data:image/png;base64,${png.toString("base64")}`);
+    editorialBackgroundCache.set(family, cached);
+    cached.catch(() => editorialBackgroundCache.delete(family));
+  }
+  return cached;
+}
 const FOOTER_Y = 7.5;
 
 const COLOR_BG = "F4F6F8";
@@ -931,8 +1181,8 @@ export async function exportQuotationPresentationPptx(data: LoadedQuotationPrese
   const pptx = new PptxGenJS();
   pptx.defineLayout({
     name: PPTX_LAYOUT_A4,
-    width: SLIDE_W,
-    height: SLIDE_H,
+    width: SINGLE_PRODUCT_LAYOUT.width,
+    height: SINGLE_PRODUCT_LAYOUT.height,
   });
   pptx.layout = PPTX_LAYOUT_A4;
   pptx.author = data.companyProfile.displayName || FALLBACK_COMPANY_PROFILE.displayName;
@@ -945,6 +1195,253 @@ export async function exportQuotationPresentationPptx(data: LoadedQuotationPrese
 
   for (const slideDef of slides) {
     const slide = pptx.addSlide();
+
+    // PPT-3 renderers use CSS-pixel geometry. Product rendering below is unchanged.
+    if (["cover", "design", "main-area", "section", "thank-you"].includes(slideDef.type)) {
+      const l = COVER_LAYOUT;
+      const inch = (px: number) => px / l.px;
+      const pt = (px: number) => px * l.pt;
+      const measure = (value: string, width: number, size: number, leading: number, tracking = l.zero as number) => {
+        let rows: number = l.one, used: number = l.zero;
+        for (const word of value.split(/(\s+)/)) {
+          if (word.includes("\n")) { rows += word.split("\n").length - l.one; used = l.zero; continue; }
+          const w = word.length * size * (l.glyphEm + tracking);
+          if (used && used + w > width && word.trim()) { rows += l.one; used = l.zero; }
+          if (word.trim() || used) used += w;
+          while (used > width && width > l.zero) { rows += l.one; used -= width; }
+        }
+        return rows * size * leading;
+      };
+      const text = (value: string | null | undefined, x: number, y: number, w: number, h: number,
+        size: number, face: string, color: string, leading = l.one as number, tracking = l.zero as number,
+        align: "left" | "right" | "center" = "left", wrap = true) => {
+        if (!value) return;
+        slide.addText(value, { x: inch(x), y: inch(y - Math.max(l.zero, size * leading - size) / l.two),
+          w: inch(w), h: inch(h), fontFace: face, fontSize: pt(size), color,
+          margin: l.zero, valign: "top", wrap, charSpacing: pt(size * tracking),
+          lineSpacing: pt(size * leading), paraSpaceAfter: l.zero, align });
+      };
+      const label = (value: string, x: number, y: number, w: number, color = l.label as string,
+        size = l.smallSize as number, tracking = l.smallTracking as number, align: "left" | "right" | "center" = "left", wrap = true) =>
+        text(value.toUpperCase(), x, y, w, size * l.leftFr, size, GEIST_FONTS.semibold, color, l.leftFr, tracking, align, wrap);
+      const line = (x: number, y: number, w: number, color = l.border as string, h = l.zero as number) =>
+        slide.addShape("line", { x: inch(x), y: inch(y), w: inch(w), h: inch(h), line: { color, pt: pt(l.one) } });
+      const box = (x: number, y: number, w: number, h: number, fill: string, border = fill,
+        radius = l.zero as number, transparency = l.zero as number) => {
+        slide.addShape(radius ? "roundRect" : RECT_SHAPE, { x: inch(x), y: inch(y), w: inch(w), h: inch(h),
+          fill: { color: fill, transparency }, line: { color: border, pt: border === fill ? l.zero : pt(l.one) },
+          ...(radius ? { rectRadius: inch(radius), radius: inch(radius) } : {}) });
+      };
+      const picture = async (source: string | null, x: number, y: number, w: number, h: number, white = false) => {
+        const encoded = await imageDataUri(source, imageCache);
+        if (!encoded) return null;
+        try {
+          const pipeline = sharp(Buffer.from(encoded.slice(encoded.indexOf(",") + l.one), "base64"), { animated: false }).rotate().ensureAlpha();
+          // CSS brightness-0 invert: turn RGB white while retaining the image alpha channel.
+          if (white) pipeline.linear(l.zero, l.channelWhite);
+          const result = await pipeline.png().toBuffer({ resolveWithObject: true });
+          const scale = Math.min(w / result.info.width, h / result.info.height);
+          const iw = result.info.width * scale, ih = result.info.height * scale;
+          slide.addImage({ data: `data:image/png;base64,${result.data.toString("base64")}`,
+            x: inch(x + (w - iw) / l.two), y: inch(y), w: inch(iw), h: inch(ih) });
+          return { width: iw, height: ih };
+        } catch { return null; }
+      };
+      const date = data.quotation.quotation_date
+        ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(data.quotation.quotation_date))
+        : null;
+
+      if (slideDef.type === "cover" || slideDef.type === "thank-you") {
+        const closing = slideDef.type === "thank-you";
+        const c = closing ? CLOSING_LAYOUT : COVER_LAYOUT;
+        slide.addImage({ data: await editorialBackground("cover"), x: inch(l.zero), y: inch(l.zero), w: inch(c.width), h: inch(c.height) });
+        box(c.width * (l.one - c.blackWidth), l.zero, c.width * c.blackWidth, c.height, c.black);
+        const leftWidth = c.width * c.leftFr / (c.leftFr + c.rightFr);
+        const contentWidth = leftWidth - c.pad * l.two;
+        const sideX = leftWidth + c.sideX, sideWidth = c.width - leftWidth - c.sideX * l.two;
+        line(c.pad, c.pad + c.labelLine / l.two, c.lineWidth, c.light);
+        label(closing ? "Closing Slide" : "Client Presentation", c.pad + c.lineWidth + c.gap12, c.pad,
+          contentWidth - c.lineWidth - c.gap12, c.label, c.labelSize, c.labelTracking);
+        const title = (closing ? closingTitle : coverTitle) || "";
+        // PPT positions a line box below its first glyph; this cancels the measured 8px first-line offset.
+        const titleY = c.pad + c.labelLine + c.gap40 - c.gap8;
+        const titleHeight = measure(title, contentWidth, c.titleSize, c.titleLeading, c.titleTracking);
+        text(title, c.pad, titleY, contentWidth, titleHeight, c.titleSize, GEIST_FONTS.light, c.dark, c.titleLeading, c.titleTracking);
+        const paragraph = closing ? closingMessage : coverSubtitle;
+        if (paragraph) {
+          const width = Math.min(contentWidth, c.paragraphMax);
+          text(paragraph, c.pad, titleY + titleHeight + c.gap32, width,
+            measure(paragraph, width, c.paragraphSize, c.paragraphLine / c.paragraphSize),
+            c.paragraphSize, GEIST_FONTS.regular, c.grey, c.paragraphLine / c.paragraphSize);
+        }
+        const cards = [{ label: "Project / Quote No.", value: data.quotation.quotation_no }, { label: "Date", value: date }]
+          .filter((card): card is { label: string; value: string } => Boolean(card.value));
+        const cardWidth = (contentWidth - c.gap40) * c.cardRightFr / (c.cardLeftFr + c.cardRightFr);
+        const cardX = c.pad + contentWidth - cardWidth;
+        const cardHeight = c.gap12 * l.two + c.smallLine + c.gap4 + c.bodyLine + c.one * l.two;
+        const cardStackHeight = cards.length * cardHeight + Math.max(l.zero, cards.length - l.one) * c.gap12;
+        const footerY = c.height - c.pad - cardStackHeight - c.gap32 - c.one;
+        line(c.pad, footerY, contentWidth);
+        cards.forEach((card, index) => {
+          const y = footerY + c.gap32 + c.one + index * (cardHeight + c.gap12);
+          box(cardX, y, cardWidth, cardHeight, c.white, c.border, c.cardRadius, c.cardTransparency);
+          label(card.label, cardX + c.gap16, y + c.gap12, cardWidth - c.gap16 * l.two, c.light);
+          text(card.value, cardX + c.gap16, y + c.gap12 + c.smallLine + c.gap4,
+            cardWidth - c.gap16 * l.two, c.bodyLine, c.bodySize, GEIST_FONTS.semibold, c.text, c.bodyLine / c.bodySize);
+        });
+        if (!closing) {
+          const projectWidth = contentWidth - cardWidth - c.gap40;
+          let projectY = footerY + c.gap32;
+          if (coverProjectDisplayName) {
+            label("Project", c.pad, projectY, projectWidth, c.light);
+            projectY += c.smallLine + c.gap8;
+            const projectHeight = measure(coverProjectDisplayName, projectWidth, c.projectSize, c.projectLeading);
+            text(coverProjectDisplayName, c.pad, projectY, projectWidth, projectHeight,
+              c.projectSize, GEIST_FONTS.light, c.dark, c.projectLeading);
+            projectY += projectHeight + c.gap16;
+          }
+          if (coverClientDisplayName) text(`Prepared for ${coverClientDisplayName}`.toUpperCase(), c.pad, projectY,
+            projectWidth, measure(coverClientDisplayName, projectWidth, c.bodySize, c.bodyLine / c.bodySize, c.preparedTracking),
+            c.bodySize, GEIST_FONTS.medium, c.label, c.bodyLine / c.bodySize, c.preparedTracking);
+        }
+        let logoSource = data.companyProfile.logoUrl || "/noa-logo.png";
+        try { if (["noaoffices.com", "www.noaoffices.com"].includes(new URL(logoSource).hostname.toLowerCase())) logoSource = "/noa-logo.png"; } catch { /* Local asset path. */ }
+        const logo = await picture(logoSource, sideX, c.sideY, Math.min(sideWidth, c.logoWidth), c.logoHeight, true);
+        if (!logo) text(closing ? data.companyProfile.displayName : coverPreparedBy || data.companyProfile.displayName,
+          sideX, c.sideY, sideWidth, c.projectSize * c.projectLeading, c.projectSize, GEIST_FONTS.light, c.white, c.projectLeading);
+        if (!closing && coverWebsite) text(coverWebsite, sideX, c.sideY + (logo?.height ?? c.logoHeight) + c.gap16, sideWidth,
+          c.contactLine, c.bodySize, GEIST_FONTS.regular, c.white70, c.contactLine / c.bodySize);
+        const contacts = closing
+          ? [{ label: "Website", value: closingWebsite }, { label: "Email", value: closingEmail }, { label: "Phone", value: closingPhone }, { label: "Office", value: closingOfficeDetails }]
+          : [{ label: "Prepared By", value: coverPreparedBy }];
+        const visibleContacts = contacts.filter((entry): entry is { label: string; value: string } => Boolean(entry.value));
+        const contactHeights = visibleContacts.map((entry, index) => c.smallLine + c.gap4
+          + measure(entry.value, sideWidth, c.bodySize, c.contactLine / c.bodySize)
+          + (index < visibleContacts.length - l.one ? c.gap12 + c.one : l.zero));
+        const contactsHeight = contactHeights.reduce<number>((sum, height) => sum + height, l.zero)
+          + Math.max(l.zero, visibleContacts.length - l.one) * c.gap16;
+        let contactY = c.height - c.sideY - contactsHeight;
+        line(sideX, contactY - c.gap28, sideWidth, c.whiteBorder);
+        visibleContacts.forEach((entry, index) => {
+          label(entry.label, sideX, contactY, sideWidth, c.white45);
+          text(entry.value, sideX, contactY + c.smallLine + c.gap4, sideWidth,
+            contactHeights[index], c.bodySize, GEIST_FONTS.medium, closing ? c.white90 : c.white, c.contactLine / c.bodySize);
+          if (index < visibleContacts.length - l.one) line(sideX, contactY + contactHeights[index], sideWidth, c.whiteBorder);
+          contactY += contactHeights[index] + c.gap16;
+        });
+      } else if (slideDef.type === "design") {
+        const d = DESIGN_LAYOUT;
+        slide.addImage({ data: await editorialBackground("design"), x: inch(l.zero), y: inch(l.zero), w: inch(d.width), h: inch(d.height) });
+        const innerWidth = d.width - d.pad * l.two;
+        const leftWidth = (innerWidth - d.columnGap) * d.leftFr / (d.leftFr + d.rightFr);
+        const dividerX = d.pad + leftWidth;
+        const rightX = dividerX + d.columnGap, rightWidth = d.width - d.pad - rightX;
+        line(dividerX, d.padY, l.zero, d.border, d.height - d.padY * l.two);
+        const leftTextWidth = leftWidth - d.columnPadding - d.one;
+        label("Design Considerations", d.pad, d.padY, leftTextWidth, d.label, d.labelSize, d.labelTracking);
+        const titleY = d.padY + d.labelLine + d.titleGap;
+        text("Design", d.pad, titleY, leftTextWidth, d.titleLine, d.titleSize, GEIST_FONTS.light, d.dark, l.one, d.titleTracking);
+        text("Considerations", d.pad, titleY + d.titleLine, leftTextWidth, d.titleLine, d.titleSize, GEIST_FONTS.light, d.grey, l.one, d.titleTracking);
+        line(d.pad, titleY + d.titleLine * l.two + d.gap32, d.ruleWidth, d.lightBorder);
+        const paragraph = "Core principles reviewed when aligning furniture choices with workflow, brand expression, and long-term performance.";
+        const paragraphWidth = Math.min(leftTextWidth, d.paragraphMax);
+        const paragraphHeight = measure(paragraph, paragraphWidth, d.paragraphSize, d.paragraphLine / d.paragraphSize);
+        const overviewY = d.height - d.padY - d.smallLine;
+        label("Editorial Overview", d.pad, overviewY, leftTextWidth, d.light);
+        text(paragraph, d.pad, overviewY - d.gap32 - paragraphHeight, paragraphWidth, paragraphHeight,
+          d.paragraphSize, GEIST_FONTS.regular, d.grey, d.paragraphLine / d.paragraphSize);
+        const itemWidth = (rightWidth - d.itemGapX) / d.itemColumns;
+        const rowHeights = Array.from({ length: d.itemRows }, (_, row) => Math.max(...designConsiderations.slice(row * d.itemColumns, (row + l.one) * d.itemColumns).map((entry) =>
+          d.one + d.itemPadding + d.smallLine + d.gap8
+          + measure(entry.title.toUpperCase(), itemWidth, d.itemTitle, d.itemTitleLine / d.itemTitle, d.itemTitleTracking)
+          + d.gap12 + measure(entry.body, itemWidth, d.bodySize, d.contactLine / d.bodySize))));
+        // CSS grid starts at the same 44px top edge as the left label and divider.
+        let rowY = d.padY;
+        designConsiderations.forEach((entry, index) => {
+          const column = index % d.itemColumns, row = Math.floor(index / d.itemColumns);
+          const x = rightX + column * (itemWidth + d.itemGapX);
+          line(x, rowY, itemWidth);
+          label(String(index + l.one).padStart(l.two, "0"), x, rowY + d.one + d.itemPadding, itemWidth, d.light, d.smallSize, d.numberTracking);
+          const titleY = rowY + d.one + d.itemPadding + d.smallLine + d.gap8;
+          const titleHeight = measure(entry.title.toUpperCase(), itemWidth, d.itemTitle, d.itemTitleLine / d.itemTitle, d.itemTitleTracking);
+          text(entry.title.toUpperCase(), x, titleY, itemWidth, titleHeight, d.itemTitle, GEIST_FONTS.semibold, d.text, d.itemTitleLine / d.itemTitle, d.itemTitleTracking);
+          text(entry.body, x, titleY + titleHeight + d.gap12, itemWidth,
+            measure(entry.body, itemWidth, d.bodySize, d.contactLine / d.bodySize), d.bodySize, GEIST_FONTS.regular, d.grey, d.contactLine / d.bodySize);
+          if (column === d.itemColumns - l.one) rowY += rowHeights[row] + d.itemGapY;
+        });
+      } else if (slideDef.type === "main-area" || slideDef.type === "section") {
+        const main = slideDef.type === "main-area";
+        const a = main ? MAIN_AREA_LAYOUT : AREA_LAYOUT;
+        const section = main ? slideDef.mainSection : slideDef.section;
+        const title = (main ? mainSectionTitlesById : titledSectionsById).get(section.id) ?? section.section_title;
+        const note = main ? resolvedOverrideValue(settings.mainSectionOverrides[section.id]?.note, section.section_notes) : sectionPresentationNote(section, settings);
+        const contentWidth = a.width - a.left - a.right;
+        box(l.zero, l.zero, a.width, a.height, a.background);
+        box(l.zero, l.zero, a.sidebar, a.height, a.black);
+        const heading = main ? "SPACE OVERVIEW" : "AREA";
+        label(heading, a.left, a.pad, contentWidth, a.label, a.labelSize, a.labelTracking);
+        const labelWidth = heading.length * a.labelSize * (a.glyphEm + a.labelTracking);
+        line(a.left + labelWidth + a.gap16, a.pad + a.labelLine / l.two, a.ruleWidth, a.lightBorder);
+        const titleY = a.pad + a.labelLine + a.titleGap;
+        const titleHeight = measure(title, contentWidth, a.titleSize, a.titleLeading, a.titleTracking);
+        text(title, a.left, titleY, contentWidth, titleHeight, a.titleSize, GEIST_FONTS.light, a.dark, a.titleLeading, a.titleTracking);
+        let visualY = titleY + titleHeight;
+        if (note) {
+          const noteWidth = Math.min(a.paragraphMax, contentWidth);
+          const noteHeight = measure(note, noteWidth, a.paragraphSize, a.paragraphLine / a.paragraphSize);
+          text(note, a.left, visualY + a.titleGap, noteWidth, noteHeight, a.paragraphSize, GEIST_FONTS.regular, a.grey, a.paragraphLine / a.paragraphSize);
+          visualY += a.titleGap + noteHeight;
+        }
+        const sectionSettings = settings.sectionOverrides[section.id];
+        const signedSources = (data as LoadedQuotationPresentationData & {
+          sectionOverrideImageUrlBySectionAndField?: Record<string, string | null>;
+        }).sectionOverrideImageUrlBySectionAndField;
+        const visuals = main
+          ? (settings.mainSectionOverrides[section.id]?.layoutImageUrl && data.mainLayoutImageUrlById[section.id]
+            ? [{ label: "Full Floor Layout", source: data.mainLayoutImageUrlById[section.id] }] : [])
+          : [{ label: "Area Image", source: signedSources?.[`${section.id}:areaImageUrl`] ?? sectionSettings?.areaImageUrl },
+            { label: "Section Layout Snapshot", source: signedSources?.[`${section.id}:sectionLayoutImageUrl`] ?? sectionSettings?.sectionLayoutImageUrl }]
+            .filter((entry): entry is { label: string; source: string } => Boolean(entry.source));
+        const parent = section.parent_section_id ? activeSections.find((entry) => entry.id === section.parent_section_id) : null;
+        const parentTitle = parent ? titledSectionsById.get(parent.id) ?? parent.section_title : null;
+        const footerLines = [{ label: main ? `Space ${String(mainSections.findIndex((entry) => entry.id === section.id) + l.one).padStart(l.two, "0")}`
+          : `Section ${String(dividerSections.findIndex((entry) => entry.id === section.id) + l.one).padStart(l.two, "0")}`,
+          text: main ? (visuals.length ? "Floor layout overview" : "Main area overview")
+            : (() => { const count = productPagesBySection.get(section.id)?.length ?? l.zero; return count ? `${count} product ${count === l.one ? "page" : "pages"} follow` : "Section overview"; })() }];
+        const footerHeight = a.smallLine + a.gap8 + a.bodyLine + (!main && parentTitle ? a.gap8 + a.bodyLine : l.zero);
+        const footerY = a.height - a.pad - footerHeight - a.gap32 - a.one;
+        line(a.left, footerY, contentWidth);
+        label(footerLines[l.zero].label, a.left, footerY + a.gap32 + a.one, contentWidth, a.light);
+        let footerTextY = footerY + a.gap32 + a.one + a.smallLine + a.gap8;
+        if (!main && parentTitle) {
+          text(`Within ${parentTitle}`, a.left, footerTextY, contentWidth, a.bodyLine, a.bodySize, GEIST_FONTS.medium, a.label, a.bodyLine / a.bodySize);
+          footerTextY += a.bodyLine + a.gap8;
+        }
+        text(footerLines[l.zero].text, a.left, footerTextY, contentWidth, a.bodyLine, a.bodySize, GEIST_FONTS.regular, a.label, a.bodyLine / a.bodySize);
+        const badge = data.project?.project_name ?? data.quotation.title;
+        const badgeWidth = Math.min(contentWidth, badge.length * a.labelSize * (a.glyphEm + a.badgeTracking) + a.gap16 * l.two + a.one * l.two);
+        const badgeHeight = a.labelLine + a.gap8 * l.two + a.one * l.two;
+        const badgeX = a.width - a.right - badgeWidth, badgeY = a.height - a.pad - badgeHeight;
+        box(badgeX, badgeY, badgeWidth, badgeHeight, a.white, a.lightBorder);
+        label(badge, badgeX + a.one, badgeY + (badgeHeight - a.labelLine) / l.two,
+          badgeWidth - a.one * l.two, a.label, a.labelSize, a.badgeTracking, "center", false);
+        if (visuals.length) {
+          visualY += a.gap32;
+          const visualWidth = (contentWidth - (visuals.length - l.one) * a.gap16) / visuals.length;
+          const visualHeight = Math.max(l.zero, footerY - visualY);
+          for (const [index, visual] of visuals.entries()) {
+            const x = a.left + index * (visualWidth + a.gap16);
+            box(x, visualY, visualWidth, visualHeight, a.white, a.border, l.zero, a.cardTransparency);
+            label(visual.label, x + a.visualPad, visualY + a.visualPad, visualWidth - a.visualPad * l.two,
+              a.label, a.smallSize, a.visualLabelTracking);
+            const imageY = visualY + a.visualPad + a.smallLine + a.gap12;
+            if (visualHeight > a.visualPad * l.two + a.smallLine + a.gap12) await picture(visual.source ?? null,
+              x + a.visualPad, imageY, visualWidth - a.visualPad * l.two, visualY + visualHeight - a.visualPad - imageY);
+          }
+        }
+      }
+      continue;
+    }
 
     if (slideDef.type === "cover") {
       addSlideBase(slide, "F7F8FA");
@@ -1482,217 +1979,329 @@ export async function exportQuotationPresentationPptx(data: LoadedQuotationPrese
       if (!item) continue;
       const dataForItem = productPageData(item, data, effectivePresentationImageUrlByItemId);
 
-      slide.addText(sectionTitle.toUpperCase(), {
-        x: PAGE_MARGIN,
-        y: 0.45,
-        w: 2.8,
-        h: 0.08,
-        fontSize: 8.5,
-        bold: true,
-        color: COLOR_LIGHT_TEXT,
-        margin: 0,
-      });
-      slide.addText(trimText(dataForItem.heading, 72) ?? dataForItem.heading, {
-        x: PAGE_MARGIN,
-        y: 0.72,
-        w: 5.75,
-        h: 0.28,
-        fontSize: 20,
-        color: COLOR_TEXT,
-        margin: 0,
-      });
-      if (dataForItem.isOptional) {
-        slide.addText("OPTIONAL", {
-          x: PAGE_MARGIN,
-          y: 1.04,
-          w: 0.9,
-          h: 0.14,
-          fontSize: 7.5,
-          bold: true,
-          color: "B91C1C",
-          margin: 0,
+      const l = SINGLE_PRODUCT_LAYOUT;
+      const inch = (px: number) => px / l.pxPerInch;
+      const pt = (px: number) => px * l.ptPerPx;
+      const leftWidth = l.width * l.leftFraction / (l.leftFraction + l.rightFraction);
+      const leftX = inch(l.leftPaddingX);
+      const leftY = inch(l.leftPaddingY);
+      const leftContentWidth = leftWidth - inch(l.leftPaddingX * l.columns);
+      const rightX = leftWidth + inch(l.rightPaddingX);
+      const rightY = inch(l.rightPaddingY);
+      const rightWidth = l.width - leftWidth - inch(l.rightPaddingX * l.columns);
+      // Estimate intrinsic CSS wrapping without altering or truncating the text.
+      const wrappedLines = (value: string, width: number, sizePx: number, maximum: number, tracking = l.zero as number) => {
+        const glyphWidth = (character: string) => {
+          const em = /\s/.test(character) ? l.glyphSpaceEm
+            : /[ilI.,:;!'|]/.test(character) ? l.glyphNarrowEm
+              : /[MWmw@%]/.test(character) ? l.glyphWideEm
+                : /[A-Z0-9]/.test(character) ? l.glyphUpperEm : l.glyphNormalEm;
+          return sizePx * (em + tracking);
+        };
+        const limit = width * l.pxPerInch;
+        let count: number = l.one;
+        let used: number = l.zero;
+        for (const word of value.split(/(\s+)/)) {
+          if (word.includes("\n")) {
+            count += word.split("\n").length - l.one;
+            used = l.zero;
+            continue;
+          }
+          const measured = Array.from(word).reduce<number>((sum, character) => sum + glyphWidth(character), l.zero);
+          if (used && used + measured > limit && word.trim()) {
+            count += l.one;
+            used = l.zero;
+          }
+          if (word.trim() || used) used += measured;
+          while (used > limit && limit > l.zero) {
+            count += l.one;
+            used -= limit;
+          }
+        }
+        return Math.min(maximum, count);
+      };
+      type TextOptions = NonNullable<Parameters<PptxSlide["addText"]>[1]>;
+      const text = (value: string, x: number, y: number, w: number, h: number,
+        fontFace: string, sizePx: number, color: string, options: TextOptions = {}) => {
+        const lineHeightPx = typeof options.lineSpacing === "number"
+          ? options.lineSpacing / l.ptPerPx : sizePx * (options.lineSpacingMultiple ?? l.optionalLineFactor);
+        // Remove PowerPoint's extra top leading; retain the CSS line-height for subsequent lines.
+        const halfLeading = inch(Math.max(l.zero, lineHeightPx - sizePx) * l.half);
+        slide.addText(value, {
+          x, y: y - halfLeading, w, h, fontFace, fontSize: pt(sizePx), color,
+          margin: l.zero, valign: "top", wrap: true,
+          breakLine: false, paraSpaceAfter: l.zero,
+          lineSpacingMultiple: l.optionalLineFactor,
+          ...options,
         });
-      }
-      if (dataForItem.isRateOnly) {
-        slide.addText("RATE ONLY", {
-          x: PAGE_MARGIN + (dataForItem.isOptional ? 0.92 : 0),
-          y: 1.04,
-          w: 0.92,
-          h: 0.14,
-          fontSize: 7.5,
-          bold: true,
-          color: "0369A1",
-          margin: 0,
+      };
+      const rect = (x: number, y: number, w: number, h: number, fill: string,
+        border = fill, rounded = false) => {
+        slide.addShape(rounded ? "roundRect" : RECT_SHAPE, {
+          x, y, w, h, fill: { color: fill },
+          line: { color: border, pt: border === fill ? l.zero : pt(l.one) },
+          ...(rounded ? { rectRadius: Math.min(h * l.badgeRadius, inch(l.finishRadiusPx)) } : {}),
         });
-      }
-      slide.addShape(RECT_SHAPE, {
-        x: 5.85,
-        y: 0.42,
-        w: 0.86,
-        h: 0.34,
-        line: { color: COLOR_LINE, pt: 1 },
-        fill: { color: "FAFBFC" },
-        rectRadius: 0.05,
-      });
-      slide.addText(`Item ${String(productNumberById.get(item.id) ?? 1).padStart(2, "0")}`, {
-        x: 5.94,
-        y: 0.53,
-        w: 0.68,
-        h: 0.08,
-        fontSize: 7,
-        bold: true,
-        color: COLOR_LABEL,
-        align: "center",
-        margin: 0,
-      });
+      };
+      const line = (x: number, y: number, w: number, color: string) => {
+        slide.addShape("line", { x, y, w, h: l.zero, line: { color, pt: pt(l.one) } });
+      };
+      const label = (value: string, x: number, y: number, w: number, color = l.lightLabel as string,
+        options: TextOptions = {}) => text(value.toUpperCase(), x, y, w, inch(l.labelLinePx),
+        GEIST_FONTS.semibold, l.labelPx, color,
+        { charSpacing: pt(l.labelPx * l.labelTracking), lineSpacingMultiple: l.optionalLineFactor, ...options });
 
-      await addImageOrPlaceholder({
-        slide,
-        source: dataForItem.imageUrl,
-        x: 0.55,
-        y: 1.3,
-        w: 6.2,
-        h: 5.8,
-        fit: dataForItem.imageFit,
-        label: dataForItem.heading,
-        cache: imageCache,
-        placeholderTitle: "Product image unavailable",
-        placeholderBody: trimText(dataForItem.heading, 48),
-      });
+      rect(l.zero, l.zero, leftWidth, l.height, l.white);
+      rect(leftWidth, l.zero, l.width - leftWidth, l.height, l.panel);
+      const badgeText = `ITEM ${productNumberById.get(item.id) ?? l.one}`;
+      const badgeWidth = inch(badgeText.length * l.labelPx * (l.averageGlyphEm + l.badgeTracking)
+        + l.gap12 * l.columns + l.one * l.columns);
+      const badgeHeight = inch(l.labelLinePx + l.gap4 * l.columns + l.one * l.columns);
+      const badgeX = leftWidth - leftX - badgeWidth;
+      rect(badgeX, leftY, badgeWidth, badgeHeight, l.white, l.badgeBorder, true);
+      label(badgeText, badgeX + inch(l.gap12 + l.one), leftY + inch(l.gap4 + l.one),
+        badgeWidth - inch((l.gap12 + l.one) * l.columns), l.label,
+        { charSpacing: pt(l.labelPx * l.badgeTracking), align: "center" });
+      const titleWidth = leftContentWidth - badgeWidth - inch(l.gap16);
+      label(sectionTitle, leftX, leftY, titleWidth);
+      const titleY = leftY + inch(l.labelLinePx + l.gap8);
+      const titleHeight = inch(l.titleLinePx * wrappedLines(dataForItem.heading, titleWidth, l.titlePx, l.titleLines, l.titleTracking));
+      text(dataForItem.heading, leftX, titleY, titleWidth, titleHeight,
+        GEIST_FONTS.light, l.titlePx, l.dark,
+        { fit: "shrink", charSpacing: pt(l.titlePx * l.titleTracking), lineSpacingMultiple: undefined, lineSpacing: pt(l.titleLinePx) });
 
-      slide.addShape(RECT_SHAPE, {
-        x: 7.0,
-        y: 0.4,
-        w: 4.14,
-        h: 6.72,
-        line: { color: "EEF1F5", pt: 0 },
-        fill: { color: COLOR_PANEL },
-      });
-      slide.addText("TECHNICAL DETAILS", {
-        x: 7.28,
-        y: 0.68,
-        w: 2.2,
-        h: 0.08,
-        fontSize: 8.5,
-        bold: true,
-        color: COLOR_LABEL,
-        margin: 0,
-      });
-      slide.addText(trimText(dataForItem.heading, 64) ?? dataForItem.heading, {
-        x: 7.28,
-        y: 0.95,
-        w: 3.45,
-        h: 0.42,
-        fontSize: 18,
-        color: COLOR_TEXT,
-        margin: 0,
-      });
-      if (dataForItem.isOptional) {
-        slide.addText("OPTIONAL", {
-          x: 7.28,
-          y: 1.42,
-          w: 0.9,
-          h: 0.14,
-          fontSize: 7.5,
-          bold: true,
-          color: "B91C1C",
-          margin: 0,
-        });
+      // Inline browser badges become separate editable boxes at the end of the title zone.
+      const statusBadges = [
+        ...(dataForItem.isOptional ? [{ value: "OPTIONAL", color: l.redText, fill: l.redBackground, border: l.redBorder }] : []),
+        ...(dataForItem.isRateOnly ? [{ value: "RATE ONLY", color: l.skyText, fill: l.skyBackground, border: l.skyBorder }] : []),
+      ];
+      const addStatusBadges = (x: number, y: number, sizePx: number) => {
+        let cursor = x;
+        for (const badge of statusBadges) {
+          const w = inch(badge.value.length * sizePx * l.averageGlyphEm + (l.optionalPaddingX + l.one) * l.columns);
+          const h = inch(sizePx * l.optionalLineFactor + (l.optionalPaddingY + l.one) * l.columns);
+          rect(cursor, y, w, h, badge.fill, badge.border);
+          text(badge.value, cursor + inch(l.optionalPaddingX + l.one), y + inch(l.optionalPaddingY + l.one),
+            w - inch((l.optionalPaddingX + l.one) * l.columns), inch(sizePx * l.optionalLineFactor),
+            GEIST_FONTS.semibold, sizePx, badge.color, { bold: true });
+          cursor += w + inch(l.gap8);
+        }
+      };
+      addStatusBadges(leftX, titleY + titleHeight - inch(l.optionalPx * l.optionalLineFactor), l.optionalPx);
+
+      const stageY = Math.max(titleY + titleHeight, leftY + badgeHeight) + inch(l.gap20);
+      const leftFooterTop = l.height - inch(l.leftPaddingY + l.footerZone);
+      const stageHeight = leftFooterTop - stageY;
+      const itemOverride = settings.itemOverrides[item.id];
+      const bounds = l.imageBounds[itemOverride?.imageFrameSize === "small" || itemOverride?.imageFrameSize === "medium"
+        ? itemOverride.imageFrameSize : "current"];
+      const imageWidth = leftContentWidth * bounds.width;
+      const imageHeight = stageHeight * bounds.height;
+      const imageX = leftX + (leftContentWidth - imageWidth) * l.half;
+      const imageY = stageY + (stageHeight - imageHeight) * l.half;
+      const image = await imageDataUri(dataForItem.imageUrl, imageCache);
+      if (image) {
+        let presentationImage = image;
+        let pixels: { width: number; height: number } | null = null;
+        try {
+          const source = Buffer.from(image.slice(image.indexOf(",") + l.one), "base64");
+          const sourceMetadata = await sharp(source, { animated: false }).metadata();
+          if (!sourceMetadata.width || !sourceMetadata.height) throw new Error("Image dimensions are unavailable.");
+          const requiresPng = sourceMetadata.format !== "png" && sourceMetadata.format !== "jpeg";
+          const raw = await sharp(source, { animated: false }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+          const channels = raw.info.channels;
+          const maximumEdge = Math.floor(raw.info.width * l.edgeTrim.maximumPercent);
+          const opaqueNeutralColumn = (column: number, direction: number) => {
+            let opaquePixels: number = l.zero;
+            let transparentInside = true;
+            for (let row = l.zero; row < raw.info.height; row += l.one) {
+              const offset = (row * raw.info.width + column) * channels;
+              const red = raw.data[offset] ?? l.zero;
+              const green = raw.data[offset + l.one] ?? l.zero;
+              const blue = raw.data[offset + l.columns] ?? l.zero;
+              const alpha = raw.data[offset + channels - l.one] ?? l.zero;
+              if (alpha <= l.edgeTrim.maximumTransparentAlpha) continue;
+              if (alpha < l.edgeTrim.minimumAlpha || Math.min(red, green, blue) < l.edgeTrim.minimumBrightness
+                || Math.max(red, green, blue) - Math.min(red, green, blue) > l.edgeTrim.maximumChannelDifference) return false;
+              opaquePixels += l.one;
+              const insideColumn = Math.min(raw.info.width - l.one, Math.max(l.zero,
+                column + direction * (maximumEdge + l.edgeTrim.insideColumns)));
+              const insideAlpha = raw.data[(row * raw.info.width + insideColumn) * channels + channels - l.one] ?? l.zero;
+              if (insideAlpha > l.edgeTrim.maximumTransparentAlpha) transparentInside = false;
+            }
+            return opaquePixels > l.zero && (opaquePixels === raw.info.height || transparentInside);
+          };
+          let leftTrim = l.zero;
+          let rightTrim = l.zero;
+          while (leftTrim < maximumEdge && opaqueNeutralColumn(leftTrim, l.one)) leftTrim += l.one;
+          while (rightTrim < maximumEdge && opaqueNeutralColumn(raw.info.width - l.one - rightTrim, -l.one)) rightTrim += l.one;
+          const needsEdgeTrim = leftTrim > l.zero || rightTrim > l.zero;
+          if (requiresPng || needsEdgeTrim) {
+            const processed = sharp(source, { animated: false });
+            if (needsEdgeTrim) {
+              processed.extract({ left: leftTrim, top: l.zero, width: raw.info.width - leftTrim - rightTrim, height: raw.info.height });
+            }
+            const png = await processed.png().toBuffer();
+            const metadata = await sharp(png).metadata();
+            if (!metadata.width || !metadata.height) throw new Error("Processed image dimensions are unavailable.");
+            presentationImage = `data:image/png;base64,${png.toString("base64")}`;
+            pixels = { width: metadata.width, height: metadata.height };
+          } else {
+            pixels = { width: sourceMetadata.width, height: sourceMetadata.height };
+          }
+        } catch {
+          pixels = null;
+        }
+        if (pixels && pixels.width > l.zero && pixels.height > l.zero) {
+          const contain = Math.min(imageWidth / pixels.width, imageHeight / pixels.height);
+          const baseWidth = pixels.width * contain;
+          const baseHeight = pixels.height * contain;
+          const requestedScale = Number(itemOverride?.imageScale);
+          // Clamp zoom rather than crop: preserve an editable picture with its original aspect ratio.
+          const scale = Math.min(Number.isFinite(requestedScale) && requestedScale > l.zero ? requestedScale : l.scaleDefault,
+            imageWidth / baseWidth, imageHeight / baseHeight);
+          const position = (value: unknown) => {
+            const number = typeof value === "number" && Number.isFinite(value) ? value : l.positionDefault;
+            return Math.min(l.percent, Math.max(l.zero, number)) / l.percent;
+          };
+          const w = baseWidth * scale;
+          const h = baseHeight * scale;
+          slide.addImage({ data: presentationImage, x: imageX + (imageWidth - w) * position(itemOverride?.imagePositionX),
+            y: imageY + (imageHeight - h) * position(itemOverride?.imagePositionY), w, h, altText: dataForItem.heading });
+        } else {
+          console.warn(`Single-product PPTX: could not read image dimensions for item ${item.id}; using sizing contain without scale or position.`);
+          slide.addImage({ data: image, x: imageX, y: imageY, w: imageWidth, h: imageHeight,
+            sizing: { type: "contain", w: imageWidth, h: imageHeight }, altText: dataForItem.heading });
+        }
+      } else {
+        const placeholderY = imageY + (imageHeight - inch(l.labelLinePx + l.gap20 + l.bodyLinePx * l.placeholderLines)) / l.columns;
+        label("Visual pending", leftX, placeholderY, leftContentWidth, l.lightLabel, { align: "center" });
+        text("No quotation image is available for this item yet. The item remains included so the presentation sequence stays complete.",
+          leftX, placeholderY + inch(l.labelLinePx + l.gap20), leftContentWidth, inch(l.bodyLinePx * l.placeholderLines),
+          GEIST_FONTS.regular, l.bodyPx, l.label, { align: "center", lineSpacingMultiple: undefined, lineSpacing: pt(l.bodyLinePx) });
       }
-      if (dataForItem.isRateOnly) {
-        slide.addText("RATE ONLY", {
-          x: 7.28 + (dataForItem.isOptional ? 0.92 : 0),
-          y: 1.42,
-          w: 0.92,
-          h: 0.14,
-          fontSize: 7.5,
-          bold: true,
-          color: "0369A1",
-          margin: 0,
-        });
+      const origin = formatBrandOriginSupplier({ brandName: item.brand_name_snapshot, origin: item.origin_snapshot, supplier: item.supplier_name_snapshot });
+      const summary = [settings.contentVisibility.brand ? origin.brand : null, settings.contentVisibility.origin ? origin.origin : null].filter(Boolean).join(" - ")
+        || item.category_name_snapshot || data.project?.project_name;
+      const areaWidth = item.room_name_snapshot
+        ? Math.min(leftContentWidth / l.columns, inch(item.room_name_snapshot.length * l.bodyPx * l.averageGlyphEm + l.gap16 * l.columns))
+        : l.zero;
+      const summaryWidth = leftContentWidth - (areaWidth ? areaWidth + inch(l.gap24) : l.zero);
+      const summaryLineCount = summary ? wrappedLines(summary, summaryWidth, l.bodyPx, l.summaryLines) : l.one;
+      const summaryValueHeight = inch(l.bodyLinePx * summaryLineCount);
+      const summaryHeight = inch(l.labelLinePx + l.gap4) + summaryValueHeight;
+      // The h-[96px] footer has mt-5: its children end 20px below the fixed grid track.
+      const leftFooterBottom = l.height - inch(l.leftPaddingY) + inch(l.gap20);
+      const summaryY = leftFooterBottom - summaryHeight;
+      line(leftX, summaryY - inch(l.gap12), summaryWidth, l.border);
+      if (summary) {
+        label("Product Summary", leftX, summaryY, summaryWidth);
+        text(summary, leftX, summaryY + inch(l.labelLinePx + l.gap4), summaryWidth, summaryValueHeight,
+          GEIST_FONTS.medium, l.bodyPx, l.summary, { lineSpacingMultiple: undefined, lineSpacing: pt(l.bodyLinePx) });
+      }
+      if (item.room_name_snapshot) {
+        const areaHeight = inch(l.gap12 * l.columns + l.labelLinePx + l.gap4 + l.bodyDefaultLinePx + l.one * l.columns);
+        const areaX = leftWidth - leftX - areaWidth;
+        const areaY = leftFooterBottom - areaHeight;
+        rect(areaX, areaY, areaWidth, areaHeight, l.white, l.border);
+        label("Area Tag", areaX + inch(l.gap16), areaY + inch(l.gap12), areaWidth - inch(l.gap16 * l.columns), l.lightLabel, { align: "right" });
+        text(item.room_name_snapshot, areaX + inch(l.gap16), areaY + inch(l.gap12 + l.labelLinePx + l.gap4),
+          areaWidth - inch(l.gap16 * l.columns), inch(l.bodyDefaultLinePx), GEIST_FONTS.semibold, l.bodyPx, l.text, { align: "right" });
       }
 
-      let detailsCursor = dataForItem.isOptional || dataForItem.isRateOnly ? 1.88 : 1.75;
-      if (settings.contentVisibility.specification && dataForItem.specification) {
-        slide.addText(trimText(dataForItem.specification, 320) ?? dataForItem.specification, {
-          x: 7.28,
-          y: detailsCursor,
-          w: 3.35,
-          h: 1.1,
-          fontSize: 10.3,
-          color: COLOR_MUTED,
-          margin: 0,
-          valign: "top",
-        });
-        detailsCursor += 1.28;
+      label("Technical Details", rightX, rightY, rightWidth, l.label);
+      const detailTitleY = rightY + inch(l.labelLinePx + l.gap12);
+      const detailTitleHeight = inch(l.detailTitleLinePx * wrappedLines(dataForItem.heading, rightWidth, l.detailTitlePx, l.titleLines, l.titleTracking));
+      text(dataForItem.heading, rightX, detailTitleY, rightWidth, detailTitleHeight,
+        GEIST_FONTS.light, l.detailTitlePx, l.dark,
+        { fit: "shrink", charSpacing: pt(l.detailTitlePx * l.titleTracking), lineSpacingMultiple: undefined, lineSpacing: pt(l.detailTitleLinePx) });
+      addStatusBadges(rightX, detailTitleY + detailTitleHeight - inch(l.labelPx * l.optionalLineFactor), l.labelPx);
+      const headingBottom = rightY + inch(l.headingZone);
+      const specificationY = detailTitleY + detailTitleHeight + inch(l.gap16);
+      const specificationLinePx = dataForItem.specification ? l.bodyLinePx : l.emptySpecificationLinePx;
+      const specificationHeight = Math.min(inch(l.bodyLinePx * l.specificationLines),
+        Math.max(l.zero, headingBottom - inch(l.gap20) - specificationY));
+      const specification = dataForItem.specification || "Specification details not added yet.";
+      if (settings.contentVisibility.specification) {
+        text(specification, rightX,
+          specificationY, rightWidth,
+          specificationHeight, GEIST_FONTS.regular, l.bodyPx,
+          dataForItem.specification ? l.muted : l.lightLabel,
+          { lineSpacingMultiple: undefined, lineSpacing: pt(specificationLinePx) });
       }
-
-      const detailRowsToRender = dataForItem.meta.slice(0, 6);
-      detailRowsToRender.forEach((row, index) => {
-        const column = index % 2;
-        const rowIndex = Math.floor(index / 2);
-        const x = 7.28 + (column * 1.7);
-        const y = detailsCursor + (rowIndex * 0.62);
-        slide.addText(row.label.toUpperCase(), {
-          x,
-          y,
-          w: 1.48,
-          h: 0.07,
-          fontSize: 7,
-          bold: true,
-          color: COLOR_LIGHT_TEXT,
-          margin: 0,
+      line(rightX, headingBottom, rightWidth, l.panelBorder);
+      const metaY = headingBottom + inch(l.gap20);
+      const metaWidth = (rightWidth - inch(l.gap20)) / l.columns;
+      const metaRows = Array.from({ length: Math.ceil(dataForItem.meta.length / l.columns) }, (_, rowIndex) => {
+        const entries = dataForItem.meta.slice(rowIndex * l.columns, rowIndex * l.columns + l.columns);
+        const cells = entries.map((entry, column) => {
+          const last = rowIndex * l.columns + column === dataForItem.meta.length - l.one;
+          const valueHeight = inch(l.bodyDefaultLinePx * wrappedLines(entry.value, metaWidth, l.bodyPx, l.titleLines));
+          // ProductDetail: gap-1, pb-2.5 and border-b; only the final CELL omits padding/border.
+          return { entry, valueHeight, bordered: !last, height: inch(l.labelLinePx + l.gap4)
+            + valueHeight + (last ? l.zero : inch(l.labelPx + l.one)) };
         });
-        slide.addText(trimText(row.value, 28) ?? row.value, {
-          x,
-          y: y + 0.15,
-          w: 1.48,
-          h: 0.16,
-          fontSize: 8.8,
-          bold: true,
-          color: COLOR_TEXT,
-          margin: 0,
-        });
+        return { cells, height: Math.max(...cells.map((cell) => cell.height)) };
       });
-      detailsCursor += Math.ceil(detailRowsToRender.length / 2) * 0.62;
-
+      let metaRowY = metaY;
+      metaRows.forEach((metaRow) => {
+        metaRow.cells.forEach((cell, column) => {
+        const row = cell.entry;
+        const x = rightX + column * (metaWidth + inch(l.gap20));
+        const y = metaRowY;
+        label(row.label, x, y, metaWidth, l.lightLabel, { charSpacing: pt(l.labelPx * DESIGN_LAYOUT.numberTracking) });
+        text(row.value, x, y + inch(l.labelLinePx + l.gap4), metaWidth, cell.valueHeight,
+          GEIST_FONTS.medium, l.bodyPx, l.text, { lineSpacingMultiple: undefined, lineSpacing: pt(l.bodyDefaultLinePx) });
+        if (cell.bordered) line(x, y + metaRow.height - inch(l.one), metaWidth, l.border);
+        });
+        metaRowY += metaRow.height + inch(l.gap12);
+      });
+      // CSS: <dl> has gap-y-3; the next block starts with mt-5 and its border.
+      const finishesY = metaRowY - inch(l.gap12) + inch(l.gap20);
+      line(rightX, finishesY, rightWidth, l.panelBorder);
       if (dataForItem.finishes.length) {
-        slide.addText("FINISHES", {
-          x: 7.28,
-          y: Math.min(detailsCursor + 0.18, 5.35),
-          w: 1.2,
-          h: 0.07,
-          fontSize: 7,
-          bold: true,
-          color: COLOR_LIGHT_TEXT,
-          margin: 0,
-        });
-
-        const visibleFinishesToRender = dataForItem.finishes.slice(0, 4);
-        for (const [finishIndex, finish] of visibleFinishesToRender.entries()) {
-          const column = finishIndex % 2;
-          const row = Math.floor(finishIndex / 2);
-          const finishX = 7.28 + (column * 1.72);
-          const finishY = Math.min(detailsCursor + 0.38 + (row * 0.7), 5.62 + (row * 0.7));
-          await addFinishChip(slide, finish, finishX, finishY, 1.52, imageCache);
+        label("Finishes", rightX, finishesY + inch(l.gap20), rightWidth, l.label);
+        const finishWidth = (rightWidth - inch(l.gap8)) / l.columns;
+        const finishHeight = inch(l.gap8 * l.columns + l.finishLabelLinePx + l.gap2 + l.finishValueLinePx * l.finishValueLines + l.one * l.columns);
+        for (const [index, finish] of dataForItem.finishes.slice(l.zero, l.finishLimit).entries()) {
+          const x = rightX + (index % l.columns) * (finishWidth + inch(l.gap8));
+          const y = finishesY + inch(l.gap20 + l.labelLinePx + l.gap16) + Math.floor(index / l.columns) * (finishHeight + inch(l.gap8));
+          rect(x, y, finishWidth, finishHeight, l.finishBackground, l.panelBorder, true);
+          const swatchX = x + inch(l.gap8 + l.one);
+          const swatchY = y + inch(l.gap8 + l.one);
+          const swatchSize = inch(l.finishSwatchPx);
+          rect(swatchX, swatchY, swatchSize, swatchSize, l.swatchBackground);
+          const swatch = await imageDataUri(finish.imageUrl, imageCache);
+          if (swatch) slide.addImage({ data: swatch, x: swatchX, y: swatchY, w: swatchSize, h: swatchSize,
+            sizing: { type: "cover", w: swatchSize, h: swatchSize }, altText: finish.name || finish.label });
+          const valueX = swatchX + swatchSize + inch(l.gap8);
+          const valueWidth = finishWidth - (valueX - x) - inch(l.gap8 + l.one);
+          text(finish.label.toUpperCase(), valueX, swatchY, valueWidth, inch(l.finishLabelLinePx),
+            GEIST_FONTS.semibold, l.finishLabelPx, l.label, { charSpacing: pt(l.finishLabelPx * l.finishTracking) });
+          text([finish.code, finish.name].filter(Boolean).join(" | ") || finish.description || "Selected finish",
+            valueX, swatchY + inch(l.finishLabelLinePx + l.gap2), valueWidth, inch(l.finishValueLinePx * l.finishValueLines),
+            GEIST_FONTS.semibold, l.finishValuePx, l.text, { lineSpacingMultiple: undefined, lineSpacing: pt(l.finishValueLinePx) });
         }
-
-        if (dataForItem.finishes.length > 4) {
-          slide.addText(`+${dataForItem.finishes.length - 4} more`, {
-            x: 9.95,
-            y: 6.84,
-            w: 0.7,
-            h: 0.07,
-            fontSize: 7,
-            bold: true,
-            color: COLOR_LIGHT_TEXT,
-            align: "right",
-            margin: 0,
-          });
+        if (dataForItem.finishes.length > l.finishLimit) {
+          const rows = Math.ceil(Math.min(dataForItem.finishes.length, l.finishLimit) / l.columns);
+          label(`+${dataForItem.finishes.length - l.finishLimit} more`, rightX,
+            finishesY + inch(l.gap20 + l.labelLinePx + l.gap16) + rows * (finishHeight + inch(l.gap8)), rightWidth,
+            l.lightLabel, { charSpacing: pt(l.labelPx * l.moreTracking) });
         }
       }
-
-      addFooter(slide, data.companyProfile.displayName, data.quotation.quotation_no);
+      const footerContentHeight = inch(l.gap12 + l.labelLinePx + l.gap4 + l.bodyDefaultLinePx);
+      const footerY = l.height - inch(l.rightPaddingY) - footerContentHeight;
+      line(rightX, footerY, rightWidth, l.panelBorder);
+      const footerColumn = (rightWidth - inch(l.gap24)) / l.columns;
+      label("Prepared By", rightX, footerY + inch(l.gap12), footerColumn);
+      text(data.companyProfile.displayName, rightX, footerY + inch(l.gap12 + l.labelLinePx + l.gap4),
+        footerColumn, inch(l.bodyDefaultLinePx), GEIST_FONTS.semibold, l.bodyPx, l.text);
+      if (data.quotation.quotation_no) {
+        const quoteX = rightX + footerColumn + inch(l.gap24);
+        label("Project / Quote No.", quoteX, footerY + inch(l.gap12), footerColumn, l.lightLabel, { align: "right" });
+        text(data.quotation.quotation_no, quoteX, footerY + inch(l.gap12 + l.labelLinePx + l.gap4),
+          footerColumn, inch(l.bodyDefaultLinePx), GEIST_FONTS.semibold, l.bodyPx, l.text, { align: "right" });
+      }
       continue;
     }
 
