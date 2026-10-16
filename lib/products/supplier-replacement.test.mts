@@ -109,12 +109,13 @@ test("wiring: reviewer/approver gates, no price writes, one confirmation, honest
   const lib = readFileSync("lib/products/supplier-replacement.ts", "utf8");
   assert.doesNotMatch(lib, /supplierApplyReviewedPrice|purge_|product_templates|\.insert\(|\.delete\(|\.update\(/);
   const wizard = readFileSync("components/products/supplier-import-wizard.tsx", "utf8");
-  assert.match(wizard, /Confirm Replacement/); assert.match(wizard, /Manage Previous Versions/); assert.match(wizard, /Return to Current Price List/);
+  const result = readFileSync("components/products/supplier-import-result.tsx", "utf8");
+  assert.match(wizard, /Confirm Replacement/); assert.match(result, /Manage Previous Versions/); assert.match(result, /Return to Current Price List/);
   assert.match(wizard, /setStep\(replace \? 5 : 4\)/);                                              // Families are not asked again
   const replaceBranch = wizard.slice(wizard.indexOf("if (replace) {\n        // Success"), wizard.indexOf("const before = new Set"));
   assert.match(replaceBranch, /verifySupplierReplacement\(/); assert.doesNotMatch(replaceBranch, /createSupplierReviewBatch|confirmSupplierCoverage/);
   assert.ok(wizard.indexOf("verifySupplierReplacement(brandId") < wizard.indexOf("setReplaced({"));
-  assert.match(wizard, /No new version was created: this file was already imported with the same settings/);
+  assert.match(result, /No new version was created: this file was already imported with the same settings/);
   assert.equal((wizard.match(/window\.confirm\(/g) ?? []).length, 3);
   assert.match(wizard, /supplierImportChunks\(importRows, 500, 600_000, stored\)/);                // importer and chunking unchanged
   const page = readFileSync("app/products/price-updates/supplier-sources/page.tsx", "utf8");

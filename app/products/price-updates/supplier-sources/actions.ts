@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { assertSupplierProfile, type RawSupplierRow, type SourceScope, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
-import { archiveBlockingSource, validateReplacementRequest, verifyReplacement } from "@/lib/products/supplier-replacement";
+import { archiveBlockingSource, describeImportedSource, findSourceReviewBatch, validateReplacementRequest, verifyReplacement } from "@/lib/products/supplier-replacement";
 import { cancelIncompleteSupplierImport, continueIncompleteSupplierCleanup, supplierIncompleteImports, supplierSourceUploadProgress } from "@/lib/products/supplier-import-cancel";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
 import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierFamilyUnchangedMatchKeys, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
@@ -374,4 +374,21 @@ export async function verifySupplierReplacement(brandId: string, definitionId: s
   const verdict = await verifyReplacement(client, { brandId, definitionId, sourceId });
   revalidatePath(workspacePath);
   return verdict;
+}
+
+/** After an import: the stored facts about the source and whether it is the current price list (existing resolver). */
+export async function describeSupplierImport(brandId: string, sourceId: string) {
+  const { client } = await reviewer();
+  const verdict = await describeImportedSource(client, { brandId, sourceId });
+  revalidatePath(workspacePath);
+  return verdict;
+}
+/** Starts the product price review for a source only when it has none yet; a retry returns the existing review instead of creating another. */
+export async function prepareSupplierSourceReview(sourceId: string) {
+  const { client } = await reviewer();
+  const existing = await findSourceReviewBatch(client, sourceId);
+  if (existing.state === "exists") return { batchId: existing.batchId!, created: false };
+  const batch = await supplierCreateReviewBatch(client, sourceId, "complete", [], undefined);
+  revalidatePath(workspacePath);
+  return { batchId: (batch as { id: string }).id, created: true };
 }

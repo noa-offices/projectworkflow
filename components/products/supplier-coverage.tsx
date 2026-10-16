@@ -247,6 +247,7 @@ export function SupplierPriceListCards({ cards, importHref, approver }: { cards:
         <p className="truncate text-base font-semibold text-zinc-950" title={item.title}>{item.title}</p></div>
         <span className={`${badge} shrink-0 ${tone}`}>{label}</span></div>
       <p className="text-xs text-zinc-500">Effective date: {item.effectiveFrom ?? "Immediately applicable"}</p>
+      {item.priceListState === "current" || item.priceListState === undefined ? <p className="text-xs text-emerald-900">Current price list{item.sourceName ? ` for ${item.sourceName}` : ""}. Product and quotation prices change only when a review is completed.</p> : null}
       <div className="flex flex-wrap gap-2"><span className={`${badge} border-zinc-200 bg-zinc-50`}>Price list: {priceListLabels[item.priceListState ?? "current"]}</span><span className={`${badge} border-zinc-200 bg-zinc-50`}>Review: {priceListReviewState(item.batchStatus, item.unresolved)}</span></div>
       <dl className="grid grid-cols-3 gap-2 text-xs"><div><dt className="text-zinc-500">Families</dt><dd className="font-semibold tabular-nums text-zinc-950">{item.families ?? "—"}</dd></div>
         <div><dt className="text-zinc-500">Source rows</dt><dd className="font-semibold tabular-nums text-zinc-950">{item.compacted ? "Detail archived" : item.sourceRows.toLocaleString("en-US")}</dd></div>

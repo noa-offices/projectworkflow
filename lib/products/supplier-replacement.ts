@@ -97,16 +97,38 @@ export async function validateReplacementRequest(client: SupabaseClient, input: 
   return context;
 }
 
-export type ReplacementVerdict = { status: "current" | "scheduled" | "not_current" | "not_imported"; applicableTitle: string | null; message: string };
-/** After importing: is the new source fully imported AND the applicable version of this definition? Never claims success otherwise. */
+export type ImportedSourceDetails = { title: string; definitionName: string | null; effectiveFrom: string | null; rows: number; identities: number };
+export type ReplacementVerdict = { status: "current" | "scheduled" | "not_current" | "not_imported" | "unlinked"; applicableTitle: string | null; message: string; details?: ImportedSourceDetails };
+/**
+ * After importing: is the source fully imported, and is it the applicable version of its supplier price list (existing resolver)? Facts come from the
+ * stored source record and the resolver, never from the browser. Anything but a finished import is "not_imported" and is never presented as success.
+ */
 export async function verifyReplacement(client: SupabaseClient, input: { brandId: string; definitionId: string; sourceId: string }): Promise<ReplacementVerdict> {
-  const source = (await supplierRows<{ id: string; status: string; title: string; effective_from: string | null; definition_id: string | null }>(client, "supplier_source_versions", "id,status,title,effective_from,definition_id", { id: input.sourceId, brand_id: input.brandId })).at(0);
+  const source = (await supplierRows<{ id: string; status: string; title: string; effective_from: string | null; definition_id: string | null; stored_rows: number; identity_count: number }>(client, "supplier_source_versions", "id,status,title,effective_from,definition_id,stored_rows,identity_count", { id: input.sourceId, brand_id: input.brandId })).at(0);
   if (!source || source.definition_id !== input.definitionId) return { status: "not_imported", applicableTitle: null, message: "The new price list is not linked to this supplier price list." };
   if (source.status !== "imported") return { status: "not_imported", applicableTitle: null, message: "The import has not finished, so nothing was replaced." };
   const context = await loadReplacementContext(client, input);
-  if (context.applicable?.id === source.id) return { status: "current", applicableTitle: source.title, message: `${source.title} is now the current price list.` };
-  if (source.effective_from && source.effective_from > supplierBusinessDate()) return { status: "scheduled", applicableTitle: context.applicable?.title ?? null, message: `${source.title} is imported and becomes current on ${source.effective_from}. Until then ${context.applicable?.title ?? "the earlier list"} stays current.` };
-  return { status: "not_current", applicableTitle: context.applicable?.title ?? null, message: `${source.title} is imported but is not current: ${context.applicable?.title ?? "another list"} has a later effective date.` };
+  const details: ImportedSourceDetails = { title: source.title, definitionName: context.definitionName, effectiveFrom: source.effective_from, rows: source.stored_rows, identities: source.identity_count };
+  if (context.applicable?.id === source.id) return { status: "current", applicableTitle: source.title, details, message: `This is now the current supplier price list for ${context.definitionName}.` };
+  if (source.effective_from && source.effective_from > supplierBusinessDate()) return { status: "scheduled", applicableTitle: context.applicable?.title ?? null, details, message: `Imported successfully. This price list becomes applicable on ${source.effective_from}. Until then ${context.applicable?.title ?? "the earlier list"} stays current.` };
+  return { status: "not_current", applicableTitle: context.applicable?.title ?? null, details, message: `Imported successfully, but another price list is currently applicable: ${context.applicable?.title ?? "another list"} has a later effective date.` };
+}
+/** The same verdict for a finished import found by source id alone (normal import flow). A source without a supplier price list is reported as imported but unlinked. */
+export async function describeImportedSource(client: SupabaseClient, input: { brandId: string; sourceId: string }): Promise<ReplacementVerdict> {
+  const source = (await supplierRows<{ id: string; status: string; title: string; effective_from: string | null; definition_id: string | null; stored_rows: number; identity_count: number }>(client, "supplier_source_versions", "id,status,title,effective_from,definition_id,stored_rows,identity_count", { id: input.sourceId, brand_id: input.brandId })).at(0);
+  if (!source || source.status !== "imported") return { status: "not_imported", applicableTitle: null, message: "The import has not finished." };
+  if (!source.definition_id) return { status: "unlinked", applicableTitle: null, message: "Imported successfully.", details: { title: source.title, definitionName: null, effectiveFrom: source.effective_from, rows: source.stored_rows, identities: source.identity_count } };
+  return verifyReplacement(client, { brandId: input.brandId, definitionId: source.definition_id, sourceId: source.id });
+}
+
+export type SourceReviewState = { state: "none" | "exists"; batchId: string | null; status: string | null };
+/** The review batch already attached to a source, if any (open ones first, then the latest). Used so a retry never creates a duplicate review. */
+export async function findSourceReviewBatch(client: SupabaseClient, sourceId: string): Promise<SourceReviewState> {
+  const batches = await supplierRows<{ id: string; status: string; created_at: string }>(client, "supplier_price_batches", "id,status,created_at", { source_id: sourceId }, "created_at");
+  if (!batches.length) return { state: "none", batchId: null, status: null };
+  const open = batches.filter((batch) => batch.status === "matching" || batch.status === "review");
+  const pick = (open.length ? open : batches).at(-1)!;
+  return { state: "exists", batchId: pick.id, status: pick.status };
 }
 
 /** Context for "Replace Price List" on one supplier price list: its current version and the definition's imported versions. */

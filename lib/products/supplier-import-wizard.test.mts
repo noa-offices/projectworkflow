@@ -70,7 +70,7 @@ test("details prefill a title; a previous Source Definition is suggested but nev
 
 test("wizard keeps the five steps, reuses the existing import/review pipeline and exposes no JSON", () => {
   for (const step of ["Upload", "Match columns", "Details", "Families", "Review"]) assert.ok(wizard.includes(`"${step}"`), step);
-  for (const action of ["saveSupplierProfile", "createSupplierSource(", "uploadSupplierChunk", "finalizeSupplierSource", "createSupplierSourceDefinition", "confirmSupplierCoverage", "linkSupplierSourceDefinition", 'createSupplierReviewBatch(result.id, "complete", [])']) assert.ok(wizard.includes(action), action);
+  for (const action of ["saveSupplierProfile", "createSupplierSource(", "uploadSupplierChunk", "finalizeSupplierSource", "createSupplierSourceDefinition", "confirmSupplierCoverage", "linkSupplierSourceDefinition", 'prepareSupplierSourceReview(sourceId)']) assert.ok(wizard.includes(action), action);
   for (const text of ["Previous column mapping found", "Use previous mapping", "Review mapping", "Use previous Families", "Advanced import settings"]) assert.ok(wizard.includes(text), text);
   for (const text of ['aria-label="Price column"', "This file has multiple price columns", "Use one price column", "multiplePriceColumnsDetected"]) assert.ok(wizard.includes(text), text);
   assert.doesNotMatch(wizard, /JSON\.stringify|<textarea/);

@@ -12,9 +12,10 @@ import {
   type WizardDefinition, type WizardMapping, type WizardPriceMode, type WizardProfileOption,
 } from "@/lib/products/supplier-import-wizard";
 import {
-  attachSupplierWorkingFile, cancelSupplierImport, compactSupplierSourceChunks, confirmSupplierCoverage, continueSupplierImportCleanup, createSupplierReviewBatch, createSupplierSource, createSupplierSourceDefinition,
-  archiveBlockingSupplierSource, finalizeSupplierSource, linkSupplierSourceDefinition, listIncompleteSupplierImports, saveSupplierProfile, supplierProfileForImport, supplierSourceUploadStatus, uploadSupplierChunk, validateSupplierReplacement, verifySupplierReplacement,
+  attachSupplierWorkingFile, cancelSupplierImport, compactSupplierSourceChunks, confirmSupplierCoverage, continueSupplierImportCleanup, createSupplierSource, createSupplierSourceDefinition,
+  archiveBlockingSupplierSource, describeSupplierImport, finalizeSupplierSource, prepareSupplierSourceReview, linkSupplierSourceDefinition, listIncompleteSupplierImports, saveSupplierProfile, supplierProfileForImport, supplierSourceUploadStatus, uploadSupplierChunk, validateSupplierReplacement, verifySupplierReplacement,
 } from "@/app/products/price-updates/supplier-sources/actions";
+import { SupplierImportResult, type ReviewUiState } from "@/components/products/supplier-import-result";
 import { blockingSourceFromError, previewReplacement, replacementMismatchWarning, type ReplaceContext, type ReplacementVerdict } from "@/lib/products/supplier-replacement";
 import { finalizeSupplierImport, resolveImportDefinition, runSupplierImportUpload, type SupplierUploadDeps } from "@/lib/products/supplier-import-resume";
 import type { IncompleteSupplierImport } from "@/lib/products/supplier-import-cancel";
@@ -42,6 +43,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
   const [title, setTitle] = useState(suggestedTitle), [effective, setEffective] = useState("");
   const [unfinished, setUnfinished] = useState<string | null>(null), [phase, setPhase] = useState<"" | "Uploading" | "Processing" | "Finalizing" | "Complete">(""), [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [conflict, setConflict] = useState<{ sourceId: string; hash: string } | null>(null), [replaced, setReplaced] = useState<(ReplacementVerdict & { existing: boolean }) | null>(null);
+  const [importedSourceId, setImportedSourceId] = useState<string | null>(null), [review, setReview] = useState<ReviewUiState>({ state: "idle" });
   const [confirmedFor, setConfirmedFor] = useState("");
   const [definitionId, setDefinitionId] = useState(replace?.definitionId ?? ""), [newName, setNewName] = useState(`${brandName} price list`), [selected, setSelected] = useState<string[]>([]);
   const headers = rows.length ? Object.keys(rows[0].values) : [];
@@ -158,13 +160,17 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       }
       const before = new Set(definition?.familyIds ?? []);
       if (coverageId && (definitionId === "new" || selected.length !== before.size || selected.some((id) => !before.has(id)))) await confirmSupplierCoverage(coverageId, selected);
-      const workspace = `/products/price-updates/supplier-sources?brand=${brandId}&source=${result.id}`;
-      if (result.existing) { router.push(`${workspace}&view=summary`); router.refresh(); return; }
-      setMessage("Comparing with your Products. This can take a moment.");
-      try { const batch = await createSupplierReviewBatch(result.id, "complete", []); router.push(`${workspace}&batch=${batch.id}&view=family`); }
-      catch (error) { setMessage(error instanceof Error ? error.message : "The review could not start."); router.push(`${workspace}&view=summary`); }
-      router.refresh();
+      // Stage 1 is over only when the database says imported: describe the stored source and the resolver's verdict, then stage 2 (review) separately.
+      const verdict = await describeSupplierImport(brandId, result.id);
+      setReplaced({ ...verdict, existing: result.existing }); setImportedSourceId(result.id); setFile(null); setRows([]); setStep(1); router.refresh();
+      if (verdict.status !== "not_imported") await prepareReview(result.id);
     });
+  }
+  /** Product price review is prepared after, and independently of, the import. A retry finds the existing review instead of creating another. */
+  async function prepareReview(sourceId: string) {
+    setReview({ state: "preparing" });
+    try { const prepared = await prepareSupplierSourceReview(sourceId); setReview({ state: "ready", batchId: prepared.batchId }); }
+    catch (error) { setReview({ state: "failed", error: error instanceof Error ? error.message : undefined }); }
   }
 
   const select = (label: string, key: "fullCode" | "articleCode" | "description" | "category", required: boolean) =>
@@ -184,8 +190,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
   const familiesReady = selected.length > 0 && (definitionId !== "new" || newName.trim() !== "") && definitionId !== "";
 
   return <section className={`${card} space-y-4 p-4`} aria-label="Import new price list">
-    {replaced ? <div role="status" className={`space-y-2 rounded-md border p-3 text-sm ${replaced.status === "current" ? "border-emerald-300 bg-emerald-50 text-emerald-950" : "border-amber-300 bg-amber-50 text-amber-950"}`}><p className="font-semibold">{replaced.existing ? "No new version was created: this file was already imported with the same settings." : replaced.status === "current" ? "Price list replaced." : "Price list imported."}</p><p>{replaced.message}</p>
-      <p className="flex flex-wrap gap-3 text-xs"><Link className="font-semibold underline" href={`/products/price-updates/supplier-sources?brand=${brandId}&tab=current`}>Return to Current Price List</Link><Link className="font-semibold underline" href={`/products/price-updates/supplier-sources?brand=${brandId}&tab=history`}>Manage Previous Versions</Link></p></div> : null}
+    {replaced ? <SupplierImportResult verdict={replaced} existing={replaced.existing} review={review} brandId={brandId} sourceId={importedSourceId} replaceMode={Boolean(replace)} busy={busy} onRetryReview={() => importedSourceId && void prepareReview(importedSourceId)} /> : null}
     {incomplete.length ? <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3" aria-label="Incomplete import">{incomplete.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 text-sm"><div><p className="font-semibold text-amber-950">Incomplete import</p><p className="text-xs text-amber-900">{item.title} · {item.filename}{item.definitionName ? ` · ${item.definitionName}` : ""} · {item.storedChunks} / {item.expectedChunks} parts</p></div><div className="flex gap-2">{item.status === "importing" && item.expectedChunks > 0 && item.storedChunks === item.expectedChunks ? <button type="button" className={button} disabled={busy} onClick={() => void resumeFinalization(item)}>Resume Finalization</button> : item.status !== "failed" ? <label className={`${button} cursor-pointer`}>Resume Import<input type="file" accept=".xlsx,.csv,.json" className="sr-only" disabled={busy} onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; if (chosen) void resumeIncomplete(item, chosen); }} /></label> : null}<button type="button" className={button} disabled={busy} onClick={() => void cancelIncomplete(item)}>Cancel Import</button></div></div>)}{progress && busy ? <p role="status" className="text-xs text-amber-900">{phase}: {progress.done} / {progress.total} parts</p> : null}<p className="text-xs text-amber-900">To resume, choose the original file again. Its contents are checked against the unfinished import.</p></div> : null}
     <ol className="flex flex-wrap items-center gap-2 text-xs font-semibold" aria-label="Import steps">{wizardSteps.map((name, index) => { const number = index + 1; const state = number < step ? "done" : number === step ? "current" : "todo";
       return <li key={name} className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 ${state === "done" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : state === "current" ? "border-emerald-900 bg-emerald-900 text-white" : "border-zinc-200 text-zinc-500"}`} aria-current={state === "current" ? "step" : undefined}><span aria-hidden="true">{state === "done" ? "✓" : number}</span>{name}</li>; })}</ol>
