@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SupplierLeaveReviewButton } from "@/components/products/supplier-history-actions";
+import { canOfferReplacement } from "@/lib/products/supplier-replacement";
 import type { SupplierCoverageConflict, SupplierCoverageSuggestionRow } from "@/lib/products/supplier-price-contracts";
 import type { SupplierCoverageDefinition, SupplierFamilyCoverageRow, SupplierPreviousSource, SupplierPriceListCard, SupplierPriceListState } from "@/lib/products/supplier-price-repository";
 import { archiveSupplierSourceDefinition, assignFamiliesToSupplierSource, confirmSupplierCoverage, createSupplierSourceDefinition, deleteSupplierSourceDefinition, linkSupplierSourceDefinition, renameSupplierSourceDefinition, resolveSupplierCoverageConflict, archiveSupplierSource, deletePreviousSupplierSource } from "@/app/products/price-updates/supplier-sources/actions";
@@ -253,11 +254,11 @@ export function SupplierPriceListCards({ cards, importHref, approver }: { cards:
       {item.batchId ? <p className="text-xs text-zinc-600">{item.unresolved ? `${item.unresolved} ${item.unresolved === 1 ? "item needs" : "items need"} attention` : "Nothing needs attention"}{item.unchanged ? ` · ${item.unchanged} unchanged` : ""}</p> : null}
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-zinc-100 pt-3">
         <div className="flex flex-wrap items-center gap-2"><Link href={item.openHref} className={primary}>{action}</Link>
+          {canOfferReplacement(approver, item.replaceHref, item.priceListState) ? <Link href={item.replaceHref!} className={button}>Replace Price List</Link> : null}
           {approver && item.batchId && (item.batchStatus === "review" || item.batchStatus === "matching") ? <SupplierLeaveReviewButton batchId={item.batchId} /> : null}</div>
         <details className="relative"><summary className={`${button} cursor-pointer list-none`} aria-label={`More actions for ${item.title}`}>⋯</summary>
           <ul className="absolute right-0 z-10 mt-1 w-48 space-y-1 rounded-md border border-zinc-200 bg-white p-2 text-xs font-semibold shadow-lg">
             <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.detailsHref}>View extracted data</Link></li>
-            {approver && item.replaceHref && item.priceListState === "current" ? <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.replaceHref}>Replace Price List</Link></li> : null}
             {approver ? <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.editHref}>Edit coverage</Link></li> : null}
             <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.detailsHref}>Price list details</Link></li>
             {approver ? <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.advancedHref}>Advanced tools</Link></li> : null}

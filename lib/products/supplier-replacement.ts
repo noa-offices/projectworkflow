@@ -86,3 +86,12 @@ export async function verifyReplacement(client: SupabaseClient, input: { brandId
 
 /** Context for "Replace Price List" on one supplier price list: its current version and the definition's imported versions. */
 export type ReplaceContext = { definitionId: string; definitionName: string; current: { title: string; filename: string; effectiveFrom: string | null; currency: string; basis: string } | null; versions: Array<{ id: string; effective_from: string | null; created_at: string }> };
+
+/**
+ * Whether a price-list card offers "Replace Price List": an approver, a card tied to a supplier price list (its link carries the definition),
+ * and an imported list that is current or has a review in progress. An open review does not hide it; replacing starts a new import and
+ * leaves the review and every earlier version untouched.
+ */
+export function canOfferReplacement(approver: boolean, replaceHref: string | undefined, priceListState: string | undefined): boolean {
+  return approver && Boolean(replaceHref) && ["current", "update_in_progress"].includes(priceListState ?? "current");
+}

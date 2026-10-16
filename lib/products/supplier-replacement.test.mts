@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { archiveBlockingSource, blockingSourceFromError, loadReplacementContext, previewReplacement, validateReplacementRequest, verifyReplacement } from "./supplier-replacement.js";
+import { archiveBlockingSource, canOfferReplacement, blockingSourceFromError, loadReplacementContext, previewReplacement, validateReplacementRequest, verifyReplacement } from "./supplier-replacement.js";
 import { listSmartSetupSupplierSources } from "./smart-setup-supplier-sources.js";
 import { resolveApplicableSupplierSourceVersion } from "./supplier-price-repository.js";
 
@@ -119,4 +119,28 @@ test("wiring: reviewer/approver gates, no price writes, one confirmation, honest
   assert.match(wizard, /supplierImportChunks\(importRows, 500, 600_000, stored\)/);                // importer and chunking unchanged
   const page = readFileSync("app/products/price-updates/supplier-sources/page.tsx", "utf8");
   assert.match(page, /replaceHref: card\.definitionId \? href\(\{ tab: "import", replace: card\.definitionId/);
+});
+
+test("the Replace Price List action is offered for current lists and lists with a review in progress, to approvers, with a definition", () => {
+  const href = "/products/price-updates/supplier-sources?brand=b1&tab=import&replace=d1";
+  assert.equal(canOfferReplacement(true, href, "current"), true);
+  assert.equal(canOfferReplacement(true, href, "update_in_progress"), true);        // an open review does not hide it
+  assert.equal(canOfferReplacement(true, href, undefined), true);                   // cards without an explicit state are current
+  assert.equal(canOfferReplacement(false, href, "current"), false);                 // unauthorized role
+  assert.equal(canOfferReplacement(true, "", "current"), false);                    // no supplier price list (definition) behind the card
+  assert.equal(canOfferReplacement(true, undefined, "update_in_progress"), false);
+  assert.equal(canOfferReplacement(true, href, "upcoming"), false);                 // not yet applicable lists are not the one being replaced
+});
+test("wiring: the card shows one visible action, the page links every card's definition, the wizard receives it, review actions are intact", () => {
+  const card = readFileSync("components/products/supplier-coverage.tsx", "utf8");
+  const page = readFileSync("app/products/price-updates/supplier-sources/page.tsx", "utf8");
+  assert.equal((card.match(/Replace Price List/g) ?? []).length, 1);                // no duplicate entry in the menu
+  assert.match(card, /canOfferReplacement\(approver, item\.replaceHref, item\.priceListState\) \? <Link href=\{item\.replaceHref!\}/);
+  assert.match(card, /<Link href=\{item\.openHref\} className=\{primary\}>\{action\}<\/Link>/);   // existing primary review action unchanged
+  assert.match(card, /<SupplierLeaveReviewButton batchId=\{item\.batchId\} \/>/);
+  for (const label of ["View extracted data", "Edit coverage", "Price list details", "Advanced tools"]) assert.ok(card.includes(label), label);
+  assert.match(page, /replaceHref: card\.definitionId \? href\(\{ tab: "import", replace: card\.definitionId, setup: "" \}\) : ""/);
+  assert.match(page, /replace: ""/);                                                // ordinary Import/Current tabs do not carry the replace mode
+  assert.match(page, /definitionId: replaceDefinitionId, definitionName/);          // the wizard gets exactly the requested definition
+  assert.match(readFileSync("components/products/supplier-import-wizard.tsx", "utf8"), /useState\(replace\?\.definitionId \?\? ""\)/);
 });
