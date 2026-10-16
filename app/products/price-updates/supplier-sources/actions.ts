@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { assertSupplierProfile, type RawSupplierRow, type SourceScope, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
-import { cancelIncompleteSupplierImport, supplierSourceUploadProgress } from "@/lib/products/supplier-import-cancel";
+import { cancelIncompleteSupplierImport, supplierIncompleteImports, supplierSourceUploadProgress } from "@/lib/products/supplier-import-cancel";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
 import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierFamilyUnchangedMatchKeys, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
 
@@ -324,4 +324,10 @@ export async function cancelSupplierImport(sourceId: string) {
   const result = await cancelIncompleteSupplierImport(client, sourceId);
   revalidatePath(workspacePath);
   return result;
+}
+
+/** Read-only recovery list of this Brand's unfinished imports. */
+export async function listIncompleteSupplierImports(brandId: string) {
+  const { client } = await reviewer();
+  return supplierIncompleteImports(client, brandId);
 }

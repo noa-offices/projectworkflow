@@ -124,8 +124,8 @@ test("actions require an authenticated reviewer and wire the helpers; the wizard
   const wizard = readFileSync("components/products/supplier-import-wizard.tsx", "utf8");
   for (const name of ["supplierSourceUploadStatus", "cancelSupplierImport"]) assert.match(actions, new RegExp(`export async function ${name}\\(sourceId: string\\) \\{\\r?\\n  const \\{ client \\} = await reviewer\\(\\);`));
   assert.match(wizard, /supplierImportChunks\(importRows, 500, 600_000, stored\)/);   // chunk geometry unchanged, no parallel upload
-  assert.equal((wizard.match(/window\.confirm\(/g) ?? []).length, 1);
-  assert.match(wizard, /chunksToUpload\(await supplierSourceUploadStatus\(result\.id\)/);
+  assert.equal((wizard.match(/window\.confirm\(/g) ?? []).length, 2); // one confirmation per cancel entry point (in-session and recovery list)
+  assert.match(wizard, /runSupplierImportUpload\(uploadDeps\(file\), \{ sourceId: result\.id/);
   assert.match(wizard, /Resume Import/); assert.match(wizard, /Cancel Import/);
   assert.doesNotMatch(wizard, /Promise\.all\([^)]*uploadSupplierChunk/);
   assert.match(wizard, /setUnfinished\(null\); setPhase\("Complete"\)/);               // "not finished" state is cleared only after finalize

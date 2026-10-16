@@ -1,21 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { parseSupplierFile } from "@/lib/products/supplier-price-file";
 import { supplierImportChunks } from "@/lib/products/supplier-price-import";
-import type { RawSupplierRow, SupplierProfile } from "@/lib/products/supplier-price-contracts";
+import { assertSupplierProfile, type RawSupplierRow, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import {
   compatibleProfile, initialPriceSelection, mappingFromProfile, previewImport, profileFromMapping, profileRequiredColumns, suggestDefinition, suggestMapping,
   type WizardDefinition, type WizardMapping, type WizardPriceMode, type WizardProfileOption,
 } from "@/lib/products/supplier-import-wizard";
 import {
   attachSupplierWorkingFile, cancelSupplierImport, confirmSupplierCoverage, createSupplierReviewBatch, createSupplierSource, createSupplierSourceDefinition,
-  finalizeSupplierSource, linkSupplierSourceDefinition, saveSupplierProfile, supplierProfileForImport, supplierSourceUploadStatus, uploadSupplierChunk,
+  finalizeSupplierSource, linkSupplierSourceDefinition, listIncompleteSupplierImports, saveSupplierProfile, supplierProfileForImport, supplierSourceUploadStatus, uploadSupplierChunk,
 } from "@/app/products/price-updates/supplier-sources/actions";
-import { chunksToUpload } from "@/lib/products/supplier-import-resume";
+import { resolveImportDefinition, runSupplierImportUpload, type SupplierUploadDeps } from "@/lib/products/supplier-import-resume";
+import type { IncompleteSupplierImport } from "@/lib/products/supplier-import-cancel";
 
 // Normal import flow: Upload → Match columns → Details → Families → Review. Technical setup stays under Advanced import settings.
 const card = "rounded-lg border border-zinc-200 bg-white shadow-sm";
@@ -40,7 +41,37 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
   const [unfinished, setUnfinished] = useState<string | null>(null), [phase, setPhase] = useState<"" | "Uploading" | "Processing" | "Finalizing" | "Complete">(""), [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [definitionId, setDefinitionId] = useState(""), [newName, setNewName] = useState(`${brandName} price list`), [selected, setSelected] = useState<string[]>([]);
   const headers = rows.length ? Object.keys(rows[0].values) : [];
-  async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); } catch (error) { setMessage(error instanceof Error ? error.message : "Something went wrong."); } finally { setBusy(false); } }
+  async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); } catch (error) { setMessage(error instanceof Error ? error.message : "Something went wrong."); } finally { setBusy(false); void refreshIncomplete(); } }
+  const [incomplete, setIncomplete] = useState<IncompleteSupplierImport[]>([]);
+  const createdDefinition = useRef<{ name: string; id: string } | null>(null);
+  const refreshIncomplete = useCallback(() => listIncompleteSupplierImports(brandId).then(setIncomplete).catch(() => setIncomplete([])), [brandId]);
+  useEffect(() => { if (approver) void refreshIncomplete(); }, [approver, refreshIncomplete]);
+  const sha256 = async (chosen: File) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await chosen.arrayBuffer())), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const uploadDeps = (chosen: File): SupplierUploadDeps => ({
+    storeFile: async (path) => { const { error } = await createClient().storage.from("supplier-price-sources").upload(path, chosen, { upsert: false }); if (error && !("statusCode" in error && ["409", "400"].includes(String(error.statusCode)))) throw Error(error.message); },
+    attachFile: attachSupplierWorkingFile, status: supplierSourceUploadStatus, uploadChunk: uploadSupplierChunk, finalize: finalizeSupplierSource,
+    onPhase: (next, nextProgress) => { setPhase(next); if (nextProgress) setProgress(nextProgress); }, onMessage: setMessage,
+  });
+  /** Persisted recovery: the same upload path as a new import, after the user selects the original file again. */
+  async function resumeIncomplete(item: IncompleteSupplierImport, chosen: File) {
+    await run(async () => {
+      setMessage("Checking the file against the unfinished import.");
+      if ((await sha256(chosen)) !== item.fileHash) throw Error("This is not the original file of the unfinished import. Choose the same file again.");
+      assertSupplierProfile(item.profile); const stored = item.profile;
+      const importRows = await parseSupplierFile(chosen, stored.sheet_names);
+      if (!importRows.length) throw Error("The price list has no data rows.");
+      const present = Object.keys(importRows[0].values);
+      if (profileRequiredColumns(stored).some((column) => !present.includes(column))) throw Error("This file does not match the unfinished import's columns.");
+      setUnfinished(item.id);
+      await runSupplierImportUpload(uploadDeps(chosen), { sourceId: item.id, brandId, hash: item.fileHash, sourceType: chosen.name.split(".").pop()!.toLowerCase(), rowCount: importRows.length, chunks: supplierImportChunks(importRows, 500, 600_000, stored) });
+      setUnfinished(null); await refreshIncomplete();
+      router.push(`/products/price-updates/supplier-sources?brand=${brandId}&source=${item.id}&view=summary`); router.refresh();
+    });
+  }
+  async function cancelIncomplete(item: IncompleteSupplierImport) {
+    if (!window.confirm(`Cancel the unfinished import "${item.title}" and remove its partial data? A completed import is never removed.`)) return;
+    await run(async () => { const result = await cancelSupplierImport(item.id); setMessage(result.message); if (unfinished === item.id) { setUnfinished(null); setPhase(""); setProgress(null); } await refreshIncomplete(); });
+  }
   async function cancelImport() {
     if (!unfinished || !window.confirm("Cancel this unfinished import and remove its partial data? A completed import is never removed.")) return;
     await run(async () => { const result = await cancelSupplierImport(unfinished); setUnfinished(null); setPhase(""); setProgress(null); setMessage(result.message); });
@@ -79,21 +110,14 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       const present = Object.keys(importRows[0].values);
       if (profileRequiredColumns(stored).some((column) => !present.includes(column))) throw Error("This file does not match the chosen columns. Go back to Match columns.");
       const chunks = supplierImportChunks(importRows, 500, 600_000, stored), sourceType = file.name.split(".").pop()!.toLowerCase();
-      const coverageId = definitionId === "new" ? (await createSupplierSourceDefinition(brandId, newName.trim(), profileId)).id : definitionId;
+      // A retry reuses the definition made for the same unfinished file (or earlier in this session) instead of creating another.
+      const resolved = await resolveImportDefinition({ definitionId, newName: newName.trim(), fileHash: hash, incomplete: await listIncompleteSupplierImports(brandId), created: createdDefinition.current, create: async () => (await createSupplierSourceDefinition(brandId, newName.trim(), profileId)).id });
+      createdDefinition.current = resolved.created; const coverageId = resolved.id;
       const result = await createSupplierSource({ profile_id: profileId, expected_profile: stored, title: title.trim(), filename: file.name, file_hash: hash, source_type: sourceType, expected_rows: importRows.length, expected_cells: importRows.length * stored.price_columns.length, expected_chunks: chunks.length, original_reference: "", effective_from: effective, received_at: "" });
       if (result.status !== "imported") {
         setUnfinished(result.id);
         if (coverageId) await linkSupplierSourceDefinition(result.id, coverageId);
-        const path = `${brandId}/${result.id}/${hash}.${sourceType}`;
-        const { error } = await createClient().storage.from("supplier-price-sources").upload(path, file, { upsert: false });
-        if (error && !("statusCode" in error && ["409", "400"].includes(String(error.statusCode)))) throw Error(error.message);
-        await attachSupplierWorkingFile(result.id, path);
-        // Resume: a source keeps its original chunking; parts it already holds are skipped, the database still validates every part it receives.
-        const pending = chunksToUpload(await supplierSourceUploadStatus(result.id), { fileHash: hash, expectedRows: importRows.length, chunkCount: chunks.length });
-        setPhase("Uploading"); setProgress({ done: chunks.length - pending.length, total: chunks.length });
-        for (const index of pending) { setMessage(`Uploading part ${index + 1} of ${chunks.length}. Do not close this page.`); await uploadSupplierChunk(result.id, index, chunks[index]); setProgress((current) => current && { ...current, done: current.done + 1 }); }
-        setPhase("Finalizing");
-        for (let part = 1; ; part++) { const progress = await finalizeSupplierSource(result.id); if (progress.done) break; setMessage(`Preparing the price list (step ${part}, ${progress.remaining_codes} codes left). Do not close this page.`); }
+        await runSupplierImportUpload(uploadDeps(file), { sourceId: result.id, brandId, hash, sourceType, rowCount: importRows.length, chunks });
         setUnfinished(null); setPhase("Complete");
       }
       const before = new Set(definition?.familyIds ?? []);
@@ -124,6 +148,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
   const familiesReady = selected.length > 0 && (definitionId !== "new" || newName.trim() !== "") && definitionId !== "";
 
   return <section className={`${card} space-y-4 p-4`} aria-label="Import new price list">
+    {incomplete.length ? <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3" aria-label="Incomplete import">{incomplete.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 text-sm"><div><p className="font-semibold text-amber-950">Incomplete import</p><p className="text-xs text-amber-900">{item.title} · {item.filename}{item.definitionName ? ` · ${item.definitionName}` : ""} · {item.storedChunks} / {item.expectedChunks} parts</p></div><div className="flex gap-2">{item.status !== "failed" ? <label className={`${button} cursor-pointer`}>Resume Import<input type="file" accept=".xlsx,.csv,.json" className="sr-only" disabled={busy} onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; if (chosen) void resumeIncomplete(item, chosen); }} /></label> : null}<button type="button" className={button} disabled={busy} onClick={() => void cancelIncomplete(item)}>Cancel Import</button></div></div>)}{progress && busy ? <p role="status" className="text-xs text-amber-900">{phase}: {progress.done} / {progress.total} parts</p> : null}<p className="text-xs text-amber-900">To resume, choose the original file again. Its contents are checked against the unfinished import.</p></div> : null}
     <ol className="flex flex-wrap items-center gap-2 text-xs font-semibold" aria-label="Import steps">{wizardSteps.map((name, index) => { const number = index + 1; const state = number < step ? "done" : number === step ? "current" : "todo";
       return <li key={name} className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 ${state === "done" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : state === "current" ? "border-emerald-900 bg-emerald-900 text-white" : "border-zinc-200 text-zinc-500"}`} aria-current={state === "current" ? "step" : undefined}><span aria-hidden="true">{state === "done" ? "✓" : number}</span>{name}</li>; })}</ol>
     <div><h3 className="text-base font-semibold text-zinc-950">Import new price list</h3><p className="text-xs text-zinc-500">{brandName} · step {step} of 5.</p></div>

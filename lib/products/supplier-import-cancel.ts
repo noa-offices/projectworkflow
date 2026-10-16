@@ -56,3 +56,18 @@ export async function cancelIncompleteSupplierImport(client: SupabaseClient, sou
   }
   return { status: source ? "cancelled" : "already_cancelled", cleaned: true, message: source ? "Import cancelled. The unfinished data was removed." : "This import was already cancelled." };
 }
+
+export type IncompleteSupplierImport = { id: string; title: string; filename: string; status: string; fileHash: string; definitionId: string | null; definitionName: string | null; expectedRows: number; expectedChunks: number; storedChunks: number; profile: unknown };
+
+/** Read-only recovery list: this Brand's unfinished imports only (never an imported or archived source), with their stored chunk count. */
+export async function supplierIncompleteImports(client: SupabaseClient, brandId: string): Promise<IncompleteSupplierImport[]> {
+  if (typeof brandId !== "string" || !brandId) throw Error("Brand is required.");
+  type Row = { id: string; title: string; filename: string; status: string; file_hash: string; definition_id: string | null; expected_rows: number; expected_chunks: number; profile: unknown; created_at: string };
+  const columns = "id,title,filename,status,file_hash,definition_id,expected_rows,expected_chunks,profile,created_at";
+  const found = (await Promise.all(incompleteStatuses.map((status) => supplierRows<Row>(client, "supplier_source_versions", columns, { brand_id: brandId, status })))).flat().sort((a, b) => b.created_at.localeCompare(a.created_at));
+  if (!found.length) return [];
+  const definitions = await supplierRows<{ id: string; name: string }>(client, "supplier_source_definitions", "id,name", { brand_id: brandId });
+  const names = new Map(definitions.map((d) => [d.id, d.name]));
+  return Promise.all(found.map(async (s) => ({ id: s.id, title: s.title, filename: s.filename, status: s.status, fileHash: s.file_hash, definitionId: s.definition_id, definitionName: s.definition_id ? names.get(s.definition_id) ?? null : null, expectedRows: s.expected_rows, expectedChunks: s.expected_chunks, profile: s.profile,
+    storedChunks: (await supplierRows<{ chunk_index: number }>(client, "supplier_source_chunks", "chunk_index", { source_id: s.id }, "chunk_index")).length })));
+}
