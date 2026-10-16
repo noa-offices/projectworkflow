@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { assertSupplierProfile, type RawSupplierRow, type SourceScope, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
-import { cancelIncompleteSupplierImport, supplierIncompleteImports, supplierSourceUploadProgress } from "@/lib/products/supplier-import-cancel";
+import { cancelIncompleteSupplierImport, continueIncompleteSupplierCleanup, supplierIncompleteImports, supplierSourceUploadProgress } from "@/lib/products/supplier-import-cancel";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
 import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierFamilyUnchangedMatchKeys, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
 
@@ -249,6 +249,13 @@ export async function permanentlyDeleteSupplierSource(sourceId: string, confirme
   const { auth, client } = await reviewer();
   if (!canManageSupplierCapacity(auth.profile?.role, auth.profile?.account_status)) throw Error("Only the System Owner can permanently delete a Supplier price list.");
   if (confirmed !== true) throw Error("Explicit permanent-delete confirmation required.");
+  // A cancelled, unfinished import can be very large: it is removed in bounded steps (the caller repeats while `more`).
+  const target = await client.from("supplier_source_versions").select("status,archived_from_status").eq("id", sourceId).maybeSingle<{ status: string; archived_from_status: string | null }>();
+  if (target.data?.status === "archived" && ["uploading", "importing", "failed"].includes(target.data.archived_from_status ?? "")) {
+    const step = await continueIncompleteSupplierCleanup(client, sourceId);
+    if (!step.more) revalidatePath(workspacePath);
+    return { warning: step.more || step.cleaned ? "" : step.message, more: step.more, remaining: step.remaining };
+  }
   const result = await client.rpc("purge_archived_supplier_source", { p_source_id: sourceId, p_confirm: true });
   if (result.error) throw Error(result.error.message);
   const paths = (result.data as { storage_paths: string[] }).storage_paths;
@@ -265,7 +272,7 @@ export async function permanentlyDeleteSupplierSource(sourceId: string, confirme
   }
   // Keep the row's warning/retry control mounted until external file cleanup succeeds.
   if (!warning) revalidatePath(workspacePath);
-  return { warning };
+  return { warning, more: false, remaining: 0 };
 }
 /** System Owner-only historical cleanup; Phase F and Storage receipts preserve all durable pricing/review proof. */
 export async function removeSupplierSourceTechnicalData(sourceId: string, confirmed: boolean) {
@@ -322,7 +329,14 @@ export async function supplierSourceUploadStatus(sourceId: string) {
 export async function cancelSupplierImport(sourceId: string) {
   const { client } = await reviewer();
   const result = await cancelIncompleteSupplierImport(client, sourceId);
-  revalidatePath(workspacePath);
+  if (!result.more) revalidatePath(workspacePath);
+  return result;
+}
+/** Continues the bounded cleanup of a cancelled import while `more` is true. Each call removes a limited number of records. */
+export async function continueSupplierImportCleanup(sourceId: string) {
+  const { client } = await reviewer();
+  const result = await continueIncompleteSupplierCleanup(client, sourceId);
+  if (!result.more) revalidatePath(workspacePath);
   return result;
 }
 

@@ -42,7 +42,8 @@ export function SupplierHistoryActions({ sourceId, title, viewHref, downloadUrl,
     if (!retryCleanup && !window.confirm("Permanently delete this archived Supplier price list?\nThis cannot be undone.")) return;
     setBusy(true); setMessage("");
     try {
-      const result = await permanentlyDeleteSupplierSource(sourceId, true);
+      let result = await permanentlyDeleteSupplierSource(sourceId, true);
+      while (result.more) { setMessage(`Removing partial data… ${result.remaining.toLocaleString("en-US")} records left. Do not close this page.`); result = await permanentlyDeleteSupplierSource(sourceId, true); }
       if (result.warning) { setMessage(result.warning); setRetryCleanup(true); }
       else { panel.current?.hidePopover(); router.refresh(); }
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not permanently delete."); }

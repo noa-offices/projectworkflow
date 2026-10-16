@@ -13,12 +13,41 @@ export async function supplierSourceUploadProgress(client: SupabaseClient, sourc
   return { sourceId: source.id, status: source.status, fileHash: source.file_hash, expectedRows: source.expected_rows, expectedChunks: source.expected_chunks, storedChunks: chunks.map((c) => c.chunk_index) };
 }
 
-export type SupplierImportCancelResult = { status: "cancelled" | "already_cancelled"; cleaned: boolean; message: string };
+export type SupplierImportCancelResult = { status: "cancelled" | "already_cancelled"; cleaned: boolean; /** More bounded cleanup calls are needed (call continueIncompleteSupplierCleanup again). */ more: boolean; remaining: number; message: string };
 
 /**
- * Cancels one INCOMPLETE import. Uses only the existing guarded writers: archive_source (row lock; further chunk and finalize writes are
- * then rejected) and purge_archived_supplier_source (System Owner only; deletes this source's own rows and receipts) plus the supported
- * Storage API for the receipt-listed file. Never touches an imported or reviewed source. Repeating it is safe.
+ * One bounded cleanup step for an ARCHIVED, UNFINISHED import (purge_incomplete_supplier_source_step: at most a few thousand rows per call,
+ * System Owner only, exact source id, review history excluded). Call repeatedly while `more`. When the source row is finally gone, the
+ * receipt-listed Storage file is removed through the Storage API. A non-owner cannot purge; the source stays archived and blocked.
+ */
+export async function continueIncompleteSupplierCleanup(client: SupabaseClient, sourceId: string): Promise<SupplierImportCancelResult> {
+  if (typeof sourceId !== "string" || !sourceId) throw Error("Supplier source is required.");
+  const step = await client.rpc("purge_incomplete_supplier_source_step", { p_source_id: sourceId, p_confirm: true });
+  if (step.error) {
+    if (/unavailable/i.test(step.error.message)) return { status: "already_cancelled", cleaned: true, more: false, remaining: 0, message: "This import was already cancelled." };
+    if (/System Owner|permission|privilege/i.test(step.error.message) || step.error.code === "42501") return { status: "cancelled", cleaned: false, more: false, remaining: 0, message: "Import cancelled and blocked from further use. The System Owner removes the partial data from the price list history." };
+    throw Error(step.error.message);
+  }
+  const data = step.data as { done?: boolean; remaining?: number; storage_paths?: string[] } | null;
+  if (!data?.done) return { status: "cancelled", cleaned: false, more: true, remaining: data?.remaining ?? 0, message: `Removing partial data… ${(data?.remaining ?? 0).toLocaleString("en-US")} records left.` };
+  const paths = data.storage_paths ?? [];
+  if (paths.length) {
+    try {
+      const removed = await client.storage.from("supplier-price-sources").remove(paths);
+      if (removed.error) throw Error(removed.error.message);
+      const finish = await client.rpc("finish_supplier_source_file_cleanup", { p_source_id: sourceId });
+      if (finish.error) throw Error(finish.error.message);
+    } catch (error) {
+      return { status: "cancelled", cleaned: false, more: false, remaining: 0, message: `Import cancelled and its data removed. The uploaded file could not be deleted: ${error instanceof Error ? error.message : "Unknown error"}. Cancel again to retry.` };
+    }
+  }
+  return { status: "cancelled", cleaned: true, more: false, remaining: 0, message: "Import cancelled. The unfinished data was removed." };
+}
+
+/**
+ * Cancels one INCOMPLETE import. archive_source (row lock; further chunk and finalize writes are then rejected) comes first, then the
+ * first bounded cleanup step; the caller continues with continueIncompleteSupplierCleanup while `more`. Never touches an imported or
+ * reviewed source. Repeating it is safe.
  */
 export async function cancelIncompleteSupplierImport(client: SupabaseClient, sourceId: string): Promise<SupplierImportCancelResult> {
   if (typeof sourceId !== "string" || !sourceId) throw Error("Supplier source is required.");
@@ -35,26 +64,8 @@ export async function cancelIncompleteSupplierImport(client: SupabaseClient, sou
       throw Error("The import finished just now, so it was not cancelled.");
     }
   }
-  const purge = await client.rpc("purge_archived_supplier_source", { p_source_id: sourceId, p_confirm: true });
-  if (purge.error) {
-    if (source && source.status === "archived") return { status: "cancelled", cleaned: false, message: `Import cancelled and blocked from further use. Partial data remains until the System Owner removes it (${purge.error.message}).` };
-    // Nothing to clean: an earlier cancellation already removed the source and its file.
-    if (!source) return { status: "already_cancelled", cleaned: true, message: "This import was already cancelled." };
-    throw Error(purge.error.message);
-  }
-  const data = purge.data as { storage_paths?: string[]; cleanup_retry?: boolean } | null;
-  const paths = data?.storage_paths ?? [];
-  if (paths.length) {
-    try {
-      const removed = await client.storage.from("supplier-price-sources").remove(paths);
-      if (removed.error) throw Error(removed.error.message);
-      const finish = await client.rpc("finish_supplier_source_file_cleanup", { p_source_id: sourceId });
-      if (finish.error) throw Error(finish.error.message);
-    } catch (error) {
-      return { status: "cancelled", cleaned: false, message: `Import cancelled and its data removed. The uploaded file could not be deleted: ${error instanceof Error ? error.message : "Unknown error"}. Cancel again to retry.` };
-    }
-  }
-  return { status: source ? "cancelled" : "already_cancelled", cleaned: true, message: source ? "Import cancelled. The unfinished data was removed." : "This import was already cancelled." };
+  const result = await continueIncompleteSupplierCleanup(client, sourceId);
+  return !source && result.status === "cancelled" && result.cleaned && !result.more ? { ...result, status: "already_cancelled", message: "This import was already cancelled." } : result;
 }
 
 export type IncompleteSupplierImport = { id: string; title: string; filename: string; status: string; fileHash: string; definitionId: string | null; definitionName: string | null; expectedRows: number; expectedChunks: number; storedChunks: number; profile: unknown };

@@ -16,7 +16,7 @@ function db(sources: Src[], chunks: Record<string, number[]> = {}, definitions =
     rpc: async (rpcName: string, args: Record<string, unknown>) => {
       calls.push(rpcName);
       if (rpcName === "supplier_price_review_write") { const s = sources.find((x) => x.id === (args.p_payload as { source_id: string }).source_id); if (s) { s.archived_from_status = s.status; s.status = "archived"; } return { data: {}, error: null }; }
-      if (rpcName === "purge_archived_supplier_source") { const i = sources.findIndex((x) => x.id === args.p_source_id); if (i < 0) return { data: null, error: { message: "unavailable" } }; sources.splice(i, 1); return { data: { storage_paths: [] }, error: null }; }
+      if (rpcName === "purge_incomplete_supplier_source_step") { const i = sources.findIndex((x) => x.id === args.p_source_id); if (i < 0) return { data: null, error: { message: "unavailable" } }; sources.splice(i, 1); return { data: { done: true, remaining: 0, storage_paths: [] }, error: null }; }
       return { data: null, error: null };
     },
     storage: { from: () => ({ remove: async () => ({ error: null }) }) },

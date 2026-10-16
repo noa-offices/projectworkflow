@@ -12,7 +12,7 @@ import {
   type WizardDefinition, type WizardMapping, type WizardPriceMode, type WizardProfileOption,
 } from "@/lib/products/supplier-import-wizard";
 import {
-  attachSupplierWorkingFile, cancelSupplierImport, confirmSupplierCoverage, createSupplierReviewBatch, createSupplierSource, createSupplierSourceDefinition,
+  attachSupplierWorkingFile, cancelSupplierImport, confirmSupplierCoverage, continueSupplierImportCleanup, createSupplierReviewBatch, createSupplierSource, createSupplierSourceDefinition,
   finalizeSupplierSource, linkSupplierSourceDefinition, listIncompleteSupplierImports, saveSupplierProfile, supplierProfileForImport, supplierSourceUploadStatus, uploadSupplierChunk,
 } from "@/app/products/price-updates/supplier-sources/actions";
 import { resolveImportDefinition, runSupplierImportUpload, type SupplierUploadDeps } from "@/lib/products/supplier-import-resume";
@@ -70,11 +70,17 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
   }
   async function cancelIncomplete(item: IncompleteSupplierImport) {
     if (!window.confirm(`Cancel the unfinished import "${item.title}" and remove its partial data? A completed import is never removed.`)) return;
-    await run(async () => { const result = await cancelSupplierImport(item.id); setMessage(result.message); if (unfinished === item.id) { setUnfinished(null); setPhase(""); setProgress(null); } await refreshIncomplete(); });
+    await run(async () => { const result = await finishCancel(await cancelSupplierImport(item.id), item.id); setMessage(result.message); if (unfinished === item.id) { setUnfinished(null); setPhase(""); setProgress(null); } await refreshIncomplete(); });
+  }
+  /** Cleanup of a large cancelled import runs in bounded steps; keep going until the server reports it is finished. */
+  async function finishCancel(first: Awaited<ReturnType<typeof cancelSupplierImport>>, sourceId: string) {
+    let result = first;
+    while (result.more) { setMessage(result.message); result = await continueSupplierImportCleanup(sourceId); }
+    return result;
   }
   async function cancelImport() {
     if (!unfinished || !window.confirm("Cancel this unfinished import and remove its partial data? A completed import is never removed.")) return;
-    await run(async () => { const result = await cancelSupplierImport(unfinished); setUnfinished(null); setPhase(""); setProgress(null); setMessage(result.message); });
+    await run(async () => { const result = await finishCancel(await cancelSupplierImport(unfinished), unfinished); setUnfinished(null); setPhase(""); setProgress(null); setMessage(result.message); });
   }
   if (!approver) return <section className={`${card} p-4 text-sm`}><h3 className="text-base font-semibold text-zinc-950">Import new price list</h3><p className="mt-1">An approver imports Supplier price lists.</p></section>;
 

@@ -23,12 +23,12 @@ function fake(sources: Source[], opts: { owner?: boolean; storageError?: string;
         if (args.p_operation === "source_unarchive" && source) { source.status = "imported"; source.archived_from_status = null; return { data: { id: source.id }, error: null }; }
         return { data: null, error: { message: "unexpected operation" } };
       }
-      if (name === "purge_archived_supplier_source") {
+      if (name === "purge_incomplete_supplier_source_step") {
         if (!opts.owner) return { data: null, error: { message: "Only the System Owner can do this." } };
         const index = sources.findIndex((s) => s.id === args.p_source_id);
         if (index < 0) return { data: null, error: { message: "Archived Supplier price list unavailable." } };
         if (sources[index].status !== "archived") return { data: null, error: { message: "Only archived, non-current Supplier price lists can be permanently deleted." } };
-        sources.splice(index, 1); return { data: { storage_paths: [`b/${args.p_source_id}/h.xlsx`], cleanup_retry: false }, error: null };
+        sources.splice(index, 1); return { data: { done: true, remaining: 0, storage_paths: [`b/${args.p_source_id}/h.xlsx`], cleanup_retry: false }, error: null };
       }
       if (name === "finish_supplier_source_file_cleanup") return { data: null, error: null };
       return { data: null, error: { message: "unknown rpc" } };
@@ -43,7 +43,7 @@ test("cancelling a partial import archives (locking out further writes), purges 
   const f = fake([partial()], { owner: true });
   const result = await cancelIncompleteSupplierImport(f.client, "s1");
   assert.deepEqual([result.status, result.cleaned], ["cancelled", true]);
-  assert.deepEqual(f.kinds(), ["rpc:supplier_price_review_write", "rpc:purge_archived_supplier_source", "storage.remove", "rpc:finish_supplier_source_file_cleanup"]);
+  assert.deepEqual(f.kinds(), ["rpc:supplier_price_review_write", "rpc:purge_incomplete_supplier_source_step", "storage.remove", "rpc:finish_supplier_source_file_cleanup"]);
 });
 
 test("only the named source is touched", async () => {
@@ -66,7 +66,7 @@ test("cancellation racing finalization: a import that just finished is restored 
   const f = fake([partial()], { owner: true, beforeArchive: (list) => { list[0].status = "imported"; } });
   await assert.rejects(cancelIncompleteSupplierImport(f.client, "s1"), /finished just now/);
   assert.deepEqual(f.kinds(), ["rpc:supplier_price_review_write", "rpc:supplier_price_review_write"]); // archive, then unarchive
-  assert.ok(!f.kinds().includes("rpc:purge_archived_supplier_source"));
+  assert.ok(!f.kinds().includes("rpc:purge_incomplete_supplier_source_step"));
 });
 
 test("repeated cancellation is safe", async () => {
