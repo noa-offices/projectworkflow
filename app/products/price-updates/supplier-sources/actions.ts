@@ -68,13 +68,22 @@ export async function uploadSupplierChunk(sourceId: string, chunkIndex: number, 
   return supplierWrite(client, "chunk", { source_id: sourceId, chunk_index: chunkIndex, rows, cells });
 }
 /** One bounded finalize step (whole codes, about 20,000 cells). The caller repeats until done; each step fits the database statement timeout. */
-export async function finalizeSupplierSource(sourceId: string) {
+export async function finalizeSupplierSource(sourceId: string, maxCells?: number) {
   const { client } = await reviewer();
-  const { data, error } = await client.rpc("supplier_finalize_source_step", { p_source_id: sourceId });
+  // The step size is bounded here as well as in the database (100-200000 there; 500-20000 allowed from the app).
+  const size = typeof maxCells === "number" && Number.isInteger(maxCells) && maxCells >= 500 && maxCells <= 20000 ? maxCells : undefined;
+  const { data, error } = await client.rpc("supplier_finalize_source_step", size ? { p_source_id: sourceId, p_max_cells: size } : { p_source_id: sourceId });
   if (error) throw Error(error.message);
-  const result = data as { id: string; done: boolean; remaining_codes: number; identity_count?: number };
+  const result = data as { id: string; done: boolean; status?: string; remaining_codes: number; identity_count?: number };
   if (result.done) revalidatePath(workspacePath);
   return result;
+}
+/** Bounded compaction of staging payloads before the last finalize step. Reports { unavailable } when the database function is not deployed yet. */
+export async function compactSupplierSourceChunks(sourceId: string) {
+  const { client } = await reviewer();
+  const { data, error } = await client.rpc("supplier_compact_chunk_payloads_step", { p_source_id: sourceId, p_limit: 25 });
+  if (error) { if (error.code === "42883" || error.code === "PGRST202" || /does not exist|could not find the function/i.test(error.message)) return { remaining: 0, unavailable: true }; throw Error(error.message); }
+  return { remaining: (data as { remaining: number }).remaining };
 }
 export async function archiveSupplierSource(sourceId: string) {
   const { client } = await reviewer(); await supplierWrite(client, "archive_source", { source_id: sourceId }); revalidatePath(workspacePath);
@@ -348,9 +357,9 @@ export async function listIncompleteSupplierImports(brandId: string) {
 }
 
 /** Replace Price List, before importing: the supplier price list belongs to this Brand and the effective date is real. */
-export async function validateSupplierReplacement(brandId: string, definitionId: string, effectiveFrom: string) {
+export async function validateSupplierReplacement(brandId: string, definitionId: string, effectiveFrom: string, fileHash?: string) {
   const { client } = await reviewer();
-  return validateReplacementRequest(client, { brandId, definitionId, effectiveFrom });
+  return validateReplacementRequest(client, { brandId, definitionId, effectiveFrom, fileHash });
 }
 /** "Import with New Settings": archives the earlier import of the same file after the user confirmed. Nothing is deleted; the file hash and Brand are re-checked here. */
 export async function archiveBlockingSupplierSource(brandId: string, blockingSourceId: string, fileHash: string) {

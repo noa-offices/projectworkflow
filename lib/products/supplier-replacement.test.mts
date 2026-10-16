@@ -103,7 +103,7 @@ test("the resolver and Smart Setup both select the replacement; the old version 
 
 test("wiring: reviewer/approver gates, no price writes, one confirmation, honest success, Manage Previous Versions", () => {
   const actions = readFileSync("app/products/price-updates/supplier-sources/actions.ts", "utf8");
-  assert.match(actions, /export async function validateSupplierReplacement\(brandId: string, definitionId: string, effectiveFrom: string\) \{\r?\n  const \{ client \} = await reviewer\(\);/);
+  assert.match(actions, /export async function validateSupplierReplacement\(brandId: string, definitionId: string, effectiveFrom: string, fileHash\?: string\) \{\r?\n  const \{ client \} = await reviewer\(\);/);
   assert.match(actions, /export async function archiveBlockingSupplierSource\([^)]*\) \{\r?\n  const \{ client \} = await approver\(\);/);
   assert.match(actions, /export async function verifySupplierReplacement\([^)]*\) \{\r?\n  const \{ client \} = await reviewer\(\);/);
   const lib = readFileSync("lib/products/supplier-replacement.ts", "utf8");

@@ -66,10 +66,35 @@ export async function loadReplacementContext(client: SupabaseClient, input: { br
   return { definitionName: definition.name, versions, applicable: applicable ? { id: applicable.id, title: applicable.title, filename: applicable.filename, currency: applicable.currency, basis: applicable.basis, effectiveFrom: applicable.effective_from } : null };
 }
 
-/** Before importing: the definition belongs to the Brand and the effective date is a real date. */
-export async function validateReplacementRequest(client: SupabaseClient, input: { brandId: string; definitionId: string; effectiveFrom: unknown }) {
+/** The name of another supplier price list of this Brand that already holds this exact file (by hash), or null. Conclusive evidence of a wrong destination. */
+export async function findFileInOtherDefinition(client: SupabaseClient, input: { brandId: string; definitionId: string; fileHash: string }): Promise<string | null> {
+  const sources = await supplierRows<{ id: string; status: string; definition_id: string | null }>(client, "supplier_source_versions", "id,status,definition_id", { brand_id: input.brandId, file_hash: input.fileHash });
+  const other = sources.find((source) => source.status !== "archived" && source.status !== "failed" && source.definition_id && source.definition_id !== input.definitionId);
+  if (!other?.definition_id) return null;
+  return (await supplierRows<{ id: string; name: string }>(client, "supplier_source_definitions", "id,name", { id: other.definition_id, brand_id: input.brandId })).at(0)?.name ?? "another price list";
+}
+
+/**
+ * Metadata-based hint that a file is not a revision of the selected supplier price list: the columns its saved import profile reads are absent.
+ * This is evidence, not proof (a revised list may rename columns), so it only warns; the destination must always be acknowledged.
+ * Never inferred from the file name.
+ */
+export function replacementMismatchWarning(input: { definitionName: string; requiredColumns: string[] | null; fileHeaders: string[] }): string | null {
+  if (!input.requiredColumns?.length || !input.fileHeaders.length) return null;
+  const have = new Set(input.fileHeaders);
+  const missing = input.requiredColumns.filter((column) => !have.has(column));
+  return missing.length ? `This file does not contain the columns that ${input.definitionName} is read with (${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ", …" : ""}). It may belong to a different price list.` : null;
+}
+
+/** Before importing: the definition belongs to the Brand, the effective date is a real date, and (when known) the file is not already another price list's. */
+export async function validateReplacementRequest(client: SupabaseClient, input: { brandId: string; definitionId: string; effectiveFrom: unknown; fileHash?: string }) {
   if (typeof input.effectiveFrom !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(input.effectiveFrom) || Number.isNaN(Date.parse(input.effectiveFrom))) throw Error("Choose the date this price list takes effect.");
-  return loadReplacementContext(client, input);
+  const context = await loadReplacementContext(client, input);
+  if (input.fileHash) {
+    const owner = await findFileInOtherDefinition(client, { brandId: input.brandId, definitionId: input.definitionId, fileHash: input.fileHash });
+    if (owner) throw Error(`This exact file is already imported as "${owner}", not "${context.definitionName}". Choose Replace Price List on "${owner}" instead, or pick the right price list.`);
+  }
+  return context;
 }
 
 export type ReplacementVerdict = { status: "current" | "scheduled" | "not_current" | "not_imported"; applicableTitle: string | null; message: string };

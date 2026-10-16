@@ -18,7 +18,9 @@ export type SupplierUploadPhase = "Uploading" | "Finalizing" | "Complete";
 export type SupplierUploadDeps = {
   storeFile: (path: string) => Promise<void>; attachFile: (sourceId: string, path: string) => Promise<void>;
   status: (sourceId: string) => Promise<SupplierUploadProgress>; uploadChunk: (sourceId: string, index: number, rows: RawSupplierRow[]) => Promise<unknown>;
-  finalize: (sourceId: string) => Promise<{ done: boolean; remaining_codes: number }>;
+  finalize: (sourceId: string, maxCells?: number) => Promise<{ done: boolean; remaining_codes: number; status?: string }>;
+  /** Optional bounded compaction of staging payloads before the last finalize step; { unavailable } when the database function is not deployed. */
+  compact?: (sourceId: string) => Promise<{ remaining: number; unavailable?: boolean }>;
   onPhase: (phase: SupplierUploadPhase, progress: { done: number; total: number } | null) => void; onMessage: (text: string) => void;
 };
 /** The one upload path for a new import and for Resume: stores the original file, uploads only the parts the source lacks, then finalizes. */
@@ -28,9 +30,40 @@ export async function runSupplierImportUpload(deps: SupplierUploadDeps, p: { sou
   const pending = chunksToUpload(await deps.status(p.sourceId), { fileHash: p.hash, expectedRows: p.rowCount, chunkCount: p.chunks.length });
   let done = p.chunks.length - pending.length; deps.onPhase("Uploading", { done, total: p.chunks.length });
   for (const index of pending) { deps.onMessage(`Uploading part ${index + 1} of ${p.chunks.length}. Do not close this page.`); await deps.uploadChunk(p.sourceId, index, p.chunks[index]); done++; deps.onPhase("Uploading", { done, total: p.chunks.length }); }
+  await finalizeSupplierImport(deps, p.sourceId);
+}
+
+export const FINALIZE_START_CELLS = 2000, FINALIZE_MIN_CELLS = 500, FINALIZE_MAX_CELLS = 20000;
+const isTimeout = (error: unknown) => /statement timeout|canceling statement/i.test(error instanceof Error ? error.message : String(error));
+/**
+ * Finalization in bounded, resumable steps. Each database step is idempotent (identities are inserted on conflict do nothing, whole codes only),
+ * so a step that times out is rolled back and simply retried with a smaller budget; the budget grows again while steps stay fast.
+ * Imported is reported only when the database says so. Safe to call again after any interruption: that is "Resume Finalization".
+ */
+export async function finalizeSupplierImport(deps: SupplierUploadDeps, sourceId: string, now: () => number = Date.now) {
   deps.onPhase("Finalizing", null);
-  for (let part = 1; ; part++) { const progress = await deps.finalize(p.sourceId); if (progress.done) break; deps.onMessage(`Preparing the price list (step ${part}, ${progress.remaining_codes} codes left). Do not close this page.`); }
-  deps.onPhase("Complete", null);
+  // Payload compaction is moved out of the last step into small steps. Best effort: if it is unavailable or fails, the last step still compacts.
+  if (deps.compact) {
+    try { for (let guard = 0; guard < 200; guard++) { const compacted = await deps.compact(sourceId); if (compacted.unavailable || compacted.remaining <= 0) break; deps.onMessage(`Tidying temporary import data (${compacted.remaining} parts left). Do not close this page.`); } }
+    catch { /* the final step compacts whatever is left */ }
+  }
+  let budget = FINALIZE_START_CELLS, timeouts = 0, step = 0;
+  for (;;) {
+    const started = now();
+    try {
+      const progress = await deps.finalize(sourceId, budget); step++;
+      if (progress.done) {
+        if (progress.status !== undefined && progress.status !== "imported") throw Error("Finalization finished but the database did not confirm the imported status. Resume Finalization.");
+        deps.onPhase("Complete", null); return;
+      }
+      const elapsed = now() - started; timeouts = 0;
+      budget = elapsed < 2500 ? Math.min(FINALIZE_MAX_CELLS, budget * 2) : elapsed > 5000 ? Math.max(FINALIZE_MIN_CELLS, Math.floor(budget / 2)) : budget;
+      deps.onMessage(`Preparing the price list (step ${step}, ${progress.remaining_codes} codes left). Do not close this page.`);
+    } catch (error) {
+      if (!isTimeout(error) || budget <= FINALIZE_MIN_CELLS || ++timeouts > 6) throw Error(`${error instanceof Error ? error.message : "Finalization failed"} — nothing was lost. Use Resume Finalization to continue.`);
+      budget = Math.max(FINALIZE_MIN_CELLS, Math.floor(budget / 2));
+    }
+  }
 }
 
 /**
