@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { assertSupplierProfile, type RawSupplierRow, type SourceScope, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
+import { cancelIncompleteSupplierImport, supplierSourceUploadProgress } from "@/lib/products/supplier-import-cancel";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
 import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierFamilyUnchangedMatchKeys, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
 
@@ -310,4 +311,17 @@ export async function loadSupplierSourceStorage() {
   const { auth, client } = await reviewer();
   if (!canManageSupplierCapacity(auth.profile?.role, auth.profile?.account_status)) throw Error("Only the System Owner can view Supplier database capacity.");
   return supplierSourceStorage(client);
+}
+
+/** Read-only: which chunk receipts one authorized source already holds, so a resumed import skips them. */
+export async function supplierSourceUploadStatus(sourceId: string) {
+  const { client } = await reviewer();
+  return supplierSourceUploadProgress(client, sourceId);
+}
+/** Cancels one unfinished import (never an imported source). The database purge itself is System Owner only. */
+export async function cancelSupplierImport(sourceId: string) {
+  const { client } = await reviewer();
+  const result = await cancelIncompleteSupplierImport(client, sourceId);
+  revalidatePath(workspacePath);
+  return result;
 }

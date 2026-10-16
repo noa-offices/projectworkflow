@@ -12,9 +12,10 @@ import {
   type WizardDefinition, type WizardMapping, type WizardPriceMode, type WizardProfileOption,
 } from "@/lib/products/supplier-import-wizard";
 import {
-  attachSupplierWorkingFile, confirmSupplierCoverage, createSupplierReviewBatch, createSupplierSource, createSupplierSourceDefinition,
-  finalizeSupplierSource, linkSupplierSourceDefinition, saveSupplierProfile, supplierProfileForImport, uploadSupplierChunk,
+  attachSupplierWorkingFile, cancelSupplierImport, confirmSupplierCoverage, createSupplierReviewBatch, createSupplierSource, createSupplierSourceDefinition,
+  finalizeSupplierSource, linkSupplierSourceDefinition, saveSupplierProfile, supplierProfileForImport, supplierSourceUploadStatus, uploadSupplierChunk,
 } from "@/app/products/price-updates/supplier-sources/actions";
+import { chunksToUpload } from "@/lib/products/supplier-import-resume";
 
 // Normal import flow: Upload → Match columns → Details → Families → Review. Technical setup stays under Advanced import settings.
 const card = "rounded-lg border border-zinc-200 bg-white shadow-sm";
@@ -36,9 +37,14 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
   const [mapping, setMapping] = useState<WizardMapping | null>(null);
   const [priceMode, setPriceMode] = useState<WizardPriceMode>("single"), [multiplePriceColumnsDetected, setMultiplePriceColumnsDetected] = useState(false);
   const [title, setTitle] = useState(suggestedTitle), [effective, setEffective] = useState("");
+  const [unfinished, setUnfinished] = useState<string | null>(null), [phase, setPhase] = useState<"" | "Uploading" | "Processing" | "Finalizing" | "Complete">(""), [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [definitionId, setDefinitionId] = useState(""), [newName, setNewName] = useState(`${brandName} price list`), [selected, setSelected] = useState<string[]>([]);
   const headers = rows.length ? Object.keys(rows[0].values) : [];
   async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); } catch (error) { setMessage(error instanceof Error ? error.message : "Something went wrong."); } finally { setBusy(false); } }
+  async function cancelImport() {
+    if (!unfinished || !window.confirm("Cancel this unfinished import and remove its partial data? A completed import is never removed.")) return;
+    await run(async () => { const result = await cancelSupplierImport(unfinished); setUnfinished(null); setPhase(""); setProgress(null); setMessage(result.message); });
+  }
   if (!approver) return <section className={`${card} p-4 text-sm`}><h3 className="text-base font-semibold text-zinc-950">Import new price list</h3><p className="mt-1">An approver imports Supplier price lists.</p></section>;
 
   const definition = definitions.find((item) => item.id === definitionId) ?? null;
@@ -76,13 +82,19 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       const coverageId = definitionId === "new" ? (await createSupplierSourceDefinition(brandId, newName.trim(), profileId)).id : definitionId;
       const result = await createSupplierSource({ profile_id: profileId, expected_profile: stored, title: title.trim(), filename: file.name, file_hash: hash, source_type: sourceType, expected_rows: importRows.length, expected_cells: importRows.length * stored.price_columns.length, expected_chunks: chunks.length, original_reference: "", effective_from: effective, received_at: "" });
       if (result.status !== "imported") {
+        setUnfinished(result.id);
         if (coverageId) await linkSupplierSourceDefinition(result.id, coverageId);
         const path = `${brandId}/${result.id}/${hash}.${sourceType}`;
         const { error } = await createClient().storage.from("supplier-price-sources").upload(path, file, { upsert: false });
         if (error && !("statusCode" in error && ["409", "400"].includes(String(error.statusCode)))) throw Error(error.message);
         await attachSupplierWorkingFile(result.id, path);
-        for (let index = 0; index < chunks.length; index++) { setMessage(`Uploading part ${index + 1} of ${chunks.length}. Do not close this page.`); await uploadSupplierChunk(result.id, index, chunks[index]); }
+        // Resume: a source keeps its original chunking; parts it already holds are skipped, the database still validates every part it receives.
+        const pending = chunksToUpload(await supplierSourceUploadStatus(result.id), { fileHash: hash, expectedRows: importRows.length, chunkCount: chunks.length });
+        setPhase("Uploading"); setProgress({ done: chunks.length - pending.length, total: chunks.length });
+        for (const index of pending) { setMessage(`Uploading part ${index + 1} of ${chunks.length}. Do not close this page.`); await uploadSupplierChunk(result.id, index, chunks[index]); setProgress((current) => current && { ...current, done: current.done + 1 }); }
+        setPhase("Finalizing");
         for (let part = 1; ; part++) { const progress = await finalizeSupplierSource(result.id); if (progress.done) break; setMessage(`Preparing the price list (step ${part}, ${progress.remaining_codes} codes left). Do not close this page.`); }
+        setUnfinished(null); setPhase("Complete");
       }
       const before = new Set(definition?.familyIds ?? []);
       if (coverageId && (definitionId === "new" || selected.length !== before.size || selected.some((id) => !before.has(id)))) await confirmSupplierCoverage(coverageId, selected);
@@ -171,7 +183,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
     {step === 5 && mapping ? <div className="space-y-3"><dl className="grid gap-3 text-sm sm:grid-cols-2">
       {([["Brand", brandName], ["Price list", title], ["Effective from", effective || "Not set"], ["Currency", known && saved ? saved.config.currency : mapping.currency], ["Price basis", (known && saved ? saved.config.basis : mapping.basis) === "net" ? "Net" : "List"], ["Families", String(selected.length)], ["Rows detected", rows.length.toLocaleString("en-US")]] as const).map(([label, value]) =>
         <div key={label}><dt className="text-xs text-zinc-500">{label}</dt><dd className="font-semibold text-zinc-950">{value}</dd></div>)}</dl>
-      <div className="flex gap-2"><button type="button" className={button} disabled={busy} onClick={() => setStep(4)}>Back</button><button type="button" className={primary} disabled={busy || !profile} onClick={() => void startReview()}>{busy ? "Working…" : "Start review"}</button></div></div> : null}
+      <div className="flex gap-2"><button type="button" className={button} disabled={busy} onClick={() => setStep(4)}>Back</button><button type="button" className={primary} disabled={busy || !profile} onClick={() => void startReview()}>{busy ? "Working…" : unfinished ? "Resume Import" : "Start review"}</button>{unfinished && !busy ? <button type="button" className={button} onClick={() => void cancelImport()}>Cancel Import</button> : null}</div>{progress && (busy || unfinished) ? <p role="status" className="text-xs text-zinc-700">{phase}: {progress.done} / {progress.total} parts{unfinished && !busy ? " — the import is not finished. Resume it or cancel it." : ""}</p> : null}</div> : null}
 
     <p className="text-xs text-zinc-500">Technical import profiles, vocabulary and coverage tools are under <Link href={advancedHref} className="underline">Advanced import settings</Link>.</p>
   </section>;
