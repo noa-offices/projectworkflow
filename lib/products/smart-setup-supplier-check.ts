@@ -96,16 +96,18 @@ const review = (reason: SmartSetupSupplierCheckReason, source: SourceIdentity | 
 export function mapSmartSetupMatches(matches: PriceMatch[], targets: PriceTarget[], sourceBasisMismatch: boolean): Map<string, Outcome> {
   const claims = new Map<string, Set<string>>();
   for (const match of matches) if (match.source && match.targets.length && !["ambiguous", "needs_dimension_mapping", "invalid_source", "baseline_drift"].includes(match.classification)) for (const t of match.targets) claims.set(t.key, new Set([...(claims.get(t.key) ?? []), match.source.key]));
-  const outcomes = new Map<string, Outcome>();
+  const outcomes = new Map<string, Outcome>(); const unmapped: PriceTarget[] = [];
   for (const match of matches) {
     if (match.source === null) { for (const t of match.targets) outcomes.set(t.key, { status: "NOT_FOUND", reason: "no_source_candidate", source: null }); continue; }
     const source = match.source;
+    // A source identity that mapped to no draft target (for example supplier category D when the draft only has A-C) lists every candidate of the
+    // code. That is not a claim on any of them: it must neither compete with a resolved identity nor hide it. It only explains targets left unresolved.
+    if (match.classification === "needs_dimension_mapping") { unmapped.push(...match.targets); continue; }
     for (const t of match.targets) {
       const resolved = ["unchanged", "increased", "decreased", "changed", "shared"].includes(match.classification);
       let outcome: Outcome;
       if (match.classification === "ambiguous") outcome = review(match.candidate_shared || match.targets.length > 1 ? "shared_price_unconfirmed" : "needs_dimension_mapping", source);
       else if (match.classification === "baseline_drift") outcome = review("shared_price_baseline_drift", source);
-      else if (match.classification === "needs_dimension_mapping") outcome = review("needs_dimension_mapping", source);
       else if (!resolved) outcome = review("invalid_source_evidence", source);
       else if ((claims.get(t.key)?.size ?? 0) > 1) outcome = review("ambiguous_source_contexts", source);
       else if (t.currency !== source.currency) outcome = review("currency_mismatch", source);
@@ -117,8 +119,10 @@ export function mapSmartSetupMatches(matches: PriceMatch[], targets: PriceTarget
       outcomes.set(t.key, previous && (previous.source?.key !== source.key || previous.status !== outcome.status) ? review("ambiguous_source_contexts", source) : outcome);
     }
   }
-  // A target the matcher reached through an invalid source identity has no per-target match: it exists in the source but cannot be compared.
-  for (const t of targets) if (!outcomes.has(t.key)) outcomes.set(t.key, review("invalid_source_evidence", null));
+  for (const t of unmapped) if (!outcomes.has(t.key)) outcomes.set(t.key, review("needs_dimension_mapping", null));
+  // Left over: the code exists in the source but no identity maps to this target's category/size (needs mapping), unless an unusable identity of that code explains it.
+  const unusable = new Set(matches.filter((m) => m.source && m.classification === "invalid_source").map((m) => JSON.stringify([comparisonCode(m.source!.code), m.source!.price_field])));
+  for (const t of targets) if (!outcomes.has(t.key)) outcomes.set(t.key, review(unusable.has(JSON.stringify([comparisonCode(t.code), t.price_field])) ? "invalid_source_evidence" : "needs_dimension_mapping", null));
   return outcomes;
 }
 
