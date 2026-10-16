@@ -203,6 +203,8 @@ export function TemplateCategoryFields({
   const [selectedBrandId, setSelectedBrandId] = useState(defaultBrandId ?? "");
   const [selectedMainCategoryId, setSelectedMainCategoryId] = useState(defaultMainCategoryId ?? "");
   const [selectedSubCategoryId, setSelectedSubCategoryId] = useState(defaultSubCategoryId ?? "");
+  // The editor owns the brand: when it changes it from outside (Smart Setup Apply), follow it and drop categories of the old brand.
+  if (defaultBrandId !== undefined && defaultBrandId !== selectedBrandId) { setSelectedBrandId(defaultBrandId); setSelectedMainCategoryId(""); setSelectedSubCategoryId(""); }
 
   const mainCategoryOptions = categories.filter(
     (category) => !category.parent_id && category.brand_id === selectedBrandId,

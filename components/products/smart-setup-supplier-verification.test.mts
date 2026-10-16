@@ -129,8 +129,8 @@ test("Smart Setup wiring: verification sits before Apply, brand is bridged, Appl
   const form = readFileSync("components/products/product-template-form.tsx", "utf8");
   const ui = readFileSync("components/products/smart-setup-supplier-verification.tsx", "utf8") + readFileSync("lib/products/smart-setup-supplier-verification.ts", "utf8");
   assert.equal((form.match(/<SmartProductJsonImport selectedBrandId=\{selectedBrandId\}/g) ?? []).length, 3);
-  assert.ok(importer.indexOf("<SmartSetupSupplierVerification key={selectedBrandId}") < importer.indexOf("onClick={confirmApply}") || importer.indexOf("<SmartSetupSupplierVerification") < importer.indexOf("Continue"));
-  assert.match(importer, /brandId=\{selectedBrandId\}/);
+  assert.ok(importer.indexOf("<SmartSetupSupplierVerification key={brandId}") < importer.indexOf("onClick={confirmApply}") || importer.indexOf("<SmartSetupSupplierVerification") < importer.indexOf("Continue"));
+  assert.match(importer, /brandId=\{brandId\}/);
   assert.doesNotMatch(importer.slice(importer.indexOf("const requestApply"), importer.indexOf("const routingValidation")), /SupplierVerification|checkSmartSetupSupplierPrices/); // Apply path does not consult the check
   assert.doesNotMatch(ui, /supplierApplyReviewedPrice|supplierWrite|\.insert\(|\.update\(|\.rpc\(|matchSupplierPrices/);
 });
