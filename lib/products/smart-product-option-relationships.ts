@@ -53,16 +53,21 @@ export function describeOptionItemRelationships(draft: ProductTemplateDraft, rul
 const applicableRuleKey = (rule: SmartReviewRule) => { const target = smartReviewRuleTarget(rule); return target ? `${target.kind}\u0000${target.group_id}\u0000${target.row_id}` : ""; };
 
 /**
- * Applicable Models picker commit. The picker only owns pricing-row targets (its `choices`); option_item rules
- * have their own Relationship / Details presentation and are carried over untouched, even when nothing is selected.
+ * The picker only owns targets present in its choices. Other rules, including
+ * unresolved targets, must survive so their validation blockers remain visible.
  */
 export function rebuildApplicableModelRules(accessory: SmartReviewAccessoryConfiguration, choices: Array<{ key: string; target: { kind: "base_model" | "price_matrix" | "modular"; group_id: string; row_id: string } }>, pendingKeys: Set<string>): SmartReviewRule[] {
-  const preserved = accessory.rules.filter((rule) => smartReviewRuleTarget(rule)?.kind === "option_item");
-  const currentByKey = new Map(accessory.rules.map((rule) => [applicableRuleKey(rule), rule]));
+  const choiceKeys = new Set(choices.map((choice) => choice.key));
+  const retained = accessory.rules.filter((rule) => !choiceKeys.has(applicableRuleKey(rule)) || pendingKeys.has(applicableRuleKey(rule)));
+  const currentKeys = new Set(accessory.rules.map(applicableRuleKey));
   const required = smartReviewSelectionContract(accessory.selection).required;
   const fixed = accessory.selection === "required_exactly_one" ? { fixedQuantity: 1 } : {};
-  const selected = choices.flatMap((choice) => pendingKeys.has(choice.key)
-    ? [currentByKey.get(choice.key) ?? (choice.target.kind === "base_model" ? { baseModelGroupId: choice.target.group_id, baseModelRowId: choice.target.row_id, required, ...fixed } : { target: choice.target, required, ...fixed })]
+  const additions = choices.flatMap((choice) => pendingKeys.has(choice.key) && !currentKeys.has(choice.key)
+    ? [choice.target.kind === "base_model" ? { baseModelGroupId: choice.target.group_id, baseModelRowId: choice.target.row_id, required, ...fixed } : { target: choice.target, required, ...fixed }]
     : []);
-  return [...preserved, ...selected];
+  const rules = [...retained, ...additions];
+  if (accessory.role !== "accessory" && !rules.length) {
+    throw new Error("All Models is not supported for companions or conditional options without explicit applicability rules. Keep at least one target, or use the existing configuration controls to change the role explicitly.");
+  }
+  return rules;
 }

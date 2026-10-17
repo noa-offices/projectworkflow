@@ -102,7 +102,56 @@ test("Applicable Models commit still adds, keeps and removes pricing-row rules w
   const kept = { baseModelGroupId: "g", baseModelRowId: "bm", required: true, allowedItemIds: ["x"] };
   const rules = rebuildApplicableModelRules(accessoryWith([kept], "required_exactly_one"), [baseChoice, modularChoice], new Set([baseChoice.key, modularChoice.key]));
   assert.deepEqual(rules, [kept, { target: modularChoice.target, required: true, fixedQuantity: 1 }]);
-  assert.deepEqual(rebuildApplicableModelRules(accessoryWith([kept]), [baseChoice], new Set()), []);
+  assert.deepEqual(rebuildApplicableModelRules({ ...accessoryWith([kept]), role: "accessory" }, [baseChoice], new Set()), []);
+});
+
+test("model picker retains every rule outside its choices, including unresolved validation blockers", () => {
+  const outsideRules: SmartReviewAccessoryConfiguration["rules"] = [
+    optionRule,
+    { target: { kind: "workstation", group_id: "workstations", row_id: "ws-1" }, required: true, visible: true, allowedItemIds: ["top-b"], fixedQuantity: 2 },
+    { target: { kind: "base_model", group_id: "missing", row_id: "gone" }, required: true, visible: false, fixedQuantity: 1 },
+    { required: true, allowedItemIds: ["missing-item"] },
+    { target: { kind: "future_target", group_id: "future", row_id: "r" }, required: true } as unknown as SmartReviewAccessoryConfiguration["rules"][number],
+  ];
+  const kept = { baseModelGroupId: "g", baseModelRowId: "bm", required: true, visible: false, allowedItemIds: ["top-b"], fixedQuantity: 2, scaleWithTargetQuantity: true };
+  const configuration = accessoryWith([...outsideRules, kept]);
+  const before = structuredClone(configuration);
+  const rules = rebuildApplicableModelRules(configuration, [baseChoice, modularChoice], new Set([baseChoice.key]));
+  assert.deepEqual(rules, [...outsideRules, kept]);
+  rules.forEach((rule, index) => assert.equal(rule, configuration.rules[index], "kept rules retain every field"));
+  assert.deepEqual(configuration, before);
+  assert.deepEqual(rebuildApplicableModelRules(configuration, [baseChoice], new Set()), outsideRules);
+
+  const source = build();
+  const plan = withCompanionRoute(source);
+  plan.routes.find((route) => route.sourceId === "top")!.accessory = { ...configuration, rules };
+  const validation = validateSmartSetupReviewRouting(source, plan);
+  assert.equal(validation.valid, false);
+  assert.match(validation.errors.join(" "), /incomplete applicable model target/);
+  assert.match(validation.errors.join(" "), /not routed/);
+});
+
+test("model picker does not consolidate duplicate rules and erase their validation blocker", () => {
+  const first = { baseModelGroupId: "g", baseModelRowId: "bm", required: true };
+  const second = { ...first, fixedQuantity: 2 };
+  const rules = rebuildApplicableModelRules(accessoryWith([first, second]), [baseChoice], new Set([baseChoice.key]));
+  assert.deepEqual(rules, [first, second]);
+  const source = build();
+  const plan = withCompanionRoute(source);
+  plan.routes.find((route) => route.sourceId === "top")!.accessory!.rules = rules;
+  assert.match(validateSmartSetupReviewRouting(source, plan).errors.join(" "), /duplicate applicable model rule/);
+});
+
+test("clearing the final companion or conditional-option target is blocked without modifying rules", () => {
+  for (const role of ["companion", "conditional_option"] as const) {
+    const configuration = { ...accessoryWith([{ baseModelGroupId: "g", baseModelRowId: "bm", required: true }], "required_exactly_one"), role };
+    const before = structuredClone(configuration);
+    assert.throws(() => rebuildApplicableModelRules(configuration, [baseChoice], new Set()), /All Models.*not supported/i);
+    assert.deepEqual(configuration, before);
+    const selected = rebuildApplicableModelRules(configuration, [baseChoice], new Set([baseChoice.key]));
+    assert.equal(selected[0].required, true);
+    assert.equal(configuration.role, role);
+  }
 });
 
 test("item role mapping keeps the exact runtime shape for structural_support, companion, normal and role-less items", () => {

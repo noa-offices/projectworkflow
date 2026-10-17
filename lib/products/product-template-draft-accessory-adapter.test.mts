@@ -4,6 +4,8 @@ import { PRODUCT_TEMPLATE_DRAFT_VERSION, type ProductTemplateDraft, type Product
 import { mapDraftOptionGroupsToAccessories } from "./product-template-draft-accessory-adapter.js";
 import { createSmartSetupReviewRouting } from "./smart-product-review-routing.js";
 import { accessoryPricingReferenceIssues } from "./accessory-pricing-parser.js";
+import { evaluateAccessoryConfigurationForModel } from "./accessory-conditional-configuration.js";
+import { applySmartAdditionalJson } from "./smart-product-additional-json.js";
 
 function draft(mode: ProductTemplateDraftSelectionMode, minSelections: number, maxSelections: number | null, defaultItemIds: string[] = []): ProductTemplateDraft {
   return {
@@ -78,6 +80,33 @@ test("category-priced accessories apply without flattening group categories or i
   assert.deepEqual(result.groups[0].items[1].prices, { "cat-b": 107, "cat-supreme": 189 });
   assert.equal(result.groups[0].items[0].price, null);
   assert.equal(result.groups[0].conditional_configuration, undefined);
+});
+
+test("explicit unrestricted reviewed availability wins over original selected-model restrictions", () => {
+  const source = draft("optional", 0, null);
+  source.optionGroups[0].conditionalConfiguration = { role: "accessory", selection: "unrestricted", applicability: [{ target: { kind: "base_model", group_id: "models", row_id: "only-this" }, required: false, visible: true }] };
+  const before = structuredClone(source);
+  const plan = createSmartSetupReviewRouting(source);
+  plan.routes[0].accessory!.rules = [];
+  const mapped = mapDraftOptionGroupsToAccessories(source, plan);
+  assert.equal(mapped.groups[0].conditional_configuration, undefined);
+  assert.equal(mapped.groups[0].group_is_required, false);
+  assert.equal(evaluateAccessoryConfigurationForModel({ accessoryGroups: mapped.groups, baseModelGroupId: "models", baseModelRowId: "another-model" }).groups[0].visible, true);
+  assert.equal(mapDraftOptionGroupsToAccessories(source).groups[0].conditional_configuration?.applicability[0].target?.row_id, "only-this", "absence of a reviewed override preserves the original contract");
+  const noOverride = structuredClone(plan);
+  delete noOverride.routes[0].accessory;
+  assert.equal(mapDraftOptionGroupsToAccessories(source, noOverride).groups[0].conditional_configuration?.applicability[0].target?.row_id, "only-this");
+  assert.deepEqual(source, before);
+
+  const incoming = draft("optional", 0, null);
+  incoming.optionGroups[0].items = [{ ...incoming.optionGroups[0].items[0], id: "new-foot", supplierCodes: ["NEW"] }];
+  incoming.optionGroups[0].conditionalConfiguration = { role: "companion", selection: "exactly_one", applicability: [{ target: { kind: "base_model", group_id: "models", row_id: "ai-inference" }, required: true, visible: true, fixed_quantity: 1 }] };
+  const merged = applySmartAdditionalJson(source, plan, incoming, { "option:feet": { action: "merge", destination: "accessory", targetKey: "option:feet", duplicateChoices: {} } });
+  assert.deepEqual(merged.plan.routes[0].accessory, { role: "accessory", selection: "optional_multiple", rules: [] });
+  const applied = mapDraftOptionGroupsToAccessories(merged.draft, merged.plan);
+  assert.equal(applied.groups[0].conditional_configuration, undefined);
+  assert.equal(applied.groups[0].group_is_required, false);
+  assert.deepEqual(applied.groups[0].items.map((item) => item.price), [0, 75, 0]);
 });
 
 test("reviewed accessory mapping preserves modular quantity scaling", () => {

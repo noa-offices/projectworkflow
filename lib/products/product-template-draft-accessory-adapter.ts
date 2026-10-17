@@ -97,7 +97,11 @@ export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft, r
       return [];
     }
     const reviewedContract = reviewedRoute?.accessory ? smartReviewSelectionContract(reviewedRoute.accessory.selection) : null;
-    const configuration = reviewedConfiguration(reviewedRoute) ?? group.conditionalConfiguration ?? selectionConfiguration(group);
+    // An explicit reviewed contract is authoritative even when it intentionally emits
+    // no conditional configuration (unrestricted accessory availability).
+    const configuration = reviewedRoute?.accessory
+      ? reviewedConfiguration(reviewedRoute)
+      : group.conditionalConfiguration ?? selectionConfiguration(group);
     return [{
       id: group.id,
       group_name: reviewedRoute?.groupName ?? group.label ?? group.id,
