@@ -436,6 +436,18 @@ type PricedRowsEditorProps = Parameters<typeof LegacyPricedRowsEditor>[0] & {
 
 type SmartAccessoryItem = ProductTemplateDraft["optionGroups"][number]["items"][number];
 
+function AccessoryItemRolesEditor({ rows, onChange }: { rows: SmartAccessoryItem[]; onChange: (rows: SmartAccessoryItem[]) => void }) {
+  const accessoryRows = rows;
+  const setRow = (rowId: string, patch: Partial<SmartAccessoryItem>) => onChange(accessoryRows.map((row) => row.id === rowId ? { ...row, ...patch } : row));
+  return <div className="mt-3 rounded-md border border-zinc-200 bg-white p-3">
+    <p className="text-xs font-semibold text-zinc-900">Item roles</p>
+    <div className="mt-2 space-y-2">{accessoryRows.map((row) => <div key={row.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-zinc-100 p-2 text-xs">
+      <div><p className="font-medium text-zinc-800">{row.displayName || row.label || row.id}</p><p className="text-zinc-500">{row.supplierCodes.join(", ") || "—"}</p></div>
+      <OptionItemRoleControl item={row} groupType={optionGroupRelationshipType({ items: accessoryRows })} onRoleChange={(role) => setRow(row.id, optionItemRolePatch(role))} />
+    </div>)}</div>
+  </div>;
+}
+
 function SmartAccessoryRowsEditor({ compatibilityGroups = [], findingsForRow, groupLabel, imageScope, images, onChange, onImageChange, onPriceCategoriesChange, originalImportedJsonSources, priceCategories = [], rowType, rows, subgroups, templateName }: PricedRowsEditorProps) {
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [editingCategories, setEditingCategories] = useState(false);
@@ -460,7 +472,7 @@ function SmartAccessoryRowsEditor({ compatibilityGroups = [], findingsForRow, gr
             const findings = findingsForRow?.(row) ?? [];
             return <Fragment key={row.id}>
               <tr className="border-b border-zinc-100">
-                <td className="px-2 py-2 align-top font-medium text-zinc-800">{row.displayName || row.label || row.id}<CommercialMarker label={row.displayName ?? row.label ?? row.id} findings={findings} /><AccessoryReviewNotice item={row} onConfirm={() => setRow(row.id, { reviewStatus: "confirmed" })} onExclude={() => onChange(accessoryRows.filter((item) => item.id !== row.id))} /><OptionItemRoleControl item={row} groupType={optionGroupRelationshipType({ items: accessoryRows })} onRoleChange={(role) => setRow(row.id, optionItemRolePatch(role))} />{row.role === "structural_support" ? <StructuralSupportCompatibilityControl item={row} groups={compatibilityGroups} onChange={(compatibleTargets) => setRow(row.id, { compatibleTargets })} /> : null}</td>
+                <td className="px-2 py-2 align-top font-medium text-zinc-800">{row.displayName || row.label || row.id}<CommercialMarker label={row.displayName ?? row.label ?? row.id} findings={findings} /><AccessoryReviewNotice item={row} onConfirm={() => setRow(row.id, { reviewStatus: "confirmed" })} onExclude={() => onChange(accessoryRows.filter((item) => item.id !== row.id))} />{row.role === "structural_support" ? <StructuralSupportCompatibilityControl item={row} groups={compatibilityGroups} onChange={(compatibleTargets) => setRow(row.id, { compatibleTargets })} /> : null}</td>
                 <td className="px-2 py-2 align-top text-zinc-600">{row.supplierCodes.join(", ") || "-"}</td>
                 <td className="px-2 py-2 align-top text-zinc-600">{row.dimensions ? formatDraftDimensions(row.dimensions) : "-"}</td>
                 <SpecificationPreviewCell row={row} />
@@ -490,7 +502,7 @@ function SmartScalarAccessoryRowsEditor({ compatibilityGroups = [], findingsForR
       const findings = findingsForRow?.(row) ?? [];
       return <Fragment key={row.id}>
         <tr className="border-b border-zinc-100">
-          <td className="px-2 py-2 align-top font-medium text-zinc-800">{row.displayName || row.label || row.id}<CommercialMarker label={row.displayName ?? row.label ?? row.id} findings={findings} /><AccessoryReviewNotice item={row} onConfirm={() => setRow(row.id, { reviewStatus: "confirmed" })} onExclude={() => onChange(accessoryRows.filter((item) => item.id !== row.id))} /><OptionItemRoleControl item={row} groupType={optionGroupRelationshipType({ items: accessoryRows })} onRoleChange={(role) => setRow(row.id, optionItemRolePatch(role))} />{row.role === "structural_support" ? <StructuralSupportCompatibilityControl item={row} groups={compatibilityGroups} onChange={(compatibleTargets) => setRow(row.id, { compatibleTargets })} /> : null}</td>
+          <td className="px-2 py-2 align-top font-medium text-zinc-800">{row.displayName || row.label || row.id}<CommercialMarker label={row.displayName ?? row.label ?? row.id} findings={findings} /><AccessoryReviewNotice item={row} onConfirm={() => setRow(row.id, { reviewStatus: "confirmed" })} onExclude={() => onChange(accessoryRows.filter((item) => item.id !== row.id))} />{row.role === "structural_support" ? <StructuralSupportCompatibilityControl item={row} groups={compatibilityGroups} onChange={(compatibleTargets) => setRow(row.id, { compatibleTargets })} /> : null}</td>
           <td className="px-2 py-2 align-top text-zinc-600">{row.supplierCodes.join(", ") || "-"}</td>
           <td className="px-2 py-2 align-top text-zinc-600">{row.dimensions ? formatDraftDimensions(row.dimensions) : "-"}</td>
           <td className="px-2 py-2 align-top"><label className="flex min-w-28 items-center gap-1"><span className="text-zinc-500">{row.currency ?? ""}</span><input aria-label={`${row.displayName || row.label || row.id} price`} type="number" step="any" value={row.price ?? ""} onChange={(event) => setRow(row.id, { price: nullableReviewNumber(event.target.value) })} className="h-8 w-24 rounded border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-700" /></label></td>
@@ -849,7 +861,7 @@ function SmartProductReviewBody({ draft, focus, originalImportedJsonSources, ima
       const subgroupEditor = route && subgroups && onSubgroupsChange && route.destination !== "skip" && routeItems(draft, route).length ? <SmartSubgroupEditor draft={draft} images={images} onImageChange={onImageChange} route={route} subgroups={groupSubgroups} onChange={(next) => onSubgroupsChange({ ...subgroups, [route.key]: next })} /> : null;
       const itemRows = <div className="mt-3"><PricedRowsEditor originalImportedJsonSources={originalImportedJsonSources} templateName={draft.template.templateName} groupLabel={group.label} rowType="accessory" compatibilityGroups={compatibilityGroups} priceCategories={group.priceCategories} onPriceCategoriesChange={(priceCategories) => onChange({ ...draft, optionGroups: draft.optionGroups.map((item, index) => index === groupIndex ? { ...item, priceCategories } : item) })} compact subgroups={route ? groupSubgroups : undefined} imageScope={`option:${group.id}`} images={images} onImageChange={onImageChange} rows={group.items} findingsForRow={(item) => ["price", "specification"].flatMap((field) => commercialFindingsByLocation.get(commercialValidationLocationKey({ kind: "option_item", groupId: group.id, itemId: item.id, field })) ?? [])} onChange={(items) => onChange({ ...draft, optionGroups: draft.optionGroups.map((item, index) => index === groupIndex ? { ...item, items } : item) })} /></div>;
       const compactConfigurationSummary = route?.accessory ? <p className="mt-1 text-xs font-medium text-zinc-700">{roleLabels[route.accessory.role]} · {selectionLabels[route.accessory.selection]} · {route.accessory.rules.length} applicable model{route.accessory.rules.length === 1 ? "" : "s"}</p> : null;
-      const advancedContent = <><div className="mb-3 rounded-md border border-emerald-100 bg-zinc-50 p-2 text-xs"><p className="font-semibold text-emerald-950">Subgroups: {groupSubgroups.length ? groupSubgroups.length : "None"} · {ungroupedItemCount} ungrouped item{ungroupedItemCount === 1 ? "" : "s"}</p></div>{subgroupEditor}<div className="mt-3">{optionGroupLabelEditor}{extractedSelectionRule}</div></>;
+      const advancedContent = <><AccessoryItemRolesEditor rows={group.items} onChange={(items) => onChange({ ...draft, optionGroups: draft.optionGroups.map((item, index) => index === groupIndex ? { ...item, items } : item) })} /><div className="mb-3 rounded-md border border-emerald-100 bg-zinc-50 p-2 text-xs"><p className="font-semibold text-emerald-950">Subgroups: {groupSubgroups.length ? groupSubgroups.length : "None"} · {ungroupedItemCount} ungrouped item{ungroupedItemCount === 1 ? "" : "s"}</p></div>{subgroupEditor}<div className="mt-3">{optionGroupLabelEditor}{extractedSelectionRule}</div></>;
       // Surfaced next to the dependent group, outside Advanced Setup, so a skipped/re-routed source group
       // never silently breaks this group's option_item Required Companion until the hard Apply-time error.
       const dependentLabel = group.label ?? group.id;
