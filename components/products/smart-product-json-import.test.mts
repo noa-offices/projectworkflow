@@ -524,3 +524,14 @@ test("8: the dependency warning is rendered for the dependent option group, outs
 test("9: no changes to the server-side accessory pricing parser/validator", () => {
   assert.ok(!source.includes("accessory-pricing-parser"), "The component must not import or duplicate the server-side parser/validator");
 });
+
+test("accessory availability controls reuse safe helpers and never drop hidden selections", () => {
+  const authoring = source.slice(source.indexOf("function ApplicableModelsAuthoring"), source.indexOf("function LocalRouteControls"));
+  ["All Models", "Selected Models", "Excluded", "Search models", "Select All", "Clear", "rebuildApplicableModelRules(accessory, choices, keys)"].forEach((expected) => assert.ok(authoring.includes(expected), `Expected ${expected}`));
+  // Select All / Clear only touch the currently visible (filtered) choices, so hidden selections are preserved.
+  assert.ok(authoring.includes("visibleChoices.forEach((choice) => next.add(choice.key))") && authoring.includes("visibleChoices.forEach((choice) => next.delete(choice.key))"));
+  // Unsafe transitions are blocked rather than silently reinterpreted.
+  assert.ok(authoring.includes("Excluding every model would leave no applicable model") && authoring.includes("No models selected. Choose at least one model, or use All Models."));
+  assert.ok(authoring.includes("if (rules.length) { setModelSelectionError("), "All Models must not claim availability while unmanaged rules remain");
+  assert.ok(source.includes("Review applicability") && source.includes('"smart-setup-review-applicability"'));
+});
