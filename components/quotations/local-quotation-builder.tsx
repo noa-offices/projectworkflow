@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Fragment, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ProductLibrarySelector,
@@ -23,8 +24,17 @@ import {
   type ProductTemplateMaterialGroupLink,
 } from "@/components/quotations/finish-selections-editor";
 import { getWorkspaceDocument, saveWorkspaceDocument } from "@/lib/local/quotation-db";
-import { acknowledgePublication, beginPublication, publicationMetadata, validateWorkspace, withPublication } from "@/lib/local/quotation-publication";
-import { requestPublication } from "@/lib/local/quotation-publication-request";
+import { acknowledgePublication, beginPublication, publicationMetadata, validateWorkspace, withPublication, type PublicationAttempt } from "@/lib/local/quotation-publication";
+import { fetchServerVersion, requestPublication } from "@/lib/local/quotation-publication-request";
+import {
+  beginReplacementPublication,
+  discardRejectedAttempt,
+  hasDifferences,
+  loadLatestWorkspace,
+  reconcileOpenedWorkspace,
+  summarizeDifferences,
+  type DifferenceSummary,
+} from "@/lib/local/quotation-conflict";
 import {
   createEmptyItem,
   createEmptySection,
@@ -416,11 +426,10 @@ function withReindexedSections(
 
 function statusText(workspace: LocalQuotationWorkspace, localDraftSaved: boolean, saveState: string) {
   if (saveState === "saving") return "Saving to software...";
-  if (saveState === "saved") return workspace.has_unsaved_changes ? "Snapshot saved; newer local edits remain" : "Saved to software";
-  if (saveState === "conflict") return "Server conflict - local draft kept";
-  if (saveState === "uncertain") return "Save unconfirmed - retry same attempt";
-  if (saveState === "error") return "Save failed / Retry";
-  if (workspace.has_unsaved_changes) return localDraftSaved ? "Unsaved local changes" : "Saving local draft...";
+  if (saveState === "saved") return workspace.has_unsaved_changes ? "Local changes not yet saved" : "Saved to software";
+  if (saveState === "conflict") return "A newer quotation version is available";
+  if (saveState === "uncertain" || saveState === "error") return "Unable to save — try again";
+  if (workspace.has_unsaved_changes) return localDraftSaved ? "Local changes not yet saved" : "Saving local draft...";
   if (workspace.last_saved_to_software_at) return "Saved to software";
   return localDraftSaved ? "Local draft saved" : "Saving local draft...";
 }
@@ -1688,6 +1697,12 @@ export function LocalQuotationBuilder({
   const [copiedRowId, setCopiedRowId] = useState<string | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const isPending = isPublishing;
+  const router = useRouter();
+  const [conflictStep, setConflictStep] = useState<"load" | "keep" | null>(null);
+  const [conflictDiff, setConflictDiff] = useState<DifferenceSummary | null>(null);
+  // Latest server workspace delivered by the server component; router.refresh() hands us a new object.
+  const serverWorkspaceRef = useRef(initialWorkspace);
+  const serverRefreshWaiterRef = useRef<{ previous: LocalQuotationWorkspace; resolve: (value: LocalQuotationWorkspace) => void } | null>(null);
   const publicationBusyRef = useRef(false);
   const hydratedQuotationRef = useRef<string | null>(null);
   const persistenceChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -1738,9 +1753,9 @@ export function LocalQuotationBuilder({
 
         if (existing) {
           validateWorkspace(existing, initialWorkspace.server_quotation_id);
-          // Dirty drafts and uncertain attempts are never reconciled over by a refresh.
-          const syncedWorkspace = existing.has_unsaved_changes || publicationMetadata(existing).pending
-            ? existing : syncWorkspaceWithServerSnapshot(existing, initialWorkspace);
+          // Dirty drafts and uncertain attempts are never replaced by a refresh; a clean draft adopts the
+          // latest server workspace together with its verified baseVersion.
+          const { workspace: syncedWorkspace, serverNewer } = reconcileOpenedWorkspace(existing, initialWorkspace);
           lastPersistedSignatureRef.current = stableSerialize(existing);
           setWorkspace(syncedWorkspace);
           setHistoryPast([]);
@@ -1750,6 +1765,8 @@ export function LocalQuotationBuilder({
           if (publicationMetadata(existing).pending) {
             setSaveState("uncertain");
             setSaveMessage("An earlier save has no durable acknowledgement. Your local draft is kept. Save to Software retries that same attempt.");
+          } else if (serverNewer) {
+            setSaveState("conflict");
           }
         } else {
           await persistWorkspace(initialWorkspace);
@@ -1778,6 +1795,15 @@ export function LocalQuotationBuilder({
       cancelled = true;
     };
   }, [initialWorkspace, hydrationRetry]);
+
+  useEffect(() => {
+    serverWorkspaceRef.current = initialWorkspace;
+    const waiter = serverRefreshWaiterRef.current;
+    if (waiter && waiter.previous !== initialWorkspace) {
+      serverRefreshWaiterRef.current = null;
+      waiter.resolve(initialWorkspace);
+    }
+  }, [initialWorkspace]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -2645,7 +2671,8 @@ export function LocalQuotationBuilder({
     }
   }
 
-  async function saveToSoftware() {
+  // `replace` is the explicit "Keep my version" path: a NEW attempt against a freshly fetched server version.
+  async function saveToSoftware(replace = false) {
     if (!navigator.onLine) {
       setSaveMessage("You're offline. Save to Software is unavailable; local editing and JSON backup remain available. Nothing was queued.");
       return;
@@ -2654,22 +2681,60 @@ export function LocalQuotationBuilder({
     publicationBusyRef.current = true;
     setIsPublishing(true);
     let sent = false;
+    let prepared = false;
     try {
-      const attempt = beginPublication(workspace);
-      const pending = withPublication(workspace, { ...publicationMetadata(workspace), pending: attempt });
+      let attempt: PublicationAttempt;
+      let pending: LocalQuotationWorkspace;
+      if (replace) {
+        const latest = await fetchServerVersion(workspace.server_quotation_id);
+        if (!latest.ok) {
+          setSaveState("error");
+          setSaveMessage(latest.error);
+          return;
+        }
+        ({ attempt, pending } = beginReplacementPublication(workspace, latest.version));
+      } else {
+        // A retry of a pending attempt must stay byte-identical, so only a fresh save is preflighted.
+        // The probe is a hint, not a lock: if it fails the atomic RPC still decides.
+        const state = publicationMetadata(workspace);
+        if (!state.pending && state.baseVersion) {
+          const latest = await fetchServerVersion(workspace.server_quotation_id).catch(() => null);
+          if (latest?.ok && latest.version !== state.baseVersion) {
+            setSaveState("conflict");
+            setSaveMessage("");
+            return;
+          }
+        }
+        attempt = beginPublication(workspace);
+        pending = withPublication(workspace, { ...publicationMetadata(workspace), pending: attempt });
+      }
+      prepared = true;
       setSaveState("saving");
       setSaveMessage("");
       setLocalDraftSaved(false);
-      setWorkspace((current) => withPublication(current, { ...publicationMetadata(current), pending: attempt }));
+      setWorkspace((current) => withPublication(current, {
+        ...publicationMetadata(current),
+        ...(replace ? { baseVersion: attempt.baseVersion } : {}),
+        pending: attempt,
+      }));
       // Persist the immutable attempt BEFORE it can reach the server.
       await persistWorkspace(pending);
       sent = true;
       const result = await requestPublication(workspace.server_quotation_id, attempt);
       if (!result.ok) {
+        if (result.state === "conflict") {
+          // Definitive: no receipt exists and the baseline is permanently stale. Drop the dead attempt, keep every edit.
+          setWorkspace((current) => discardRejectedAttempt(current));
+          setSaveState("conflict");
+          setSaveMessage("");
+          return;
+        }
         setSaveState(result.state);
         setSaveMessage(result.error);
         return;
       }
+      setConflictStep(null);
+      setConflictDiff(null);
       historyGroupRef.current = null;
       setLocalDraftSaved(false);
       // The functional update sees B even when the response belongs to A.
@@ -2681,7 +2746,7 @@ export function LocalQuotationBuilder({
       setSaveMessage(sent
         ? "Server outcome is unknown. Your draft and original save attempt are retained. Use Save to Software to retry that same attempt."
         : (error instanceof Error ? error.message : "Save could not start."));
-      if (!sent && publicationMetadata(workspace).baseVersion) {
+      if (!sent && prepared && publicationMetadata(workspace).baseVersion) {
         setLocalDraftSaved(false);
         setLocalPersistenceError("Could not persist the save attempt. Nothing was sent. Keep this page open and export a JSON backup.");
       }
@@ -2689,6 +2754,67 @@ export function LocalQuotationBuilder({
       publicationBusyRef.current = false;
       setIsPublishing(false);
     }
+  }
+
+  // Ask the server component for the latest workspace. Resolves with the refreshed prop; rejects on timeout,
+  // in which case the caller keeps the local draft untouched.
+  function fetchLatestServerWorkspace() {
+    return new Promise<LocalQuotationWorkspace>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        serverRefreshWaiterRef.current = null;
+        reject(new Error("Could not load the latest quotation version. Your local draft is kept - check your connection and try again."));
+      }, 20000);
+      serverRefreshWaiterRef.current = {
+        previous: serverWorkspaceRef.current,
+        resolve: (value) => { window.clearTimeout(timer); resolve(value); },
+      };
+      router.refresh();
+    });
+  }
+
+  async function runConflictAction(action: () => Promise<void>) {
+    if (publicationBusyRef.current || !hydrated) return;
+    publicationBusyRef.current = true;
+    setIsPublishing(true);
+    try {
+      await action();
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "Unable to complete this action. Your local draft is kept - try again.");
+    } finally {
+      publicationBusyRef.current = false;
+      setIsPublishing(false);
+    }
+  }
+
+  function reviewDifferences() {
+    return runConflictAction(async () => {
+      const latest = await fetchLatestServerWorkspace();
+      setConflictDiff(summarizeDifferences(workspace, latest));
+    });
+  }
+
+  // Load latest: only after explicit confirmation, and only once the server copy is in hand.
+  function confirmLoadLatest() {
+    return runConflictAction(async () => {
+      const latest = await fetchLatestServerWorkspace();
+      const next = loadLatestWorkspace(workspace, latest);
+      await persistWorkspace(next);
+      lastPersistedSignatureRef.current = stableSerialize(next);
+      setHistoryPast([]);
+      setHistoryFuture([]);
+      historyGroupRef.current = null;
+      setWorkspace(next);
+      setLocalDraftSaved(true);
+      setConflictStep(null);
+      setConflictDiff(null);
+      setSaveState("idle");
+      setSaveMessage("Loaded the latest software version. Your previous local draft was discarded.");
+    });
+  }
+
+  function confirmKeepMine() {
+    setConflictStep(null);
+    return saveToSoftware(true);
   }
 
   function renderRowDetailsModalContent(item: LocalQuotationItem) {
@@ -3295,7 +3421,7 @@ export function LocalQuotationBuilder({
               >
                 ↷
               </button>
-              <button type="button" onClick={saveToSoftware} disabled={isPending} className="inline-flex h-9 items-center bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:bg-zinc-400">Save to Software</button>
+              <button type="button" onClick={() => void saveToSoftware()} disabled={isPending} className="inline-flex h-9 items-center bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:bg-zinc-400">Save to Software</button>
               <ClickAwayWrapper
                 className="relative"
                 buttonClassName="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -4257,6 +4383,54 @@ export function LocalQuotationBuilder({
             <p>{localPersistenceError}</p>
             <button type="button" onClick={() => hydrated ? void saveLocalDraftNow() : setHydrationRetry((value) => value + 1)} className="mt-2 underline">Retry local storage</button>
             <button type="button" onClick={exportBackup} className="ml-4 mt-2 underline">Export in-memory JSON backup</button>
+          </div>
+        ) : null}
+        {saveState === "conflict" ? (
+          <div role="alert" data-testid="local-builder-conflict" className="mb-4 rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            <p className="font-semibold">A newer quotation version is available.</p>
+            <p className="mt-1">This quotation was changed in the software after you opened it. Your local changes are safe and nothing has been replaced. Choose how to continue.</p>
+            {conflictStep === "load" ? (
+              <div className="mt-3 border border-amber-400 bg-white p-3">
+                <p className="font-semibold">Discard your local draft and load the latest software version?</p>
+                <p className="mt-1">Your unsaved local changes will be lost. Export a JSON backup first if you may need them.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button type="button" disabled={isPending} onClick={() => void confirmLoadLatest()} className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white disabled:bg-zinc-400">Yes, discard my draft and load latest</button>
+                  <button type="button" disabled={isPending} onClick={() => setConflictStep(null)} className="h-8 border border-zinc-300 bg-white px-3 text-xs font-semibold">Cancel</button>
+                </div>
+              </div>
+            ) : conflictStep === "keep" ? (
+              <div className="mt-3 border border-amber-400 bg-white p-3">
+                <p className="font-semibold">Replace the newer software version with my current Local Builder version?</p>
+                <p className="mt-1">The newer sections, items, prices and header details in the software will be overwritten by your version. If the software changes again while saving, nothing is overwritten and you will be asked again.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button type="button" disabled={isPending} onClick={() => void confirmKeepMine()} className="h-8 bg-red-800 px-3 text-xs font-semibold text-white disabled:bg-zinc-400">Yes, replace the software version</button>
+                  <button type="button" disabled={isPending} onClick={() => setConflictStep(null)} className="h-8 border border-zinc-300 bg-white px-3 text-xs font-semibold">Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" disabled={isPending} onClick={() => setConflictStep("load")} className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white disabled:bg-zinc-400">Load latest version</button>
+                <button type="button" disabled={isPending} onClick={() => setConflictStep("keep")} className="h-8 border border-zinc-400 bg-white px-3 text-xs font-semibold disabled:text-zinc-400">Keep my version</button>
+                <button type="button" disabled={isPending} onClick={() => void reviewDifferences()} className="h-8 border border-zinc-300 bg-white px-3 text-xs font-semibold disabled:text-zinc-400">Review differences</button>
+                <button type="button" disabled={isPending} onClick={() => { setConflictDiff(null); setSaveState("idle"); setSaveMessage(""); }} className="h-8 px-3 text-xs font-semibold underline">Decide later</button>
+              </div>
+            )}
+            {conflictDiff ? (
+              <div className="mt-3 border border-zinc-300 bg-white p-3" data-testid="local-builder-conflict-diff">
+                <p className="font-semibold">Your version compared with the software version</p>
+                {hasDifferences(conflictDiff) ? (
+                  <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                    {conflictDiff.header.map((row) => <li key={row.label}>{row.label}: software {row.server || "-"} → yours {row.local || "-"}</li>)}
+                    {conflictDiff.sectionsAdded.map((title, index) => <li key={`sa-${index}`}>Section only in your version: {title}</li>)}
+                    {conflictDiff.sectionsRemoved.map((title, index) => <li key={`sr-${index}`}>Section only in the software: {title}</li>)}
+                    {conflictDiff.itemsAdded.map((title, index) => <li key={`ia-${index}`}>Item only in your version: {title}</li>)}
+                    {conflictDiff.itemsRemoved.map((title, index) => <li key={`ir-${index}`}>Item only in the software: {title}</li>)}
+                    {conflictDiff.itemChanges.map((change, index) => <li key={`ic-${index}`}>{change.item} — {change.changes.join("; ")}</li>)}
+                  </ul>
+                ) : <p className="mt-1">No differences found in the quotation header, sections or items.</p>}
+                <p className="mt-2 text-xs text-zinc-600">Approximate review only; rows are matched by section and name. Presentation settings are kept on the server and are not compared. Nothing is merged automatically.</p>
+              </div>
+            ) : null}
           </div>
         ) : null}
         {saveMessage ? (

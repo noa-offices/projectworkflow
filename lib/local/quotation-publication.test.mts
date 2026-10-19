@@ -106,7 +106,9 @@ test("component wires errors to alerts, keeps debounce and functional acknowledg
   assert.match(source, /setWorkspace\(\(current\) => acknowledgePublication\(current, attempt, result\)\)/);
   assert.match(readFileSync("lib/local/quotation-publication-request.ts", "utf8"), /AbortSignal.timeout\(60000\)/);
   assert.match(source, /JSON.stringify\(workspace, null, 2\)/);
-  assert.match(source, /existing.has_unsaved_changes \|\| publicationMetadata\(existing\).pending/);
+  // Dirty/pending drafts are protected inside reconcileOpenedWorkspace (see quotation-conflict.test.mts).
+  assert.match(source, /reconcileOpenedWorkspace\(existing, initialWorkspace\)/);
+  assert.match(readFileSync("lib/local/quotation-conflict.ts", "utf8"), /existing\.has_unsaved_changes \|\| local\.pending/);
 });
 
 test("network loss and timeout retain the same durable intent and all newer edits", async () => {

@@ -130,6 +130,44 @@ test("stale baseline conflicts without any writes", async () => {
   assert.equal(result.code, "CONFLICT");
   assert.deepEqual(await state(), before);
 });
+test("explicit replacement: stale conflict, then a fresh baseline and mutation ID publish through the same RPC", async () => {
+  const stale = await version();
+  await db.query("update public.quotation_items set qty=3 where quotation_id=$1", [quotationId]);
+  const rejectedMutation = crypto.randomUUID();
+  assert.equal((await publish(stale, rejectedMutation)).code, "CONFLICT");
+  const latest = await version();
+  assert.notEqual(latest, stale);
+  const replaced = await publish(latest, crypto.randomUUID());
+  assert.equal(replaced.ok, true);
+  assert.equal(replaced.version, await version());
+  const [, , items] = await state();
+  assert.equal(Number(items.filter((r) => r.is_active)[0].qty), 2);
+  // The rejected stale attempt can never commit later: the same stale baseline keeps conflicting.
+  assert.equal((await publish(stale, rejectedMutation)).code, "CONFLICT");
+});
+
+test("a server change between the version fetch and replacement yields another conflict and no overwrite", async () => {
+  const fetched = await version();
+  await db.query("update public.quotations set title='Changed during replacement' where id=$1", [quotationId]);
+  const before = await state();
+  const result = await publish(fetched, crypto.randomUUID());
+  assert.equal(result.code, "CONFLICT");
+  assert.deepEqual(await state(), before);
+});
+
+test("after an acknowledged save the returned version is the next valid baseline; the old one is stale", async () => {
+  const base = await version();
+  const first = await publish(base);
+  assert.equal((await publish(first.version, crypto.randomUUID())).ok, true);
+  assert.equal((await publish(base, crypto.randomUUID())).code, "CONFLICT");
+});
+
+test("a read-only no-op touch still advances the version (trigger audit, documented not changed)", async () => {
+  const before = await version();
+  await db.query("update public.quotations set title=title where id=$1", [quotationId]);
+  assert.notEqual(await version(), before);
+});
+
 test("same mutation retry after lost acknowledgement returns same result without another replacement/audit", async () => {
   const base = await version();
   const mutation = crypto.randomUUID();

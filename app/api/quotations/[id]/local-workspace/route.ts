@@ -9,16 +9,37 @@ function failure(error: string, code: string, status: number) {
   return NextResponse.json({ ok: false, error, code }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
+async function authorizePublisher(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { failed: failure("Sign in before publishing.", "UNAUTHORIZED", 401) } as const;
+  const { data: profile, error: profileError } = await supabase.from("profiles").select("role,account_status").eq("id", user.id).maybeSingle();
+  if (profileError) return { failed: failure("Could not verify permissions.", "UNAVAILABLE", 503) } as const;
+  if (profile?.account_status !== "active" || !["system_owner", "admin_manager", "procurement_manager", "sales_designer", "sales_coordinator", "designer"].includes(profile?.role ?? "")) {
+    return { failed: failure("You cannot publish this quotation.", "FORBIDDEN", 403) } as const;
+  }
+  return { user } as const;
+}
+
+// Read-only version probe for the Local Builder (preflight and explicit "Keep my version").
+// Same permission gate as publication and RLS-scoped. A hint only: the RPC re-checks the version atomically.
+export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+  const { id } = await context.params;
+  if (!uuid.test(id)) return failure("Invalid quotation.", "VALIDATION", 400);
+  const supabase = await createClient();
+  const auth = await authorizePublisher(supabase);
+  if ("failed" in auth) return auth.failed;
+  const { data, error } = await supabase.from("quotations").select("workspace_version").eq("id", id).maybeSingle();
+  if (error) return failure("Could not read the quotation version.", "UNAVAILABLE", 503);
+  if (!data?.workspace_version) return failure("Quotation not found.", "NOT_FOUND", 404);
+  return NextResponse.json({ ok: true, version: data.workspace_version }, { headers: { "Cache-Control": "no-store" } });
+}
+
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return failure("Sign in before publishing.", "UNAUTHORIZED", 401);
-  const { data: profile, error: profileError } = await supabase.from("profiles").select("role,account_status").eq("id", user.id).maybeSingle();
-  if (profileError) return failure("Could not verify permissions.", "UNAVAILABLE", 503);
-  if (profile?.account_status !== "active" || !["system_owner", "admin_manager", "procurement_manager", "sales_designer", "sales_coordinator", "designer"].includes(profile?.role ?? "")) {
-    return failure("You cannot publish this quotation.", "FORBIDDEN", 403);
-  }
+  const auth = await authorizePublisher(supabase);
+  if ("failed" in auth) return auth.failed;
+  const user = auth.user;
   let body;
   try {
     body = await request.json();

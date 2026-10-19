@@ -4,6 +4,28 @@ export type PublicationResponse =
   | { ok: true; version: string; savedAt: string; mutationId: string }
   | { ok: false; state: "conflict" | "uncertain" | "error"; error: string };
 
+// Lightweight preflight / Keep My Version baseline. It is a hint, never a lock: the RPC re-checks atomically.
+export async function fetchServerVersion(
+  quotationId: string,
+  send: typeof fetch = fetch,
+  signal: AbortSignal = AbortSignal.timeout(15000),
+): Promise<{ ok: true; version: string } | { ok: false; error: string }> {
+  const unreachable = "Could not check the latest quotation version. Your local draft is kept - check your connection and try again.";
+  let response: Response;
+  try {
+    response = await send(`/api/quotations/${quotationId}/local-workspace`, { method: "GET", cache: "no-store", signal });
+  } catch {
+    throw new Error(unreachable);
+  }
+  const result = await response.json().catch(() => null);
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!response.ok || !result?.ok || !uuid.test(result.version ?? "")) {
+    if (response.status >= 500 || !result) throw new Error(unreachable);
+    return { ok: false, error: result?.error ?? unreachable };
+  }
+  return { ok: true, version: result.version };
+}
+
 // A missing/invalid acknowledgement is uncertain; the caller retains the attempt.
 export async function requestPublication(
   quotationId: string,
