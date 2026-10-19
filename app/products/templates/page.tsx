@@ -1762,7 +1762,9 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
     templateList.map((template) => [template.id, normalizeTemplateLifecycleStatus(template)]),
   );
   const activeTemplateList = templateList.filter((template) => templateLifecycleById.get(template.id) === "active");
-  const supplierPriceStatusByTemplate = await loadSupplierFamilyPriceStatusMap(supabase, activeTemplateList);
+  // Depends on the template batch only; started now and awaited after the actor-name read below so both run together.
+  const supplierPriceStatusPromise = loadSupplierFamilyPriceStatusMap(supabase, activeTemplateList);
+  supplierPriceStatusPromise.catch(() => undefined);
   const archivedTemplateList = templateList.filter((template) => templateLifecycleById.get(template.id) === "archived");
   const discontinuedTemplateList = templateList.filter((template) => templateLifecycleById.get(template.id) === "discontinued");
   const archivedLinkedFamilyList = (linkedFamilies ?? []).filter((link) => !link.is_active);
@@ -1956,6 +1958,8 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
       }
     }
   }
+
+  const supplierPriceStatusByTemplate = await supplierPriceStatusPromise;
 
   function buildManagementTemplateResult(template: ProductTemplate): ProductManagementTemplateResult {
     const firstVisibleImageSlot = proposedImageSlots.find((slot) =>

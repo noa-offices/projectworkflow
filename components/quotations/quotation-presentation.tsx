@@ -1,8 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, useTransition, type ClipboardEvent, type ReactNode } from "react";
+import {
+  ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronRight, CircleAlert, CircleCheck, ClipboardList, Eye, File as FileIcon, FileCheck, FileText,
+  Image as ImageIcon, Layers, LayoutGrid, List, ListRestart, Package, RotateCcw, Save, Settings, Settings2, SlidersHorizontal,
+  type LucideIcon,
+} from "lucide-react";
+import { useEffect, useRef, useState, useTransition, type ClipboardEvent, type CSSProperties, type ReactNode } from "react";
 import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
+import { presentationSans, presentationSerif } from "@/components/quotations/presentation-fonts";
+import { ProductImageEditBox } from "@/components/quotations/presentation-image-editor";
 import { PresentationPptxExportButton } from "@/components/quotations/presentation-pptx-export-button";
 import { PrintActions } from "@/components/quotations/print-actions";
 import type { CompanyProfile } from "@/lib/company-profile";
@@ -14,6 +21,7 @@ import {
   DEFAULT_PRESENTATION_COVER_OVERRIDES,
   DEFAULT_PRESENTATION_FLOW_ORDER,
   DEFAULT_PRESENTATION_ITEM_OVERRIDE,
+  normalizePresentationImageRect,
   DEFAULT_PRESENTATION_PAGE_VISIBILITY,
   DEFAULT_PRESENTATION_VISUALS,
   normalizeFlowOrder,
@@ -23,6 +31,7 @@ import {
   type PresentationCoverOverrides,
   type PresentationFlowOrder,
   type PresentationImageFrameSize,
+  type PresentationImageRect,
   type PresentationImageFit,
   type PresentationItemOverride,
   type PresentationLayoutMode,
@@ -133,6 +142,7 @@ type ProductPageData = {
   imagePositionX: number;
   imagePositionY: number;
   imageScale: number;
+  imageRect: PresentationImageRect | null;
   summary: string | null;
   meta: Array<{ label: string; value: string | null }>;
   finishGroups: Array<{ label: string; items: FinishEntry[] }>;
@@ -703,6 +713,7 @@ function settingsSignature(value: QuotationPresentationSettings) {
           imagePositionX: override.imagePositionX,
           imagePositionY: override.imagePositionY,
           imageScale: override.imageScale,
+          imageRect: override.imageRect,
         }]),
     ),
   });
@@ -763,6 +774,8 @@ function resolvedOverrideValue(value: string | null | undefined, fallback: strin
 }
 
 function normalizedPresentationItemOverride(value: PresentationItemOverride | undefined): PresentationItemOverride {
+  const imageRect = normalizePresentationImageRect(value?.imageRect);
+
   return {
     imageUrl: value?.imageUrl?.trim() ?? "",
     imageFit: value?.imageFit === "cover" ? "cover" : "contain",
@@ -771,6 +784,7 @@ function normalizedPresentationItemOverride(value: PresentationItemOverride | un
     imagePositionX: Math.min(Math.max(Number.isFinite(Number(value?.imagePositionX)) ? Number(value?.imagePositionX) : 50, 0), 100),
     imagePositionY: Math.min(Math.max(Number.isFinite(Number(value?.imagePositionY)) ? Number(value?.imagePositionY) : 50, 0), 100),
     imageScale: Math.min(Math.max(Number(value?.imageScale) || 1, 0.6), 1.2),
+    ...(imageRect ? { imageRect } : {}),
   };
 }
 
@@ -783,7 +797,8 @@ function itemOverrideHasCustomValue(value: PresentationItemOverride | undefined)
     normalized.imagePosition !== DEFAULT_PRESENTATION_ITEM_OVERRIDE.imagePosition ||
     normalized.imagePositionX !== DEFAULT_PRESENTATION_ITEM_OVERRIDE.imagePositionX ||
     normalized.imagePositionY !== DEFAULT_PRESENTATION_ITEM_OVERRIDE.imagePositionY ||
-    normalized.imageScale !== DEFAULT_PRESENTATION_ITEM_OVERRIDE.imageScale
+    normalized.imageScale !== DEFAULT_PRESENTATION_ITEM_OVERRIDE.imageScale ||
+    normalized.imageRect
   );
 }
 
@@ -941,16 +956,80 @@ function buildPresentationSlides({
   return slides;
 }
 
+// 16:9 slide. Design sizes come from a 1920x1080 canvas and are written as `u(N)` (N * --u).
+const PRESENTATION_PAGE_WIDTH = "13.333in";
+const PRESENTATION_PAGE_HEIGHT = "7.5in";
+const PRESENTATION_DESIGN_UNIT = "calc(13.333in / 1920)";
+
+function u(value: number) {
+  return `calc(${value} * var(--u))`;
+}
+
+const presentationTheme = {
+  bg: "#2B2D33",
+  card: "#363940",
+  hairline: "#4C5058",
+  text: "#F3F0EA",
+  muted: "#B9B4AB",
+  bronze: "#CC9366",
+} as const;
+
+const darkSlideStyle: CSSProperties = { background: presentationTheme.bg, color: presentationTheme.text };
+const bronzeGlowBackground = "radial-gradient(circle, rgba(204,147,102,0.22), rgba(43,45,51,0) 62%)";
+const themeLogoClassName = "h-[calc(47*var(--u))] w-[calc(280*var(--u))] object-contain object-left brightness-0 invert";
+const themeLogoFallbackClassName = "presentation-serif text-[length:calc(40*var(--u))] leading-none text-[#F3F0EA]";
+
+const productTheme = {
+  ink: "#23252A",
+  mutedOnWhite: "#6B6F76",
+  hairlineOnWhite: "#DADCE0",
+} as const;
+const PRODUCT_FINISH_LIMIT = 25;
+
+function ProductDetailCell({ compact = false, label, value }: { compact?: boolean; label: string; value: string | null | undefined }) {
+  if (!value) return null;
+
+  return (
+    <div className="min-w-0">
+      <p className="uppercase" style={{ fontSize: u(compact ? 15 : 17), letterSpacing: u(2), lineHeight: 1.2, color: productTheme.mutedOnWhite }}>{label}</p>
+      <p className="[overflow-wrap:anywhere]" style={{ marginTop: u(6), fontSize: u(compact ? 19 : 22), fontWeight: 500, lineHeight: 1.3, color: productTheme.ink }}>{value}</p>
+    </div>
+  );
+}
+
+function ProductFinishChip({ compact = false, finish }: { compact?: boolean; finish: FinishEntry }) {
+  const caption = (finish.name && finish.name !== finish.code ? finish.name : null) || (!finish.code ? finish.description || "Selected finish" : null);
+
+  return (
+    <div className="flex flex-col" style={{ width: u(108), gap: u(6) }}>
+      <div className="overflow-hidden bg-[linear-gradient(135deg,_#f4f4f5,_#e4e4e7)]" style={{ width: u(108), height: u(compact ? 32 : 36), border: `1px solid ${presentationTheme.hairline}` }}>
+        {finish.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={finish.imageUrl} alt={finish.name || finish.code || finish.label} className="h-full w-full object-cover" />
+        ) : null}
+      </div>
+      {/* One line: code then name. Only the name wraps (max 2 lines, clipped without an ellipsis). */}
+      <p className="min-w-0 overflow-hidden" style={{ fontSize: u(15), lineHeight: 1.2, maxHeight: "2.4em" }}>
+        {finish.code ? <span className="whitespace-nowrap" style={{ fontWeight: 600, color: presentationTheme.text }}>{finish.code}</span> : null}
+        {finish.code && caption ? " " : null}
+        {caption ? <span className="[overflow-wrap:anywhere]" style={{ fontWeight: 400, color: presentationTheme.muted }}>{caption}</span> : null}
+      </p>
+    </div>
+  );
+}
+
 function PresentationPage({
   children,
   className = "",
   id,
   slideIndex,
+  style,
 }: {
   children: ReactNode;
   className?: string;
   id?: string;
   slideIndex?: number;
+  style?: CSSProperties;
 }) {
   return (
     <section
@@ -958,42 +1037,76 @@ function PresentationPage({
       data-presentation-slide="true"
       data-slide-index={typeof slideIndex === "number" ? slideIndex : undefined}
       className={`presentation-page overflow-hidden break-after-page bg-white text-zinc-900 shadow-[0_24px_80px_rgba(15,23,42,0.12)] print:shadow-none ${className}`}
-      style={{ width: "297mm", height: "210mm" }}
+      style={{
+        ...style,
+        width: PRESENTATION_PAGE_WIDTH,
+        height: PRESENTATION_PAGE_HEIGHT,
+        "--u": PRESENTATION_DESIGN_UNIT,
+      } as CSSProperties}
     >
       {children}
     </section>
   );
 }
 
-function MetaCard({ label, value }: { label: string; value: string | null | undefined }) {
+function ThemeBronzeGlow() {
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute"
+      style={{ left: u(1000), top: u(-260), width: u(1200), height: u(1200), background: bronzeGlowBackground }}
+    />
+  );
+}
+
+function ThemeEyebrow({ children }: { children: ReactNode }) {
+  return (
+    <p className="uppercase" style={{ fontSize: u(24), fontWeight: 600, letterSpacing: u(5), lineHeight: 1.2, color: presentationTheme.bronze }}>
+      {children}
+    </p>
+  );
+}
+
+function ThemeInfoCell({ label, value }: { label: string; value: string | null | undefined }) {
   if (!value) return null;
 
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white/80 px-4 py-3">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-zinc-900">{value}</p>
+    <div className="min-w-0">
+      <p className="uppercase" style={{ fontSize: u(22), letterSpacing: u(3), lineHeight: 1.2, color: presentationTheme.muted }}>{label}</p>
+      <p style={{ marginTop: u(8), fontSize: u(26), fontWeight: 500, lineHeight: 1.3, color: presentationTheme.text }}>{value}</p>
     </div>
   );
 }
 
-function MetaLine({ label, value }: { label: string; value: string | null | undefined }) {
-  if (!value) return null;
-
+function ThemeTagChip({ children }: { children: ReactNode }) {
   return (
-    <div className="border-b border-white/10 pb-3 last:border-b-0 last:pb-0">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/45">{label}</p>
-      <p className="mt-1 text-sm font-medium leading-6 text-white">{value}</p>
-    </div>
+    <p
+      className="self-start uppercase [overflow-wrap:anywhere]"
+      style={{ ...clampStyle(2), border: `${u(2)} solid ${presentationTheme.bronze}`, padding: `${u(12)} ${u(26)}`, fontSize: u(22), fontWeight: 600, letterSpacing: u(4), lineHeight: 1.2, color: presentationTheme.bronze }}
+    >
+      {children}
+    </p>
   );
 }
 
-function ContactLine({ label, value }: { label: string; value: string | null | undefined }) {
+function ThemeSlideFooter({ companyName, quotationNo }: { companyName: string | null | undefined; quotationNo: string | null | undefined }) {
+  const text = [companyName, quotationNo].filter(Boolean).join(" · ");
+  if (!text) return null;
+
+  return (
+    <p className="absolute" style={{ ...clampStyle(1), left: u(128), bottom: u(40), width: u(900), fontSize: u(22), lineHeight: 1.3, color: presentationTheme.muted }}>
+      {text}
+    </p>
+  );
+}
+
+function ThemeContactRow({ label, value }: { label: string; value: string | null | undefined }) {
   if (!value) return null;
 
   return (
-    <div className="border-b border-white/10 pb-3 last:border-b-0 last:pb-0">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/45">{label}</p>
-      <p className="mt-1 text-sm font-medium leading-6 text-white/90">{value}</p>
+    <div className="min-w-0">
+      <p className="uppercase" style={{ fontSize: u(22), letterSpacing: u(3), lineHeight: 1.2, color: presentationTheme.bronze }}>{label}</p>
+      <p className="[overflow-wrap:anywhere]" style={{ marginTop: u(8), fontSize: u(26), fontWeight: 500, lineHeight: 1.35, color: presentationTheme.text }}>{value}</p>
     </div>
   );
 }
@@ -1040,17 +1153,6 @@ function PresentationBrandLogo({
       className={className}
       onError={() => setFailedLogoUrl(safeLogoUrl)}
     />
-  );
-}
-
-function ProductDetail({ label, value }: { label: string; value: string | null }) {
-  if (!value) return null;
-
-  return (
-    <div className="grid gap-1 border-b border-zinc-200/80 pb-2.5 last:border-b-0 last:pb-0">
-      <dt className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400">{label}</dt>
-      <dd className="text-sm font-medium leading-5 text-zinc-900 [overflow-wrap:anywhere]" style={clampStyle(2)}>{value}</dd>
-    </div>
   );
 }
 
@@ -1104,6 +1206,7 @@ function PresentationImageStage({
   boundsClassName,
   emptyContent,
   fit,
+  imageRect = null,
   imageUrl,
   positionX,
   positionY,
@@ -1113,11 +1216,34 @@ function PresentationImageStage({
   boundsClassName: string;
   emptyContent: ReactNode;
   fit: PresentationImageFit;
+  imageRect?: PresentationImageRect | null;
   imageUrl: string | null;
   positionX: number;
   positionY: number;
   scale: number;
 }) {
+  // Custom frame (one-per-page product slide only): the image fills a box placed in percent of the image area.
+  // scale, position and frame size are ignored for drawing in this case.
+  if (imageRect) {
+    return (
+      <div className="relative h-full w-full overflow-hidden bg-white">
+        <div
+          className="pointer-events-none absolute overflow-hidden"
+          style={{ left: `${imageRect.x}%`, top: `${imageRect.y}%`, width: `${imageRect.w}%`, height: `${imageRect.h}%` }}
+        >
+          <QuotationImageFrame
+            alt={alt}
+            className="h-full w-full overflow-hidden bg-white"
+            imageClassName="block h-full w-full bg-white"
+            imageUrl={imageUrl}
+            emptyContent={emptyContent}
+            settings={{ fit, zoom: 1, positionX: 50, positionY: 50 }}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-white">
       <div className={`relative overflow-hidden ${boundsClassName}`}>
@@ -1154,17 +1280,34 @@ function presentationImageBoundsClass(frameSize: PresentationImageFrameSize, com
     return "h-[90%] w-[95%]";
   }
 
-  if (frameSize === "small") return "h-[52%] w-[62%]";
-  if (frameSize === "medium") return "h-[62%] w-[72%]";
-  return "h-[72%] w-[82%]";
+  // One-per-page stage box is 1120x800 (design units). "current" fills it; smaller sizes keep their old relative steps.
+  if (frameSize === "small") return "h-[72%] w-[76%]";
+  if (frameSize === "medium") return "h-[86%] w-[88%]";
+  return "h-full w-full";
 }
+
+const settingsSectionIcons: Record<SettingsSectionKey, LucideIcon> = {
+  flow: Layers,
+  items: Package,
+  layout: LayoutGrid,
+  content: FileText,
+  pages: FileIcon,
+  areasSections: ImageIcon,
+  mainLayouts: ImageIcon,
+  sections: ImageIcon,
+  cover: ImageIcon,
+  closing: FileCheck,
+  presets: SlidersHorizontal,
+};
 
 function SettingsSectionButton({
   active,
+  icon: Icon,
   label,
   onClick,
 }: {
   active: boolean;
+  icon: LucideIcon;
   label: string;
   onClick: () => void;
 }) {
@@ -1172,12 +1315,13 @@ function SettingsSectionButton({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex w-full items-center justify-center whitespace-nowrap rounded-full border px-3 py-2 text-sm font-semibold transition ${
+      className={`inline-flex min-h-10 w-full items-center justify-center gap-1.5 border-b-2 bg-transparent px-0.5 py-2 text-center text-xs font-semibold leading-tight transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800 ${
         active
-          ? "border-zinc-950 bg-zinc-950 text-white"
-          : "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-400 hover:text-zinc-950"
+          ? "border-emerald-800 text-emerald-800"
+          : "border-transparent text-[#6B7380] hover:text-[#151A24]"
       }`}
     >
+      <Icon aria-hidden="true" className="h-4 w-4 shrink-0" />
       {label}
     </button>
   );
@@ -1222,7 +1366,7 @@ function FlowMoveButtons({
   onMoveDown: () => void;
   onMoveUp: () => void;
 }) {
-  const buttonClassName = "inline-flex h-9 items-center rounded-full border border-zinc-300 px-3 text-[11px] font-semibold text-zinc-600 transition hover:border-zinc-400 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-40";
+  const buttonClassName = "inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#D5DAE2] bg-white text-[#6B7380] transition hover:bg-zinc-50 hover:text-[#151A24] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800 disabled:cursor-not-allowed disabled:opacity-40";
 
   return (
     <div className="flex items-center gap-1">
@@ -1230,17 +1374,21 @@ function FlowMoveButtons({
         type="button"
         onClick={onMoveUp}
         disabled={disableUp}
+        aria-label="Up"
+        title="Up"
         className={buttonClassName}
       >
-        Up
+        <ArrowUp aria-hidden="true" className="h-4 w-4" />
       </button>
       <button
         type="button"
         onClick={onMoveDown}
         disabled={disableDown}
+        aria-label="Down"
+        title="Down"
         className={buttonClassName}
       >
-        Down
+        <ArrowDown aria-hidden="true" className="h-4 w-4" />
       </button>
     </div>
   );
@@ -1282,6 +1430,7 @@ function buildProductPageData({
     imagePositionX: normalizedPresentationItemOverride(itemOverride).imagePositionX,
     imagePositionY: normalizedPresentationItemOverride(itemOverride).imagePositionY,
     imageScale: normalizedPresentationItemOverride(itemOverride).imageScale,
+    imageRect: normalizedPresentationItemOverride(itemOverride).imageRect ?? null,
     summary: productSummary(item, project, contentVisibility),
     meta: detailRows(item, contentVisibility),
     finishGroups: groupedFinishes(finishes),
@@ -1289,67 +1438,174 @@ function buildProductPageData({
   };
 }
 
+// Two-per-page card (one column of the 1920x1080 slide). Finishes are capped to what fits under the description.
+const TWO_PER_PAGE_FINISH_LIMIT = 14;
+const TWO_PER_PAGE_FINISH_MINIMUM = 10;
+const TWO_PER_PAGE_CHIPS_PER_ROW = 7;
+// With 3 or more finish types each heading sits beside its chips, which leaves room for 6 chips per row.
+const TWO_PER_PAGE_DENSE_CHIPS_PER_ROW = 6;
+const TWO_PER_PAGE_DENSE_TYPE_COUNT = 3;
+
+function limitFinishGroups(finishGroups: ProductPageData["finishGroups"], limit: number) {
+  const all = compactFinishRows(finishGroups);
+  const shown = all.slice(0, limit);
+  const shownKeys = new Set(shown.map((finish) => `${finish.label}:${finish.id}`));
+  const groups = finishGroups
+    .map((group) => ({ label: group.label, items: group.items.filter((finish) => shownKeys.has(`${group.label}:${finish.id}`)) }))
+    .filter((group) => group.items.length);
+
+  return { groups, hidden: Math.max(all.length - shown.length, 0), total: all.length };
+}
+
+// Rough heights in design units, used only to pick the finishes cap and description clamp.
+function estimatedFinishesHeight(groups: Array<{ items: FinishEntry[] }>, dense = false) {
+  if (!groups.length) return 0;
+  const rowsPerGroup = groups.map((group) => Math.ceil(group.items.length / (dense ? TWO_PER_PAGE_DENSE_CHIPS_PER_ROW : TWO_PER_PAGE_CHIPS_PER_ROW)));
+  const rows = rowsPerGroup.reduce((sum, count) => sum + count, 0);
+  // 62 per chip row leaves room for a name that wraps onto a second line.
+  if (dense) return 15 + 20 + groups.length * 12 + rows * 62 + (rows - groups.length) * 12;
+  return 15 + 20 + groups.length * (12 + 21 + 10) + rows * 62 + (rows - groups.length) * 12;
+}
+
+function twoPerPageCardPlan(data: ProductPageData, showDescription: boolean) {
+  const hasDescription = showDescription;
+  const topHeight = (descriptionLines: number) =>
+    22 + 10 + (data.heading.length > 36 ? 88 : 44) + (data.item.is_optional || data.item.is_rate_only ? 36 : 0)
+    + (data.summary ? 32 : 0) + (hasDescription ? 10 + descriptionLines * 27 : 0);
+  const budget = 448 - 18;
+  const dense = data.finishGroups.length >= TWO_PER_PAGE_DENSE_TYPE_COUNT;
+
+  // 3 lines at the full cap first, then 2 lines with a lower cap (down to the minimum). Only when even that does not
+  // fit (many types with one chip each) the description is shortened to 1 line, then left out.
+  for (const descriptionLines of [3, 2]) {
+    for (let cap = TWO_PER_PAGE_FINISH_LIMIT; cap >= (descriptionLines === 3 ? TWO_PER_PAGE_FINISH_LIMIT : TWO_PER_PAGE_FINISH_MINIMUM); cap -= 1) {
+      const limited = limitFinishGroups(data.finishGroups, cap);
+      if (topHeight(descriptionLines) + estimatedFinishesHeight(limited.groups, dense) <= budget) return { dense, descriptionLines, limited };
+    }
+  }
+
+  const limited = limitFinishGroups(data.finishGroups, TWO_PER_PAGE_FINISH_MINIMUM);
+  for (const descriptionLines of [1, 0]) {
+    if (topHeight(descriptionLines) + estimatedFinishesHeight(limited.groups, dense) <= budget) return { dense, descriptionLines, limited };
+  }
+
+  return { dense, descriptionLines: 0, limited };
+}
+
 function TwoPerPageCard({
   data,
   itemNumber,
+  left,
+  preparedBy,
+  quotationNo,
   sectionTitle,
+  showDescription,
 }: {
   data: ProductPageData;
   itemNumber: number | null;
+  left: number;
+  preparedBy: string | null | undefined;
+  quotationNo: string | null | undefined;
   sectionTitle: string;
+  showDescription: boolean;
 }) {
   const minimalMeta = data.meta.filter((row) => ["Code", "Brand", "Origin"].includes(row.label));
+  // Same cells and data as the one-per-page details row; a cell is skipped when its value is empty.
+  const detailCells = [
+    ...minimalMeta.map((row) => ({ label: row.label, value: row.value })),
+    { label: "Quote no.", value: quotationNo },
+    { label: "Prepared by", value: preparedBy },
+  ].filter((cell): cell is { label: string; value: string } => Boolean(cell.value));
+  // Estimate whether the row wraps (860 wide, 28 gap). It is anchored to the panel edge so it grows upward, and the
+  // image box gets shorter when two lines are expected so the two never overlap.
+  const detailRowWidth = detailCells.reduce((sum, cell) => sum + Math.max(cell.label.length * 12.5, cell.value.length * 10.6), 0) + Math.max(detailCells.length - 1, 0) * 28;
+  const imageBoxHeight = detailRowWidth > 860 ? 390 : 430;
+  const { dense, descriptionLines, limited } = twoPerPageCardPlan(data, showDescription);
+  const showDescriptionText = showDescription && descriptionLines > 0;
+  const eyebrow = [itemNumber ? `Item ${itemNumber}` : null, sectionTitle].filter(Boolean).join(" · ");
+  const badgeStyle = { border: `1px solid ${presentationTheme.bronze}`, padding: `${u(2)} ${u(8)}`, fontSize: u(15), fontWeight: 600, letterSpacing: u(2), color: presentationTheme.bronze };
 
   return (
-    <article className="flex min-h-0 flex-col overflow-hidden border border-zinc-200 bg-white">
-      <div className="flex items-start justify-between gap-3 px-5 pb-3 pt-4">
-        <div className="min-w-0">
-          <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-zinc-400">{sectionTitle}</p>
-          <h3 className="mt-1.5 text-[21px] font-light tracking-tight text-zinc-950" style={clampStyle(2)}>
-            {data.heading}
-            {data.item.is_optional ? <span className="ml-2 border border-red-300 bg-red-50 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
-            {data.item.is_rate_only ? <span className="ml-2 border border-sky-300 bg-sky-50 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
-          </h3>
-        </div>
-        {itemNumber ? (
-          <div className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-            Item {itemNumber}
-          </div>
-        ) : null}
+    <article className="absolute top-0 overflow-hidden bg-white" style={{ left: u(left), width: u(956), height: "100%" }}>
+      <div className="absolute bg-white" style={{ left: u(48), top: u(36), width: u(860), height: u(imageBoxHeight) }}>
+        <PresentationImageStage
+          alt={data.heading}
+          boundsClassName={presentationImageBoundsClass(data.imageFrameSize, true)}
+          emptyContent={(
+            <div className="flex h-full w-full items-center justify-center bg-white text-center uppercase" style={{ padding: `0 ${u(40)}`, fontSize: u(15), letterSpacing: u(3), color: productTheme.mutedOnWhite }}>
+              Visual pending
+            </div>
+          )}
+          fit={data.imageSettings?.fit === "cover" ? "cover" : "contain"}
+          imageUrl={data.imageUrl}
+          positionX={data.imagePositionX}
+          positionY={data.imagePositionY}
+          scale={data.imageScale}
+        />
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col px-5 pb-5">
-        <div className="flex min-h-0 flex-[1_1_70%] items-center justify-center overflow-hidden bg-white">
-          <PresentationImageStage
-            alt={data.heading}
-            boundsClassName={presentationImageBoundsClass(data.imageFrameSize, true)}
-            emptyContent={(
-              <div className="flex h-full w-full items-center justify-center bg-white px-6 text-center text-xs text-zinc-400">
-                Visual pending
-              </div>
-            )}
-            fit={data.imageSettings?.fit === "cover" ? "cover" : "contain"}
-            imageUrl={data.imageUrl}
-            positionX={data.imagePositionX}
-            positionY={data.imagePositionY}
-            scale={data.imageScale}
-          />
+      {detailCells.length ? (
+        <div
+          className="absolute flex flex-wrap justify-between bg-white"
+          style={{ left: u(48), bottom: u(532), width: u(860), borderTop: `1px solid ${productTheme.hairlineOnWhite}`, paddingTop: u(12), columnGap: u(28), rowGap: u(10) }}
+        >
+          {detailCells.map((cell) => (
+            <ProductDetailCell key={cell.label} compact label={cell.label} value={cell.value} />
+          ))}
         </div>
+      ) : null}
 
-        {minimalMeta.length ? (
-          <div className="mt-3 border-t border-zinc-200 bg-[#fcfcfd] px-1 pt-3">
-            <dl className={`grid gap-3 ${minimalMeta.length === 1 ? "grid-cols-1" : minimalMeta.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
-              {minimalMeta.map((row) => (
-                <div key={row.label} className="min-w-0">
-                  <dt className="text-[9px] font-semibold uppercase tracking-[0.22em] text-zinc-400">{row.label}</dt>
-                  <dd className="mt-1 text-[11px] font-semibold leading-5 text-zinc-900 [overflow-wrap:anywhere]" style={clampStyle(2)}>
-                    {row.value}
-                  </dd>
+      <div className="absolute" style={{ left: 0, top: u(560), width: u(956), height: u(520), background: presentationTheme.bg }}>
+        <div className="absolute flex flex-col justify-between" style={{ left: u(40), top: u(36), width: u(876), height: u(448), gap: u(18) }}>
+          <div className="flex min-h-0 flex-col overflow-hidden [&>*]:shrink-0" style={{ gap: u(10) }}>
+            <p className="uppercase" style={{ ...clampStyle(1), fontSize: u(18), fontWeight: 600, letterSpacing: u(5), lineHeight: 1.2, color: presentationTheme.bronze }}>{eyebrow}</p>
+            <div>
+              <h3 className="presentation-serif" style={{ ...clampStyle(2), fontSize: u(44), fontWeight: 500, lineHeight: 1, letterSpacing: u(-1), color: presentationTheme.text }}>
+                {data.heading}
+              </h3>
+              {data.item.is_optional || data.item.is_rate_only ? (
+                <div className="flex flex-wrap" style={{ marginTop: u(8), gap: u(8) }}>
+                  {data.item.is_optional ? <span className="uppercase" style={badgeStyle}>Optional</span> : null}
+                  {data.item.is_rate_only ? <span className="uppercase" style={badgeStyle}>Rate only</span> : null}
+                </div>
+              ) : null}
+            </div>
+            {data.summary ? (
+              <p className="uppercase" style={{ ...clampStyle(1), fontSize: u(17), fontWeight: 600, letterSpacing: u(3), lineHeight: 1.3, color: presentationTheme.bronze }}>{data.summary}</p>
+            ) : null}
+            {showDescriptionText ? (
+              data.cleanedSpecification ? (
+                <p className="whitespace-pre-wrap" style={{ ...clampStyle(descriptionLines), fontSize: u(18), lineHeight: 1.5, color: presentationTheme.muted }}>{data.cleanedSpecification}</p>
+              ) : (
+                <p style={{ fontSize: u(18), lineHeight: 1.5, color: presentationTheme.muted, opacity: 0.7 }}>Specification details not added yet.</p>
+              )
+            ) : null}
+          </div>
+
+          {limited.groups.length ? (
+            <div className="flex shrink-0 flex-col" style={{ borderTop: `1px solid ${presentationTheme.hairline}`, paddingTop: u(14), gap: u(12) }}>
+              <div className="flex items-baseline justify-between" style={{ gap: u(16) }}>
+                <p className="uppercase" style={{ fontSize: u(16), fontWeight: 600, letterSpacing: u(4), color: presentationTheme.text }}>Finishes</p>
+                {limited.hidden ? <p className="uppercase" style={{ fontSize: u(15), letterSpacing: u(2), color: presentationTheme.bronze }}>+{limited.hidden} more</p> : null}
+              </div>
+              {limited.groups.map((group) => dense ? (
+                <div key={group.label} className="flex items-start" style={{ gap: u(18) }}>
+                  <p className="shrink-0 uppercase [overflow-wrap:anywhere]" style={{ width: u(120), fontSize: u(16), fontWeight: 600, letterSpacing: u(3), lineHeight: 1.2, color: presentationTheme.bronze }}>{group.label}</p>
+                  <div className="flex min-w-0 flex-1 flex-wrap" style={{ rowGap: u(12), columnGap: u(10) }}>
+                    {group.items.map((finish) => <ProductFinishChip key={finish.id} compact finish={finish} />)}
+                  </div>
+                </div>
+              ) : (
+                <div key={group.label} className="flex flex-col" style={{ gap: u(10) }}>
+                  <p className="uppercase" style={{ fontSize: u(16), fontWeight: 600, letterSpacing: u(3), color: presentationTheme.bronze }}>{group.label}</p>
+                  <div className="flex flex-wrap" style={{ width: u(876), rowGap: u(12), columnGap: u(10) }}>
+                    {group.items.map((finish) => <ProductFinishChip key={finish.id} compact finish={finish} />)}
+                  </div>
                 </div>
               ))}
-            </dl>
-          </div>
-        ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
     </article>
   );
@@ -1569,10 +1825,12 @@ function PresentationItemImageControl({
   fit,
   frameSize,
   hasOverrideImage,
+  imageRect = null,
   imageScale,
   positionX,
   positionY,
   itemId,
+  onClearImageRect,
   onFileSelected,
   onFitChange,
   onFrameSizeChange,
@@ -1588,10 +1846,12 @@ function PresentationItemImageControl({
   fit: PresentationImageFit;
   frameSize: PresentationImageFrameSize;
   hasOverrideImage: boolean;
+  imageRect?: PresentationImageRect | null;
   imageScale: number;
   positionX: number;
   positionY: number;
   itemId: string;
+  onClearImageRect?: () => void;
   onFileSelected: (file: File) => Promise<void>;
   onFitChange: (fit: PresentationImageFit) => void;
   onFrameSizeChange: (frameSize: PresentationImageFrameSize) => void;
@@ -1606,6 +1866,7 @@ function PresentationItemImageControl({
 }) {
   const [inputKey, setInputKey] = useState(0);
   const inputId = `presentation-image-upload-${itemId}-${inputKey}`;
+  const hasCustomFrame = Boolean(imageRect);
 
   return (
     <div className="mt-3 rounded-2xl border border-zinc-100 bg-zinc-50 px-3 py-3">
@@ -1674,6 +1935,19 @@ function PresentationItemImageControl({
         </button>
       </div>
 
+      {hasCustomFrame ? (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[#E3E7ED] bg-white px-3 py-2">
+          <p className="text-xs text-[#151A24]">Custom frame set on the slide</p>
+          <button
+            type="button"
+            onClick={onClearImageRect}
+            className="shrink-0 rounded-[10px] border border-[#D5DAE2] bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#151A24] transition hover:bg-zinc-50"
+          >
+            Clear custom frame
+          </button>
+        </div>
+      ) : null}
+
       <div className="mt-3">
         <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Image frame size</span>
         <div className="mt-2 grid grid-cols-3 gap-2">
@@ -1681,8 +1955,9 @@ function PresentationItemImageControl({
             <button
               key={option}
               type="button"
+              disabled={hasCustomFrame}
               onClick={() => onFrameSizeChange(option)}
-              className={`inline-flex h-10 min-w-0 items-center justify-center rounded-full border px-2 text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+              className={`inline-flex h-10 min-w-0 items-center justify-center rounded-full border px-2 text-[10px] font-semibold uppercase tracking-[0.12em] transition disabled:cursor-not-allowed disabled:opacity-50 ${
                 frameSize === option
                   ? "border-zinc-950 bg-zinc-950 text-white"
                   : "border-zinc-300 bg-white text-zinc-600 hover:border-zinc-400 hover:text-zinc-950"
@@ -1723,8 +1998,9 @@ function PresentationItemImageControl({
           max={1.2}
           step={0.05}
           value={imageScale}
+          disabled={hasCustomFrame}
           onChange={(event) => onScaleChange(Number(event.target.value))}
-          className="mt-2 w-full accent-zinc-900"
+          className="mt-2 w-full accent-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </div>
 
@@ -1739,8 +2015,9 @@ function PresentationItemImageControl({
           max={100}
           step={1}
           value={positionX}
+          disabled={hasCustomFrame}
           onChange={(event) => onPositionXChange(Number(event.target.value))}
-          className="mt-2 w-full accent-zinc-900"
+          className="mt-2 w-full accent-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </div>
 
@@ -1755,8 +2032,9 @@ function PresentationItemImageControl({
           max={100}
           step={1}
           value={positionY}
+          disabled={hasCustomFrame}
           onChange={(event) => onPositionYChange(Number(event.target.value))}
-          className="mt-2 w-full accent-zinc-900"
+          className="mt-2 w-full accent-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </div>
 
@@ -1814,6 +2092,8 @@ export function QuotationPresentation({
   const [expandedFlowGroupIds, setExpandedFlowGroupIds] = useState<string[] | null>(null);
   const [expandedFlowSectionIds, setExpandedFlowSectionIds] = useState<string[] | null>(null);
   const [selectedPresentationItemId, setSelectedPresentationItemId] = useState<string | null>(null);
+  // On-slide image editor: one selected product image at a time (editor preview only, never print).
+  const [selectedSlideImageItemId, setSelectedSlideImageItemId] = useState<string | null>(null);
   const [expandedMainSectionLayoutIds, setExpandedMainSectionLayoutIds] = useState<string[] | null>(null);
   const [expandedSectionSettingsKeys, setExpandedSectionSettingsKeys] = useState<string[] | null>(null);
   const [overridePreviewUrlByItemId, setOverridePreviewUrlByItemId] = useState<ImageUrlRecord>(presentationOverrideImageUrlByItemId);
@@ -1827,7 +2107,6 @@ export function QuotationPresentation({
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isSlideNavigatorOpen, setIsSlideNavigatorOpen] = useState(false);
   const [isMobileSettingsOpen, setIsMobileSettingsOpen] = useState(false);
-  const [isMobilePreview, setIsMobilePreview] = useState(false);
   const [previewZoomMode, setPreviewZoomMode] = useState<"fit-width" | "manual">("fit-width");
   const [fitPreviewScale, setFitPreviewScale] = useState(1);
   const [manualPreviewScale, setManualPreviewScale] = useState(1);
@@ -1919,6 +2198,17 @@ export function QuotationPresentation({
   const visibleCount = visiblePresentableItems.length;
   const totalCount = presentableItems.length;
   const isDirty = settingsSignature(settings) !== savedSignature;
+
+  // Warn before leaving only while there are unsaved presentation changes.
+  useEffect(() => {
+    if (!isDirty || printMode) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty, printMode]);
   const updatedAtLabel = formatUpdatedAt(settings.updatedAt);
   const isCompactLayout = settings.layoutMode === "two_per_page";
   const visibleContentOptions = isCompactLayout ? compactContentVisibilityOptions : fullContentVisibilityOptions;
@@ -2001,17 +2291,11 @@ export function QuotationPresentation({
   const visibleSlideCount = presentationSlides.length;
   const previewScale = previewZoomMode === "fit-width" ? fitPreviewScale : manualPreviewScale;
 
-  useEffect(() => {
-    const mediaQuery = window.matchMedia("(max-width: 1279px)");
-    const updateMobileState = () => setIsMobilePreview(mediaQuery.matches);
-
-    updateMobileState();
-    mediaQuery.addEventListener("change", updateMobileState);
-    return () => mediaQuery.removeEventListener("change", updateMobileState);
-  }, []);
+  // The editor preview always scales to fit its column (desktop and mobile). Print/PDF stays at natural size.
+  const scalePreview = !printMode;
 
   useEffect(() => {
-    if (!isMobilePreview) return;
+    if (!scalePreview) return;
 
     const viewport = previewViewportRef.current;
     const stack = previewStackRef.current;
@@ -2032,7 +2316,7 @@ export function QuotationPresentation({
     resizeObserver.observe(viewport);
     resizeObserver.observe(stack);
     return () => resizeObserver.disconnect();
-  }, [isMobilePreview, previewZoomMode, visibleSlideCount]);
+  }, [scalePreview, previewZoomMode, visibleSlideCount]);
 
   function adjustPreviewZoom(change: number) {
     setManualPreviewScale(Math.min(Math.max(previewScale + change, 0.2), 1.5));
@@ -2415,7 +2699,8 @@ export function QuotationPresentation({
       ...current,
       [itemId]: null,
     }));
-    updateItemOverride(itemId, DEFAULT_PRESENTATION_ITEM_OVERRIDE);
+    updateItemOverride(itemId, { ...DEFAULT_PRESENTATION_ITEM_OVERRIDE, imageRect: undefined });
+    setSelectedSlideImageItemId((current) => (current === itemId ? null : current));
     setItemOverrideStatus(itemId, "idle");
   }
 
@@ -2544,11 +2829,41 @@ export function QuotationPresentation({
   return (
     <main className="min-h-screen min-w-0 overflow-x-hidden bg-[#edf0f3] px-3 py-3 print:bg-white print:px-0 print:py-0 xl:overflow-x-visible xl:px-4 xl:py-6">
       <style>{`
-        @page { size: A4 landscape; margin: 0; }
+        @page { size: ${PRESENTATION_PAGE_WIDTH} ${PRESENTATION_PAGE_HEIGHT}; margin: 0; }
         html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .presentation-theme { font-family: var(--font-presentation-sans), Arial, Helvetica, sans-serif; }
+        .presentation-theme .presentation-serif { font-family: var(--font-presentation-serif), Georgia, "Times New Roman", serif; }
+        /* Settings sidebar (editor page only): one shared set of overrides instead of per-control rewrites. */
+        .presentation-settings-panel .text-zinc-950, .presentation-settings-panel .text-zinc-900, .presentation-settings-panel .text-zinc-800 { color: #151A24; }
+        .presentation-settings-panel .text-zinc-700, .presentation-settings-panel .text-zinc-600 { color: #3B4252; }
+        .presentation-settings-panel .text-zinc-500 { color: #6B7380; }
+        .presentation-settings-panel .text-zinc-400 { color: #8A93A1; }
+        .presentation-settings-panel .border-zinc-300 { border-color: #D5DAE2; }
+        .presentation-settings-panel .border-zinc-200 { border-color: #E3E7ED; }
+        .presentation-settings-panel .border-zinc-100 { border-color: #EEF1F5; }
+        .presentation-settings-panel .ring-zinc-200 { --tw-ring-color: #E3E7ED; }
+        .presentation-settings-panel .bg-zinc-50, .presentation-settings-panel .bg-zinc-50\/60, .presentation-settings-panel .bg-zinc-50\/70 { background-color: #F7F8FA; }
+        .presentation-settings-panel .rounded-full { border-radius: 10px; }
+        .presentation-settings-panel .rounded-lg, .presentation-settings-panel .rounded-xl, .presentation-settings-panel .rounded-2xl, .presentation-settings-panel .rounded-\[24px\] { border-radius: 12px; }
+        .presentation-settings-panel .rounded-lg.h-8 { border-radius: 8px; }
+        .presentation-settings-panel .bg-zinc-950, .presentation-settings-panel .bg-zinc-900 { background-color: #064e3b; border-color: #064e3b; color: #ffffff; }
+        .presentation-settings-panel .border-zinc-950, .presentation-settings-panel .border-zinc-900 { border-color: #064e3b; }
+        .presentation-settings-panel .hover\:bg-zinc-800:hover { background-color: #065f46; }
+        .presentation-settings-panel .hover\:border-zinc-400:hover { border-color: #9AA1AD; }
+        .presentation-settings-panel .hover\:text-zinc-950:hover { color: #151A24; }
+        .presentation-settings-panel .disabled\:bg-zinc-300:disabled { background-color: #D3D7DE; color: #9AA1AD; }
+        .presentation-settings-panel input[type="checkbox"], .presentation-settings-panel input[type="radio"] { accent-color: #064e3b; color: #064e3b; }
+        .presentation-settings-panel input[type="range"], .presentation-settings-panel .accent-zinc-900 { accent-color: #064e3b; }
+        .presentation-settings-panel input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), .presentation-settings-panel textarea, .presentation-settings-panel select {
+          border-color: #D5DAE2; border-radius: 10px; background-color: #ffffff; color: #151A24;
+        }
+        .presentation-settings-panel input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):focus, .presentation-settings-panel textarea:focus, .presentation-settings-panel select:focus {
+          border-color: #064e3b; outline: 2px solid #064e3b; outline-offset: 1px; box-shadow: none;
+        }
+        .presentation-settings-panel button:focus-visible, .presentation-settings-panel label:focus-within, .presentation-settings-panel [tabindex]:focus-visible { outline: 2px solid #064e3b; outline-offset: 2px; }
         @media print {
           html, body { background: #ffffff; }
-          .presentation-page { width: 297mm !important; height: 210mm !important; break-after: page; page-break-after: always; overflow: hidden !important; }
+          .presentation-page { width: ${PRESENTATION_PAGE_WIDTH} !important; height: ${PRESENTATION_PAGE_HEIGHT} !important; break-after: page; page-break-after: always; overflow: hidden !important; }
           .presentation-page:last-child { break-after: auto !important; page-break-after: auto !important; }
           .presentation-stack { gap: 0 !important; }
           .presentation-preview-reservation { width: auto !important; height: auto !important; }
@@ -2560,10 +2875,11 @@ export function QuotationPresentation({
       <div className={`mx-auto mb-4 grid max-w-full gap-3 print:hidden xl:hidden ${printMode ? "hidden" : ""}`}>
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-zinc-950">Presentation</p>
-            <p className="mt-1 text-xs text-zinc-500">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"}</p>
+            <p className="text-sm font-semibold text-[#151A24]">Presentation</p>
+            <p className="mt-1 text-xs text-[#6B7380]">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"}</p>
           </div>
-          <Link href={`/quotations/${quotation.id}`} className="inline-flex h-10 shrink-0 items-center rounded-full border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700">
+          <Link href={`/quotations/${quotation.id}`} className="inline-flex h-10 shrink-0 items-center gap-2 rounded-[10px] px-3 text-xs font-semibold border border-[#D5DAE2] bg-white text-[#151A24] transition hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800">
+            <ArrowLeft aria-hidden="true" className="h-4 w-4" />
             Back
           </Link>
         </div>
@@ -2572,50 +2888,104 @@ export function QuotationPresentation({
             <PresentationPptxExportButton />
           </PrintActions>
         </div>
-        <div className="flex min-w-0 items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white p-3">
+        <div className="flex min-w-0 items-center justify-between gap-3 rounded-2xl border border-[#E3E7ED] bg-white p-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Presentation Settings</p>
-            <p className="mt-1 text-xs text-zinc-600">{visibleCount} visible / {totalCount} total items</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6B7380]">Presentation Settings</p>
+            <p className="mt-1 text-xs text-[#151A24]">{visibleCount} visible / {totalCount} total items</p>
           </div>
           <button
             type="button"
             onClick={() => setIsMobileSettingsOpen(true)}
-            className="inline-flex h-10 shrink-0 items-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-800"
+            className="inline-flex h-10 shrink-0 items-center rounded-[10px] px-4 text-sm font-semibold border border-[#D5DAE2] bg-white text-[#151A24] transition hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800"
           >
             Open settings
           </button>
         </div>
       </div>
 
-      <div className={`mx-auto mb-5 hidden w-full max-w-[1530px] items-center justify-between gap-4 print:hidden xl:flex ${printMode ? "xl:hidden" : ""}`}>
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Quotation Presentation</p>
-          <p className="mt-1 text-sm text-zinc-600">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"}.</p>
-          <p className="mt-1 text-sm text-zinc-600">Landscape presentation preview. Use browser print to save as PDF.</p>
-          <p className={`mt-2 text-xs ${isDirty ? "text-amber-700" : "text-zinc-500"}`}>
-            {isDirty ? "Preview includes unsaved changes. Save to keep them." : "Preview matches the latest saved presentation settings."}
-          </p>
+      <div className={`mx-auto mb-5 hidden w-full max-w-[1570px] print:hidden xl:block ${printMode ? "xl:hidden" : ""}`}>
+        <div className="mb-4 flex items-center gap-4 rounded-2xl border border-[#E3E7ED] bg-white px-4 py-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+          <Link href={`/quotations/${quotation.id}`} className="inline-flex h-10 shrink-0 items-center gap-2 rounded-[10px] px-3 text-sm font-semibold border border-[#D5DAE2] bg-white text-[#151A24] transition hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800">
+            <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+            Back
+          </Link>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-lg font-bold text-[#151A24]">{[quotation.quotation_no, project?.project_name ?? quotation.title].filter(Boolean).join(" - ")}</p>
+            <p className="truncate text-xs text-[#6B7380]">{[client?.company_name, project?.project_name, quotation.quotation_no].filter(Boolean).join(" / ")}</p>
+          </div>
+          <PrintActions showHint={false}>
+            <PresentationPptxExportButton />
+          </PrintActions>
         </div>
-        <PrintActions>
-          <PresentationPptxExportButton />
-        </PrintActions>
+
+        <div className="flex items-stretch gap-4">
+          <div className="flex min-w-0 flex-1 items-center gap-4 rounded-2xl border border-[#E3E7ED] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#EDF0F4] text-[#151A24]">
+              <Layers aria-hidden="true" className="h-7 w-7" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-bold uppercase tracking-[0.18em] text-[#151A24]">Quotation Presentation</p>
+              <p className="mt-1 text-sm text-[#6B7380]">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"}. Landscape presentation preview. Use browser print to save as PDF.</p>
+              <p className={`mt-1 text-xs ${isDirty ? "text-amber-700" : "text-[#6B7380]"}`}>
+                {isDirty ? "Preview includes unsaved changes. Save to keep them." : "Preview matches the latest saved presentation settings."}
+              </p>
+            </div>
+          </div>
+          {[
+            { icon: Layers, value: String(visibleSlideCount), label: "Visible slides", caption: `Total items: ${totalCount}` },
+            { icon: ClipboardList, value: String(visibleCount), label: "Presentation items", caption: `${visibleCount} visible / ${totalCount} total` },
+            { icon: Settings2, value: "Landscape", label: "Page orientation", caption: "Optimized for print" },
+          ].map((card) => (
+            <div key={card.label} className="flex w-[230px] shrink-0 items-center gap-3 rounded-2xl border border-[#E3E7ED] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#EDF0F4] text-[#151A24]">
+                <card.icon aria-hidden="true" className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-lg font-bold leading-tight text-[#151A24]">{card.value}</p>
+                <p className="truncate text-sm font-semibold text-[#151A24]">{card.label}</p>
+                <p className="truncate text-xs text-[#6B7380]">{card.caption}</p>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="presentation-workspace mx-auto w-full max-w-[1570px] min-w-0 print:block xl:grid xl:grid-cols-[minmax(0,1fr)_440px] xl:items-start xl:gap-6">
       <section className={`${isMobileSettingsOpen ? "fixed inset-3 z-50 block max-h-[calc(100dvh-1.5rem)] overflow-y-auto" : "hidden"} mx-auto w-auto max-w-full print:hidden xl:sticky xl:top-6 xl:col-start-2 xl:row-start-1 xl:block xl:max-h-[calc(100vh-3rem)] xl:w-auto xl:self-start xl:overflow-y-auto xl:overscroll-contain ${printMode ? "hidden xl:hidden" : ""}`}>
-        <div className="rounded-[20px] border border-zinc-200 bg-white p-3 shadow-[0_18px_50px_rgba(15,23,42,0.08)] xl:rounded-[28px] xl:p-5">
+        <div className="presentation-settings-panel rounded-2xl border border-[#E3E7ED] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
           <div className="flex min-w-0 flex-col gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Presentation Settings</p>
-              <p className="mt-2 text-lg font-semibold text-zinc-950">{visibleCount} visible / {totalCount} total items</p>
-              <p className="mt-1 text-sm text-zinc-500">Manage presentation-only item visibility, layout, pages, and cover/closing text.</p>
-              <p className="mt-1 text-sm text-zinc-500">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"} generated.</p>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Settings aria-hidden="true" className="h-5 w-5 shrink-0 text-[#151A24]" />
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#151A24]">Presentation Settings</p>
+              </div>
+              <div className="flex min-w-0 items-start gap-2 text-right text-xs text-[#6B7380]">
+                {isDirty || saveState === "error"
+                  ? <CircleAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                  : <CircleCheck aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />}
+                <div className="min-w-0">
+                  {updatedAtLabel ? <p>Last saved: {updatedAtLabel}</p> : <p>Not saved yet</p>}
+                  {saveMessage ? (
+                    <p className={saveState === "error" ? "text-red-600" : "text-emerald-700"}>
+                      {saveMessage}
+                    </p>
+                  ) : (
+                    <p className={isDirty ? "text-amber-700" : ""}>{isDirty ? "You have unsaved presentation changes." : "Presentation settings are up to date."}</p>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="grid w-full grid-cols-2 gap-2">
+            {persistenceDisabled || uploadsDisabled ? <p className="text-xs text-amber-700">Development preview only. Saving and uploads are disabled.</p> : null}
+            <div className="min-w-0">
+              <p className="text-lg font-semibold text-[#151A24]">{visibleCount} visible / {totalCount} total items</p>
+              <p className="mt-1 text-sm text-[#6B7380]">Manage presentation-only item visibility, layout, pages, and cover/closing text.</p>
+              <p className="mt-1 text-sm text-[#6B7380]">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"} generated.</p>
+            </div>
+            <div className="grid w-full grid-cols-2 gap-3">
               <button
                 type="button"
                 onClick={() => setIsMobileSettingsOpen(false)}
-                className="col-span-2 inline-flex h-10 items-center justify-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 xl:hidden"
+                className="col-span-2 inline-flex h-10 items-center justify-center rounded-[10px] px-4 text-sm font-semibold border border-[#D5DAE2] bg-white text-[#151A24] transition hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800 xl:hidden"
               >
                 Close
               </button>
@@ -2623,36 +2993,27 @@ export function QuotationPresentation({
                 type="button"
                 disabled={persistenceDisabled || isPending || !isDirty}
                 onClick={saveSettings}
-                className="inline-flex h-10 items-center justify-center rounded-full bg-zinc-950 px-5 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-[10px] bg-emerald-900 px-5 text-sm font-semibold text-white transition hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:cursor-not-allowed disabled:bg-[#D3D7DE] disabled:text-[#9AA1AD]"
               >
+                <Save aria-hidden="true" className="h-4 w-4" />
                 {persistenceDisabled ? "Preview only" : isPending ? "Saving..." : "Save"}
               </button>
               <button
                 type="button"
                 onClick={resetPresentationSettings}
-                className="inline-flex h-10 items-center justify-center whitespace-nowrap rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                className="inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] px-4 text-sm font-semibold border border-[#D5DAE2] bg-white text-[#151A24] transition hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800"
               >
+                <RotateCcw aria-hidden="true" className="h-4 w-4" />
                 Reset presentation
               </button>
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-zinc-500">
-            {updatedAtLabel ? <p>Last saved: {updatedAtLabel}</p> : <p>Not saved yet</p>}
-            {persistenceDisabled || uploadsDisabled ? <p className="text-amber-700">Development preview only. Saving and uploads are disabled.</p> : null}
-            {saveMessage ? (
-              <p className={saveState === "error" ? "text-red-600" : "text-emerald-700"}>
-                {saveMessage}
-              </p>
-            ) : (
-              <p>{isDirty ? "You have unsaved presentation changes." : "Presentation settings are up to date."}</p>
-            )}
-          </div>
-
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="mt-4 grid grid-cols-2 gap-x-2 gap-y-1 border-b border-[#E3E7ED] sm:grid-cols-4">
             {settingsSections.map((section) => (
               <SettingsSectionButton
                 key={section.key}
+                icon={settingsSectionIcons[section.key]}
                 active={section.key === "areasSections"
                   ? activeSettingsSection === "areasSections" || activeSettingsSection === "mainLayouts" || activeSettingsSection === "sections"
                   : activeSettingsSection === section.key}
@@ -2662,27 +3023,32 @@ export function QuotationPresentation({
             ))}
           </div>
 
-          <div className="mt-5 rounded-[24px] border border-zinc-200 bg-zinc-50/70 p-4">
+          <div className="mt-4 rounded-xl border border-[#E3E7ED] bg-[#F7F8FA] p-4">
             {activeSettingsSection === "flow" ? (
               <>
-                <div className="flex min-w-0 flex-col items-stretch gap-3">
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Presentation Flow</p>
-                    <p className="mt-1 text-sm text-zinc-500">Review the real presentation hierarchy, control visibility, and adjust presentation-only order.</p>
+                <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1 basis-48">
+                    <div className="flex items-center gap-2">
+                      <List aria-hidden="true" className="h-4 w-4 shrink-0 text-[#151A24]" />
+                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#151A24]">Presentation Flow</p>
+                    </div>
+                    <p className="mt-2 text-sm text-[#6B7380]">Review the real presentation hierarchy, control visibility, and adjust presentation-only order.</p>
                   </div>
-                  <div className="grid w-full gap-2 xl:grid-cols-2">
+                  <div className="flex shrink-0 flex-col gap-2">
                     <button
                       type="button"
                       onClick={resetFlowOrder}
-                      className="inline-flex h-10 w-full items-center justify-center whitespace-nowrap rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950 xl:h-9"
+                      className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] px-3 text-sm font-semibold border border-[#D5DAE2] bg-white text-[#151A24] transition hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800"
                     >
+                      <ListRestart aria-hidden="true" className="h-4 w-4" />
                       Reset flow order
                     </button>
                     <button
                       type="button"
                       onClick={resetHiddenItems}
-                      className="inline-flex h-10 w-full items-center justify-center whitespace-nowrap rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950 xl:h-9"
+                      className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] px-3 text-sm font-semibold border border-[#D5DAE2] bg-white text-[#151A24] transition hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800"
                     >
+                      <Eye aria-hidden="true" className="h-4 w-4" />
                       Show all items
                     </button>
                   </div>
@@ -2725,7 +3091,7 @@ export function QuotationPresentation({
                             className="min-w-0 text-left"
                           >
                             <div className="flex min-w-0 items-start gap-2">
-                              <span className="mt-0.5 shrink-0 text-xs text-zinc-400">{groupExpanded ? "v" : ">"}</span>
+                              <span className="mt-0.5 shrink-0 text-zinc-400">{groupExpanded ? <ChevronDown aria-hidden="true" className="h-4 w-4" /> : <ChevronRight aria-hidden="true" className="h-4 w-4" />}</span>
                               <p className="min-w-0 break-words text-sm font-semibold text-zinc-900">{groupTitle}</p>
                             </div>
                             <p className="mt-1 pl-5 text-xs uppercase tracking-[0.16em] text-zinc-400">{groupTypeLabel}</p>
@@ -2761,7 +3127,7 @@ export function QuotationPresentation({
                                 : -1;
 
                               return (
-                                <div key={section.id} className="rounded-2xl border border-zinc-200 bg-zinc-50/60">
+                                <div key={section.id} className="ml-3 rounded-2xl border border-zinc-200 bg-zinc-50/60">
                                   <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2 px-3 py-3">
                                     <SectionVisibilityCheckbox
                                       checked={sectionAllVisible}
@@ -2774,7 +3140,7 @@ export function QuotationPresentation({
                                       className="min-w-0 text-left"
                                     >
                                       <div className="flex min-w-0 items-start gap-2">
-                                        <span className="mt-0.5 shrink-0 text-xs text-zinc-400">{sectionExpanded ? "v" : ">"}</span>
+                                        <span className="mt-0.5 shrink-0 text-zinc-400">{sectionExpanded ? <ChevronDown aria-hidden="true" className="h-4 w-4" /> : <ChevronRight aria-hidden="true" className="h-4 w-4" />}</span>
                                         <p className="min-w-0 break-words text-sm font-semibold text-zinc-900">{section.section_title}</p>
                                       </div>
                                       <p className="mt-1 pl-5 text-xs uppercase tracking-[0.16em] text-zinc-400">Section / Area</p>
@@ -2808,7 +3174,7 @@ export function QuotationPresentation({
                                         return (
                                           <div
                                             key={item.id}
-                                            className={`rounded-2xl border px-3 py-2.5 transition ${
+                                            className={`ml-3 rounded-2xl border px-3 py-2.5 transition ${
                                               included
                                                 ? "border-zinc-200 bg-white"
                                                 : "border-zinc-200 bg-zinc-50 text-zinc-500"
@@ -2941,10 +3307,15 @@ export function QuotationPresentation({
                         fit={itemOverride.imageFit}
                         frameSize={itemOverride.imageFrameSize}
                         hasOverrideImage={hasOverrideImage}
+                        imageRect={itemOverride.imageRect ?? null}
                         imageScale={itemOverride.imageScale}
                         positionX={itemOverride.imagePositionX}
                         positionY={itemOverride.imagePositionY}
                         itemId={item.id}
+                        onClearImageRect={() => {
+                          updateItemOverride(item.id, { imageRect: undefined });
+                          setSelectedSlideImageItemId(null);
+                        }}
                         onFileSelected={(file) => handlePresentationItemImageUpload(item.id, file)}
                         onFitChange={(fit) => updateItemOverride(item.id, { imageFit: fit })}
                         onFrameSizeChange={(frameSize) => updateItemOverride(item.id, { imageFrameSize: frameSize })}
@@ -3440,27 +3811,33 @@ export function QuotationPresentation({
       </section>
 
       <div className="min-w-0 print:block xl:col-start-1 xl:row-start-1">
-      <section className={`mx-auto mb-6 w-[297mm] max-w-full print:hidden ${printMode ? "hidden" : "block"}`}>
-        <div className="rounded-[20px] border border-zinc-200 bg-white p-3 shadow-[0_18px_50px_rgba(15,23,42,0.08)] xl:rounded-[28px] xl:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Slide Navigator</p>
-              <p className="mt-2 text-lg font-semibold text-zinc-950">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"}</p>
-              <p className="mt-1 text-sm text-zinc-500">Jump to generated slides without opening a long page list.</p>
+      <section className={`mx-auto mb-4 w-[13.333in] max-w-full print:hidden ${printMode ? "hidden" : "block"}`}>
+        <div className="rounded-2xl border border-[#E3E7ED] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Eye aria-hidden="true" className="h-5 w-5 text-[#151A24]" />
+              <p className="text-sm font-bold uppercase tracking-[0.18em] text-[#151A24]">Presentation Preview</p>
+            </div>
+            <div className="hidden text-xs text-[#6B7380] md:block">
+              <p>In Chrome print settings, turn off Headers and footers for a clean PDF.</p>
+              <p>Use Landscape orientation.</p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setIsSlideNavigatorOpen((current) => !current)}
-                className="inline-flex h-10 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-800 transition hover:border-zinc-400 hover:text-zinc-950"
+                aria-expanded={isSlideNavigatorOpen}
+                className="inline-flex h-10 items-center gap-2 rounded-[10px] px-4 text-sm font-semibold border border-[#D5DAE2] bg-white text-[#151A24] transition hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800"
               >
+                <List aria-hidden="true" className="h-4 w-4" />
                 {isSlideNavigatorOpen ? "Hide Slide Navigator" : `Slide Navigator - ${visibleSlideCount} visible ${visibleSlideCount === 1 ? "slide" : "slides"}`}
+                <ChevronRight aria-hidden="true" className={`h-4 w-4 transition ${isSlideNavigatorOpen ? "rotate-90" : ""}`} />
               </button>
               {isSlideNavigatorOpen ? (
                 <button
                   type="button"
                   onClick={() => setIsSlideNavigatorOpen(false)}
-                  className="inline-flex h-10 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                  className="inline-flex h-10 items-center rounded-[10px] px-4 text-sm font-semibold border border-[#D5DAE2] bg-white text-[#151A24] transition hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800"
                 >
                   Close
                 </button>
@@ -3509,13 +3886,14 @@ export function QuotationPresentation({
         </div>
       </section>
 
-      <div className={`mb-3 items-center justify-center gap-2 print:hidden xl:hidden ${printMode ? "hidden" : "flex"}`}>
+      <div className={printMode ? "" : "overflow-hidden rounded-2xl print:overflow-visible print:rounded-none"}>
+      <div className={`items-center gap-2 bg-[#2B2D33] p-3 print:hidden ${printMode ? "hidden" : "flex"}`}>
         <button
           type="button"
           onClick={() => adjustPreviewZoom(-0.1)}
           disabled={previewScale <= 0.2}
           aria-label="Zoom out"
-          className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-zinc-300 bg-white text-lg font-semibold disabled:text-zinc-300"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[#363940] text-lg font-semibold text-zinc-100 transition hover:bg-[#42454D] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 disabled:opacity-40"
         >
           −
         </button>
@@ -3523,11 +3901,11 @@ export function QuotationPresentation({
           type="button"
           onClick={() => setPreviewZoomMode("fit-width")}
           aria-label="Fit presentation preview to width"
-          className={`inline-flex h-10 items-center justify-center rounded-md border px-3 text-xs font-semibold ${previewZoomMode === "fit-width" ? "border-emerald-800 bg-emerald-50 text-emerald-900" : "border-zinc-300 bg-white text-zinc-700"}`}
+          className={`inline-flex h-10 items-center justify-center rounded-lg px-3 text-xs font-semibold text-zinc-100 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 ${previewZoomMode === "fit-width" ? "bg-[#0F6B50]" : "bg-[#363940] hover:bg-[#42454D]"}`}
         >
           Fit width
         </button>
-        <span className="inline-flex h-10 min-w-14 items-center justify-center rounded-md border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-700">
+        <span className="inline-flex h-10 min-w-14 items-center justify-center rounded-lg bg-[#363940] px-2 text-xs font-semibold text-zinc-100">
           {Math.round(previewScale * 100)}%
         </span>
         <button
@@ -3535,16 +3913,17 @@ export function QuotationPresentation({
           onClick={() => adjustPreviewZoom(0.1)}
           disabled={previewScale >= 1.5}
           aria-label="Zoom in"
-          className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-zinc-300 bg-white text-lg font-semibold disabled:text-zinc-300"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[#363940] text-lg font-semibold text-zinc-100 transition hover:bg-[#42454D] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 disabled:opacity-40"
         >
           +
         </button>
       </div>
 
+      <div className={printMode ? "" : "bg-[#5F6670] p-3 print:bg-transparent print:p-0"}>
       <div ref={previewViewportRef} className="min-w-0 overflow-x-auto overscroll-x-contain print:overflow-visible">
         <div
           className="presentation-preview-reservation mx-auto"
-          style={isMobilePreview ? {
+          style={scalePreview ? {
             height: previewStackSize.height * previewScale,
             width: previewStackSize.width * previewScale,
           } : undefined}
@@ -3552,72 +3931,51 @@ export function QuotationPresentation({
         <div
           ref={previewStackRef}
           className="presentation-preview-content"
-          style={isMobilePreview ? {
+          style={scalePreview ? {
             transform: `scale(${previewScale})`,
             transformOrigin: "top left",
-            width: "297mm",
+            width: PRESENTATION_PAGE_WIDTH,
           } : undefined}
         >
-      <div className="presentation-stack mx-auto flex w-fit max-w-full flex-col gap-5">
+      <div className={`presentation-stack presentation-theme ${presentationSerif.variable} ${presentationSans.variable} mx-auto flex w-fit max-w-full flex-col gap-5`}>
         {presentationSlides.map((slide, slideIndex) => {
           const pageId = slideDomId(slideIndex);
 
           if (slide.type === "cover") {
             return (
-              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden">
-                <div className="absolute inset-0 bg-[linear-gradient(130deg,_#eef2f5_0%,_#f8fafc_44%,_#ffffff_44%,_#ffffff_100%)]" />
-                <div className="absolute inset-y-0 right-0 w-[30%] bg-zinc-950" />
-                <div className="absolute left-0 top-0 h-full w-[44%] bg-[radial-gradient(circle_at_top_left,_rgba(39,39,42,0.08),_transparent_55%)]" />
-                <div className="relative grid h-full grid-cols-[1.5fr_0.7fr]">
-                  <div className="flex h-full flex-col justify-between px-12 py-12">
-                    <div>
-                      <div className="flex items-center gap-3">
-                        <div className="h-px w-14 bg-zinc-400" />
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">Client Presentation</p>
-                      </div>
-                      <h1 className="mt-10 max-w-4xl text-[56px] font-light leading-[1.02] tracking-[-0.04em] text-zinc-950">
-                        {coverTitle}
-                      </h1>
-                      {coverSubtitle ? (
-                        <p className="mt-8 max-w-2xl text-lg leading-8 text-zinc-600" style={clampStyle(3)}>
-                          {coverSubtitle}
-                        </p>
-                      ) : null}
-                    </div>
-
-                    <div className="grid grid-cols-[1.1fr_0.9fr] gap-10 border-t border-zinc-200 pt-8">
-                      <div>
-                        {coverProjectDisplayName ? <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Project</p> : null}
-                        {coverProjectDisplayName ? (
-                          <p className="mt-2 text-2xl font-light leading-tight text-zinc-950">{coverProjectDisplayName}</p>
-                        ) : null}
-                        {coverClientDisplayName ? (
-                          <p className="mt-4 text-sm font-medium uppercase tracking-[0.16em] text-zinc-500">
-                            Prepared for {coverClientDisplayName}
-                          </p>
-                        ) : null}
-                      </div>
-                      <div className="grid gap-3 self-end">
-                        <MetaCard label="Project / Quote No." value={quotation.quotation_no} />
-                        <MetaCard label="Date" value={formatPresentationDate(quotation.quotation_date)} />
-                      </div>
-                    </div>
+              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden" style={darkSlideStyle}>
+                <ThemeBronzeGlow />
+                <div aria-hidden="true" className="absolute" style={{ left: u(1790), top: u(96), width: u(2), height: u(888), background: presentationTheme.bronze }} />
+                <div className="absolute flex flex-col justify-between" style={{ left: u(128), top: u(96), bottom: u(96), width: u(1560) }}>
+                  <div className="flex items-center justify-between" style={{ gap: u(48) }}>
+                    <PresentationBrandLogo
+                      logoUrl={companyProfile.logoUrl}
+                      fallbackText={coverPreparedBy ?? companyProfile.displayName}
+                      className={themeLogoClassName}
+                      fallbackClassName={themeLogoFallbackClassName}
+                    />
+                    {coverWebsite ? <p style={{ fontSize: u(24), lineHeight: 1.3, color: presentationTheme.muted }}>{coverWebsite}</p> : null}
                   </div>
 
-                  <div className="relative flex h-full flex-col justify-between px-9 py-10 text-white">
-                    <div>
-                      <div className="flex items-center justify-between gap-4">
-                        <PresentationBrandLogo
-                          logoUrl={companyProfile.logoUrl}
-                          fallbackText={coverPreparedBy ?? companyProfile.displayName}
-                        />
-                      </div>
-                      {coverWebsite ? <p className="mt-4 text-sm leading-6 text-white/70">{coverWebsite}</p> : null}
-                    </div>
+                  <div>
+                    <ThemeEyebrow>Client presentation</ThemeEyebrow>
+                    <h1 className="presentation-serif" style={{ marginTop: u(32), maxWidth: u(1100), fontSize: u(120), fontWeight: 500, lineHeight: 1.02, color: presentationTheme.text }}>
+                      {coverTitle}
+                    </h1>
+                    <div style={{ marginTop: u(36), width: u(120), height: u(3), background: presentationTheme.bronze }} />
+                    {coverSubtitle ? (
+                      <p style={{ ...clampStyle(3), marginTop: u(36), width: u(820), fontSize: u(28), lineHeight: 1.5, color: presentationTheme.muted }}>
+                        {coverSubtitle}
+                      </p>
+                    ) : null}
+                  </div>
 
-                    <div className="grid gap-4 border-t border-white/10 pt-7">
-                      <MetaLine label="Prepared By" value={coverPreparedBy} />
-                    </div>
+                  <div className="flex items-start justify-between" style={{ gap: u(48), borderTop: `1px solid ${presentationTheme.hairline}`, paddingTop: u(36) }}>
+                    <ThemeInfoCell label="Project" value={coverProjectDisplayName} />
+                    <ThemeInfoCell label="Quote no." value={quotation.quotation_no} />
+                    <ThemeInfoCell label="Prepared for" value={coverClientDisplayName} />
+                    <ThemeInfoCell label="Prepared by" value={coverPreparedBy} />
+                    <ThemeInfoCell label="Date" value={formatPresentationDate(quotation.quotation_date)} />
                   </div>
                 </div>
               </PresentationPage>
@@ -3626,35 +3984,32 @@ export function QuotationPresentation({
 
           if (slide.type === "design") {
             return (
-              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="overflow-hidden bg-[linear-gradient(130deg,_#eef2f5_0%,_#f8fafc_44%,_#ffffff_44%,_#ffffff_100%)]">
-                <div className="grid h-full grid-cols-[0.9fr_1.1fr] gap-12 px-12 py-11">
-                  <div className="flex h-full flex-col justify-between border-r border-zinc-200 pr-10">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">Design Considerations</p>
-                      <h2 className="mt-5 text-5xl font-light tracking-[-0.04em] text-zinc-950">Design
-                        <span className="block text-zinc-600">Considerations</span>
+              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden" style={darkSlideStyle}>
+                <div className="flex h-full flex-col" style={{ padding: `${u(96)} ${u(128)}` }}>
+                  <div className="flex items-start justify-between" style={{ gap: u(64) }}>
+                    <div className="min-w-0">
+                      <ThemeEyebrow>Editorial overview</ThemeEyebrow>
+                      <h2 className="presentation-serif" style={{ marginTop: u(16), fontSize: u(84), fontWeight: 500, lineHeight: 1.05, color: presentationTheme.text }}>
+                        Design <span style={{ color: presentationTheme.bronze }}>considerations</span>
                       </h2>
-                      <div className="mt-8 h-px w-20 bg-zinc-300" />
                     </div>
-
-                    <div>
-                      <p className="max-w-sm text-base leading-7 text-zinc-600" style={clampStyle(5)}>
-                        Core principles reviewed when aligning furniture choices with workflow, brand expression, and long-term performance.
-                      </p>
-                      <p className="mt-8 text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
-                        Editorial Overview
-                      </p>
-                    </div>
+                    <p className="shrink-0" style={{ ...clampStyle(4), width: u(620), fontSize: u(28), lineHeight: 1.5, color: presentationTheme.muted }}>
+                      Core principles reviewed when aligning furniture choices with workflow, brand expression, and long-term performance.
+                    </p>
                   </div>
 
-                  <div className="grid content-center grid-cols-2 gap-x-8 gap-y-5">
+                  <div className="mt-auto grid grid-cols-4" style={{ gap: u(24), gridAutoRows: "1fr" }}>
                     {designConsiderations.map((block, index) => (
-                      <article key={block.title} className="border-t border-zinc-200 pt-4">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400">
+                      <article
+                        key={block.title}
+                        className="min-w-0"
+                        style={{ background: presentationTheme.card, borderTop: `${u(3)} solid ${presentationTheme.bronze}`, padding: u(32) }}
+                      >
+                        <p style={{ fontSize: u(24), fontWeight: 600, letterSpacing: u(2), lineHeight: 1.2, color: presentationTheme.bronze }}>
                           {String(index + 1).padStart(2, "0")}
                         </p>
-                        <p className="mt-2 text-base font-semibold uppercase tracking-[0.12em] text-zinc-900">{block.title}</p>
-                        <p className="mt-3 text-sm leading-6 text-zinc-600" style={clampStyle(4)}>{block.body}</p>
+                        <p style={{ marginTop: u(12), fontSize: u(28), fontWeight: 600, lineHeight: 1.25, color: presentationTheme.text }}>{block.title}</p>
+                        <p style={{ ...clampStyle(4), marginTop: u(12), fontSize: u(24), lineHeight: 1.45, color: presentationTheme.muted }}>{block.body}</p>
                       </article>
                     ))}
                   </div>
@@ -3671,49 +4026,39 @@ export function QuotationPresentation({
             const mainSectionPreviewUrl = mainSectionOverride.layoutImageUrl ? (mainLayoutPreviewUrlById[section.id] ?? null) : null;
 
             return (
-              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden bg-[#f4f6f8]">
-                <div className="absolute left-0 top-0 h-full w-24 bg-zinc-950" />
-                <div className="absolute left-24 top-0 h-full w-[1px] bg-zinc-200/80" />
-                <div className="relative flex h-full flex-col justify-between px-14 py-12 pl-36">
-                  <div>
-                    <div className="flex items-center gap-4">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">SPACE OVERVIEW</span>
-                      <span className="h-px w-16 bg-zinc-300" />
+              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden" style={darkSlideStyle}>
+                <div className="flex h-full items-stretch" style={{ padding: `${u(96)} ${u(128)}`, gap: u(72) }}>
+                  <div className="flex shrink-0 flex-col justify-between" style={{ width: u(380), gap: u(32) }}>
+                    <div className="flex min-h-0 flex-col" style={{ gap: u(24) }}>
+                      <ThemeEyebrow>
+                        Space overview {"·"} {String(mainSections.findIndex((entry) => entry.id === section.id) + 1).padStart(2, "0")}
+                      </ThemeEyebrow>
+                      <h2 className="presentation-serif [overflow-wrap:anywhere]" style={{ ...clampStyle(3), fontSize: u(72), fontWeight: 500, lineHeight: 1.05, letterSpacing: u(-1), color: presentationTheme.text }}>
+                        {mainSectionTitle}
+                      </h2>
                     </div>
-                    <h2 className="mt-7 max-w-5xl text-6xl font-light leading-[1.02] tracking-[-0.045em] text-zinc-950">
-                      {mainSectionTitle}
-                    </h2>
-                    {mainSectionNote ? (
-                      <p className="mt-7 max-w-3xl text-lg leading-8 text-zinc-600" style={clampStyle(4)}>{mainSectionNote}</p>
-                    ) : null}
+                    <div className="flex flex-col" style={{ gap: u(20) }}>
+                      <p style={{ fontSize: u(30), lineHeight: 1.3, color: presentationTheme.muted }}>
+                        {mainSectionPreviewUrl ? "Floor layout overview" : "Main area overview"}
+                      </p>
+                      {mainSectionNote ? (
+                        <p style={{ ...clampStyle(4), fontSize: u(24), lineHeight: 1.5, color: presentationTheme.muted }}>{mainSectionNote}</p>
+                      ) : null}
+                      <ThemeTagChip>{project?.project_name ?? quotation.title}</ThemeTagChip>
+                    </div>
                   </div>
 
                   {mainSectionPreviewUrl ? (
-                    <div className="mt-8 grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-4">
-                      <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3 border border-zinc-200 bg-white/80 p-4">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Full Floor Layout</p>
-                        <div className="min-h-0 overflow-hidden bg-white">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={mainSectionPreviewUrl} alt={`${mainSectionTitle} Full Floor Layout`} className="h-full w-full object-contain" />
-                        </div>
+                    <div className="flex shrink-0 flex-col bg-white" style={{ width: u(1212), height: u(888), padding: u(24), gap: u(12) }}>
+                      <p className="uppercase" style={{ fontSize: u(20), fontWeight: 600, letterSpacing: u(3), lineHeight: 1.2, color: "#7A7A7A" }}>Full floor layout</p>
+                      <div className="min-h-0 flex-1 overflow-hidden bg-white">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={mainSectionPreviewUrl} alt={`${mainSectionTitle} Full Floor Layout`} className="h-full w-full object-contain" />
                       </div>
                     </div>
                   ) : null}
-
-                  <div className="flex items-end justify-between gap-6 border-t border-zinc-200 pt-8">
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
-                        Space {String(mainSections.findIndex((entry) => entry.id === section.id) + 1).padStart(2, "0")}
-                      </p>
-                      <p className="mt-2 text-sm text-zinc-500">
-                        {mainSectionPreviewUrl ? "Floor layout overview" : "Main area overview"}
-                      </p>
-                    </div>
-                    <div className="border border-zinc-300 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
-                      {project?.project_name ?? quotation.title}
-                    </div>
-                  </div>
                 </div>
+                <ThemeSlideFooter companyName={companyProfile.displayName} quotationNo={quotation.quotation_no} />
               </PresentationPage>
             );
           }
@@ -3731,35 +4076,51 @@ export function QuotationPresentation({
               { key: "area", label: "Area Image", imageUrl: sectionOverridePreviewUrlBySectionAndField[`${section.id}:areaImageUrl`] ?? null },
               { key: "section-layout", label: "Section Layout Snapshot", imageUrl: sectionOverridePreviewUrlBySectionAndField[`${section.id}:sectionLayoutImageUrl`] ?? null },
             ].filter((entry) => Boolean(entry.imageUrl));
+            const singleVisual = sectionVisuals.length === 1;
 
             return (
-              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden bg-[#f4f6f8]">
-                <div className="absolute left-0 top-0 h-full w-24 bg-zinc-950" />
-                <div className="absolute left-24 top-0 h-full w-[1px] bg-zinc-200/80" />
-                <div className="relative flex h-full flex-col justify-between px-14 py-12 pl-36">
-                  <div>
-                    <div className="flex items-center gap-4">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">Area</span>
-                      <span className="h-px w-16 bg-zinc-300" />
+              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden" style={darkSlideStyle}>
+                <div className="flex h-full items-stretch" style={{ padding: `${u(96)} ${u(128)}`, gap: u(72) }}>
+                  <div className="flex shrink-0 flex-col justify-between" style={{ width: u(380), gap: u(32) }}>
+                    <div className="flex min-h-0 flex-col" style={{ gap: u(24) }}>
+                      <ThemeEyebrow>Area {"·"} {String(dividerSections.indexOf(section) + 1).padStart(2, "0")}</ThemeEyebrow>
+                      <h2 className="presentation-serif [overflow-wrap:anywhere]" style={{ ...clampStyle(3), fontSize: u(72), fontWeight: 500, lineHeight: 1.05, letterSpacing: u(-1), color: presentationTheme.text }}>
+                        {sectionTitle}
+                      </h2>
                     </div>
-                    <h2 className="mt-7 max-w-5xl text-6xl font-light leading-[1.02] tracking-[-0.045em] text-zinc-950">
-                      {sectionTitle}
-                    </h2>
-                    {sectionNote ? (
-                      <p className="mt-7 max-w-3xl text-lg leading-8 text-zinc-600" style={clampStyle(4)}>{sectionNote}</p>
-                    ) : null}
+                    <div className="flex flex-col" style={{ gap: u(20) }}>
+                      {sectionNote ? (
+                        <p style={{ ...clampStyle(4), fontSize: u(24), lineHeight: 1.5, color: presentationTheme.muted }}>{sectionNote}</p>
+                      ) : null}
+                      {mainSection && mainSection.id !== section.id ? (
+                        <p style={{ fontSize: u(32), fontWeight: 500, lineHeight: 1.25, color: presentationTheme.text }}>Within {parentMainSectionTitle}</p>
+                      ) : null}
+                      <p style={{ fontSize: u(28), lineHeight: 1.3, color: presentationTheme.muted }}>
+                        {sectionPageGroups.length ? `${sectionPageGroups.length} product ${sectionPageGroups.length === 1 ? "page" : "pages"} follow` : "Section overview"}
+                      </p>
+                      <ThemeTagChip>{project?.project_name ?? quotation.title}</ThemeTagChip>
+                    </div>
                   </div>
 
                   {sectionVisuals.length ? (
-                    <div className={`mt-8 grid min-h-0 flex-1 gap-4 ${sectionVisuals.length === 1 ? "grid-cols-1" : sectionVisuals.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
-                      {sectionVisuals.map((visual) => (
-                        <div key={visual.key} className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3 border border-zinc-200 bg-white/80 p-4">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">{visual.label}</p>
-                          <div className="min-h-0 overflow-hidden bg-white">
-                            {visual.imageUrl ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img src={visual.imageUrl} alt={`${sectionTitle} ${visual.label}`} className="h-full w-full object-contain" />
-                            ) : null}
+                    <div className="flex shrink-0" style={{ width: u(1212), height: u(888), gap: u(24) }}>
+                      {sectionVisuals.map((visual) => visual.key === "area" ? (
+                        <div key={visual.key} className="relative h-full shrink-0 overflow-hidden" style={{ width: singleVisual ? u(1212) : u(520), background: presentationTheme.card }}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={visual.imageUrl ?? undefined} alt={`${sectionTitle} ${visual.label}`} className="h-full w-full object-cover" />
+                          <p
+                            className="absolute uppercase"
+                            style={{ left: u(20), bottom: u(20), padding: `${u(10)} ${u(16)}`, fontSize: u(20), fontWeight: 600, letterSpacing: u(3), lineHeight: 1.2, color: presentationTheme.text, background: "rgba(43,45,51,0.8)" }}
+                          >
+                            {visual.label}
+                          </p>
+                        </div>
+                      ) : (
+                        <div key={visual.key} className="flex h-full shrink-0 flex-col bg-white" style={{ width: singleVisual ? u(1212) : u(668), padding: u(24), gap: u(12) }}>
+                          <p className="uppercase" style={{ fontSize: u(20), fontWeight: 600, letterSpacing: u(3), lineHeight: 1.2, color: "#7A7A7A" }}>{visual.label}</p>
+                          <div className="min-h-0 flex-1 overflow-hidden bg-white">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={visual.imageUrl ?? undefined} alt={`${sectionTitle} ${visual.label}`} className="h-full w-full object-contain" />
                           </div>
                         </div>
                       ))}
@@ -3767,24 +4128,8 @@ export function QuotationPresentation({
                   ) : (
                     <EmptySectionVisualState />
                   )}
-
-                  <div className="flex items-end justify-between gap-6 border-t border-zinc-200 pt-8">
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
-                        Section {String(dividerSections.indexOf(section) + 1).padStart(2, "0")}
-                      </p>
-                      {mainSection && mainSection.id !== section.id ? (
-                        <p className="mt-2 text-sm font-medium text-zinc-500">Within {parentMainSectionTitle}</p>
-                      ) : null}
-                      <p className="mt-2 text-sm text-zinc-500">
-                        {sectionPageGroups.length ? `${sectionPageGroups.length} product ${sectionPageGroups.length === 1 ? "page" : "pages"} follow` : "Section overview"}
-                      </p>
-                    </div>
-                    <div className="border border-zinc-300 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
-                      {project?.project_name ?? quotation.title}
-                    </div>
-                  </div>
                 </div>
+                <ThemeSlideFooter companyName={companyProfile.displayName} quotationNo={quotation.quotation_no} />
               </PresentationPage>
             );
           }
@@ -3807,36 +4152,19 @@ export function QuotationPresentation({
               }));
 
               return (
-                <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="overflow-hidden bg-white">
-                  <div className="flex h-full flex-col px-8 py-7">
-                    <div className="border-b border-zinc-200 pb-4">
-                      <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">{sectionTitle}</p>
-                        <p className="mt-2 text-2xl font-light tracking-tight text-zinc-950">
-                          {pageItems.length === 2 ? "Selected Products" : "Selected Product"}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className={`mt-5 grid min-h-0 flex-1 gap-5 ${pageData.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
-                      {pageData.map((data) => (
-                        <TwoPerPageCard
-                          key={data.item.id}
-                          data={data}
-                          itemNumber={visibleSlideItemNumberById.get(data.item.id) ?? null}
-                          sectionTitle={sectionTitle}
-                        />
-                      ))}
-                    </div>
-
-                    <div className="mt-5 flex items-end justify-between gap-4 border-t border-zinc-200 pt-4">
-                      <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Prepared By</p>
-                        <p className="mt-1 text-sm font-semibold text-zinc-900">{companyProfile.displayName}</p>
-                      </div>
-                      {quotation.quotation_no ? <p className="text-sm font-semibold text-zinc-900">{quotation.quotation_no}</p> : null}
-                    </div>
-                  </div>
+                <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden bg-white">
+                  {pageData.map((data, cardIndex) => (
+                    <TwoPerPageCard
+                      key={data.item.id}
+                      data={data}
+                      itemNumber={visibleSlideItemNumberById.get(data.item.id) ?? null}
+                      left={cardIndex * 964}
+                      preparedBy={companyProfile.displayName}
+                      quotationNo={quotation.quotation_no}
+                      sectionTitle={sectionTitle}
+                      showDescription={settings.contentVisibility.specification}
+                    />
+                  ))}
                 </PresentationPage>
               );
             }
@@ -3852,198 +4180,164 @@ export function QuotationPresentation({
               item,
               project,
             });
-            const compactFinishes = compactFinishRows(data.finishGroups);
-            const visibleCompactFinishes = compactFinishes.slice(0, 4);
-            const hiddenFinishCount = Math.max(compactFinishes.length - visibleCompactFinishes.length, 0);
+            // All visible finishes up to PRODUCT_FINISH_LIMIT, regrouped by type in their original order.
+            const allFinishes = compactFinishRows(data.finishGroups);
+            const shownFinishes = allFinishes.slice(0, PRODUCT_FINISH_LIMIT);
+            const hiddenFinishCount = Math.max(allFinishes.length - shownFinishes.length, 0);
+            const shownFinishKeys = new Set(shownFinishes.map((finish) => `${finish.label}:${finish.id}`));
+            const shownFinishGroups = data.finishGroups
+              .map((group) => ({ label: group.label, items: group.items.filter((finish) => shownFinishKeys.has(`${group.label}:${finish.id}`)) }))
+              .filter((group) => group.items.length);
+            const descriptionLines = shownFinishGroups.length >= 3 || shownFinishes.length > 18 ? 4 : 6;
+            const productBadgeStyle = { border: `1px solid ${presentationTheme.bronze}`, padding: `${u(2)} ${u(10)}`, fontSize: u(17), fontWeight: 600, letterSpacing: u(2), color: presentationTheme.bronze };
 
             return (
-              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="overflow-hidden bg-white">
-                <div className="grid h-full grid-cols-[1.65fr_0.9fr]">
-                  <div className="relative grid h-full grid-rows-[auto_minmax(0,1fr)_96px] bg-white px-9 py-8">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">{sectionTitle}</p>
-                        <p className="mt-2 text-2xl font-light tracking-tight text-zinc-950" style={clampStyle(2)}>
-                          {data.heading}
-                          {data.item.is_optional ? <span className="ml-2 border border-red-300 bg-red-50 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
-                          {data.item.is_rate_only ? <span className="ml-2 border border-sky-300 bg-sky-50 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
+              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden bg-white">
+                <div aria-hidden="true" className="absolute" style={{ left: u(1240), top: 0, width: u(680), height: "100%", background: presentationTheme.bg }} />
+
+                <ProductImageEditBox
+                  editable={!printMode && Boolean(data.imageUrl)}
+                  imageRect={data.imageRect}
+                  measureKey={[data.imageUrl, data.imageSettings?.fit, data.imageFrameSize, data.imageScale, data.imagePositionX, data.imagePositionY].join("|")}
+                  onRectChange={(rect) => updateItemOverride(item.id, { imageRect: rect })}
+                  onSelectedChange={(isSelected) => setSelectedSlideImageItemId(isSelected ? item.id : null)}
+                  selected={selectedSlideImageItemId === item.id}
+                  style={{ left: u(60), top: u(40), width: u(1120), height: u(800) }}
+                >
+                  <PresentationImageStage
+                    alt={data.heading}
+                    boundsClassName={presentationImageBoundsClass(data.imageFrameSize, false)}
+                    emptyContent={(
+                      <div className="flex h-full w-full flex-col items-center justify-center bg-white text-center" style={{ gap: u(20), padding: `0 ${u(80)}` }}>
+                        <div className="uppercase" style={{ border: `1px dashed ${productTheme.hairlineOnWhite}`, padding: `${u(6)} ${u(18)}`, fontSize: u(17), fontWeight: 600, letterSpacing: u(3), color: productTheme.mutedOnWhite }}>
+                          Visual pending
+                        </div>
+                        <p style={{ ...clampStyle(3), maxWidth: u(640), fontSize: u(20), lineHeight: 1.5, color: productTheme.mutedOnWhite }}>
+                          No quotation image is available for this item yet. The item remains included so the presentation sequence stays complete.
                         </p>
                       </div>
-                      <div className="rounded-full border border-zinc-300 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                        Item {visibleSlideItemNumberById.get(item.id) ?? 1}
-                      </div>
-                    </div>
+                    )}
+                    fit={data.imageSettings?.fit === "cover" ? "cover" : "contain"}
+                    imageRect={data.imageRect}
+                    imageUrl={data.imageUrl}
+                    positionX={data.imagePositionX}
+                    positionY={data.imagePositionY}
+                    scale={data.imageScale}
+                  />
+                </ProductImageEditBox>
 
-                    <div className="mt-5 flex min-h-0 items-center justify-center overflow-hidden bg-white">
-                      <PresentationImageStage
-                        alt={data.heading}
-                        boundsClassName={presentationImageBoundsClass(data.imageFrameSize, false)}
-                        emptyContent={(
-                          <div className="flex h-full min-h-[120mm] w-full flex-col items-center justify-center gap-5 bg-white px-10 text-center">
-                            <div className="border border-dashed border-zinc-300 px-4 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
-                              Visual pending
-                            </div>
-                            <p className="max-w-md text-sm leading-6 text-zinc-500" style={clampStyle(3)}>
-                              No quotation image is available for this item yet. The item remains included so the presentation sequence stays complete.
-                            </p>
-                          </div>
-                        )}
-                        fit={data.imageSettings?.fit === "cover" ? "cover" : "contain"}
-                        imageUrl={data.imageUrl}
-                        positionX={data.imagePositionX}
-                        positionY={data.imagePositionY}
-                        scale={data.imageScale}
-                      />
-                    </div>
+                <div
+                  className="absolute flex flex-wrap justify-between"
+                  style={{ left: u(60), bottom: u(40), width: u(1120), borderTop: `1px solid ${productTheme.hairlineOnWhite}`, paddingTop: u(16), columnGap: u(40), rowGap: u(16) }}
+                >
+                  {data.meta.map((row) => (
+                    <ProductDetailCell key={row.label} label={row.label} value={row.value} />
+                  ))}
+                  <ProductDetailCell label="Area" value={item.room_name_snapshot} />
+                  <ProductDetailCell label="Quote no." value={quotation.quotation_no} />
+                  <ProductDetailCell label="Prepared by" value={companyProfile.displayName} />
+                </div>
 
-                    <div className="mt-5 grid h-[96px] grid-cols-[minmax(0,1fr)_auto] items-end gap-6">
-                      <div className="min-w-0 self-end border-t border-zinc-200 pt-3">
-                        {data.summary ? (
-                          <>
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Product Summary</p>
-                            <p className="mt-1 text-sm font-medium leading-6 text-zinc-700" style={clampStyle(2)}>{data.summary}</p>
-                          </>
-                        ) : (
-                          <div className="h-[40px]" />
-                        )}
-                      </div>
-                      <div className="self-end">
-                        {item.room_name_snapshot ? (
-                          <div className="border border-zinc-200 bg-white px-4 py-3 text-right">
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Area Tag</p>
-                            <p className="mt-1 text-sm font-semibold text-zinc-900">{item.room_name_snapshot}</p>
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid h-full grid-rows-[220px_auto_1fr_96px] bg-[#f3f4f6] px-8 py-9">
-                    <div className="min-h-0 border-b border-zinc-900/10 pb-5">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Technical Details</p>
-                      <h3 className="mt-3 text-3xl font-light tracking-tight text-zinc-950" style={clampStyle(2)}>
+                <div className="absolute flex flex-col justify-between" style={{ left: u(1292), top: u(56), width: u(580), height: u(984), gap: u(24) }}>
+                  <div className="flex min-h-0 flex-col overflow-hidden" style={{ gap: u(20) }}>
+                    <p className="uppercase" style={{ ...clampStyle(1), fontSize: u(20), fontWeight: 600, letterSpacing: u(5), lineHeight: 1.2, color: presentationTheme.bronze }}>
+                      Item {visibleSlideItemNumberById.get(item.id) ?? 1}
+                      {sectionTitle ? ` · ${sectionTitle}` : ""}
+                    </p>
+                    <div>
+                      <h3 className="presentation-serif" style={{ ...clampStyle(2), fontSize: u(60), fontWeight: 500, lineHeight: 1, letterSpacing: u(-1), color: presentationTheme.text }}>
                         {data.heading}
-                        {data.item.is_optional ? <span className="ml-2 border border-red-300 bg-red-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
-                        {data.item.is_rate_only ? <span className="ml-2 border border-sky-300 bg-sky-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
                       </h3>
-                      {settings.contentVisibility.specification ? (
-                        data.cleanedSpecification ? (
-                          <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-zinc-600" style={clampStyle(5)}>
-                            {data.cleanedSpecification}
-                          </p>
-                        ) : (
-                          <p className="mt-4 text-sm leading-7 text-zinc-400">Specification details not added yet.</p>
-                        )
+                      {data.item.is_optional || data.item.is_rate_only ? (
+                        <div className="flex flex-wrap" style={{ marginTop: u(12), gap: u(8) }}>
+                          {data.item.is_optional ? <span className="uppercase" style={productBadgeStyle}>Optional</span> : null}
+                          {data.item.is_rate_only ? <span className="uppercase" style={productBadgeStyle}>Rate only</span> : null}
+                        </div>
                       ) : null}
                     </div>
-
-                    {data.meta.length ? (
-                      <dl className="mt-5 grid min-h-0 grid-cols-2 content-start gap-x-5 gap-y-3 overflow-hidden">
-                        {data.meta.map((row) => (
-                          <ProductDetail key={row.label} label={row.label} value={row.value ?? null} />
-                        ))}
-                      </dl>
-                    ) : <div className="mt-5" />}
-
-                    {compactFinishes.length ? (
-                      <div className="mt-5 min-h-0 overflow-hidden border-t border-zinc-900/10 pt-5">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Finishes</p>
-                        <div className="mt-4 grid grid-cols-2 gap-2">
-                          {visibleCompactFinishes.map((finish) => (
-                            <div key={finish.id} className="grid grid-cols-[28px_1fr] gap-2 rounded-lg border border-zinc-900/10 bg-white/55 p-2">
-                              <div className="h-7 w-7 overflow-hidden bg-zinc-50">
-                                {finish.imageUrl ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img src={finish.imageUrl} alt={finish.name || finish.code || finish.label} className="h-full w-full object-cover" />
-                                ) : (
-                                  <div className="h-full w-full bg-[linear-gradient(135deg,_#f4f4f5,_#e4e4e7)]" />
-                                )}
-                              </div>
-                              <div className="min-w-0">
-                                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500" style={clampStyle(1)}>{finish.label}</p>
-                                <p className="mt-0.5 text-[11px] font-semibold leading-4 text-zinc-900" style={clampStyle(2)}>
-                                  {[finish.code, finish.name].filter(Boolean).join(" | ") || finish.description || "Selected finish"}
-                                </p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        {hiddenFinishCount ? (
-                          <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-400">+{hiddenFinishCount} more</p>
-                        ) : null}
-                      </div>
-                    ) : <div className="mt-5 border-t border-zinc-900/10 pt-5" />}
-
-                    <div className="mt-5 self-end border-t border-zinc-900/10 pt-3">
-                      <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto] items-start gap-x-6 gap-y-1">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Prepared By</p>
-                        {quotation.quotation_no ? (
-                          <p className="text-right text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Project / Quote No.</p>
-                        ) : (
-                          <div />
-                        )}
-                        <p className="text-sm font-semibold text-zinc-900">{companyProfile.displayName}</p>
-                        {quotation.quotation_no ? (
-                          <p className="text-right text-sm font-semibold text-zinc-900">{quotation.quotation_no}</p>
-                        ) : (
-                          <div />
-                        )}
-                      </div>
-                    </div>
+                    {data.summary ? (
+                      <p className="uppercase" style={{ ...clampStyle(2), fontSize: u(19), fontWeight: 600, letterSpacing: u(3), lineHeight: 1.3, color: presentationTheme.bronze }}>{data.summary}</p>
+                    ) : null}
+                    {settings.contentVisibility.specification ? (
+                      data.cleanedSpecification ? (
+                        <p className="whitespace-pre-wrap" style={{ ...clampStyle(descriptionLines), fontSize: u(20), lineHeight: 1.5, color: presentationTheme.muted }}>
+                          {data.cleanedSpecification}
+                        </p>
+                      ) : (
+                        <p style={{ fontSize: u(20), lineHeight: 1.5, color: presentationTheme.muted, opacity: 0.7 }}>Specification details not added yet.</p>
+                      )
+                    ) : null}
                   </div>
+
+                  {shownFinishGroups.length ? (
+                    <div className="flex shrink-0 flex-col" style={{ borderTop: `1px solid ${presentationTheme.hairline}`, paddingTop: u(18), gap: u(16) }}>
+                      <div className="flex items-baseline justify-between" style={{ gap: u(16) }}>
+                        <p className="uppercase" style={{ fontSize: u(18), fontWeight: 600, letterSpacing: u(4), color: presentationTheme.text }}>Finishes</p>
+                        {hiddenFinishCount ? <p className="uppercase" style={{ fontSize: u(17), letterSpacing: u(2), color: presentationTheme.bronze }}>+{hiddenFinishCount} more</p> : null}
+                      </div>
+                      {shownFinishGroups.map((group) => (
+                        <div key={group.label} className="flex flex-col" style={{ gap: u(10) }}>
+                          <p className="uppercase" style={{ fontSize: u(18), fontWeight: 600, letterSpacing: u(3), color: presentationTheme.bronze }}>{group.label}</p>
+                          <div className="flex flex-wrap" style={{ width: u(580), rowGap: u(14), columnGap: u(10) }}>
+                            {group.items.map((finish) => <ProductFinishChip key={finish.id} finish={finish} />)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </PresentationPage>
             );
           }
 
           return (
-            <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden">
-              <div className="absolute inset-0 bg-[linear-gradient(130deg,_#eef2f5_0%,_#f8fafc_44%,_#ffffff_44%,_#ffffff_100%)]" />
-              <div className="absolute inset-y-0 right-0 w-[30%] bg-zinc-950" />
-              <div className="absolute left-0 top-0 h-full w-[44%] bg-[radial-gradient(circle_at_top_left,_rgba(39,39,42,0.08),_transparent_55%)]" />
-              <div className="relative grid h-full grid-cols-[1.5fr_0.7fr]">
-                <div className="flex h-full flex-col justify-between px-12 py-12">
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <div className="h-px w-14 bg-zinc-400" />
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">Closing Slide</p>
-                    </div>
-                    <h2 className="mt-10 max-w-4xl text-[56px] font-light leading-[1.02] tracking-[-0.04em] text-zinc-950">
-                      {closingTitle}
-                    </h2>
-                    {closingMessage ? (
-                      <p className="mt-8 max-w-2xl text-lg leading-8 text-zinc-600" style={clampStyle(4)}>
-                        {closingMessage}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <div className="grid grid-cols-[1.1fr_0.9fr] gap-10 border-t border-zinc-200 pt-8">
-                    <div />
-                    <div className="grid gap-3 self-end">
-                      {quotation.quotation_no ? <MetaCard label="Project / Quote No." value={quotation.quotation_no} /> : null}
-                      {quotation.quotation_date ? <MetaCard label="Date" value={formatPresentationDate(quotation.quotation_date)} /> : null}
-                    </div>
-                  </div>
+            <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden" style={darkSlideStyle}>
+              <ThemeBronzeGlow />
+              <div className="absolute flex flex-col justify-between" style={{ left: u(128), top: u(96), bottom: u(96), width: u(1000) }}>
+                <div>
+                  <PresentationBrandLogo
+                    logoUrl={companyProfile.logoUrl}
+                    fallbackText={companyProfile.displayName}
+                    className={themeLogoClassName}
+                    fallbackClassName={themeLogoFallbackClassName}
+                  />
                 </div>
 
-                <div className="relative flex h-full flex-col justify-between px-9 py-10 text-white">
-                  <div>
-                    <div className="flex items-center justify-between gap-4">
-                      <PresentationBrandLogo
-                        logoUrl={companyProfile.logoUrl}
-                        fallbackText={companyProfile.displayName}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid gap-4 border-t border-white/10 pt-7">
-                    <ContactLine label="Website" value={closingWebsite} />
-                    <ContactLine label="Email" value={closingEmail} />
-                    <ContactLine label="Phone" value={closingPhone} />
-                    <ContactLine label="Office" value={closingOfficeDetails} />
-                  </div>
+                <div>
+                  <h2 className="presentation-serif" style={{ fontSize: u(120), fontWeight: 500, lineHeight: 1.02, color: presentationTheme.text }}>
+                    {closingTitle}
+                  </h2>
+                  <div style={{ marginTop: u(36), width: u(120), height: u(3), background: presentationTheme.bronze }} />
+                  {closingMessage ? (
+                    <p style={{ ...clampStyle(4), marginTop: u(36), width: u(700), fontSize: u(28), lineHeight: 1.5, color: presentationTheme.muted }}>
+                      {closingMessage}
+                    </p>
+                  ) : null}
                 </div>
+
+                <div className="flex items-start" style={{ gap: u(96), borderTop: `1px solid ${presentationTheme.hairline}`, paddingTop: u(36) }}>
+                  <ThemeInfoCell label="Quote no." value={quotation.quotation_no} />
+                  <ThemeInfoCell label="Date" value={quotation.quotation_date ? formatPresentationDate(quotation.quotation_date) : null} />
+                </div>
+              </div>
+
+              <div
+                className="absolute grid"
+                style={{
+                  right: u(128),
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  width: u(560),
+                  gap: u(28),
+                  padding: u(48),
+                  background: presentationTheme.card,
+                  borderTop: `${u(3)} solid ${presentationTheme.bronze}`,
+                }}
+              >
+                <ThemeContactRow label="Website" value={closingWebsite} />
+                <ThemeContactRow label="Email" value={closingEmail} />
+                <ThemeContactRow label="Phone" value={closingPhone} />
+                <ThemeContactRow label="Office" value={closingOfficeDetails} />
               </div>
             </PresentationPage>
           );
@@ -4051,6 +4345,8 @@ export function QuotationPresentation({
       </div>
         </div>
         </div>
+      </div>
+      </div>
       </div>
       </div>
       </div>

@@ -297,7 +297,7 @@ export function GlobalLoadingIndicator() {
   }, [finishPending, startPending]);
 
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-50">
+    <div className="pointer-events-none fixed bottom-4 right-4 z-50 print:hidden">
       <div
         ref={indicatorRef}
         aria-hidden={!isVisible}

@@ -7,9 +7,8 @@ import { NoaAssistant } from "@/components/noa/noa-assistant";
 import { PreserveUiState } from "@/components/preserve-ui-state";
 import { PwaServiceWorkerRegister } from "@/components/pwa-service-worker-register";
 import { LocalReadRuntime } from "@/components/local-read-cache/local-read-runtime";
-import { getProfileForUser } from "@/lib/auth";
+import { getProfileForUser, getRequestUser } from "@/lib/auth";
 import type { NoaAuthContext } from "@/lib/noa/noa-types";
-import { createClient } from "@/lib/supabase/server";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -63,10 +62,7 @@ export const viewport: Viewport = {
 // <NoaAssistant> renders at all, reusing the same Supabase/profile lookup those helpers are built
 // on rather than a second auth system.
 async function currentNoaAuthContext(): Promise<NoaAuthContext | null> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getRequestUser();
 
   if (!user) {
     return null;

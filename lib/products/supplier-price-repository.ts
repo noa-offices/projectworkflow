@@ -75,11 +75,19 @@ export async function readProductPages<T>(
   page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
 ): Promise<{ data: T[] | null; error: { message: string } | null }> {
   const rows: T[] = [];
-  for (let from = 0; ; from += 500) {
-    const result = await page(from, from + 499);
-    if (result.error) return { data: null, error: result.error };
-    rows.push(...(result.data ?? []));
-    if ((result.data ?? []).length < 500) return { data: rows, error: null };
+  const first = await page(0, 499);
+  if (first.error) return { data: null, error: first.error };
+  rows.push(...(first.data ?? []));
+  if ((first.data ?? []).length < 500) return { data: rows, error: null };
+  // More than one page: read the rest 4 pages at a time. Results are consumed in page order, so the final array
+  // and the first error are the same as a sequential read; the first short page ends the read (later pages are empty).
+  for (let from = 500; ; from += 500 * 4) {
+    const batch = await Promise.all(Array.from({ length: 4 }, (_, index) => page(from + index * 500, from + index * 500 + 499)));
+    for (const result of batch) {
+      if (result.error) return { data: null, error: result.error };
+      rows.push(...(result.data ?? []));
+      if ((result.data ?? []).length < 500) return { data: rows, error: null };
+    }
   }
 }
 

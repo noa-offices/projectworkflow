@@ -63,8 +63,9 @@ export async function GET(request: NextRequest, { params }: DownloadPresentation
       cookieHeader,
       pdfOptions: {
         displayHeaderFooter: false,
-        format: "A4",
-        landscape: true,
+        // 16:9 slide size; matches the presentation @page rule (preferCSSPageSize is also on).
+        width: "13.333in",
+        height: "7.5in",
         margin: {
           top: "0",
           right: "0",
@@ -73,7 +74,7 @@ export async function GET(request: NextRequest, { params }: DownloadPresentation
         },
       },
       sourceUrl,
-      viewport: { width: 1280, height: 900, deviceScaleFactor: 2, hasTouch: false, isLandscape: true, isMobile: false },
+      viewport: { width: 1280, height: 720, deviceScaleFactor: 2, hasTouch: false, isLandscape: true, isMobile: false },
     });
     const filename = `${presentationPdfFilename(quotation)}.pdf`;
     const pdfBody = pdfBuffer.buffer.slice(

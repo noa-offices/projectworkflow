@@ -248,11 +248,13 @@ function quotationPdfLayoutMetrics(settings: QuotationPdfSettings): QuotationPdf
     large: isLandscape ? { width: 138, height: 92 } : { width: 108, height: 80 },
   } as const;
 
+  // Landscape pages are only 210mm tall (portrait 297mm) and landscape images are taller, so landscape capacity is
+  // scaled down from the portrait values (about 0.68x) to keep rows, subtotal and total bar inside the page.
   const capacityByOrientation = isLandscape
     ? {
-        comfortable: { first: 14, continuation: 17 },
-        compact: { first: 16, continuation: 20 },
-        maxFit: { first: 18, continuation: 23 },
+        comfortable: { first: 9.5, continuation: 13 },
+        compact: { first: 11.5, continuation: 16 },
+        maxFit: { first: 13.5, continuation: 18.5 },
       }
     : {
         comfortable: { first: 14, continuation: 20 },

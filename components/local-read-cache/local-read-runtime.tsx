@@ -191,10 +191,10 @@ export function LocalReadRuntime({ userId }: { userId: string | null }) {
         window.location.assign("/offline.html?draft=" + encodeURIComponent(url.pathname.split("/")[2])); return;
       }
       const entity = readEntity(url.pathname, url.search);
-      if (!entity) return;
+      // Online: let Next.js navigate normally (no overlay). Offline: show the saved read view instead of a failing navigation.
+      if (!entity || navigator.onLine) return;
       event.preventDefault(); event.stopPropagation();
       void openPreview(entity);
-      if (navigator.onLine) router.push(url.pathname + url.search);
     };
     const submit = (event: SubmitEvent) => {
       if (!navigator.onLine && event.target instanceof HTMLFormElement && event.target.method.toLowerCase() === "post") {

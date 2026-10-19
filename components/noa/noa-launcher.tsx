@@ -81,7 +81,7 @@ export function NoaLauncher({
     // than on top of it. Full mode sits a small inset from the true edge (so it's never clipped by
     // default - PART 1); Sneak docks flush to the edge (PART 5's "wall").
     <div
-      className={`group fixed bottom-20 z-40 sm:bottom-24 ${isDrawerOpen ? "hidden sm:block" : ""} ${isSneak ? "right-0" : "right-2 sm:right-3"}`}
+      className={`group fixed bottom-20 z-40 print:hidden sm:bottom-24 ${isDrawerOpen ? "hidden sm:block" : ""} ${isSneak ? "right-0" : "right-2 sm:right-3"}`}
       data-noa-page-section={pageSection}
     >
       <button

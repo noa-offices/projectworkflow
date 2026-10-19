@@ -39,7 +39,6 @@ type ProductPageData = {
   imageUrl: string | null;
   imageFit: "contain" | "cover";
   meta: Array<{ label: string; value: string }>;
-  compactMeta: Array<{ label: string; value: string }>;
   finishes: FinishEntry[];
   isOptional: boolean;
   isRateOnly: boolean;
@@ -48,272 +47,29 @@ type ProductPageData = {
 type PptxSlide = ReturnType<PptxGenJS["addSlide"]>;
 
 const RECT_SHAPE: Parameters<PptxSlide["addShape"]>[0] = "rect";
-const PPTX_LAYOUT_A4 = "A4_LANDSCAPE";
-const SLIDE_W = 11.69;
-const SLIDE_H = 8.27;
-const USE_ARIAL_FALLBACK = false;
-// Windows family names (name ID 1) from the official Geist static TTF name tables.
-const GEIST_FONTS = {
-  light: USE_ARIAL_FALLBACK ? "Arial" : "Geist Light",
-  regular: USE_ARIAL_FALLBACK ? "Arial" : "Geist",
-  medium: USE_ARIAL_FALLBACK ? "Arial" : "Geist Medium",
-  semibold: USE_ARIAL_FALLBACK ? "Arial" : "Geist SemiBold",
+// 16:9 slide (13.333 x 7.5in). The web slide is 1920x1080 units: 144 units per inch.
+const PPTX_LAYOUT_NAME = "WIDESCREEN_16_9";
+const SLIDE_W = 13.333;
+const SLIDE_H = 7.5;
+// New 16:9 design tokens (same values as the web slides).
+const DESIGN_COLORS = {
+  bg: "2B2D33",
+  card: "363940",
+  hairline: "4C5058",
+  text: "F3F0EA",
+  muted: "B9B4AB",
+  bronze: "CC9366",
+  white: "FFFFFF",
+  ink: "23252A",
+  mutedOnWhite: "6B6F76",
+  hairlineOnWhite: "DADCE0",
 } as const;
-const SINGLE_PRODUCT_LAYOUT = {
-  width: 11.6929, // PresentationPage: 297mm
-  height: 8.2677, // PresentationPage: 210mm
-  pxPerInch: 96, // CSS reference pixel
-  ptPerPx: 0.75, // CSS px to PowerPoint pt
-  zero: 0, // margin-0 / top-left origin
-  one: 1, // one CSS border pixel / first item number
-  columns: 2, // grid-cols-2
-  leftFraction: 1.65, // grid-cols-[1.65fr_0.9fr]
-  rightFraction: 0.9, // grid-cols-[1.65fr_0.9fr]
-  leftPaddingX: 36, // px-9
-  leftPaddingY: 32, // py-8
-  rightPaddingX: 32, // px-8
-  rightPaddingY: 36, // py-9
-  headingZone: 220, // grid-rows-[220px_auto_1fr_96px]
-  footerZone: 96, // grid-rows: 96px, h-[96px]
-  gap2: 2, // mt-0.5
-  gap4: 4, // mt-1 / gap-y-1
-  gap8: 8, // mt-2 / gap-2 / p-2
-  gap12: 12, // mt-3 / pt-3 / gap-y-3 / px-3
-  gap16: 16, // mt-4 / gap-4 / px-4
-  gap20: 20, // mt-5 / pb-5 / pt-5 / gap-x-5
-  gap24: 24, // gap-6 / gap-x-6
-  labelPx: 10, // text-[10px]
-  labelLinePx: 15, // text-[10px], inherited normal line-height 1.5
-  labelTracking: 0.24, // tracking-[0.24em]
-  badgeTracking: 0.2, // tracking-[0.2em]
-  titlePx: 24, // text-2xl
-  titleLinePx: 32, // text-2xl default line-height
-  detailTitlePx: 30, // text-3xl
-  detailTitleLinePx: 36, // text-3xl default line-height
-  titleTracking: -0.025, // tracking-tight
-  titleLines: 2, // clampStyle(2)
-  bodyPx: 14, // text-sm
-  bodyLinePx: 24, // leading-6
-  bodyDefaultLinePx: 20, // text-sm default line-height
-  summaryLines: 2, // clampStyle(2)
-  specificationLines: 5, // clampStyle(5)
-  emptySpecificationLinePx: 28, // leading-7
-  finishLimit: 4, // compactFinishes.slice(0, 4)
-  finishSwatchPx: 28, // h-7 w-7 / grid-cols-[28px_1fr]
-  finishRadiusPx: 8, // rounded-lg
-  finishLabelPx: 9, // text-[9px]
-  finishLabelLinePx: 13.5, // text-[9px], inherited normal line-height 1.5
-  finishTracking: 0.16, // tracking-[0.16em]
-  finishValuePx: 11, // text-[11px]
-  finishValueLinePx: 16, // leading-4
-  finishValueLines: 2, // clampStyle(2)
-  moreTracking: 0.18, // tracking-[0.18em]
-  optionalPx: 9, // left title badge text-[9px]
-  optionalPaddingX: 6, // px-1.5
-  optionalPaddingY: 2, // py-0.5
-  optionalLineFactor: 1.5, // inherited normal line-height
-  badgeRadius: 0.5, // rounded-full: radius bounded by half the height
-  averageGlyphEm: 0.6, // intrinsic badge/area width approximation; native text metrics differ
-  placeholderMinHeightMm: 120, // min-h-[120mm]
-  placeholderMaxWidthPx: 448, // max-w-md
-  placeholderLines: 3, // clampStyle(3)
-  imageBounds: {
-    current: { width: 0.82, height: 0.72 }, // presentationImageBoundsClass: w-[82%] h-[72%]
-    medium: { width: 0.72, height: 0.62 }, // w-[72%] h-[62%]
-    small: { width: 0.62, height: 0.52 }, // w-[62%] h-[52%]
-  },
-  positionDefault: 50, // object-position / transform-origin: 50% 50%
-  percent: 100, // CSS percentage denominator
-  scaleDefault: 1, // PresentationImageStage: scale(1)
-  half: 0.5, // CSS half-leading: (line-height - font-size) / 2
-  glyphSpaceEm: 0.25, // approximate Geist metrics for CSS intrinsic wrapping
-  glyphNarrowEm: 0.25, // approximate narrow glyph width
-  glyphNormalEm: 0.5, // approximate lowercase glyph width
-  glyphUpperEm: 0.65, // approximate uppercase/digit width
-  glyphWideEm: 0.85, // approximate wide glyph width
-  imageHeader: {
-    pngLength: 24, pngSignatureLength: 8, pngWidth: 16, pngHeight: 20, // PNG IHDR offsets
-    jpegMinimum: 4, jpegStart: 2, marker: 0xff, startOfImage: 0xd8, // JPEG SOI / marker prefix
-    endOfImage: 0xd9, startOfScan: 0xda, stuffed: 0x00, temporary: 0x01, // JPEG markers without dimensions
-    restartStart: 0xd0, restartEnd: 0xd7, // standalone JPEG restart markers
-    segmentLengthBytes: 2, frameHeight: 3, frameWidth: 5, frameMinimum: 7, // JPEG SOF segment offsets
-    frames: [0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf], // JPEG SOF markers
-  },
-  edgeTrim: {
-    maximumPercent: 0.01, // remove at most 1% from each image edge
-    minimumBrightness: 220, // light-grey / white CSS-hidden edge strip
-    maximumChannelDifference: 12, // neutral strip: R, G, and B remain close
-    minimumAlpha: 250, // opaque edge strip only
-    maximumTransparentAlpha: 5, // transparent pixels just inside a partial-height edge strip
-    insideColumns: 3, // inspect a few columns inside the outer 1% strip
-  },
-  white: "FFFFFF", // bg-white
-  panel: "F3F4F6", // bg-[#f3f4f6]
-  dark: "09090B", // text-zinc-950
-  text: "18181B", // text-zinc-900
-  summary: "3F3F46", // text-zinc-700
-  muted: "52525B", // text-zinc-600
-  label: "71717A", // text-zinc-500
-  lightLabel: "A1A1AA", // text-zinc-400
-  border: "E4E4E7", // border-zinc-200
-  badgeBorder: "D4D4D8", // border-zinc-300
-  panelBorder: "DEDFE1", // border-zinc-900/10 over #f3f4f6
-  finishBackground: "FAFAFB", // bg-white/55 over #f3f4f6
-  swatchBackground: "F4F4F5", // gradient fallback start #f4f4f5
-  redText: "B91C1C", // text-red-700
-  redBorder: "FCA5A5", // border-red-300
-  redBackground: "FEF2F2", // bg-red-50
-  skyText: "0369A1", // text-sky-700
-  skyBorder: "7DD3FC", // border-sky-300
-  skyBackground: "F0F9FF", // bg-sky-50
-} as const;
-const PAGE_MARGIN = 0.55;
-// Browser CSS dimensions are kept in px; these renderers convert only at the PPTX boundary.
-const COVER_LAYOUT = {
-  width: 1122.5184, // 297mm at 96px/in
-  height: 793.6992, // 210mm at 96px/in
-  px: 96, // CSS px per inch
-  pt: 0.75, // CSS px to pt
-  zero: 0, // zero inner margins / origin
-  one: 1, // h-px / border
-  two: 2, // grid-cols-2 / half-leading
-  pad: 48, // px-12 py-12
-  sideX: 36, // px-9
-  sideY: 40, // py-10
-  leftFr: 1.5, // grid-cols-[1.5fr_0.7fr]
-  rightFr: 0.7, // grid-cols-[1.5fr_0.7fr]
-  blackWidth: 0.3, // w-[30%]
-  radialWidth: 0.44, // w-[44%]
-  radialStop: 0.55, // transparent_55%
-  gradientAngle: 130, // linear-gradient(130deg,...)
-  gradientStop: 0.44, // #f8fafc 44%, #ffffff 44%
-  radialOpacity: 0.08, // rgba(39,39,42,0.08)
-  pngWidth: 2339, // requested ~200dpi background
-  pngHeight: 1654, // requested ~200dpi background
-  fullTurn: 180, // degrees to radians
-  gap4: 4, // mt-1
-  gap8: 8, // mt-2
-  gap12: 12, // gap-3 / py-3
-  gap16: 16, // mt-4 / px-4 / gap-4
-  gap28: 28, // pt-7
-  gap32: 32, // mt-8 / pt-8
-  gap40: 40, // mt-10 / gap-10
-  labelSize: 11, // text-[11px]
-  labelLine: 16.5, // normal 1.5 line-height
-  labelTracking: 0.32, // tracking-[0.32em]
-  smallSize: 10, // text-[10px]
-  smallLine: 15, // normal 1.5 line-height
-  smallTracking: 0.24, // tracking-[0.24em]
-  titleSize: 56, // text-[56px]
-  titleLeading: 1.02, // leading-[1.02]
-  titleTracking: -0.04, // tracking-[-0.04em]
-  paragraphSize: 18, // text-lg
-  paragraphLine: 32, // leading-8
-  paragraphMax: 672, // max-w-2xl
-  projectSize: 24, // text-2xl
-  projectLeading: 1.25, // leading-tight
-  bodySize: 14, // text-sm
-  bodyLine: 20, // text-sm default line-height
-  contactLine: 24, // leading-6
-  preparedTracking: 0.16, // tracking-[0.16em]
-  lineWidth: 56, // w-14
-  cardLeftFr: 1.1, // grid-cols-[1.1fr_0.9fr]
-  cardRightFr: 0.9, // grid-cols-[1.1fr_0.9fr]
-  cardRadius: 16, // rounded-2xl
-  logoWidth: 150, // max-w-[150px]
-  logoHeight: 56, // max-h-14
-  glyphEm: 0.52, // intrinsic text-width estimate (PowerPoint/browser metrics differ)
-  white: "FFFFFF", // bg-white
-  black: "09090B", // bg-zinc-950
-  dark: "09090B", // text-zinc-950
-  text: "18181B", // text-zinc-900
-  grey: "52525B", // text-zinc-600
-  label: "71717A", // text-zinc-500
-  light: "A1A1AA", // text-zinc-400
-  border: "E4E4E7", // border-zinc-200
-  lightBorder: "D4D4D8", // bg-zinc-300
-  white45: "787879", // text-white/45 over zinc-950
-  white70: "B5B5B6", // text-white/70 over zinc-950
-  white90: "E6E6E7", // text-white/90 over zinc-950
-  whiteBorder: "222224", // border-white/10 over zinc-950
-  cardTransparency: 20, // bg-white/80
-  channelWhite: 255, // brightness-0 invert: white RGB, preserve alpha
-} as const;
-const CLOSING_LAYOUT = { ...COVER_LAYOUT }; // same cover/closing CSS family
-const DESIGN_LAYOUT = {
-  ...COVER_LAYOUT,
-  padY: 44, // py-11
-  columnGap: 48, // gap-12
-  leftFr: 0.9, // grid-cols-[0.9fr_1.1fr]
-  rightFr: 1.1, // grid-cols-[0.9fr_1.1fr]
-  columnPadding: 40, // pr-10
-  titleSize: 48, // text-5xl
-  titleLine: 48, // text-5xl default line-height
-  titleGap: 20, // mt-5
-  ruleWidth: 80, // w-20
-  paragraphSize: 16, // text-base
-  paragraphLine: 28, // leading-7
-  paragraphMax: 384, // max-w-sm
-  itemColumns: 2, // grid-cols-2
-  itemRows: 4, // eight items in two columns
-  itemGapX: 32, // gap-x-8
-  itemGapY: 20, // gap-y-5
-  itemPadding: 16, // pt-4
-  itemTitle: 16, // text-base
-  itemTitleLine: 24, // text-base default line-height
-  itemTitleTracking: 0.12, // tracking-[0.12em]
-  numberTracking: 0.22, // tracking-[0.22em]
-} as const;
-const MAIN_AREA_LAYOUT = {
-  ...COVER_LAYOUT,
-  sidebar: 96, // w-24
-  left: 144, // pl-36
-  right: 56, // px-14
-  titleSize: 60, // text-6xl
-  titleTracking: -0.045, // tracking-[-0.045em]
-  titleGap: 28, // mt-7
-  paragraphMax: 768, // max-w-3xl
-  ruleWidth: 64, // w-16
-  badgeTracking: 0.24, // tracking-[0.24em]
-  visualPad: 16, // p-4
-  visualLabelTracking: 0.22, // tracking-[0.22em]
-  background: "FFFFFF", // PPT-3 explicit white-page requirement overrides CSS #f4f6f8
-} as const;
-const AREA_LAYOUT = { ...MAIN_AREA_LAYOUT }; // same area/section CSS geometry
-const editorialBackgroundCache = new Map<"cover" | "design", Promise<string>>();
-
-function editorialBackground(family: "cover" | "design") {
-  let cached = editorialBackgroundCache.get(family);
-  if (!cached) {
-    const l = COVER_LAYOUT;
-    const angle = l.gradientAngle * Math.PI / l.fullTurn;
-    const dx = Math.sin(angle), dy = -Math.cos(angle);
-    const length = Math.abs(l.width * dx) + Math.abs(l.height * dy);
-    const x1 = (l.width - dx * length) / l.two, y1 = (l.height - dy * length) / l.two;
-    const x2 = (l.width + dx * length) / l.two, y2 = (l.height + dy * length) / l.two;
-    const radialWidth = l.width * l.radialWidth;
-    const radius = Math.hypot(radialWidth, l.height) * l.radialStop;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${l.width}" height="${l.height}" viewBox="0 0 ${l.width} ${l.height}"><defs><linearGradient id="linear" gradientUnits="userSpaceOnUse" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"><stop offset="0" stop-color="#eef2f5"/><stop offset="${l.gradientStop}" stop-color="#f8fafc"/><stop offset="${l.gradientStop}" stop-color="#ffffff"/><stop offset="1" stop-color="#ffffff"/></linearGradient><radialGradient id="radial" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="${radius}"><stop offset="0" stop-color="#27272a" stop-opacity="${l.radialOpacity}"/><stop offset="1" stop-color="#27272a" stop-opacity="0"/></radialGradient></defs><rect width="${l.width}" height="${l.height}" fill="url(#linear)"/>${family === "cover" ? `<rect width="${radialWidth}" height="${l.height}" fill="url(#radial)"/>` : ""}</svg>`;
-    cached = sharp(Buffer.from(svg)).resize(l.pngWidth, l.pngHeight).png().toBuffer()
-      .then((png) => `data:image/png;base64,${png.toString("base64")}`);
-    editorialBackgroundCache.set(family, cached);
-    cached.catch(() => editorialBackgroundCache.delete(family));
-  }
-  return cached;
-}
-const FOOTER_Y = 7.5;
-
-const COLOR_BG = "F4F6F8";
-const COLOR_SURFACE = "FFFFFF";
-const COLOR_PANEL = "F3F4F6";
-const COLOR_TEXT = "111827";
-const COLOR_MUTED = "5B6472";
-const COLOR_LINE = "D7DCE3";
-const COLOR_LIGHT_TEXT = "98A1AE";
-const COLOR_LABEL = "6B7280";
-const COLOR_ACCENT = "E9EDF2";
-const COLOR_DARK = "111111";
-const COLOR_WHITE = "FFFFFF";
+// Regular family names. Weight 600 uses bold; weight 500 has no PowerPoint equivalent and uses the regular face.
+const DESIGN_FONTS = { serif: "Cormorant Garamond", sans: "DM Sans" } as const;
+// Average glyph width in em for wrap estimates, measured in Chrome on the real fonts (mixed-case sentences,
+// digits and capitals included): DM Sans 400 = 0.46, 500 = 0.56, 600 = 0.49, uppercase 0.59; Cormorant 500 = 0.43.
+// Rounded up slightly so an estimate never gives a box that is too short.
+const TEXT_METRICS = { sans: 0.47, sansMedium: 0.55, sansSemibold: 0.5, sansUpper: 0.6, serif: 0.43 } as const;
 
 const designConsiderations = [
   {
@@ -501,20 +257,6 @@ function detailRows(item: PresentationItem, contentVisibility: LoadedQuotationPr
   ].filter((row): row is { label: string; value: string } => Boolean(row?.value));
 }
 
-function compactMetaRows(item: PresentationItem) {
-  const originDisplay = formatBrandOriginSupplier({
-    brandName: item.brand_name_snapshot,
-    origin: item.origin_snapshot,
-    supplier: item.supplier_name_snapshot,
-  });
-
-  return [
-    item.item_code_snapshot ? { label: "Code", value: item.item_code_snapshot } : null,
-    originDisplay.brand ? { label: "Brand", value: originDisplay.brand } : null,
-    originDisplay.origin ? { label: "Origin", value: originDisplay.origin } : null,
-  ].filter((row): row is { label: string; value: string } => Boolean(row?.value));
-}
-
 function resolvedOverrideValue(value: string | null | undefined, fallback: string | null | undefined) {
   const trimmed = typeof value === "string" ? value.trim() : "";
   if (trimmed) return trimmed;
@@ -585,16 +327,6 @@ function buildOrderedPresentationHierarchy(
   };
 }
 
-function chunkItems<T>(items: T[], size: number) {
-  const chunks: T[][] = [];
-
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
-  }
-
-  return chunks;
-}
-
 function buildPresentationSlides({
   dividerSections,
   productPagesBySection,
@@ -656,12 +388,6 @@ function trimText(value: string | null | undefined, maxLength: number) {
   return `${trimmed.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
-function safeLines(values: Array<string | null | undefined>) {
-  return values
-    .map((value) => value?.trim())
-    .filter((value): value is string => Boolean(value));
-}
-
 function mimeTypeForPath(value: string) {
   const extension = extname(value).toLowerCase();
   switch (extension) {
@@ -715,81 +441,6 @@ async function imageDataUri(value: string | null, cache: Map<string, string | nu
   }
 }
 
-async function addImageOrPlaceholder({
-  slide,
-  source,
-  x,
-  y,
-  w,
-  h,
-  fit,
-  label,
-  cache,
-  placeholderTitle = "Image unavailable",
-  placeholderBody = null,
-}: {
-  slide: PptxSlide;
-  source: string | null;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  fit: "contain" | "cover";
-  label: string;
-  cache: Map<string, string | null>;
-  placeholderTitle?: string;
-  placeholderBody?: string | null;
-}) {
-  slide.addShape(RECT_SHAPE, {
-    x,
-    y,
-    w,
-    h,
-    line: { color: COLOR_LINE, pt: 1 },
-    fill: { color: "FBFBFC" },
-    rectRadius: 0.12,
-  });
-
-  const data = await imageDataUri(source, cache);
-  if (data) {
-    slide.addImage({
-      data,
-      x: x + 0.08,
-      y: y + 0.08,
-      w: w - 0.16,
-      h: h - 0.16,
-      sizing: { type: fit, w: w - 0.16, h: h - 0.16 },
-      altText: label,
-    });
-    return;
-  }
-
-  slide.addText(placeholderTitle, {
-    x: x + 0.25,
-    y: y + (h / 2) - 0.15,
-    w: w - 0.5,
-    h: 0.12,
-    align: "center",
-    fontSize: 10,
-    color: COLOR_LABEL,
-    bold: true,
-    margin: 0,
-  });
-
-  if (placeholderBody) {
-    slide.addText(trimText(placeholderBody, 110) ?? placeholderBody, {
-      x: x + 0.3,
-      y: y + (h / 2) + 0.02,
-      w: w - 0.6,
-      h: 0.32,
-      align: "center",
-      fontSize: 9,
-      color: COLOR_LIGHT_TEXT,
-      margin: 0,
-    });
-  }
-}
-
 function sectionPresentationTitle(
   section: Pick<PresentationSection, "id" | "section_title">,
   settings: LoadedQuotationPresentationData["initialSettings"],
@@ -810,7 +461,12 @@ function productPageData(
   effectivePresentationImageUrlByItemId: Record<string, string | null>,
 ): ProductPageData {
   const itemOverride = data.initialSettings.itemOverrides[item.id];
-  const imageFit = itemOverride?.imageFit === "cover" ? "cover" : "contain";
+  const hasCustomImage = Boolean(itemOverride && (
+    itemOverride.imageUrl || itemOverride.imageFit !== "contain" || itemOverride.imageFrameSize !== "current"
+    || itemOverride.imagePositionX !== 50 || itemOverride.imagePositionY !== 50 || itemOverride.imageScale !== 1 || itemOverride.imageRect
+  ));
+  const cellImageSettings = item.cell_layout?.images?.[item.proposed_image_url_snapshot ? "proposed_image_url_snapshot" : "specified_image_url_snapshot"];
+  const imageFit = (hasCustomImage ? itemOverride?.imageFit : (cellImageSettings as { fit?: string } | undefined)?.fit) === "cover" ? "cover" : "contain";
 
   return {
     item,
@@ -824,7 +480,6 @@ function productPageData(
     imageUrl: effectivePresentationImageUrlByItemId[item.id] ?? null,
     imageFit,
     meta: detailRows(item, data.initialSettings.contentVisibility),
-    compactMeta: compactMetaRows(item),
     finishes: data.initialSettings.contentVisibility.finishes
       ? visibleFinishes(item, data.finishImageUrlByItemAndFinishId)
       : [],
@@ -836,250 +491,672 @@ function buildProductNumberById(sections: DisplaySection[], presentableItemsBySe
   return new Map(orderedItems.map((item, index) => [item.id, index + 1] as const));
 }
 
-function projectLabel(data: LoadedQuotationPresentationData) {
-  return data.project?.project_name ?? data.quotation.title;
-}
+// ---------------------------------------------------------------------------------------------------------------
+// 16:9 design (cover, design considerations, closing). Every number below is a unit of the web slide's 1920x1080
+// canvas, copied from quotation-presentation.tsx. 1920 units = 13.333in, so inches = units / 144 and points = units / 2.
+// ---------------------------------------------------------------------------------------------------------------
+const u = (value: number) => value / 144;
+const unitPt = (value: number) => value / 2;
 
-function addSlideBase(slide: PptxSlide, background = COLOR_SURFACE) {
-  slide.background = { color: background };
-}
+type DesignTextOptions = {
+  align?: "left" | "center" | "right";
+  bold?: boolean;
+  color: string;
+  face: string;
+  leading?: number;
+  tracking?: number; // letter-spacing in units
+};
 
-function addSideBarDivider(slide: PptxSlide) {
-  slide.addShape(RECT_SHAPE, {
-    x: 0,
-    y: 0,
-    w: 0.7,
-    h: SLIDE_H,
-    line: { color: COLOR_DARK, pt: 0 },
-    fill: { color: COLOR_DARK },
-  });
-  slide.addShape(RECT_SHAPE, {
-    x: 0.7,
-    y: 0,
-    w: 0.02,
-    h: SLIDE_H,
-    line: { color: COLOR_ACCENT, pt: 0 },
-    fill: { color: COLOR_ACCENT },
-  });
-}
-
-function addSectionHeader(slide: PptxSlide, label: string, title: string, note?: string | null) {
-  slide.addText(label.toUpperCase(), {
-    x: 1.1,
-    y: 0.62,
-    w: 1.5,
-    h: 0.12,
-    fontSize: 10,
-    bold: true,
-    color: COLOR_LABEL,
-    margin: 0,
-  });
-  slide.addShape(RECT_SHAPE, {
-    x: 2.05,
-    y: 0.69,
-    w: 0.48,
-    h: 0.02,
-    line: { color: COLOR_ACCENT, pt: 0 },
-    fill: { color: COLOR_ACCENT },
-  });
-  slide.addText(trimText(title, 78) ?? title, {
-    x: 1.1,
-    y: 1.02,
-    w: 5.65,
-    h: 0.7,
-    fontSize: 27,
-    color: COLOR_TEXT,
-    margin: 0,
-  });
-
-  if (note) {
-    slide.addText(trimText(note, 220) ?? note, {
-      x: 1.1,
-      y: 1.78,
-      w: 4.95,
-      h: 0.55,
-      fontSize: 12.5,
-      color: COLOR_MUTED,
-      margin: 0,
-    });
-  }
-}
-
-function addProjectBadge(slide: PptxSlide, value: string) {
-  slide.addShape(RECT_SHAPE, {
-    x: 8.76,
-    y: 7.12,
-    w: 2.38,
-    h: 0.34,
-    line: { color: COLOR_LINE, pt: 1 },
-    fill: { color: COLOR_SURFACE },
-    rectRadius: 0.05,
-  });
-  slide.addText(trimText(value, 42) ?? value, {
-    x: 8.9,
-    y: 7.23,
-    w: 2.1,
-    h: 0.08,
-    fontSize: 8.3,
-    bold: true,
-    color: COLOR_LABEL,
-    align: "center",
-    margin: 0,
-  });
-}
-
-function addFooter(slide: PptxSlide, companyName: string, quotationNo: string | null) {
-  slide.addShape(RECT_SHAPE, {
-    x: PAGE_MARGIN,
-    y: FOOTER_Y,
-    w: SLIDE_W - (PAGE_MARGIN * 2),
-    h: 0.02,
-    line: { color: COLOR_ACCENT, pt: 0 },
-    fill: { color: COLOR_ACCENT },
-  });
-  slide.addText(companyName, {
-    x: PAGE_MARGIN,
-    y: FOOTER_Y + 0.12,
-    w: 2.8,
-    h: 0.1,
-    fontSize: 9,
-    bold: true,
-    color: COLOR_TEXT,
-    margin: 0,
-  });
-  if (quotationNo) {
-    slide.addText(quotationNo, {
-      x: 8.54,
-      y: FOOTER_Y + 0.12,
-      w: 2.6,
-      h: 0.1,
-      fontSize: 9,
-      bold: true,
-      color: COLOR_TEXT,
-      align: "right",
-      margin: 0,
-    });
-  }
-}
-
-function addMetaCard(slide: PptxSlide, label: string, value: string, x: number, y: number, w: number) {
-  slide.addShape(RECT_SHAPE, {
-    x,
-    y,
-    w,
-    h: 0.62,
-    line: { color: COLOR_LINE, pt: 1 },
-    fill: { color: COLOR_SURFACE },
-    rectRadius: 0.05,
-  });
-  slide.addText(label.toUpperCase(), {
-    x: x + 0.14,
-    y: y + 0.11,
-    w: w - 0.28,
-    h: 0.08,
-    fontSize: 7.2,
-    bold: true,
-    color: COLOR_LIGHT_TEXT,
-    margin: 0,
-  });
-  slide.addText(trimText(value, 42) ?? value, {
-    x: x + 0.14,
-    y: y + 0.28,
-    w: w - 0.28,
-    h: 0.1,
-    fontSize: 10.2,
-    bold: true,
-    color: COLOR_TEXT,
-    margin: 0,
-  });
-}
-
-function addMetaField(slide: PptxSlide, label: string, value: string, x: number, y: number, w: number) {
-  slide.addText(label.toUpperCase(), {
-    x,
-    y,
-    w,
-    h: 0.08,
-    fontSize: 7.2,
-    bold: true,
-    color: COLOR_LIGHT_TEXT,
-    margin: 0,
-  });
-  slide.addText(trimText(value, 52) ?? value, {
-    x,
-    y: y + 0.15,
-    w,
-    h: 0.18,
-    fontSize: 10,
-    bold: true,
-    color: COLOR_TEXT,
-    margin: 0,
-  });
-}
-
-async function addFinishChip(
+function addDesignText(
   slide: PptxSlide,
-  finish: FinishEntry,
-  x: number,
-  y: number,
-  w: number,
-  cache: Map<string, string | null>,
+  value: string | Array<{ text: string; color: string; bold?: boolean }>,
+  x: number, y: number, w: number, h: number, size: number, options: DesignTextOptions,
 ) {
-  slide.addShape(RECT_SHAPE, {
-    x,
-    y,
-    w,
-    h: 0.58,
-    line: { color: COLOR_LINE, pt: 1 },
-    fill: { color: "FAFBFC" },
-    rectRadius: 0.06,
-  });
+  if (!value.length) return;
+  const leading = options.leading ?? 1.2;
+  const common = {
+    x: u(x),
+    // PowerPoint puts the extra line height above the text, CSS splits it above and below: cancel the half-leading.
+    y: u(y - Math.max(0, size * leading - size) / 2),
+    w: u(w),
+    h: u(h),
+    fontFace: options.face,
+    fontSize: unitPt(size),
+    color: options.color,
+    bold: Boolean(options.bold),
+    margin: 0,
+    valign: "top" as const,
+    wrap: true,
+    charSpacing: unitPt(options.tracking ?? 0),
+    lineSpacing: unitPt(size * leading),
+    paraSpaceAfter: 0,
+    align: options.align ?? "left",
+  };
+  if (typeof value === "string") slide.addText(value, common);
+  else slide.addText(value.map((run) => ({ text: run.text, options: { color: run.color, bold: run.bold ?? Boolean(options.bold) } })), common);
+}
 
-  const finishData = await imageDataUri(finish.imageUrl, cache);
-  if (finishData) {
-    slide.addImage({
-      data: finishData,
-      x: x + 0.08,
-      y: y + 0.12,
-      w: 0.3,
-      h: 0.3,
-      sizing: { type: "cover", w: 0.3, h: 0.3 },
-      altText: finish.name || finish.label,
+function addDesignRect(slide: PptxSlide, x: number, y: number, w: number, h: number, fill: string) {
+  slide.addShape(RECT_SHAPE, { x: u(x), y: u(y), w: u(w), h: u(h), fill: { color: fill }, line: { color: fill, pt: 0 } });
+}
+
+function wrapDesignLines(value: string, width: number, size: number, em: number, tracking = 0) {
+  const perCharacter = size * em + tracking;
+  const lines: string[] = [];
+  for (const paragraph of value.split("\n")) {
+    let current = "";
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const next = current ? `${current} ${word}` : word;
+      if (current && next.length * perCharacter > width + 0.01) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = next;
+      }
+    }
+    lines.push(current);
+  }
+  return lines;
+}
+
+// Mirrors the web's line clamp: more lines than allowed are cut and end with an ellipsis.
+function clampDesignText(value: string, width: number, size: number, em: number, maxLines: number, tracking = 0) {
+  const lines = wrapDesignLines(value, width, size, em, tracking);
+  if (lines.length <= maxLines) return { text: value, lines: lines.length };
+  const kept = lines.slice(0, maxLines);
+  kept[maxLines - 1] = `${kept[maxLines - 1].replace(/[\s,.;:]+$/, "")}…`;
+  return { text: kept.join(" "), lines: maxLines };
+}
+
+let designGlowCache: Promise<string> | null = null;
+// Soft bronze glow of the cover/closing: radial-gradient(circle, rgba(204,147,102,0.22), transparent 62%) in a
+// 1200x1200 box at left 1000, top -260. A circle gradient reaches the farthest corner: radius 600 * sqrt(2).
+function designGlowImage() {
+  if (!designGlowCache) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080"><defs><radialGradient id="glow" gradientUnits="userSpaceOnUse" cx="1600" cy="340" r="848.53"><stop offset="0" stop-color="#${DESIGN_COLORS.bronze}" stop-opacity="0.22"/><stop offset="0.62" stop-color="#${DESIGN_COLORS.bronze}" stop-opacity="0"/><stop offset="1" stop-color="#${DESIGN_COLORS.bronze}" stop-opacity="0"/></radialGradient></defs><rect width="1920" height="1080" fill="url(#glow)"/></svg>`;
+    designGlowCache = sharp(Buffer.from(svg)).resize(2400, 1350).png().toBuffer()
+      .then((png) => `data:image/png;base64,${png.toString("base64")}`);
+    designGlowCache.catch(() => { designGlowCache = null; });
+  }
+  return designGlowCache;
+}
+
+function formatDesignDate(value: string | null | undefined) {
+  return value
+    ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(value))
+    : null;
+}
+
+// White logo (CSS brightness-0 invert) fitted into a box, left aligned and vertically centred (object-contain object-left).
+async function addDesignLogo(slide: PptxSlide, source: string, x: number, y: number, boxWidth: number, boxHeight: number, cache: Map<string, string | null>) {
+  let logoSource = source;
+  try { if (["noaoffices.com", "www.noaoffices.com"].includes(new URL(logoSource).hostname.toLowerCase())) logoSource = "/noa-logo.png"; } catch { /* Local asset path. */ }
+  const encoded = await imageDataUri(logoSource, cache);
+  if (!encoded) return false;
+  try {
+    const result = await sharp(Buffer.from(encoded.slice(encoded.indexOf(",") + 1), "base64"), { animated: false })
+      .rotate().ensureAlpha().linear(0, 255).png().toBuffer({ resolveWithObject: true });
+    const scale = Math.min(boxWidth / result.info.width, boxHeight / result.info.height);
+    const width = result.info.width * scale, height = result.info.height * scale;
+    slide.addImage({ data: `data:image/png;base64,${result.data.toString("base64")}`, x: u(x), y: u(y + (boxHeight - height) / 2), w: u(width), h: u(height) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type DesignInfoCell = { label: string; value: string };
+
+// Label (22, uppercase, spaced) over value (26, weight 500). Returns the row height.
+function addDesignInfoRow(slide: PptxSlide, cells: DesignInfoCell[], x: number, y: number, width: number, mode: { gap: number; between: boolean }) {
+  const labelHeight = 22 * 1.2, valueLeading = 1.3, valueGap = 8;
+  const natural = cells.map((cell) => Math.max(
+    cell.label.length * (22 * TEXT_METRICS.sansUpper + 3),
+    cell.value.length * 26 * TEXT_METRICS.sansMedium,
+  ));
+  const naturalTotal = natural.reduce((sum, w) => sum + w, 0) + mode.gap * Math.max(cells.length - 1, 0);
+  const shrink = naturalTotal > width ? (width - mode.gap * Math.max(cells.length - 1, 0)) / (naturalTotal - mode.gap * Math.max(cells.length - 1, 0)) : 1;
+  const widths = natural.map((w) => w * shrink);
+  const gap = mode.between && cells.length > 1
+    ? (width - widths.reduce((sum, w) => sum + w, 0)) / (cells.length - 1)
+    : mode.gap;
+  let cursor = x, rowHeight = 0;
+  cells.forEach((cell, index) => {
+    addDesignText(slide, cell.label.toUpperCase(), cursor, y, widths[index] + 4, labelHeight, 22,
+      { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.muted, tracking: 3 });
+    const lines = wrapDesignLines(cell.value, widths[index], 26, TEXT_METRICS.sansMedium).length;
+    const valueHeight = lines * 26 * valueLeading;
+    addDesignText(slide, cell.value, cursor, y + labelHeight + valueGap, widths[index] + 4, valueHeight, 26,
+      { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.text, leading: valueLeading });
+    rowHeight = Math.max(rowHeight, labelHeight + valueGap + valueHeight);
+    cursor += widths[index] + gap;
+  });
+  return rowHeight;
+}
+
+function designInfoRowHeight(cells: DesignInfoCell[], width: number, gap: number) {
+  const natural = cells.map((cell) => Math.max(cell.label.length * (22 * TEXT_METRICS.sansUpper + 3), cell.value.length * 26 * TEXT_METRICS.sansMedium));
+  const gaps = gap * Math.max(cells.length - 1, 0);
+  const total = natural.reduce((sum, w) => sum + w, 0) + gaps;
+  const shrink = total > width ? (width - gaps) / (total - gaps) : 1;
+  return Math.max(...cells.map((cell, index) => 22 * 1.2 + 8 + wrapDesignLines(cell.value, natural[index] * shrink, 26, TEXT_METRICS.sansMedium).length * 26 * 1.3));
+}
+
+type DesignSlideData = {
+  cache: Map<string, string | null>;
+  companyDisplayName: string;
+  date: string | null;
+  logoUrl: string | null;
+  quotationNo: string | null;
+};
+
+async function addCoverSlide(slide: PptxSlide, v: DesignSlideData & {
+  clientName: string | null; preparedBy: string | null; projectName: string | null; subtitle: string | null; title: string; website: string | null;
+}) {
+  slide.background = { color: DESIGN_COLORS.bg };
+  slide.addImage({ data: await designGlowImage(), x: 0, y: 0, w: u(1920), h: u(1080) });
+  addDesignRect(slide, 1790, 96, 2, 888, DESIGN_COLORS.bronze);
+
+  const x = 128, top = 96, width = 1560, height = 888;
+  // Row 1: logo left, website right (47 high).
+  const logoDrawn = await addDesignLogo(slide, v.logoUrl || "/noa-logo.png", x, top, 280, 47, v.cache);
+  if (!logoDrawn) addDesignText(slide, v.preparedBy ?? v.companyDisplayName, x, top + 3, 700, 40, 40, { face: DESIGN_FONTS.serif, color: DESIGN_COLORS.text, leading: 1 });
+  if (v.website) addDesignText(slide, v.website, x + width - 600, top + (47 - 24 * 1.3) / 2, 600, 24 * 1.3, 24,
+    { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.muted, leading: 1.3, align: "right" });
+
+  // Row 3: hairline, then the info cells (Project, Quote no., Prepared for, Prepared by, Date).
+  const cells: DesignInfoCell[] = [
+    { label: "Project", value: v.projectName ?? "" },
+    { label: "Quote no.", value: v.quotationNo ?? "" },
+    { label: "Prepared for", value: v.clientName ?? "" },
+    { label: "Prepared by", value: v.preparedBy ?? "" },
+    { label: "Date", value: v.date ?? "" },
+  ].filter((cell) => cell.value);
+  const row3Height = cells.length ? 1 + 36 + designInfoRowHeight(cells, width, 48) : 0;
+
+  // Row 2: eyebrow, title (1100 wide), bronze rule, subtitle (820 wide, 3 lines).
+  const titleLines = wrapDesignLines(v.title, 1100, 120, TEXT_METRICS.serif).length;
+  const subtitle = v.subtitle ? clampDesignText(v.subtitle, 820, 28, TEXT_METRICS.sans, 3) : null;
+  const titleHeight = titleLines * 120 * 1.02;
+  const row2Height = 24 * 1.2 + 32 + titleHeight + 36 + 3 + (subtitle ? 36 + subtitle.lines * 28 * 1.5 : 0);
+  const free = height - 47 - row2Height - row3Height;
+  const row2Top = top + 47 + free / 2;
+
+  addDesignText(slide, "CLIENT PRESENTATION", x, row2Top, 900, 24 * 1.2, 24, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.bronze, bold: true, tracking: 5 });
+  const titleTop = row2Top + 24 * 1.2 + 32;
+  addDesignText(slide, v.title, x, titleTop, 1100, titleHeight, 120, { face: DESIGN_FONTS.serif, color: DESIGN_COLORS.text, leading: 1.02 });
+  const ruleTop = titleTop + titleHeight + 36;
+  addDesignRect(slide, x, ruleTop, 120, 3, DESIGN_COLORS.bronze);
+  if (subtitle) addDesignText(slide, subtitle.text, x, ruleTop + 3 + 36, 820, subtitle.lines * 28 * 1.5, 28,
+    { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.muted, leading: 1.5 });
+
+  if (cells.length) {
+    const row3Top = top + height - row3Height;
+    addDesignRect(slide, x, row3Top, width, 1, DESIGN_COLORS.hairline);
+    addDesignInfoRow(slide, cells, x, row3Top + 1 + 36, width, { gap: 48, between: true });
+  }
+}
+
+async function addClosingSlide(slide: PptxSlide, v: DesignSlideData & {
+  contacts: DesignInfoCell[]; message: string | null; title: string;
+}) {
+  slide.background = { color: DESIGN_COLORS.bg };
+  slide.addImage({ data: await designGlowImage(), x: 0, y: 0, w: u(1920), h: u(1080) });
+
+  const x = 128, top = 96, width = 1000, height = 888;
+  const logoDrawn = await addDesignLogo(slide, v.logoUrl || "/noa-logo.png", x, top, 280, 47, v.cache);
+  if (!logoDrawn) addDesignText(slide, v.companyDisplayName, x, top + 3, 700, 40, 40, { face: DESIGN_FONTS.serif, color: DESIGN_COLORS.text, leading: 1 });
+
+  const cells: DesignInfoCell[] = [
+    { label: "Quote no.", value: v.quotationNo ?? "" },
+    { label: "Date", value: v.date ?? "" },
+  ].filter((cell) => cell.value);
+  const row3Height = cells.length ? 1 + 36 + designInfoRowHeight(cells, width, 96) : 0;
+
+  const titleLines = wrapDesignLines(v.title, width, 120, TEXT_METRICS.serif).length;
+  const message = v.message ? clampDesignText(v.message, 700, 28, TEXT_METRICS.sans, 4) : null;
+  const titleHeight = titleLines * 120 * 1.02;
+  const row2Height = titleHeight + 36 + 3 + (message ? 36 + message.lines * 28 * 1.5 : 0);
+  const free = height - 47 - row2Height - row3Height;
+  const row2Top = top + 47 + free / 2;
+
+  addDesignText(slide, v.title, x, row2Top, width, titleHeight, 120, { face: DESIGN_FONTS.serif, color: DESIGN_COLORS.text, leading: 1.02 });
+  const ruleTop = row2Top + titleHeight + 36;
+  addDesignRect(slide, x, ruleTop, 120, 3, DESIGN_COLORS.bronze);
+  if (message) addDesignText(slide, message.text, x, ruleTop + 3 + 36, 700, message.lines * 28 * 1.5, 28,
+    { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.muted, leading: 1.5 });
+  if (cells.length) {
+    const row3Top = top + height - row3Height;
+    addDesignRect(slide, x, row3Top, width, 1, DESIGN_COLORS.hairline);
+    addDesignInfoRow(slide, cells, x, row3Top + 1 + 36, width, { gap: 96, between: false });
+  }
+
+  // Contact card: 560 wide at right 128, padding 48, 3-high bronze top border, vertically centred.
+  const contacts = v.contacts.filter((entry) => entry.value);
+  if (contacts.length) {
+    const inner = 560 - 96;
+    const blocks = contacts.map((entry) => {
+      const lines = wrapDesignLines(entry.value, inner, 26, TEXT_METRICS.sansMedium).length;
+      return { ...entry, height: 22 * 1.2 + 8 + lines * 26 * 1.35 };
     });
+    const cardHeight = 3 + 96 + blocks.reduce((sum, block) => sum + block.height, 0) + 28 * (blocks.length - 1);
+    const cardX = 1920 - 128 - 560, cardTop = 540 - cardHeight / 2;
+    addDesignRect(slide, cardX, cardTop, 560, cardHeight, DESIGN_COLORS.card);
+    addDesignRect(slide, cardX, cardTop, 560, 3, DESIGN_COLORS.bronze);
+    let cursor = cardTop + 3 + 48;
+    for (const block of blocks) {
+      addDesignText(slide, block.label.toUpperCase(), cardX + 48, cursor, inner, 22 * 1.2, 22, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.bronze, tracking: 3 });
+      addDesignText(slide, block.value, cardX + 48, cursor + 22 * 1.2 + 8, inner, block.height - 22 * 1.2 - 8, 26,
+        { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.text, leading: 1.35 });
+      cursor += block.height + 28;
+    }
+  }
+}
+
+function addDesignConsiderationsSlide(slide: PptxSlide) {
+  slide.background = { color: DESIGN_COLORS.bg };
+  const x = 128, top = 96, width = 1664, bottom = 984;
+
+  addDesignText(slide, "EDITORIAL OVERVIEW", x, top, 900, 24 * 1.2, 24, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.bronze, bold: true, tracking: 5 });
+  addDesignText(slide, [{ text: "Design ", color: DESIGN_COLORS.text }, { text: "considerations", color: DESIGN_COLORS.bronze }],
+    x, top + 24 * 1.2 + 16, 980, 84 * 1.05, 84, { face: DESIGN_FONTS.serif, leading: 1.05, color: DESIGN_COLORS.text });
+  const intro = clampDesignText("Core principles reviewed when aligning furniture choices with workflow, brand expression, and long-term performance.", 620, 28, TEXT_METRICS.sans, 4);
+  addDesignText(slide, intro.text, x + width - 620, top, 620, intro.lines * 28 * 1.5, 28, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.muted, leading: 1.5 });
+
+  // 4 x 2 grid, gap 24, equal row heights (grid-auto-rows 1fr), anchored to the bottom edge.
+  const columnWidth = (width - 3 * 24) / 4, inner = columnWidth - 64;
+  const cards = designConsiderations.map((entry) => {
+    const title = wrapDesignLines(entry.title, inner, 28, TEXT_METRICS.sansSemibold).length;
+    const body = clampDesignText(entry.body, inner, 24, TEXT_METRICS.sans, 4);
+    return { entry, titleLines: title, body, height: 3 + 32 + 24 * 1.2 + 12 + title * 28 * 1.25 + 12 + body.lines * 24 * 1.45 + 32 };
+  });
+  const rowHeight = Math.max(...cards.map((card) => card.height));
+  const gridTop = bottom - (2 * rowHeight + 24);
+  cards.forEach((card, index) => {
+    const cardX = x + (index % 4) * (columnWidth + 24);
+    const cardY = gridTop + Math.floor(index / 4) * (rowHeight + 24);
+    addDesignRect(slide, cardX, cardY, columnWidth, rowHeight, DESIGN_COLORS.card);
+    addDesignRect(slide, cardX, cardY, columnWidth, 3, DESIGN_COLORS.bronze);
+    addDesignText(slide, String(index + 1).padStart(2, "0"), cardX + 32, cardY + 3 + 32, inner, 24 * 1.2, 24,
+      { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.bronze, bold: true, tracking: 2 });
+    const titleY = cardY + 3 + 32 + 24 * 1.2 + 12;
+    addDesignText(slide, card.entry.title, cardX + 32, titleY, inner, card.titleLines * 28 * 1.25, 28,
+      { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.text, bold: true, leading: 1.25 });
+    addDesignText(slide, card.body.text, cardX + 32, titleY + card.titleLines * 28 * 1.25 + 12, inner, card.body.lines * 24 * 1.45, 24,
+      { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.muted, leading: 1.45 });
+  });
+}
+
+type DesignImage = { data: string; height: number; width: number };
+type DesignRect = { x: number; y: number; w: number; h: number };
+
+// Decodes any supported source (URL, path, base64 or URL-encoded data URI) into a PNG with its pixel size.
+async function loadDesignImage(source: string | null | undefined, cache: Map<string, string | null>): Promise<DesignImage | null> {
+  const encoded = await imageDataUri(source ?? null, cache);
+  if (!encoded) return null;
+  try {
+    const comma = encoded.indexOf(",");
+    const payload = encoded.slice(comma + 1);
+    const input = /;base64/i.test(encoded.slice(0, comma)) ? Buffer.from(payload, "base64") : Buffer.from(decodeURIComponent(payload), "utf8");
+    const png = await sharp(input, { animated: false }).rotate().png().toBuffer({ resolveWithObject: true });
+    return { data: `data:image/png;base64,${png.data.toString("base64")}`, height: png.info.height, width: png.info.width };
+  } catch {
+    return null;
+  }
+}
+
+// Image in a box. "cover" crops through PptxGenJS sizing (the element carries the source aspect, sizing carries the box);
+// "contain" is fitted and centred like CSS object-contain.
+async function addDesignImage(
+  slide: PptxSlide, source: string | null | undefined, x: number, y: number, w: number, h: number,
+  fit: "contain" | "cover", cache: Map<string, string | null>,
+) {
+  const image = await loadDesignImage(source, cache);
+  if (!image) return false;
+  if (fit === "cover") {
+    slide.addImage({ data: image.data, x: u(x), y: u(y), w: image.width / 96, h: image.height / 96, sizing: { type: "cover", w: u(w), h: u(h) } });
   } else {
-    slide.addShape(RECT_SHAPE, {
-      x: x + 0.08,
-      y: y + 0.12,
-      w: 0.3,
-      h: 0.3,
-      line: { color: COLOR_LINE, pt: 1 },
-      fill: { color: "E5E7EB" },
+    const scale = Math.min(w / image.width, h / image.height);
+    const width = image.width * scale, height = image.height * scale;
+    slide.addImage({ data: image.data, x: u(x + (w - width) / 2), y: u(y + (h - height) / 2), w: u(width), h: u(height) });
+  }
+  return true;
+}
+
+// Draws an image in a frame exactly like the web's PresentationImageStage: object-fit and object-position X%/Y% inside the
+// frame, then scale() around the same X%/Y% point, all clipped to the frame. Whatever leaves the frame is cropped.
+function placeDesignImage(slide: PptxSlide, image: DesignImage, frame: DesignRect, fit: "contain" | "cover", positionX: number, positionY: number, scale: number) {
+  const fitScale = fit === "cover" ? Math.max(frame.w / image.width, frame.h / image.height) : Math.min(frame.w / image.width, frame.h / image.height);
+  const width = image.width * fitScale, height = image.height * fitScale;
+  const baseX = frame.x + (frame.w - width) * positionX / 100, baseY = frame.y + (frame.h - height) * positionY / 100;
+  const originX = frame.x + frame.w * positionX / 100, originY = frame.y + frame.h * positionY / 100;
+  const drawn: DesignRect = { x: originX + (baseX - originX) * scale, y: originY + (baseY - originY) * scale, w: width * scale, h: height * scale };
+  const left = Math.max(drawn.x, frame.x), top = Math.max(drawn.y, frame.y);
+  const right = Math.min(drawn.x + drawn.w, frame.x + frame.w), bottom = Math.min(drawn.y + drawn.h, frame.y + frame.h);
+  if (right - left < 0.01 || bottom - top < 0.01) return;
+  const cropped = left > drawn.x + 0.01 || top > drawn.y + 0.01 || right < drawn.x + drawn.w - 0.01 || bottom < drawn.y + drawn.h - 0.01;
+  if (!cropped) {
+    slide.addImage({ data: image.data, x: u(drawn.x), y: u(drawn.y), w: u(drawn.w), h: u(drawn.h) });
+    return;
+  }
+  slide.addImage({
+    data: image.data, x: u(left), y: u(top), w: u(drawn.w), h: u(drawn.h),
+    sizing: { type: "crop", x: u(left - drawn.x), y: u(top - drawn.y), w: u(right - left), h: u(bottom - top) },
+  });
+}
+
+const PRODUCT_FINISH_LIMIT = 25; // same cap as the web slide
+const PRODUCT_FRAME_SIZES = { current: { w: 1, h: 1 }, medium: { w: 0.88, h: 0.86 }, small: { w: 0.76, h: 0.72 } } as const;
+
+function finishCaption(finish: FinishEntry) {
+  return (finish.name && finish.name !== finish.code ? finish.name : null) || (!finish.code ? finish.description || "Selected finish" : null);
+}
+
+type DesignProductSlide = {
+  cache: Map<string, string | null>;
+  frameSize: "small" | "medium" | "current";
+  imageRect: { x: number; y: number; w: number; h: number } | null;
+  imageScale: number;
+  itemNumber: number;
+  positionX: number;
+  positionY: number;
+  preparedBy: string;
+  product: ProductPageData;
+  quotationNo: string | null;
+  sectionTitle: string;
+  showSpecification: boolean;
+  summary: string | null;
+};
+
+async function addProductSlide(slide: PptxSlide, v: DesignProductSlide) {
+  const { product } = v;
+  slide.background = { color: DESIGN_COLORS.white };
+  addDesignRect(slide, 1240, 0, 680, 1080, DESIGN_COLORS.bg);
+
+  // ---- Image box (60, 40, 1120 x 800), white. imageRect replaces scale, position and frame size.
+  const box: DesignRect = { x: 60, y: 40, w: 1120, h: 800 };
+  let frame: DesignRect, positionX = 50, positionY = 50, scale = 1;
+  if (v.imageRect) {
+    frame = { x: box.x + v.imageRect.x / 100 * box.w, y: box.y + v.imageRect.y / 100 * box.h, w: v.imageRect.w / 100 * box.w, h: v.imageRect.h / 100 * box.h };
+  } else {
+    const size = PRODUCT_FRAME_SIZES[v.frameSize];
+    frame = { x: box.x + box.w * (1 - size.w) / 2, y: box.y + box.h * (1 - size.h) / 2, w: box.w * size.w, h: box.h * size.h };
+    positionX = v.positionX;
+    positionY = v.positionY;
+    scale = v.imageScale;
+  }
+  const image = await loadDesignImage(product.imageUrl, v.cache);
+  if (image) {
+    placeDesignImage(slide, image, frame, product.imageFit, positionX, positionY, scale);
+  } else {
+    const note = clampDesignText("No quotation image is available for this item yet. The item remains included so the presentation sequence stays complete.", 640, 20, TEXT_METRICS.sans, 3);
+    const chipWidth = "VISUAL PENDING".length * (17 * TEXT_METRICS.sansUpper + 3) + 2 * 18 + 2, chipHeight = 17 * 1.5 + 2 * 6 + 2;
+    const stack = chipHeight + 20 + note.lines * 30;
+    const top = frame.y + (frame.h - stack) / 2;
+    slide.addShape(RECT_SHAPE, { x: u(frame.x + (frame.w - chipWidth) / 2), y: u(top), w: u(chipWidth), h: u(chipHeight),
+      fill: { type: "none" }, line: { color: DESIGN_COLORS.hairlineOnWhite, width: unitPt(1), dashType: "dash" } });
+    addDesignText(slide, "VISUAL PENDING", frame.x + (frame.w - chipWidth) / 2, top + 7, chipWidth, 17 * 1.5, 17,
+      { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.mutedOnWhite, bold: true, tracking: 3, leading: 1.5, align: "center" });
+    addDesignText(slide, note.text, frame.x + (frame.w - 640) / 2, top + chipHeight + 20, 640, note.lines * 30, 20,
+      { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.mutedOnWhite, leading: 1.5, align: "center" });
+  }
+
+  // ---- Details row: x 60, width 1120, bottom edge 1040, grows upward (cells wrap, space-between).
+  const cells = [
+    ...product.meta.map((row) => ({ label: row.label, value: row.value })),
+    { label: "Area", value: product.item.room_name_snapshot ?? "" },
+    { label: "Quote no.", value: v.quotationNo ?? "" },
+    { label: "Prepared by", value: v.preparedBy },
+  ].filter((cell) => cell.value);
+  if (cells.length) {
+    const natural = cells.map((cell) => Math.min(1120, Math.max(cell.label.length * (17 * TEXT_METRICS.sansUpper + 2), cell.value.length * 22 * TEXT_METRICS.sansMedium)));
+    const lines: Array<Array<number>> = [[]];
+    let used = 0;
+    natural.forEach((width, index) => {
+      const row = lines[lines.length - 1];
+      if (row.length && used + 40 + width > 1120) { lines.push([index]); used = width; } else { used += (row.length ? 40 : 0) + width; row.push(index); }
+    });
+    const cellHeight = (index: number) => 17 * 1.2 + 6 + wrapDesignLines(cells[index].value, natural[index], 22, TEXT_METRICS.sansMedium).length * 22 * 1.3;
+    const rowHeights = lines.map((row) => Math.max(...row.map(cellHeight)));
+    const total = 1 + 16 + rowHeights.reduce((sum, h) => sum + h, 0) + 16 * (lines.length - 1);
+    const top = 1040 - total;
+    addDesignRect(slide, 60, top, 1120, 1, DESIGN_COLORS.hairlineOnWhite);
+    let rowY = top + 1 + 16;
+    lines.forEach((row, rowIndex) => {
+      const free = 1120 - row.reduce((sum, index) => sum + natural[index], 0);
+      const gap = row.length > 1 ? free / (row.length - 1) : 0;
+      let cursor = 60;
+      for (const index of row) {
+        addDesignText(slide, cells[index].label.toUpperCase(), cursor, rowY, natural[index] + 4, 17 * 1.2, 17, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.mutedOnWhite, tracking: 2 });
+        addDesignText(slide, cells[index].value, cursor, rowY + 17 * 1.2 + 6, natural[index] + 4, cellHeight(index) - 17 * 1.2 - 6, 22,
+          { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.ink, leading: 1.3 });
+        cursor += natural[index] + gap;
+      }
+      rowY += rowHeights[rowIndex] + 16;
     });
   }
 
-  slide.addText(trimText(finish.label, 18) ?? finish.label, {
-    x: x + 0.45,
-    y: y + 0.11,
-    w: w - 0.53,
-    h: 0.07,
-    fontSize: 7,
-    bold: true,
-    color: COLOR_LABEL,
-    margin: 0,
+  // ---- Finishes (bottom of the right panel, bottom edge 1040), measured first so the top group can sit above it.
+  const flat = product.finishes.length ? (() => {
+    const groups = new Map<string, FinishEntry[]>();
+    for (const finish of product.finishes) groups.set(finish.label, [...(groups.get(finish.label) ?? []), finish]);
+    return Array.from(groups.entries()).map(([label, items]) => ({ label, items }));
+  })() : [];
+  const allFinishCount = flat.reduce((sum, group) => sum + group.items.length, 0);
+  let remaining = PRODUCT_FINISH_LIMIT;
+  const shownGroups = flat.map((group) => {
+    const items = group.items.slice(0, Math.max(remaining, 0));
+    remaining -= items.length;
+    return { label: group.label, items };
+  }).filter((group) => group.items.length);
+  const shownCount = shownGroups.reduce((sum, group) => sum + group.items.length, 0);
+  const hiddenCount = Math.max(allFinishCount - shownCount, 0);
+
+  const chipLines = (finish: FinishEntry) => Math.min(2, wrapDesignLines([finish.code, finishCaption(finish)].filter(Boolean).join(" "), 108, 15, TEXT_METRICS.sansSemibold).length);
+  const groupLayouts = shownGroups.map((group) => {
+    const rows: FinishEntry[][] = [];
+    for (let i = 0; i < group.items.length; i += 5) rows.push(group.items.slice(i, i + 5));
+    const rowHeights = rows.map((row) => 36 + 6 + Math.max(...row.map(chipLines)) * 15 * 1.2);
+    return { label: group.label, rows, rowHeights, height: 18 * 1.5 + 10 + rowHeights.reduce((sum, h) => sum + h, 0) + 14 * (rows.length - 1) };
   });
-  slide.addText(
-    trimText([finish.code, finish.name].filter(Boolean).join(" | ") || finish.description || "Selected finish", 28) ?? "Selected finish",
-    {
-      x: x + 0.45,
-      y: y + 0.25,
-      w: w - 0.53,
-      h: 0.12,
-      fontSize: 8.5,
-      bold: true,
-      color: COLOR_TEXT,
-      margin: 0,
-    },
-  );
+  const finishesHeight = groupLayouts.length
+    ? 1 + 18 + 18 * 1.5 + groupLayouts.reduce((sum, group) => sum + 16 + group.height, 0)
+    : 0;
+  const finishesTop = 1040 - finishesHeight;
+
+  if (groupLayouts.length) {
+    addDesignRect(slide, 1292, finishesTop, 580, 1, DESIGN_COLORS.hairline);
+    let cursor = finishesTop + 1 + 18;
+    addDesignText(slide, "FINISHES", 1292, cursor, 300, 18 * 1.5, 18, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.text, bold: true, tracking: 4, leading: 1.5 });
+    if (hiddenCount) addDesignText(slide, `+${hiddenCount} MORE`, 1292 + 280, cursor + 1, 300, 17 * 1.5, 17, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.bronze, tracking: 2, leading: 1.5, align: "right" });
+    cursor += 18 * 1.5;
+    for (const group of groupLayouts) {
+      cursor += 16;
+      addDesignText(slide, group.label.toUpperCase(), 1292, cursor, 580, 18 * 1.5, 18, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.bronze, bold: true, tracking: 3, leading: 1.5 });
+      cursor += 18 * 1.5 + 10;
+      for (const [rowIndex, row] of group.rows.entries()) {
+        for (const [chipIndex, finish] of row.entries()) {
+          const x = 1292 + chipIndex * (108 + 10);
+          // Swatch 108 x 36: grey placeholder, optional thumbnail (cover) inside the 1-unit border.
+          slide.addShape(RECT_SHAPE, { x: u(x + 0.5), y: u(cursor + 0.5), w: u(107), h: u(35), fill: { color: "ECECEE" }, line: { color: DESIGN_COLORS.hairline, width: unitPt(1) } });
+          if (finish.imageUrl) await addDesignImage(slide, finish.imageUrl, x + 1, cursor + 1, 106, 34, "cover", v.cache);
+          const caption = finishCaption(finish);
+          const runs: Array<{ text: string; color: string; bold?: boolean }> = [];
+          if (finish.code) runs.push({ text: finish.code, color: DESIGN_COLORS.text, bold: true });
+          if (caption) runs.push({ text: `${finish.code ? " " : ""}${caption}`, color: DESIGN_COLORS.muted });
+          addDesignText(slide, runs, x, cursor + 36 + 6, 108, chipLines(finish) * 15 * 1.2, 15, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.muted, leading: 1.2 });
+        }
+        cursor += group.rowHeights[rowIndex] + 14;
+      }
+      cursor -= 14;
+    }
+  }
+
+  // ---- Top group (x 1292, y 56, width 580): eyebrow, name (+ badges), subtitle, description.
+  const x = 1292, width = 580;
+  const limit = finishesHeight ? finishesTop - 24 : 1040;
+  let y = 56;
+  const eyebrow = clampDesignText(`ITEM ${v.itemNumber}${v.sectionTitle ? ` · ${v.sectionTitle}` : ""}`.toUpperCase(), width, 20, TEXT_METRICS.sansUpper, 1, 5);
+  addDesignText(slide, eyebrow.text, x, y, width, 20 * 1.2, 20, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.bronze, bold: true, tracking: 5 });
+  y += 20 * 1.2 + 20;
+
+  const title = clampDesignText(product.heading, width, 60, TEXT_METRICS.serif, 2, -1);
+  addDesignText(slide, title.text, x, y, width, title.lines * 60, 60, { face: DESIGN_FONTS.serif, color: DESIGN_COLORS.text, leading: 1, tracking: -1 });
+  y += title.lines * 60;
+  const badges = [product.isOptional ? "OPTIONAL" : null, product.isRateOnly ? "RATE ONLY" : null].filter((label): label is string => Boolean(label));
+  if (badges.length) {
+    y += 12;
+    let badgeX = x;
+    for (const label of badges) {
+      const badgeWidth = label.length * (17 * TEXT_METRICS.sansUpper + 2) + 2 * 10 + 2, badgeHeight = 17 * 1.5 + 2 * 2 + 2;
+      slide.addShape(RECT_SHAPE, { x: u(badgeX + 0.5), y: u(y + 0.5), w: u(badgeWidth - 1), h: u(badgeHeight - 1), fill: { type: "none" }, line: { color: DESIGN_COLORS.bronze, width: unitPt(1) } });
+      addDesignText(slide, label, badgeX + 1 + 10, y + 1 + 2, badgeWidth, 17 * 1.5, 17, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.bronze, bold: true, tracking: 2, leading: 1.5 });
+      badgeX += badgeWidth + 8;
+    }
+    y += 17 * 1.5 + 2 * 2 + 2;
+  }
+  y += 20;
+
+  if (v.summary) {
+    const summary = clampDesignText(v.summary.toUpperCase(), width, 19, TEXT_METRICS.sansUpper, 2, 3);
+    addDesignText(slide, summary.text, x, y, width, summary.lines * 19 * 1.3, 19, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.bronze, bold: true, tracking: 3, leading: 1.3 });
+    y += summary.lines * 19 * 1.3 + 20;
+  }
+
+  if (v.showSpecification) {
+    // Same rule as the web: 4 lines with 3+ finish types or more than 18 swatches, otherwise 6; fewer if the space is short.
+    const ruleLines = shownGroups.length >= 3 || shownCount > 18 ? 4 : 6;
+    const fitting = Math.floor((limit - y) / 30);
+    const maxLines = Math.min(ruleLines, fitting);
+    if (product.specification && maxLines >= 1) {
+      const description = clampDesignText(product.specification, width, 20, TEXT_METRICS.sans, maxLines);
+      addDesignText(slide, description.text, x, y, width, description.lines * 30, 20, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.muted, leading: 1.5 });
+    } else if (!product.specification && fitting >= 1) {
+      addDesignText(slide, "Specification details not added yet.", x, y, width, 30, 20, { face: DESIGN_FONTS.sans, color: "8E8B87", leading: 1.5 });
+    }
+  }
+}
+
+type DesignColumnBlock =
+  | { chip: string }
+  | { text: string; size: number; leading: number; color: string; clamp?: number; medium?: boolean };
+
+// Left column of the section and area slides: eyebrow + title at the top, a bottom group (gap 20) ending at y 984,
+// and the footer line. Column x 128, width 380.
+function addDesignSectionColumn(slide: PptxSlide, v: {
+  blocks: DesignColumnBlock[]; companyDisplayName: string; eyebrow: string; quotationNo: string | null; title: string;
+}) {
+  const x = 128, width = 380, top = 96, bottom = 984;
+  const eyebrowLines = wrapDesignLines(v.eyebrow.toUpperCase(), width, 24, TEXT_METRICS.sansUpper, 5).length;
+  const eyebrowHeight = eyebrowLines * 24 * 1.2;
+  const title = clampDesignText(v.title, width, 72, TEXT_METRICS.serif, 3, -1);
+  addDesignText(slide, v.eyebrow.toUpperCase(), x, top, width, eyebrowHeight, 24, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.bronze, bold: true, tracking: 5 });
+  addDesignText(slide, title.text, x, top + eyebrowHeight + 24, width, title.lines * 72 * 1.05, 72,
+    { face: DESIGN_FONTS.serif, color: DESIGN_COLORS.text, leading: 1.05, tracking: -1 });
+
+  // Bottom group, measured first so it can be stacked upwards from the bottom edge.
+  const placed = v.blocks.map((block) => {
+    if ("chip" in block) {
+      const text = v.blocks.length ? block.chip.toUpperCase() : "";
+      const inner = width - 2 * 26 - 2 * 2;
+      const clamped = clampDesignText(text, inner, 22, TEXT_METRICS.sansUpper, 2, 4);
+      const lines = wrapDesignLines(clamped.text, inner, 22, TEXT_METRICS.sansUpper, 4);
+      const textWidth = Math.max(...lines.map((line) => line.length * (22 * TEXT_METRICS.sansUpper + 4)));
+      return { block, text: clamped.text, lines: clamped.lines, chipWidth: Math.min(width, textWidth + 2 * 26 + 2 * 2), height: clamped.lines * 22 * 1.2 + 2 * 12 + 2 * 2 };
+    }
+    const em = block.medium ? TEXT_METRICS.sansMedium : TEXT_METRICS.sans;
+    const clamped = block.clamp ? clampDesignText(block.text, width, block.size, em, block.clamp) : { text: block.text, lines: wrapDesignLines(block.text, width, block.size, em).length };
+    return { block, text: clamped.text, lines: clamped.lines, chipWidth: 0, height: clamped.lines * block.size * block.leading };
+  });
+  const total = placed.reduce((sum, entry) => sum + entry.height, 0) + 20 * Math.max(placed.length - 1, 0);
+  let cursor = bottom - total;
+  for (const entry of placed) {
+    if ("chip" in entry.block) {
+      // 2-unit bronze border drawn as an outline inset by half its width; no fill.
+      slide.addShape(RECT_SHAPE, { x: u(x + 1), y: u(cursor + 1), w: u(entry.chipWidth - 2), h: u(entry.height - 2),
+        fill: { type: "none" }, line: { color: DESIGN_COLORS.bronze, width: unitPt(2) } });
+      addDesignText(slide, entry.text, x + 2 + 26, cursor + 2 + 12, entry.chipWidth - 2 * 26 - 2 * 2 + 6, entry.lines * 22 * 1.2, 22,
+        { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.bronze, bold: true, tracking: 4 });
+    } else {
+      addDesignText(slide, entry.text, x, cursor, width, entry.height, entry.block.size,
+        { face: DESIGN_FONTS.sans, color: entry.block.color, leading: entry.block.leading });
+    }
+    cursor += entry.height + 20;
+  }
+
+  const footer = clampDesignText([v.companyDisplayName, v.quotationNo].filter(Boolean).join(" · "), 900, 22, TEXT_METRICS.sans, 1);
+  addDesignText(slide, footer.text, x, 1080 - 40 - 22 * 1.3, 900, 22 * 1.3, 22, { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.muted, leading: 1.3 });
+}
+
+async function addSectionSlide(slide: PptxSlide, v: {
+  cache: Map<string, string | null>; chipText: string; companyDisplayName: string; eyebrow: string;
+  layoutSource: string | null; note: string | null; quotationNo: string | null; title: string;
+}) {
+  slide.background = { color: DESIGN_COLORS.bg };
+  addDesignSectionColumn(slide, {
+    companyDisplayName: v.companyDisplayName,
+    eyebrow: v.eyebrow,
+    quotationNo: v.quotationNo,
+    title: v.title,
+    blocks: [
+      { text: v.layoutSource ? "Floor layout overview" : "Main area overview", size: 30, leading: 1.3, color: DESIGN_COLORS.muted },
+      ...(v.note ? [{ text: v.note, size: 24, leading: 1.5, color: DESIGN_COLORS.muted, clamp: 4 }] : []),
+      { chip: v.chipText },
+    ],
+  });
+
+  // White card with the floor layout (only when the web draws it): 1212 x 888 at (580, 96), padding 24, label then image.
+  if (v.layoutSource) {
+    addDesignRect(slide, 580, 96, 1212, 888, DESIGN_COLORS.white);
+    addDesignText(slide, "FULL FLOOR LAYOUT", 580 + 24, 96 + 24, 1164, 24, 20, { face: DESIGN_FONTS.sans, color: "7A7A7A", bold: true, tracking: 3 });
+    await addDesignImage(slide, v.layoutSource, 580 + 24, 96 + 24 + 24 + 12, 1164, 888 - 48 - 24 - 12, "contain", v.cache);
+  }
+}
+
+async function addAreaSlide(slide: PptxSlide, v: {
+  cache: Map<string, string | null>; chipText: string; companyDisplayName: string; count: string; eyebrow: string; note: string | null;
+  quotationNo: string | null; title: string; within: string | null;
+  visuals: Array<{ key: "area" | "snapshot"; label: string; source: string }>;
+}) {
+  slide.background = { color: DESIGN_COLORS.bg };
+  addDesignSectionColumn(slide, {
+    companyDisplayName: v.companyDisplayName,
+    eyebrow: v.eyebrow,
+    quotationNo: v.quotationNo,
+    title: v.title,
+    blocks: [
+      ...(v.note ? [{ text: v.note, size: 24, leading: 1.5, color: DESIGN_COLORS.muted, clamp: 4 }] : []),
+      ...(v.within ? [{ text: `Within ${v.within}`, size: 32, leading: 1.25, color: DESIGN_COLORS.text, medium: true }] : []),
+      { text: v.count, size: 28, leading: 1.3, color: DESIGN_COLORS.muted },
+      { chip: v.chipText },
+    ],
+  });
+
+  // Right area 1212 x 888 at (580, 96), gap 24. A single image takes the full width; no image leaves it empty.
+  const single = v.visuals.length === 1;
+  let cursor = 580;
+  for (const visual of v.visuals) {
+    if (visual.key === "area") {
+      const width = single ? 1212 : 520;
+      addDesignRect(slide, cursor, 96, width, 888, DESIGN_COLORS.card);
+      await addDesignImage(slide, visual.source, cursor, 96, width, 888, "cover", v.cache);
+      // Label chip: left 20, bottom 20, #2B2D33 at 80 percent, padding 10/16.
+      const text = visual.label.toUpperCase();
+      const chipWidth = text.length * (20 * TEXT_METRICS.sansUpper + 3) + 2 * 16, chipHeight = 20 * 1.2 + 2 * 10;
+      const chipY = 96 + 888 - 20 - chipHeight;
+      slide.addShape(RECT_SHAPE, { x: u(cursor + 20), y: u(chipY), w: u(chipWidth), h: u(chipHeight),
+        fill: { color: DESIGN_COLORS.bg, transparency: 20 }, line: { color: DESIGN_COLORS.bg, pt: 0 } });
+      addDesignText(slide, text, cursor + 20 + 16, chipY + 10, chipWidth - 2 * 16 + 6, 20 * 1.2, 20,
+        { face: DESIGN_FONTS.sans, color: DESIGN_COLORS.text, bold: true, tracking: 3 });
+      cursor += width + 24;
+    } else {
+      const width = single ? 1212 : 668;
+      addDesignRect(slide, cursor, 96, width, 888, DESIGN_COLORS.white);
+      addDesignText(slide, visual.label.toUpperCase(), cursor + 24, 96 + 24, width - 48, 24, 20, { face: DESIGN_FONTS.sans, color: "7A7A7A", bold: true, tracking: 3 });
+      await addDesignImage(slide, visual.source, cursor + 24, 96 + 24 + 24 + 12, width - 48, 888 - 48 - 24 - 12, "contain", v.cache);
+      cursor += width + 24;
+    }
+  }
 }
 
 export async function exportQuotationPresentationPptx(data: LoadedQuotationPresentationData) {
@@ -1167,7 +1244,8 @@ export async function exportQuotationPresentationPptx(data: LoadedQuotationPrese
   const productPagesBySection = new Map(
     dividerSections.map((section) => {
       const sectionItems = presentableItemsBySection.get(section.id) ?? [];
-      return [section.id, settings.layoutMode === "two_per_page" ? chunkItems(sectionItems, 2) : sectionItems.map((item) => [item])] as const;
+      // The PowerPoint export always uses one product per slide, also when the web layout is two per page.
+      return [section.id, sectionItems.map((item) => [item])] as const;
     }),
   );
 
@@ -1180,1220 +1258,125 @@ export async function exportQuotationPresentationPptx(data: LoadedQuotationPrese
 
   const pptx = new PptxGenJS();
   pptx.defineLayout({
-    name: PPTX_LAYOUT_A4,
-    width: SINGLE_PRODUCT_LAYOUT.width,
-    height: SINGLE_PRODUCT_LAYOUT.height,
+    name: PPTX_LAYOUT_NAME,
+    width: SLIDE_W,
+    height: SLIDE_H,
   });
-  pptx.layout = PPTX_LAYOUT_A4;
+  pptx.layout = PPTX_LAYOUT_NAME;
   pptx.author = data.companyProfile.displayName || FALLBACK_COMPANY_PROFILE.displayName;
   pptx.company = data.companyProfile.companyName || FALLBACK_COMPANY_PROFILE.companyName;
   pptx.subject = "Quotation Presentation";
   pptx.title = presentationTitle(data.quotation, coverTitle);
 
   const imageCache = new Map<string, string | null>();
-  const currentProjectLabel = projectLabel(data);
 
   for (const slideDef of slides) {
     const slide = pptx.addSlide();
 
-    // PPT-3 renderers use CSS-pixel geometry. Product rendering below is unchanged.
-    if (["cover", "design", "main-area", "section", "thank-you"].includes(slideDef.type)) {
-      const l = COVER_LAYOUT;
-      const inch = (px: number) => px / l.px;
-      const pt = (px: number) => px * l.pt;
-      const measure = (value: string, width: number, size: number, leading: number, tracking = l.zero as number) => {
-        let rows: number = l.one, used: number = l.zero;
-        for (const word of value.split(/(\s+)/)) {
-          if (word.includes("\n")) { rows += word.split("\n").length - l.one; used = l.zero; continue; }
-          const w = word.length * size * (l.glyphEm + tracking);
-          if (used && used + w > width && word.trim()) { rows += l.one; used = l.zero; }
-          if (word.trim() || used) used += w;
-          while (used > width && width > l.zero) { rows += l.one; used -= width; }
-        }
-        return rows * size * leading;
+    if (slideDef.type === "cover" || slideDef.type === "design" || slideDef.type === "thank-you") {
+      const shared = {
+        cache: imageCache,
+        companyDisplayName: data.companyProfile.displayName,
+        date: formatDesignDate(data.quotation.quotation_date),
+        logoUrl: data.companyProfile.logoUrl,
+        quotationNo: data.quotation.quotation_no,
       };
-      const text = (value: string | null | undefined, x: number, y: number, w: number, h: number,
-        size: number, face: string, color: string, leading = l.one as number, tracking = l.zero as number,
-        align: "left" | "right" | "center" = "left", wrap = true) => {
-        if (!value) return;
-        slide.addText(value, { x: inch(x), y: inch(y - Math.max(l.zero, size * leading - size) / l.two),
-          w: inch(w), h: inch(h), fontFace: face, fontSize: pt(size), color,
-          margin: l.zero, valign: "top", wrap, charSpacing: pt(size * tracking),
-          lineSpacing: pt(size * leading), paraSpaceAfter: l.zero, align });
-      };
-      const label = (value: string, x: number, y: number, w: number, color = l.label as string,
-        size = l.smallSize as number, tracking = l.smallTracking as number, align: "left" | "right" | "center" = "left", wrap = true) =>
-        text(value.toUpperCase(), x, y, w, size * l.leftFr, size, GEIST_FONTS.semibold, color, l.leftFr, tracking, align, wrap);
-      const line = (x: number, y: number, w: number, color = l.border as string, h = l.zero as number) =>
-        slide.addShape("line", { x: inch(x), y: inch(y), w: inch(w), h: inch(h), line: { color, pt: pt(l.one) } });
-      const box = (x: number, y: number, w: number, h: number, fill: string, border = fill,
-        radius = l.zero as number, transparency = l.zero as number) => {
-        slide.addShape(radius ? "roundRect" : RECT_SHAPE, { x: inch(x), y: inch(y), w: inch(w), h: inch(h),
-          fill: { color: fill, transparency }, line: { color: border, pt: border === fill ? l.zero : pt(l.one) },
-          ...(radius ? { rectRadius: inch(radius), radius: inch(radius) } : {}) });
-      };
-      const picture = async (source: string | null, x: number, y: number, w: number, h: number, white = false) => {
-        const encoded = await imageDataUri(source, imageCache);
-        if (!encoded) return null;
-        try {
-          const pipeline = sharp(Buffer.from(encoded.slice(encoded.indexOf(",") + l.one), "base64"), { animated: false }).rotate().ensureAlpha();
-          // CSS brightness-0 invert: turn RGB white while retaining the image alpha channel.
-          if (white) pipeline.linear(l.zero, l.channelWhite);
-          const result = await pipeline.png().toBuffer({ resolveWithObject: true });
-          const scale = Math.min(w / result.info.width, h / result.info.height);
-          const iw = result.info.width * scale, ih = result.info.height * scale;
-          slide.addImage({ data: `data:image/png;base64,${result.data.toString("base64")}`,
-            x: inch(x + (w - iw) / l.two), y: inch(y), w: inch(iw), h: inch(ih) });
-          return { width: iw, height: ih };
-        } catch { return null; }
-      };
-      const date = data.quotation.quotation_date
-        ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(data.quotation.quotation_date))
-        : null;
-
-      if (slideDef.type === "cover" || slideDef.type === "thank-you") {
-        const closing = slideDef.type === "thank-you";
-        const c = closing ? CLOSING_LAYOUT : COVER_LAYOUT;
-        slide.addImage({ data: await editorialBackground("cover"), x: inch(l.zero), y: inch(l.zero), w: inch(c.width), h: inch(c.height) });
-        box(c.width * (l.one - c.blackWidth), l.zero, c.width * c.blackWidth, c.height, c.black);
-        const leftWidth = c.width * c.leftFr / (c.leftFr + c.rightFr);
-        const contentWidth = leftWidth - c.pad * l.two;
-        const sideX = leftWidth + c.sideX, sideWidth = c.width - leftWidth - c.sideX * l.two;
-        line(c.pad, c.pad + c.labelLine / l.two, c.lineWidth, c.light);
-        label(closing ? "Closing Slide" : "Client Presentation", c.pad + c.lineWidth + c.gap12, c.pad,
-          contentWidth - c.lineWidth - c.gap12, c.label, c.labelSize, c.labelTracking);
-        const title = (closing ? closingTitle : coverTitle) || "";
-        // PPT positions a line box below its first glyph; this cancels the measured 8px first-line offset.
-        const titleY = c.pad + c.labelLine + c.gap40 - c.gap8;
-        const titleHeight = measure(title, contentWidth, c.titleSize, c.titleLeading, c.titleTracking);
-        text(title, c.pad, titleY, contentWidth, titleHeight, c.titleSize, GEIST_FONTS.light, c.dark, c.titleLeading, c.titleTracking);
-        const paragraph = closing ? closingMessage : coverSubtitle;
-        if (paragraph) {
-          const width = Math.min(contentWidth, c.paragraphMax);
-          text(paragraph, c.pad, titleY + titleHeight + c.gap32, width,
-            measure(paragraph, width, c.paragraphSize, c.paragraphLine / c.paragraphSize),
-            c.paragraphSize, GEIST_FONTS.regular, c.grey, c.paragraphLine / c.paragraphSize);
-        }
-        const cards = [{ label: "Project / Quote No.", value: data.quotation.quotation_no }, { label: "Date", value: date }]
-          .filter((card): card is { label: string; value: string } => Boolean(card.value));
-        const cardWidth = (contentWidth - c.gap40) * c.cardRightFr / (c.cardLeftFr + c.cardRightFr);
-        const cardX = c.pad + contentWidth - cardWidth;
-        const cardHeight = c.gap12 * l.two + c.smallLine + c.gap4 + c.bodyLine + c.one * l.two;
-        const cardStackHeight = cards.length * cardHeight + Math.max(l.zero, cards.length - l.one) * c.gap12;
-        const footerY = c.height - c.pad - cardStackHeight - c.gap32 - c.one;
-        line(c.pad, footerY, contentWidth);
-        cards.forEach((card, index) => {
-          const y = footerY + c.gap32 + c.one + index * (cardHeight + c.gap12);
-          box(cardX, y, cardWidth, cardHeight, c.white, c.border, c.cardRadius, c.cardTransparency);
-          label(card.label, cardX + c.gap16, y + c.gap12, cardWidth - c.gap16 * l.two, c.light);
-          text(card.value, cardX + c.gap16, y + c.gap12 + c.smallLine + c.gap4,
-            cardWidth - c.gap16 * l.two, c.bodyLine, c.bodySize, GEIST_FONTS.semibold, c.text, c.bodyLine / c.bodySize);
+      if (slideDef.type === "cover") {
+        await addCoverSlide(slide, {
+          ...shared,
+          clientName: coverClientDisplayName,
+          preparedBy: coverPreparedBy,
+          projectName: coverProjectDisplayName,
+          subtitle: coverSubtitle,
+          title: coverTitle || "",
+          website: coverWebsite,
         });
-        if (!closing) {
-          const projectWidth = contentWidth - cardWidth - c.gap40;
-          let projectY = footerY + c.gap32;
-          if (coverProjectDisplayName) {
-            label("Project", c.pad, projectY, projectWidth, c.light);
-            projectY += c.smallLine + c.gap8;
-            const projectHeight = measure(coverProjectDisplayName, projectWidth, c.projectSize, c.projectLeading);
-            text(coverProjectDisplayName, c.pad, projectY, projectWidth, projectHeight,
-              c.projectSize, GEIST_FONTS.light, c.dark, c.projectLeading);
-            projectY += projectHeight + c.gap16;
-          }
-          if (coverClientDisplayName) text(`Prepared for ${coverClientDisplayName}`.toUpperCase(), c.pad, projectY,
-            projectWidth, measure(coverClientDisplayName, projectWidth, c.bodySize, c.bodyLine / c.bodySize, c.preparedTracking),
-            c.bodySize, GEIST_FONTS.medium, c.label, c.bodyLine / c.bodySize, c.preparedTracking);
-        }
-        let logoSource = data.companyProfile.logoUrl || "/noa-logo.png";
-        try { if (["noaoffices.com", "www.noaoffices.com"].includes(new URL(logoSource).hostname.toLowerCase())) logoSource = "/noa-logo.png"; } catch { /* Local asset path. */ }
-        const logo = await picture(logoSource, sideX, c.sideY, Math.min(sideWidth, c.logoWidth), c.logoHeight, true);
-        if (!logo) text(closing ? data.companyProfile.displayName : coverPreparedBy || data.companyProfile.displayName,
-          sideX, c.sideY, sideWidth, c.projectSize * c.projectLeading, c.projectSize, GEIST_FONTS.light, c.white, c.projectLeading);
-        if (!closing && coverWebsite) text(coverWebsite, sideX, c.sideY + (logo?.height ?? c.logoHeight) + c.gap16, sideWidth,
-          c.contactLine, c.bodySize, GEIST_FONTS.regular, c.white70, c.contactLine / c.bodySize);
-        const contacts = closing
-          ? [{ label: "Website", value: closingWebsite }, { label: "Email", value: closingEmail }, { label: "Phone", value: closingPhone }, { label: "Office", value: closingOfficeDetails }]
-          : [{ label: "Prepared By", value: coverPreparedBy }];
-        const visibleContacts = contacts.filter((entry): entry is { label: string; value: string } => Boolean(entry.value));
-        const contactHeights = visibleContacts.map((entry, index) => c.smallLine + c.gap4
-          + measure(entry.value, sideWidth, c.bodySize, c.contactLine / c.bodySize)
-          + (index < visibleContacts.length - l.one ? c.gap12 + c.one : l.zero));
-        const contactsHeight = contactHeights.reduce<number>((sum, height) => sum + height, l.zero)
-          + Math.max(l.zero, visibleContacts.length - l.one) * c.gap16;
-        let contactY = c.height - c.sideY - contactsHeight;
-        line(sideX, contactY - c.gap28, sideWidth, c.whiteBorder);
-        visibleContacts.forEach((entry, index) => {
-          label(entry.label, sideX, contactY, sideWidth, c.white45);
-          text(entry.value, sideX, contactY + c.smallLine + c.gap4, sideWidth,
-            contactHeights[index], c.bodySize, GEIST_FONTS.medium, closing ? c.white90 : c.white, c.contactLine / c.bodySize);
-          if (index < visibleContacts.length - l.one) line(sideX, contactY + contactHeights[index], sideWidth, c.whiteBorder);
-          contactY += contactHeights[index] + c.gap16;
+      } else if (slideDef.type === "thank-you") {
+        await addClosingSlide(slide, {
+          ...shared,
+          contacts: [
+            { label: "Website", value: closingWebsite ?? "" },
+            { label: "Email", value: closingEmail ?? "" },
+            { label: "Phone", value: closingPhone ?? "" },
+            { label: "Office", value: closingOfficeDetails ?? "" },
+          ],
+          message: closingMessage,
+          title: closingTitle || "",
         });
-      } else if (slideDef.type === "design") {
-        const d = DESIGN_LAYOUT;
-        slide.addImage({ data: await editorialBackground("design"), x: inch(l.zero), y: inch(l.zero), w: inch(d.width), h: inch(d.height) });
-        const innerWidth = d.width - d.pad * l.two;
-        const leftWidth = (innerWidth - d.columnGap) * d.leftFr / (d.leftFr + d.rightFr);
-        const dividerX = d.pad + leftWidth;
-        const rightX = dividerX + d.columnGap, rightWidth = d.width - d.pad - rightX;
-        line(dividerX, d.padY, l.zero, d.border, d.height - d.padY * l.two);
-        const leftTextWidth = leftWidth - d.columnPadding - d.one;
-        label("Design Considerations", d.pad, d.padY, leftTextWidth, d.label, d.labelSize, d.labelTracking);
-        const titleY = d.padY + d.labelLine + d.titleGap;
-        text("Design", d.pad, titleY, leftTextWidth, d.titleLine, d.titleSize, GEIST_FONTS.light, d.dark, l.one, d.titleTracking);
-        text("Considerations", d.pad, titleY + d.titleLine, leftTextWidth, d.titleLine, d.titleSize, GEIST_FONTS.light, d.grey, l.one, d.titleTracking);
-        line(d.pad, titleY + d.titleLine * l.two + d.gap32, d.ruleWidth, d.lightBorder);
-        const paragraph = "Core principles reviewed when aligning furniture choices with workflow, brand expression, and long-term performance.";
-        const paragraphWidth = Math.min(leftTextWidth, d.paragraphMax);
-        const paragraphHeight = measure(paragraph, paragraphWidth, d.paragraphSize, d.paragraphLine / d.paragraphSize);
-        const overviewY = d.height - d.padY - d.smallLine;
-        label("Editorial Overview", d.pad, overviewY, leftTextWidth, d.light);
-        text(paragraph, d.pad, overviewY - d.gap32 - paragraphHeight, paragraphWidth, paragraphHeight,
-          d.paragraphSize, GEIST_FONTS.regular, d.grey, d.paragraphLine / d.paragraphSize);
-        const itemWidth = (rightWidth - d.itemGapX) / d.itemColumns;
-        const rowHeights = Array.from({ length: d.itemRows }, (_, row) => Math.max(...designConsiderations.slice(row * d.itemColumns, (row + l.one) * d.itemColumns).map((entry) =>
-          d.one + d.itemPadding + d.smallLine + d.gap8
-          + measure(entry.title.toUpperCase(), itemWidth, d.itemTitle, d.itemTitleLine / d.itemTitle, d.itemTitleTracking)
-          + d.gap12 + measure(entry.body, itemWidth, d.bodySize, d.contactLine / d.bodySize))));
-        // CSS grid starts at the same 44px top edge as the left label and divider.
-        let rowY = d.padY;
-        designConsiderations.forEach((entry, index) => {
-          const column = index % d.itemColumns, row = Math.floor(index / d.itemColumns);
-          const x = rightX + column * (itemWidth + d.itemGapX);
-          line(x, rowY, itemWidth);
-          label(String(index + l.one).padStart(l.two, "0"), x, rowY + d.one + d.itemPadding, itemWidth, d.light, d.smallSize, d.numberTracking);
-          const titleY = rowY + d.one + d.itemPadding + d.smallLine + d.gap8;
-          const titleHeight = measure(entry.title.toUpperCase(), itemWidth, d.itemTitle, d.itemTitleLine / d.itemTitle, d.itemTitleTracking);
-          text(entry.title.toUpperCase(), x, titleY, itemWidth, titleHeight, d.itemTitle, GEIST_FONTS.semibold, d.text, d.itemTitleLine / d.itemTitle, d.itemTitleTracking);
-          text(entry.body, x, titleY + titleHeight + d.gap12, itemWidth,
-            measure(entry.body, itemWidth, d.bodySize, d.contactLine / d.bodySize), d.bodySize, GEIST_FONTS.regular, d.grey, d.contactLine / d.bodySize);
-          if (column === d.itemColumns - l.one) rowY += rowHeights[row] + d.itemGapY;
-        });
-      } else if (slideDef.type === "main-area" || slideDef.type === "section") {
-        const main = slideDef.type === "main-area";
-        const a = main ? MAIN_AREA_LAYOUT : AREA_LAYOUT;
-        const section = main ? slideDef.mainSection : slideDef.section;
-        const title = (main ? mainSectionTitlesById : titledSectionsById).get(section.id) ?? section.section_title;
-        const note = main ? resolvedOverrideValue(settings.mainSectionOverrides[section.id]?.note, section.section_notes) : sectionPresentationNote(section, settings);
-        const contentWidth = a.width - a.left - a.right;
-        box(l.zero, l.zero, a.width, a.height, a.background);
-        box(l.zero, l.zero, a.sidebar, a.height, a.black);
-        const heading = main ? "SPACE OVERVIEW" : "AREA";
-        label(heading, a.left, a.pad, contentWidth, a.label, a.labelSize, a.labelTracking);
-        const labelWidth = heading.length * a.labelSize * (a.glyphEm + a.labelTracking);
-        line(a.left + labelWidth + a.gap16, a.pad + a.labelLine / l.two, a.ruleWidth, a.lightBorder);
-        const titleY = a.pad + a.labelLine + a.titleGap;
-        const titleHeight = measure(title, contentWidth, a.titleSize, a.titleLeading, a.titleTracking);
-        text(title, a.left, titleY, contentWidth, titleHeight, a.titleSize, GEIST_FONTS.light, a.dark, a.titleLeading, a.titleTracking);
-        let visualY = titleY + titleHeight;
-        if (note) {
-          const noteWidth = Math.min(a.paragraphMax, contentWidth);
-          const noteHeight = measure(note, noteWidth, a.paragraphSize, a.paragraphLine / a.paragraphSize);
-          text(note, a.left, visualY + a.titleGap, noteWidth, noteHeight, a.paragraphSize, GEIST_FONTS.regular, a.grey, a.paragraphLine / a.paragraphSize);
-          visualY += a.titleGap + noteHeight;
-        }
-        const sectionSettings = settings.sectionOverrides[section.id];
-        const signedSources = (data as LoadedQuotationPresentationData & {
-          sectionOverrideImageUrlBySectionAndField?: Record<string, string | null>;
-        }).sectionOverrideImageUrlBySectionAndField;
-        const visuals = main
-          ? (settings.mainSectionOverrides[section.id]?.layoutImageUrl && data.mainLayoutImageUrlById[section.id]
-            ? [{ label: "Full Floor Layout", source: data.mainLayoutImageUrlById[section.id] }] : [])
-          : [{ label: "Area Image", source: signedSources?.[`${section.id}:areaImageUrl`] ?? sectionSettings?.areaImageUrl },
-            { label: "Section Layout Snapshot", source: signedSources?.[`${section.id}:sectionLayoutImageUrl`] ?? sectionSettings?.sectionLayoutImageUrl }]
-            .filter((entry): entry is { label: string; source: string } => Boolean(entry.source));
-        const parent = section.parent_section_id ? activeSections.find((entry) => entry.id === section.parent_section_id) : null;
-        const parentTitle = parent ? titledSectionsById.get(parent.id) ?? parent.section_title : null;
-        const footerLines = [{ label: main ? `Space ${String(mainSections.findIndex((entry) => entry.id === section.id) + l.one).padStart(l.two, "0")}`
-          : `Section ${String(dividerSections.findIndex((entry) => entry.id === section.id) + l.one).padStart(l.two, "0")}`,
-          text: main ? (visuals.length ? "Floor layout overview" : "Main area overview")
-            : (() => { const count = productPagesBySection.get(section.id)?.length ?? l.zero; return count ? `${count} product ${count === l.one ? "page" : "pages"} follow` : "Section overview"; })() }];
-        const footerHeight = a.smallLine + a.gap8 + a.bodyLine + (!main && parentTitle ? a.gap8 + a.bodyLine : l.zero);
-        const footerY = a.height - a.pad - footerHeight - a.gap32 - a.one;
-        line(a.left, footerY, contentWidth);
-        label(footerLines[l.zero].label, a.left, footerY + a.gap32 + a.one, contentWidth, a.light);
-        let footerTextY = footerY + a.gap32 + a.one + a.smallLine + a.gap8;
-        if (!main && parentTitle) {
-          text(`Within ${parentTitle}`, a.left, footerTextY, contentWidth, a.bodyLine, a.bodySize, GEIST_FONTS.medium, a.label, a.bodyLine / a.bodySize);
-          footerTextY += a.bodyLine + a.gap8;
-        }
-        text(footerLines[l.zero].text, a.left, footerTextY, contentWidth, a.bodyLine, a.bodySize, GEIST_FONTS.regular, a.label, a.bodyLine / a.bodySize);
-        const badge = data.project?.project_name ?? data.quotation.title;
-        const badgeWidth = Math.min(contentWidth, badge.length * a.labelSize * (a.glyphEm + a.badgeTracking) + a.gap16 * l.two + a.one * l.two);
-        const badgeHeight = a.labelLine + a.gap8 * l.two + a.one * l.two;
-        const badgeX = a.width - a.right - badgeWidth, badgeY = a.height - a.pad - badgeHeight;
-        box(badgeX, badgeY, badgeWidth, badgeHeight, a.white, a.lightBorder);
-        label(badge, badgeX + a.one, badgeY + (badgeHeight - a.labelLine) / l.two,
-          badgeWidth - a.one * l.two, a.label, a.labelSize, a.badgeTracking, "center", false);
-        if (visuals.length) {
-          visualY += a.gap32;
-          const visualWidth = (contentWidth - (visuals.length - l.one) * a.gap16) / visuals.length;
-          const visualHeight = Math.max(l.zero, footerY - visualY);
-          for (const [index, visual] of visuals.entries()) {
-            const x = a.left + index * (visualWidth + a.gap16);
-            box(x, visualY, visualWidth, visualHeight, a.white, a.border, l.zero, a.cardTransparency);
-            label(visual.label, x + a.visualPad, visualY + a.visualPad, visualWidth - a.visualPad * l.two,
-              a.label, a.smallSize, a.visualLabelTracking);
-            const imageY = visualY + a.visualPad + a.smallLine + a.gap12;
-            if (visualHeight > a.visualPad * l.two + a.smallLine + a.gap12) await picture(visual.source ?? null,
-              x + a.visualPad, imageY, visualWidth - a.visualPad * l.two, visualY + visualHeight - a.visualPad - imageY);
-          }
-        }
-      }
-      continue;
-    }
-
-    if (slideDef.type === "cover") {
-      addSlideBase(slide, "F7F8FA");
-      slide.addShape(RECT_SHAPE, {
-        x: 0,
-        y: 0,
-        w: SLIDE_W,
-        h: SLIDE_H,
-        line: { color: "F7F8FA", pt: 0 },
-        fill: { color: "F7F8FA" },
-      });
-      slide.addShape(RECT_SHAPE, {
-        x: 0,
-        y: 0,
-        w: 5.0,
-        h: SLIDE_H,
-        line: { color: "EEF2F5", pt: 0 },
-        fill: { color: "EEF2F5", transparency: 22 },
-      });
-      slide.addShape(RECT_SHAPE, {
-        x: 8.25,
-        y: 0,
-        w: 3.44,
-        h: SLIDE_H,
-        line: { color: COLOR_DARK, pt: 0 },
-        fill: { color: COLOR_DARK },
-      });
-      slide.addText("CLIENT PRESENTATION", {
-        x: 0.7,
-        y: 0.7,
-        w: 2.6,
-        h: 0.1,
-        fontSize: 10,
-        bold: true,
-        color: COLOR_LABEL,
-        margin: 0,
-      });
-      slide.addShape(RECT_SHAPE, {
-        x: 0.7,
-        y: 0.88,
-        w: 0.72,
-        h: 0.02,
-        line: { color: COLOR_ACCENT, pt: 0 },
-        fill: { color: COLOR_ACCENT },
-      });
-      slide.addText(trimText(coverTitle, 90) ?? defaultCoverText.title, {
-        x: 0.7,
-        y: 1.24,
-        w: 6.95,
-        h: 1.05,
-        fontSize: 27,
-        color: COLOR_TEXT,
-        margin: 0,
-      });
-      if (coverSubtitle) {
-        slide.addText(trimText(coverSubtitle, 220) ?? coverSubtitle, {
-          x: 0.7,
-          y: 2.5,
-          w: 5.9,
-          h: 0.72,
-          fontSize: 12.5,
-          color: COLOR_MUTED,
-          margin: 0,
-        });
-      }
-
-      if (coverProjectDisplayName) {
-        addMetaField(slide, "Project", coverProjectDisplayName, 0.7, 5.72, 3.3);
-      }
-      if (coverClientDisplayName) {
-        addMetaField(slide, "Prepared For", coverClientDisplayName, 0.7, 6.34, 3.3);
-      }
-      if (coverPreparedBy) {
-        addMetaField(slide, "Prepared By", coverPreparedBy, 4.15, 5.72, 1.7);
-      }
-      if (data.quotation.quotation_no) {
-        addMetaCard(slide, "Project / Quote No.", data.quotation.quotation_no, 6.0, 5.88, 1.95);
-      }
-      if (data.quotation.quotation_date) {
-        addMetaCard(slide, "Date", data.quotation.quotation_date, 6.0, 6.61, 1.95);
-      }
-
-      const logoData = await imageDataUri(data.companyProfile.logoUrl, imageCache);
-      if (logoData) {
-        slide.addImage({ data: logoData, x: 8.7, y: 0.78, w: 2.0, h: 0.58, sizing: { type: "contain", w: 2.0, h: 0.58 } });
       } else {
-        slide.addText(data.companyProfile.displayName, {
-          x: 8.7,
-          y: 0.95,
-          w: 2.2,
-          h: 0.14,
-          fontSize: 17,
-          bold: true,
-          color: COLOR_WHITE,
-          margin: 0,
-        });
+        addDesignConsiderationsSlide(slide);
       }
-      slide.addText(trimText(coverPreparedBy, 34) ?? coverPreparedBy ?? data.companyProfile.displayName, {
-        x: 8.7,
-        y: 5.96,
-        w: 2.2,
-        h: 0.18,
-        fontSize: 16,
-        color: COLOR_WHITE,
-        margin: 0,
-      });
-      if (coverWebsite) {
-        slide.addText(coverWebsite, {
-          x: 8.7,
-          y: 6.34,
-          w: 2.2,
-          h: 0.12,
-          fontSize: 10,
-          color: "D7DCE3",
-          margin: 0,
-        });
-      }
-      slide.addText("Prepared presentation deck", {
-        x: 8.7,
-        y: 7.18,
-        w: 2.2,
-        h: 0.08,
-        fontSize: 8.5,
-        bold: true,
-        color: "C7CDD6",
-        margin: 0,
-      });
       continue;
     }
 
-    if (slideDef.type === "design") {
-      addSlideBase(slide, "F7F8FA");
-      slide.addShape(RECT_SHAPE, {
-        x: 0,
-        y: 0,
-        w: 3.42,
-        h: SLIDE_H,
-        line: { color: "EEF2F5", pt: 0 },
-        fill: { color: "EEF2F5" },
-      });
-      slide.addText("DESIGN CONSIDERATIONS", {
-        x: 0.65,
-        y: 0.72,
-        w: 2.2,
-        h: 0.1,
-        fontSize: 10,
-        bold: true,
-        color: COLOR_LABEL,
-        margin: 0,
-      });
-      slide.addText("Design", {
-        x: 0.65,
-        y: 1.14,
-        w: 2.2,
-        h: 0.28,
-        fontSize: 24,
-        color: COLOR_TEXT,
-        margin: 0,
-      });
-      slide.addText("Considerations", {
-        x: 0.65,
-        y: 1.56,
-        w: 2.4,
-        h: 0.28,
-        fontSize: 24,
-        color: COLOR_MUTED,
-        margin: 0,
-      });
-      slide.addShape(RECT_SHAPE, {
-        x: 0.65,
-        y: 2.16,
-        w: 0.82,
-        h: 0.02,
-        line: { color: COLOR_LINE, pt: 0 },
-        fill: { color: COLOR_LINE },
-      });
-      slide.addText(
-        "Core principles reviewed when aligning furniture choices with workflow, brand expression, and long-term performance.",
-        {
-          x: 0.65,
-          y: 5.88,
-          w: 2.12,
-          h: 0.8,
-          fontSize: 11.5,
-          color: COLOR_MUTED,
-          margin: 0,
-        },
-      );
-      slide.addText("Editorial overview", {
-        x: 0.65,
-        y: 7.14,
-        w: 1.8,
-        h: 0.08,
-        fontSize: 8.5,
-        bold: true,
-        color: COLOR_LIGHT_TEXT,
-        margin: 0,
-      });
-
-      designConsiderations.forEach((entry, index) => {
-        const column = index % 2;
-        const row = Math.floor(index / 2);
-        const x = 3.95 + (column * 3.58);
-        const y = 0.95 + (row * 1.58);
-        slide.addShape(RECT_SHAPE, {
-          x,
-          y,
-          w: 3.03,
-          h: 1.18,
-          line: { color: COLOR_LINE, pt: 1 },
-          fill: { color: COLOR_SURFACE },
+    if (slideDef.type === "main-area" || slideDef.type === "section") {
+      const main = slideDef.type === "main-area";
+      const section = main ? slideDef.mainSection : slideDef.section;
+      const title = (main ? mainSectionTitlesById : titledSectionsById).get(section.id) ?? section.section_title;
+      const note = main
+        ? resolvedOverrideValue(settings.mainSectionOverrides[section.id]?.note, section.section_notes)
+        : sectionPresentationNote(section, settings);
+      const shared = {
+        cache: imageCache,
+        chipText: data.project?.project_name ?? data.quotation.title,
+        companyDisplayName: data.companyProfile.displayName,
+        note,
+        quotationNo: data.quotation.quotation_no,
+        title,
+      };
+      if (main) {
+        const layoutSource = settings.mainSectionOverrides[section.id]?.layoutImageUrl
+          ? data.mainLayoutImageUrlById[section.id] ?? null
+          : null;
+        await addSectionSlide(slide, {
+          ...shared,
+          eyebrow: `Space overview \u00b7 ${String(mainSections.findIndex((entry) => entry.id === section.id) + 1).padStart(2, "0")}`,
+          layoutSource,
         });
-        slide.addText(String(index + 1).padStart(2, "0"), {
-          x: x + 0.18,
-          y: y + 0.16,
-          w: 0.3,
-          h: 0.08,
-          fontSize: 8,
-          bold: true,
-          color: COLOR_LIGHT_TEXT,
-          margin: 0,
-        });
-        slide.addText(entry.title.toUpperCase(), {
-          x: x + 0.18,
-          y: y + 0.34,
-          w: 2.55,
-          h: 0.1,
-          fontSize: 9,
-          bold: true,
-          color: COLOR_TEXT,
-          margin: 0,
-        });
-        slide.addText(trimText(entry.body, 115) ?? entry.body, {
-          x: x + 0.18,
-          y: y + 0.56,
-          w: 2.55,
-          h: 0.42,
-          fontSize: 9.5,
-          color: COLOR_MUTED,
-          margin: 0,
-        });
-      });
-      continue;
-    }
-
-    if (slideDef.type === "main-area") {
-      addSlideBase(slide, COLOR_BG);
-      addSideBarDivider(slide);
-
-      const section = slideDef.mainSection;
-      const title = mainSectionTitlesById.get(section.id) ?? section.section_title;
-      const note = resolvedOverrideValue(settings.mainSectionOverrides[section.id]?.note, section.section_notes);
-      const layoutSource = data.mainLayoutImageUrlById[section.id] ?? null;
-
-      addSectionHeader(slide, "Main Area", title, note);
-
-      if (layoutSource) {
-        slide.addText("FULL FLOOR LAYOUT", {
-          x: 1.1,
-          y: 2.72,
-          w: 2.3,
-          h: 0.08,
-          fontSize: 8.5,
-          bold: true,
-          color: COLOR_LABEL,
-          margin: 0,
-        });
-        await addImageOrPlaceholder({
-          slide,
-          source: layoutSource,
-          x: 1.1,
-          y: 2.95,
-          w: 9.6,
-          h: 3.66,
-          fit: "contain",
-          label: `${title} layout`,
-          cache: imageCache,
-          placeholderTitle: "Layout image unavailable",
+      } else {
+        const parent = section.parent_section_id ? activeSections.find((entry) => entry.id === section.parent_section_id) : null;
+        const pageCount = productPagesBySection.get(section.id)?.length ?? 0;
+        const visuals = [
+          { key: "area" as const, label: "Area Image", source: data.sectionOverrideImageUrlBySectionAndField[`${section.id}:areaImageUrl`] },
+          { key: "snapshot" as const, label: "Section Layout Snapshot", source: data.sectionOverrideImageUrlBySectionAndField[`${section.id}:sectionLayoutImageUrl`] },
+        ].filter((visual): visual is { key: "area" | "snapshot"; label: string; source: string } => Boolean(visual.source));
+        await addAreaSlide(slide, {
+          ...shared,
+          count: pageCount ? `${pageCount} product ${pageCount === 1 ? "page" : "pages"} follow` : "Section overview",
+          eyebrow: `Area \u00b7 ${String(dividerSections.findIndex((entry) => entry.id === section.id) + 1).padStart(2, "0")}`,
+          visuals,
+          within: parent && parent.id !== section.id ? titledSectionsById.get(parent.id) ?? parent.section_title : null,
         });
       }
-
-      slide.addText(`Main Area ${String(mainSections.findIndex((entry) => entry.id === section.id) + 1).padStart(2, "0")}`, {
-        x: 1.1,
-        y: 7.18,
-        w: 1.8,
-        h: 0.08,
-        fontSize: 8.5,
-        bold: true,
-        color: COLOR_LIGHT_TEXT,
-        margin: 0,
-      });
-      addProjectBadge(slide, currentProjectLabel);
-      continue;
-    }
-
-    if (slideDef.type === "section") {
-      addSlideBase(slide, COLOR_BG);
-      addSideBarDivider(slide);
-
-      const section = slideDef.section;
-      const title = titledSectionsById.get(section.id) ?? section.section_title;
-      const note = sectionPresentationNote(section, settings);
-      const mainSection = section.parent_section_id ? displaySections.find((entry) => entry.id === section.parent_section_id) ?? null : null;
-      const areaImage = data.sectionOverrideImageUrlBySectionAndField[`${section.id}:areaImageUrl`] ?? null;
-      const layoutImage = data.sectionOverrideImageUrlBySectionAndField[`${section.id}:sectionLayoutImageUrl`] ?? null;
-      const visuals = [
-        areaImage ? { label: "Area Image", source: areaImage } : null,
-        layoutImage ? { label: "Section Layout Snapshot", source: layoutImage } : null,
-      ].filter((entry): entry is { label: string; source: string } => Boolean(entry));
-      const pageCount = productPagesBySection.get(section.id)?.length ?? 0;
-
-      addSectionHeader(slide, "Area", title, note);
-
-      if (visuals.length === 1) {
-        slide.addText(visuals[0].label.toUpperCase(), {
-          x: 1.1,
-          y: 2.72,
-          w: 2.3,
-          h: 0.08,
-          fontSize: 8.5,
-          bold: true,
-          color: COLOR_LABEL,
-          margin: 0,
-        });
-        await addImageOrPlaceholder({
-          slide,
-          source: visuals[0].source,
-          x: 1.1,
-          y: 2.95,
-          w: 9.6,
-          h: 3.66,
-          fit: "contain",
-          label: `${title} ${visuals[0].label}`,
-          cache: imageCache,
-        });
-      } else if (visuals.length === 2) {
-        for (const [index, visual] of visuals.entries()) {
-          const x = index === 0 ? 1.1 : 6.05;
-          slide.addText(visual.label.toUpperCase(), {
-            x,
-            y: 2.72,
-            w: 2.3,
-            h: 0.08,
-            fontSize: 8.5,
-            bold: true,
-            color: COLOR_LABEL,
-            margin: 0,
-          });
-          await addImageOrPlaceholder({
-            slide,
-            source: visual.source,
-            x,
-            y: 2.95,
-            w: 4.65,
-            h: 3.66,
-            fit: "contain",
-            label: `${title} ${visual.label}`,
-            cache: imageCache,
-          });
-        }
-      }
-
-      if (mainSection) {
-        slide.addText(`Within ${mainSectionTitlesById.get(mainSection.id) ?? mainSection.section_title}`, {
-          x: 1.1,
-          y: 7.18,
-          w: 2.8,
-          h: 0.08,
-          fontSize: 8.5,
-          bold: true,
-          color: COLOR_LIGHT_TEXT,
-          margin: 0,
-        });
-      }
-      if (pageCount) {
-        slide.addText(`${pageCount} product ${pageCount === 1 ? "page" : "pages"} follow`, {
-          x: 4.22,
-          y: 7.18,
-          w: 2.2,
-          h: 0.08,
-          fontSize: 8.5,
-          color: COLOR_LABEL,
-          align: "center",
-          margin: 0,
-        });
-      }
-      addProjectBadge(slide, currentProjectLabel);
       continue;
     }
 
     if (slideDef.type === "product") {
-      addSlideBase(slide, COLOR_SURFACE);
-
       const section = slideDef.section;
-      const sectionTitle = titledSectionsById.get(section.id) ?? section.section_title;
-      const pageItems = slideDef.itemIds
-        .map((itemId) => (presentableItemsBySection.get(section.id) ?? []).find((item) => item.id === itemId) ?? null)
-        .filter((item): item is PresentationItem => Boolean(item));
-
-      if (settings.layoutMode === "two_per_page") {
-        slide.addText(sectionTitle.toUpperCase(), {
-          x: PAGE_MARGIN,
-          y: 0.45,
-          w: 2.8,
-          h: 0.08,
-          fontSize: 8.5,
-          bold: true,
-          color: COLOR_LIGHT_TEXT,
-          margin: 0,
-        });
-        slide.addText(pageItems.length === 2 ? "Selected Products" : "Selected Product", {
-          x: PAGE_MARGIN,
-          y: 0.72,
-          w: 4.1,
-          h: 0.24,
-          fontSize: 18,
-          color: COLOR_TEXT,
-          margin: 0,
-        });
-
-        for (const [index, item] of pageItems.entries()) {
-          const dataForItem = productPageData(item, data, effectivePresentationImageUrlByItemId);
-          const cardX = index === 0 ? 0.55 : 6.07;
-          const cardY = 1.25;
-          const cardW = 5.07;
-
-          slide.addShape(RECT_SHAPE, {
-            x: cardX,
-            y: cardY,
-            w: cardW,
-            h: 5.7,
-            line: { color: COLOR_LINE, pt: 1 },
-            fill: { color: COLOR_SURFACE },
-          });
-          slide.addText(trimText(dataForItem.heading, 54) ?? dataForItem.heading, {
-            x: cardX + 0.22,
-            y: cardY + 0.22,
-            w: 3.82,
-            h: 0.22,
-            fontSize: 14.5,
-            color: COLOR_TEXT,
-            margin: 0,
-          });
-          if (dataForItem.isOptional) {
-            slide.addText("OPTIONAL", {
-              x: cardX + 0.22,
-              y: cardY + 0.5,
-              w: 0.82,
-              h: 0.14,
-              fontSize: 7,
-              bold: true,
-              color: "B91C1C",
-              margin: 0,
-            });
-          }
-          if (dataForItem.isRateOnly) {
-            slide.addText("RATE ONLY", {
-              x: cardX + (dataForItem.isOptional ? 1.02 : 0.22),
-              y: cardY + 0.5,
-              w: 0.86,
-              h: 0.14,
-              fontSize: 7,
-              bold: true,
-              color: "0369A1",
-              margin: 0,
-            });
-          }
-          slide.addShape(RECT_SHAPE, {
-            x: cardX + 4.03,
-            y: cardY + 0.16,
-            w: 0.65,
-            h: 0.28,
-            line: { color: COLOR_LINE, pt: 1 },
-            fill: { color: "FAFBFC" },
-            rectRadius: 0.05,
-          });
-          slide.addText(`Item ${String(productNumberById.get(item.id) ?? index + 1).padStart(2, "0")}`, {
-            x: cardX + 4.08,
-            y: cardY + 0.24,
-            w: 0.55,
-            h: 0.08,
-            fontSize: 7,
-            bold: true,
-            color: COLOR_LABEL,
-            align: "center",
-            margin: 0,
-          });
-          await addImageOrPlaceholder({
-            slide,
-            source: dataForItem.imageUrl,
-            x: cardX + 0.22,
-            y: cardY + 0.75,
-            w: 4.63,
-            h: 3.56,
-            fit: dataForItem.imageFit,
-            label: dataForItem.heading,
-            cache: imageCache,
-            placeholderTitle: "Product image unavailable",
-          });
-
-          const metaRows = dataForItem.compactMeta.length
-            ? dataForItem.compactMeta.slice(0, 3)
-            : (item.item_code_snapshot ? [{ label: "Code", value: item.item_code_snapshot }] : []);
-
-          metaRows.forEach((row, metaIndex) => {
-            const x = cardX + 0.22 + (metaIndex * 1.53);
-            slide.addText(row.label.toUpperCase(), {
-              x,
-              y: cardY + 4.6,
-              w: 1.35,
-              h: 0.07,
-              fontSize: 7,
-              bold: true,
-              color: COLOR_LIGHT_TEXT,
-              margin: 0,
-            });
-            slide.addText(trimText(row.value, 26) ?? row.value, {
-              x,
-              y: cardY + 4.76,
-              w: 1.35,
-              h: 0.18,
-              fontSize: 8.8,
-              bold: true,
-              color: COLOR_TEXT,
-              margin: 0,
-            });
-          });
-        }
-
-        addFooter(slide, data.companyProfile.displayName, data.quotation.quotation_no);
-        continue;
-      }
-
-      const item = pageItems[0];
-      if (!item) continue;
-      const dataForItem = productPageData(item, data, effectivePresentationImageUrlByItemId);
-
-      const l = SINGLE_PRODUCT_LAYOUT;
-      const inch = (px: number) => px / l.pxPerInch;
-      const pt = (px: number) => px * l.ptPerPx;
-      const leftWidth = l.width * l.leftFraction / (l.leftFraction + l.rightFraction);
-      const leftX = inch(l.leftPaddingX);
-      const leftY = inch(l.leftPaddingY);
-      const leftContentWidth = leftWidth - inch(l.leftPaddingX * l.columns);
-      const rightX = leftWidth + inch(l.rightPaddingX);
-      const rightY = inch(l.rightPaddingY);
-      const rightWidth = l.width - leftWidth - inch(l.rightPaddingX * l.columns);
-      // Estimate intrinsic CSS wrapping without altering or truncating the text.
-      const wrappedLines = (value: string, width: number, sizePx: number, maximum: number, tracking = l.zero as number) => {
-        const glyphWidth = (character: string) => {
-          const em = /\s/.test(character) ? l.glyphSpaceEm
-            : /[ilI.,:;!'|]/.test(character) ? l.glyphNarrowEm
-              : /[MWmw@%]/.test(character) ? l.glyphWideEm
-                : /[A-Z0-9]/.test(character) ? l.glyphUpperEm : l.glyphNormalEm;
-          return sizePx * (em + tracking);
-        };
-        const limit = width * l.pxPerInch;
-        let count: number = l.one;
-        let used: number = l.zero;
-        for (const word of value.split(/(\s+)/)) {
-          if (word.includes("\n")) {
-            count += word.split("\n").length - l.one;
-            used = l.zero;
-            continue;
-          }
-          const measured = Array.from(word).reduce<number>((sum, character) => sum + glyphWidth(character), l.zero);
-          if (used && used + measured > limit && word.trim()) {
-            count += l.one;
-            used = l.zero;
-          }
-          if (word.trim() || used) used += measured;
-          while (used > limit && limit > l.zero) {
-            count += l.one;
-            used -= limit;
-          }
-        }
-        return Math.min(maximum, count);
-      };
-      type TextOptions = NonNullable<Parameters<PptxSlide["addText"]>[1]>;
-      const text = (value: string, x: number, y: number, w: number, h: number,
-        fontFace: string, sizePx: number, color: string, options: TextOptions = {}) => {
-        const lineHeightPx = typeof options.lineSpacing === "number"
-          ? options.lineSpacing / l.ptPerPx : sizePx * (options.lineSpacingMultiple ?? l.optionalLineFactor);
-        // Remove PowerPoint's extra top leading; retain the CSS line-height for subsequent lines.
-        const halfLeading = inch(Math.max(l.zero, lineHeightPx - sizePx) * l.half);
-        slide.addText(value, {
-          x, y: y - halfLeading, w, h, fontFace, fontSize: pt(sizePx), color,
-          margin: l.zero, valign: "top", wrap: true,
-          breakLine: false, paraSpaceAfter: l.zero,
-          lineSpacingMultiple: l.optionalLineFactor,
-          ...options,
-        });
-      };
-      const rect = (x: number, y: number, w: number, h: number, fill: string,
-        border = fill, rounded = false) => {
-        slide.addShape(rounded ? "roundRect" : RECT_SHAPE, {
-          x, y, w, h, fill: { color: fill },
-          line: { color: border, pt: border === fill ? l.zero : pt(l.one) },
-          ...(rounded ? { rectRadius: Math.min(h * l.badgeRadius, inch(l.finishRadiusPx)) } : {}),
-        });
-      };
-      const line = (x: number, y: number, w: number, color: string) => {
-        slide.addShape("line", { x, y, w, h: l.zero, line: { color, pt: pt(l.one) } });
-      };
-      const label = (value: string, x: number, y: number, w: number, color = l.lightLabel as string,
-        options: TextOptions = {}) => text(value.toUpperCase(), x, y, w, inch(l.labelLinePx),
-        GEIST_FONTS.semibold, l.labelPx, color,
-        { charSpacing: pt(l.labelPx * l.labelTracking), lineSpacingMultiple: l.optionalLineFactor, ...options });
-
-      rect(l.zero, l.zero, leftWidth, l.height, l.white);
-      rect(leftWidth, l.zero, l.width - leftWidth, l.height, l.panel);
-      const badgeText = `ITEM ${productNumberById.get(item.id) ?? l.one}`;
-      const badgeWidth = inch(badgeText.length * l.labelPx * (l.averageGlyphEm + l.badgeTracking)
-        + l.gap12 * l.columns + l.one * l.columns);
-      const badgeHeight = inch(l.labelLinePx + l.gap4 * l.columns + l.one * l.columns);
-      const badgeX = leftWidth - leftX - badgeWidth;
-      rect(badgeX, leftY, badgeWidth, badgeHeight, l.white, l.badgeBorder, true);
-      label(badgeText, badgeX + inch(l.gap12 + l.one), leftY + inch(l.gap4 + l.one),
-        badgeWidth - inch((l.gap12 + l.one) * l.columns), l.label,
-        { charSpacing: pt(l.labelPx * l.badgeTracking), align: "center" });
-      const titleWidth = leftContentWidth - badgeWidth - inch(l.gap16);
-      label(sectionTitle, leftX, leftY, titleWidth);
-      const titleY = leftY + inch(l.labelLinePx + l.gap8);
-      const titleHeight = inch(l.titleLinePx * wrappedLines(dataForItem.heading, titleWidth, l.titlePx, l.titleLines, l.titleTracking));
-      text(dataForItem.heading, leftX, titleY, titleWidth, titleHeight,
-        GEIST_FONTS.light, l.titlePx, l.dark,
-        { fit: "shrink", charSpacing: pt(l.titlePx * l.titleTracking), lineSpacingMultiple: undefined, lineSpacing: pt(l.titleLinePx) });
-
-      // Inline browser badges become separate editable boxes at the end of the title zone.
-      const statusBadges = [
-        ...(dataForItem.isOptional ? [{ value: "OPTIONAL", color: l.redText, fill: l.redBackground, border: l.redBorder }] : []),
-        ...(dataForItem.isRateOnly ? [{ value: "RATE ONLY", color: l.skyText, fill: l.skyBackground, border: l.skyBorder }] : []),
-      ];
-      const addStatusBadges = (x: number, y: number, sizePx: number) => {
-        let cursor = x;
-        for (const badge of statusBadges) {
-          const w = inch(badge.value.length * sizePx * l.averageGlyphEm + (l.optionalPaddingX + l.one) * l.columns);
-          const h = inch(sizePx * l.optionalLineFactor + (l.optionalPaddingY + l.one) * l.columns);
-          rect(cursor, y, w, h, badge.fill, badge.border);
-          text(badge.value, cursor + inch(l.optionalPaddingX + l.one), y + inch(l.optionalPaddingY + l.one),
-            w - inch((l.optionalPaddingX + l.one) * l.columns), inch(sizePx * l.optionalLineFactor),
-            GEIST_FONTS.semibold, sizePx, badge.color, { bold: true });
-          cursor += w + inch(l.gap8);
-        }
-      };
-      addStatusBadges(leftX, titleY + titleHeight - inch(l.optionalPx * l.optionalLineFactor), l.optionalPx);
-
-      const stageY = Math.max(titleY + titleHeight, leftY + badgeHeight) + inch(l.gap20);
-      const leftFooterTop = l.height - inch(l.leftPaddingY + l.footerZone);
-      const stageHeight = leftFooterTop - stageY;
-      const itemOverride = settings.itemOverrides[item.id];
-      const bounds = l.imageBounds[itemOverride?.imageFrameSize === "small" || itemOverride?.imageFrameSize === "medium"
-        ? itemOverride.imageFrameSize : "current"];
-      const imageWidth = leftContentWidth * bounds.width;
-      const imageHeight = stageHeight * bounds.height;
-      const imageX = leftX + (leftContentWidth - imageWidth) * l.half;
-      const imageY = stageY + (stageHeight - imageHeight) * l.half;
-      const image = await imageDataUri(dataForItem.imageUrl, imageCache);
-      if (image) {
-        let presentationImage = image;
-        let pixels: { width: number; height: number } | null = null;
-        try {
-          const source = Buffer.from(image.slice(image.indexOf(",") + l.one), "base64");
-          const sourceMetadata = await sharp(source, { animated: false }).metadata();
-          if (!sourceMetadata.width || !sourceMetadata.height) throw new Error("Image dimensions are unavailable.");
-          const requiresPng = sourceMetadata.format !== "png" && sourceMetadata.format !== "jpeg";
-          const raw = await sharp(source, { animated: false }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-          const channels = raw.info.channels;
-          const maximumEdge = Math.floor(raw.info.width * l.edgeTrim.maximumPercent);
-          const opaqueNeutralColumn = (column: number, direction: number) => {
-            let opaquePixels: number = l.zero;
-            let transparentInside = true;
-            for (let row = l.zero; row < raw.info.height; row += l.one) {
-              const offset = (row * raw.info.width + column) * channels;
-              const red = raw.data[offset] ?? l.zero;
-              const green = raw.data[offset + l.one] ?? l.zero;
-              const blue = raw.data[offset + l.columns] ?? l.zero;
-              const alpha = raw.data[offset + channels - l.one] ?? l.zero;
-              if (alpha <= l.edgeTrim.maximumTransparentAlpha) continue;
-              if (alpha < l.edgeTrim.minimumAlpha || Math.min(red, green, blue) < l.edgeTrim.minimumBrightness
-                || Math.max(red, green, blue) - Math.min(red, green, blue) > l.edgeTrim.maximumChannelDifference) return false;
-              opaquePixels += l.one;
-              const insideColumn = Math.min(raw.info.width - l.one, Math.max(l.zero,
-                column + direction * (maximumEdge + l.edgeTrim.insideColumns)));
-              const insideAlpha = raw.data[(row * raw.info.width + insideColumn) * channels + channels - l.one] ?? l.zero;
-              if (insideAlpha > l.edgeTrim.maximumTransparentAlpha) transparentInside = false;
-            }
-            return opaquePixels > l.zero && (opaquePixels === raw.info.height || transparentInside);
-          };
-          let leftTrim = l.zero;
-          let rightTrim = l.zero;
-          while (leftTrim < maximumEdge && opaqueNeutralColumn(leftTrim, l.one)) leftTrim += l.one;
-          while (rightTrim < maximumEdge && opaqueNeutralColumn(raw.info.width - l.one - rightTrim, -l.one)) rightTrim += l.one;
-          const needsEdgeTrim = leftTrim > l.zero || rightTrim > l.zero;
-          if (requiresPng || needsEdgeTrim) {
-            const processed = sharp(source, { animated: false });
-            if (needsEdgeTrim) {
-              processed.extract({ left: leftTrim, top: l.zero, width: raw.info.width - leftTrim - rightTrim, height: raw.info.height });
-            }
-            const png = await processed.png().toBuffer();
-            const metadata = await sharp(png).metadata();
-            if (!metadata.width || !metadata.height) throw new Error("Processed image dimensions are unavailable.");
-            presentationImage = `data:image/png;base64,${png.toString("base64")}`;
-            pixels = { width: metadata.width, height: metadata.height };
-          } else {
-            pixels = { width: sourceMetadata.width, height: sourceMetadata.height };
-          }
-        } catch {
-          pixels = null;
-        }
-        if (pixels && pixels.width > l.zero && pixels.height > l.zero) {
-          const contain = Math.min(imageWidth / pixels.width, imageHeight / pixels.height);
-          const baseWidth = pixels.width * contain;
-          const baseHeight = pixels.height * contain;
-          const requestedScale = Number(itemOverride?.imageScale);
-          // Clamp zoom rather than crop: preserve an editable picture with its original aspect ratio.
-          const scale = Math.min(Number.isFinite(requestedScale) && requestedScale > l.zero ? requestedScale : l.scaleDefault,
-            imageWidth / baseWidth, imageHeight / baseHeight);
-          const position = (value: unknown) => {
-            const number = typeof value === "number" && Number.isFinite(value) ? value : l.positionDefault;
-            return Math.min(l.percent, Math.max(l.zero, number)) / l.percent;
-          };
-          const w = baseWidth * scale;
-          const h = baseHeight * scale;
-          slide.addImage({ data: presentationImage, x: imageX + (imageWidth - w) * position(itemOverride?.imagePositionX),
-            y: imageY + (imageHeight - h) * position(itemOverride?.imagePositionY), w, h, altText: dataForItem.heading });
-        } else {
-          console.warn(`Single-product PPTX: could not read image dimensions for item ${item.id}; using sizing contain without scale or position.`);
-          slide.addImage({ data: image, x: imageX, y: imageY, w: imageWidth, h: imageHeight,
-            sizing: { type: "contain", w: imageWidth, h: imageHeight }, altText: dataForItem.heading });
-        }
-      } else {
-        const placeholderY = imageY + (imageHeight - inch(l.labelLinePx + l.gap20 + l.bodyLinePx * l.placeholderLines)) / l.columns;
-        label("Visual pending", leftX, placeholderY, leftContentWidth, l.lightLabel, { align: "center" });
-        text("No quotation image is available for this item yet. The item remains included so the presentation sequence stays complete.",
-          leftX, placeholderY + inch(l.labelLinePx + l.gap20), leftContentWidth, inch(l.bodyLinePx * l.placeholderLines),
-          GEIST_FONTS.regular, l.bodyPx, l.label, { align: "center", lineSpacingMultiple: undefined, lineSpacing: pt(l.bodyLinePx) });
-      }
-      const origin = formatBrandOriginSupplier({ brandName: item.brand_name_snapshot, origin: item.origin_snapshot, supplier: item.supplier_name_snapshot });
-      const summary = [settings.contentVisibility.brand ? origin.brand : null, settings.contentVisibility.origin ? origin.origin : null].filter(Boolean).join(" - ")
-        || item.category_name_snapshot || data.project?.project_name;
-      const areaWidth = item.room_name_snapshot
-        ? Math.min(leftContentWidth / l.columns, inch(item.room_name_snapshot.length * l.bodyPx * l.averageGlyphEm + l.gap16 * l.columns))
-        : l.zero;
-      const summaryWidth = leftContentWidth - (areaWidth ? areaWidth + inch(l.gap24) : l.zero);
-      const summaryLineCount = summary ? wrappedLines(summary, summaryWidth, l.bodyPx, l.summaryLines) : l.one;
-      const summaryValueHeight = inch(l.bodyLinePx * summaryLineCount);
-      const summaryHeight = inch(l.labelLinePx + l.gap4) + summaryValueHeight;
-      // The h-[96px] footer has mt-5: its children end 20px below the fixed grid track.
-      const leftFooterBottom = l.height - inch(l.leftPaddingY) + inch(l.gap20);
-      const summaryY = leftFooterBottom - summaryHeight;
-      line(leftX, summaryY - inch(l.gap12), summaryWidth, l.border);
-      if (summary) {
-        label("Product Summary", leftX, summaryY, summaryWidth);
-        text(summary, leftX, summaryY + inch(l.labelLinePx + l.gap4), summaryWidth, summaryValueHeight,
-          GEIST_FONTS.medium, l.bodyPx, l.summary, { lineSpacingMultiple: undefined, lineSpacing: pt(l.bodyLinePx) });
-      }
-      if (item.room_name_snapshot) {
-        const areaHeight = inch(l.gap12 * l.columns + l.labelLinePx + l.gap4 + l.bodyDefaultLinePx + l.one * l.columns);
-        const areaX = leftWidth - leftX - areaWidth;
-        const areaY = leftFooterBottom - areaHeight;
-        rect(areaX, areaY, areaWidth, areaHeight, l.white, l.border);
-        label("Area Tag", areaX + inch(l.gap16), areaY + inch(l.gap12), areaWidth - inch(l.gap16 * l.columns), l.lightLabel, { align: "right" });
-        text(item.room_name_snapshot, areaX + inch(l.gap16), areaY + inch(l.gap12 + l.labelLinePx + l.gap4),
-          areaWidth - inch(l.gap16 * l.columns), inch(l.bodyDefaultLinePx), GEIST_FONTS.semibold, l.bodyPx, l.text, { align: "right" });
-      }
-
-      label("Technical Details", rightX, rightY, rightWidth, l.label);
-      const detailTitleY = rightY + inch(l.labelLinePx + l.gap12);
-      const detailTitleHeight = inch(l.detailTitleLinePx * wrappedLines(dataForItem.heading, rightWidth, l.detailTitlePx, l.titleLines, l.titleTracking));
-      text(dataForItem.heading, rightX, detailTitleY, rightWidth, detailTitleHeight,
-        GEIST_FONTS.light, l.detailTitlePx, l.dark,
-        { fit: "shrink", charSpacing: pt(l.detailTitlePx * l.titleTracking), lineSpacingMultiple: undefined, lineSpacing: pt(l.detailTitleLinePx) });
-      addStatusBadges(rightX, detailTitleY + detailTitleHeight - inch(l.labelPx * l.optionalLineFactor), l.labelPx);
-      const headingBottom = rightY + inch(l.headingZone);
-      const specificationY = detailTitleY + detailTitleHeight + inch(l.gap16);
-      const specificationLinePx = dataForItem.specification ? l.bodyLinePx : l.emptySpecificationLinePx;
-      const specificationHeight = Math.min(inch(l.bodyLinePx * l.specificationLines),
-        Math.max(l.zero, headingBottom - inch(l.gap20) - specificationY));
-      const specification = dataForItem.specification || "Specification details not added yet.";
-      if (settings.contentVisibility.specification) {
-        text(specification, rightX,
-          specificationY, rightWidth,
-          specificationHeight, GEIST_FONTS.regular, l.bodyPx,
-          dataForItem.specification ? l.muted : l.lightLabel,
-          { lineSpacingMultiple: undefined, lineSpacing: pt(specificationLinePx) });
-      }
-      line(rightX, headingBottom, rightWidth, l.panelBorder);
-      const metaY = headingBottom + inch(l.gap20);
-      const metaWidth = (rightWidth - inch(l.gap20)) / l.columns;
-      const metaRows = Array.from({ length: Math.ceil(dataForItem.meta.length / l.columns) }, (_, rowIndex) => {
-        const entries = dataForItem.meta.slice(rowIndex * l.columns, rowIndex * l.columns + l.columns);
-        const cells = entries.map((entry, column) => {
-          const last = rowIndex * l.columns + column === dataForItem.meta.length - l.one;
-          const valueHeight = inch(l.bodyDefaultLinePx * wrappedLines(entry.value, metaWidth, l.bodyPx, l.titleLines));
-          // ProductDetail: gap-1, pb-2.5 and border-b; only the final CELL omits padding/border.
-          return { entry, valueHeight, bordered: !last, height: inch(l.labelLinePx + l.gap4)
-            + valueHeight + (last ? l.zero : inch(l.labelPx + l.one)) };
-        });
-        return { cells, height: Math.max(...cells.map((cell) => cell.height)) };
-      });
-      let metaRowY = metaY;
-      metaRows.forEach((metaRow) => {
-        metaRow.cells.forEach((cell, column) => {
-        const row = cell.entry;
-        const x = rightX + column * (metaWidth + inch(l.gap20));
-        const y = metaRowY;
-        label(row.label, x, y, metaWidth, l.lightLabel, { charSpacing: pt(l.labelPx * DESIGN_LAYOUT.numberTracking) });
-        text(row.value, x, y + inch(l.labelLinePx + l.gap4), metaWidth, cell.valueHeight,
-          GEIST_FONTS.medium, l.bodyPx, l.text, { lineSpacingMultiple: undefined, lineSpacing: pt(l.bodyDefaultLinePx) });
-        if (cell.bordered) line(x, y + metaRow.height - inch(l.one), metaWidth, l.border);
-        });
-        metaRowY += metaRow.height + inch(l.gap12);
-      });
-      // CSS: <dl> has gap-y-3; the next block starts with mt-5 and its border.
-      const finishesY = metaRowY - inch(l.gap12) + inch(l.gap20);
-      line(rightX, finishesY, rightWidth, l.panelBorder);
-      if (dataForItem.finishes.length) {
-        label("Finishes", rightX, finishesY + inch(l.gap20), rightWidth, l.label);
-        const finishWidth = (rightWidth - inch(l.gap8)) / l.columns;
-        const finishHeight = inch(l.gap8 * l.columns + l.finishLabelLinePx + l.gap2 + l.finishValueLinePx * l.finishValueLines + l.one * l.columns);
-        for (const [index, finish] of dataForItem.finishes.slice(l.zero, l.finishLimit).entries()) {
-          const x = rightX + (index % l.columns) * (finishWidth + inch(l.gap8));
-          const y = finishesY + inch(l.gap20 + l.labelLinePx + l.gap16) + Math.floor(index / l.columns) * (finishHeight + inch(l.gap8));
-          rect(x, y, finishWidth, finishHeight, l.finishBackground, l.panelBorder, true);
-          const swatchX = x + inch(l.gap8 + l.one);
-          const swatchY = y + inch(l.gap8 + l.one);
-          const swatchSize = inch(l.finishSwatchPx);
-          rect(swatchX, swatchY, swatchSize, swatchSize, l.swatchBackground);
-          const swatch = await imageDataUri(finish.imageUrl, imageCache);
-          if (swatch) slide.addImage({ data: swatch, x: swatchX, y: swatchY, w: swatchSize, h: swatchSize,
-            sizing: { type: "cover", w: swatchSize, h: swatchSize }, altText: finish.name || finish.label });
-          const valueX = swatchX + swatchSize + inch(l.gap8);
-          const valueWidth = finishWidth - (valueX - x) - inch(l.gap8 + l.one);
-          text(finish.label.toUpperCase(), valueX, swatchY, valueWidth, inch(l.finishLabelLinePx),
-            GEIST_FONTS.semibold, l.finishLabelPx, l.label, { charSpacing: pt(l.finishLabelPx * l.finishTracking) });
-          text([finish.code, finish.name].filter(Boolean).join(" | ") || finish.description || "Selected finish",
-            valueX, swatchY + inch(l.finishLabelLinePx + l.gap2), valueWidth, inch(l.finishValueLinePx * l.finishValueLines),
-            GEIST_FONTS.semibold, l.finishValuePx, l.text, { lineSpacingMultiple: undefined, lineSpacing: pt(l.finishValueLinePx) });
-        }
-        if (dataForItem.finishes.length > l.finishLimit) {
-          const rows = Math.ceil(Math.min(dataForItem.finishes.length, l.finishLimit) / l.columns);
-          label(`+${dataForItem.finishes.length - l.finishLimit} more`, rightX,
-            finishesY + inch(l.gap20 + l.labelLinePx + l.gap16) + rows * (finishHeight + inch(l.gap8)), rightWidth,
-            l.lightLabel, { charSpacing: pt(l.labelPx * l.moreTracking) });
-        }
-      }
-      const footerContentHeight = inch(l.gap12 + l.labelLinePx + l.gap4 + l.bodyDefaultLinePx);
-      const footerY = l.height - inch(l.rightPaddingY) - footerContentHeight;
-      line(rightX, footerY, rightWidth, l.panelBorder);
-      const footerColumn = (rightWidth - inch(l.gap24)) / l.columns;
-      label("Prepared By", rightX, footerY + inch(l.gap12), footerColumn);
-      text(data.companyProfile.displayName, rightX, footerY + inch(l.gap12 + l.labelLinePx + l.gap4),
-        footerColumn, inch(l.bodyDefaultLinePx), GEIST_FONTS.semibold, l.bodyPx, l.text);
-      if (data.quotation.quotation_no) {
-        const quoteX = rightX + footerColumn + inch(l.gap24);
-        label("Project / Quote No.", quoteX, footerY + inch(l.gap12), footerColumn, l.lightLabel, { align: "right" });
-        text(data.quotation.quotation_no, quoteX, footerY + inch(l.gap12 + l.labelLinePx + l.gap4),
-          footerColumn, inch(l.bodyDefaultLinePx), GEIST_FONTS.semibold, l.bodyPx, l.text, { align: "right" });
-      }
-      continue;
-    }
-
-    if (slideDef.type === "thank-you") {
-      addSlideBase(slide, "F7F8FA");
-      slide.addShape(RECT_SHAPE, {
-        x: 8.1,
-        y: 0,
-        w: 3.59,
-        h: SLIDE_H,
-        line: { color: COLOR_DARK, pt: 0 },
-        fill: { color: COLOR_DARK },
-      });
-      slide.addText("THANK YOU", {
-        x: 0.75,
-        y: 0.82,
-        w: 2.2,
-        h: 0.1,
-        fontSize: 10,
-        bold: true,
-        color: COLOR_LABEL,
-        margin: 0,
-      });
-      slide.addShape(RECT_SHAPE, {
-        x: 0.75,
-        y: 1.02,
-        w: 0.72,
-        h: 0.02,
-        line: { color: COLOR_ACCENT, pt: 0 },
-        fill: { color: COLOR_ACCENT },
-      });
-      slide.addText(trimText(closingTitle, 80) ?? defaultClosingText.title, {
-        x: 0.75,
-        y: 1.35,
-        w: 5.6,
-        h: 0.52,
-        fontSize: 28,
-        color: COLOR_TEXT,
-        margin: 0,
-      });
-      if (closingMessage) {
-        slide.addText(trimText(closingMessage, 220) ?? closingMessage, {
-          x: 0.75,
-          y: 2.25,
-          w: 4.9,
-          h: 0.8,
-          fontSize: 12.5,
-          color: COLOR_MUTED,
-          margin: 0,
+      const item = slideDef.itemIds
+        .map((itemId) => (presentableItemsBySection.get(section.id) ?? []).find((entry) => entry.id === itemId) ?? null)
+        .find((entry): entry is PresentationItem => Boolean(entry));
+      if (item) {
+        const override = settings.itemOverrides[item.id];
+        const product = productPageData(item, data, effectivePresentationImageUrlByItemId);
+        const originDisplay = formatBrandOriginSupplier({ brandName: item.brand_name_snapshot, origin: item.origin_snapshot, supplier: item.supplier_name_snapshot });
+        const visibleBrandOrigin = [settings.contentVisibility.brand ? originDisplay.brand : null, settings.contentVisibility.origin ? originDisplay.origin : null].filter(Boolean).join(" - ");
+        await addProductSlide(slide, {
+          cache: imageCache,
+          frameSize: override?.imageFrameSize ?? "current",
+          imageRect: override?.imageRect ?? null,
+          imageScale: override?.imageScale ?? 1,
+          itemNumber: productNumberById.get(item.id) ?? 1,
+          positionX: override?.imagePositionX ?? 50,
+          positionY: override?.imagePositionY ?? 50,
+          preparedBy: data.companyProfile.displayName,
+          product,
+          quotationNo: data.quotation.quotation_no,
+          sectionTitle: titledSectionsById.get(section.id) ?? section.section_title,
+          showSpecification: settings.contentVisibility.specification,
+          summary: visibleBrandOrigin || item.category_name_snapshot?.trim() || data.project?.project_name || null,
         });
       }
-
-      const logoData = await imageDataUri(data.companyProfile.logoUrl, imageCache);
-      if (logoData) {
-        slide.addImage({ data: logoData, x: 8.55, y: 0.86, w: 1.95, h: 0.56, sizing: { type: "contain", w: 1.95, h: 0.56 } });
-      } else {
-        slide.addText(data.companyProfile.displayName, {
-          x: 8.55,
-          y: 1.02,
-          w: 2.2,
-          h: 0.14,
-          fontSize: 17,
-          color: COLOR_WHITE,
-          bold: true,
-          margin: 0,
-        });
-      }
-
-      slide.addText(safeLines([
-        closingWebsite ? `Website: ${closingWebsite}` : null,
-        closingEmail ? `Email: ${closingEmail}` : null,
-        closingPhone ? `Phone: ${closingPhone}` : null,
-        closingOfficeDetails ? `Office: ${closingOfficeDetails}` : null,
-      ]).join("\n"), {
-        x: 8.55,
-        y: 5.72,
-        w: 2.25,
-        h: 1.1,
-        fontSize: 10,
-        color: "E5E7EB",
-        margin: 0,
-      });
-      slide.addText("Furniture presentation", {
-        x: 0.75,
-        y: 7.18,
-        w: 2.2,
-        h: 0.08,
-        fontSize: 8.5,
-        bold: true,
-        color: COLOR_LIGHT_TEXT,
-        margin: 0,
-      });
     }
   }
 

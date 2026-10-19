@@ -81,7 +81,7 @@ export function ProductLibraryBrowseControls({
             </p>
           </div>
           <a
-            href="/products/management"
+            href="/products/manage"
             className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
           >
             Open Product Management

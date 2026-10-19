@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
@@ -25,7 +26,16 @@ export type AuthenticatedUser = {
   displayName: string;
 };
 
-export async function getProfileForUser(userId: string) {
+// Per-request memoisation (React cache): one render/request does each lookup once, nothing is shared across requests.
+export const getRequestUser = cache(async () => {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  return user;
+});
+
+export const getProfileForUser = cache(async function getProfileForUser(userId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("profiles")
@@ -38,29 +48,19 @@ export async function getProfileForUser(userId: string) {
   }
 
   return data;
-}
+});
 
 export async function requireActiveUser(): Promise<AuthenticatedUser> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getRequestUser();
 
   if (!user) {
     redirect("/login");
   }
 
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("id,email,full_name,phone,job_title,department,role,account_status,avatar_url")
-    .eq("id", user.id)
-    .single<UserProfile>();
-
-  if (profileError) {
-    console.error("AUTH PROFILE ERROR", profileError.message);
-  }
+  const profile = await getProfileForUser(user.id);
 
   if (profile?.account_status === "disabled") {
+    const supabase = await createClient();
     await supabase.auth.signOut();
     redirect("/login?message=Your%20account%20has%20been%20disabled.");
   }

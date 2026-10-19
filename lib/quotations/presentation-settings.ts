@@ -70,6 +70,10 @@ export type PresentationFlowOrder = {
   itemIdsBySection: Record<string, string[]>;
 };
 
+// Optional custom frame for the one-per-page product image, in percent (0-100) of the image box.
+// When present it replaces imageScale / imagePositionX/Y / imageFrameSize for drawing.
+export type PresentationImageRect = { x: number; y: number; w: number; h: number };
+
 export type PresentationItemOverride = {
   imageUrl: string;
   imageFit: PresentationImageFit;
@@ -78,6 +82,7 @@ export type PresentationItemOverride = {
   imagePositionX: number;
   imagePositionY: number;
   imageScale: number;
+  imageRect?: PresentationImageRect;
 };
 
 export type QuotationPresentationSettings = {
@@ -221,6 +226,21 @@ function normalizedItemImageScale(source: Record<string, unknown> | undefined) {
   const rawValue = Number(source?.imageScale);
   if (!Number.isFinite(rawValue)) return 1;
   return Math.min(Math.max(rawValue, 0.6), 1.2);
+}
+
+/** Returns a clamped rect, or undefined when the value is missing or any field is not a finite number. */
+export function normalizePresentationImageRect(value: unknown): PresentationImageRect | undefined {
+  if (!isRecord(value)) return undefined;
+  const { x, y, w, h } = value;
+  if (![x, y, w, h].every((entry) => typeof entry === "number" && Number.isFinite(entry))) return undefined;
+
+  const width = Math.min(Math.max(w as number, 10), 100);
+  const height = Math.min(Math.max(h as number, 10), 100);
+  // Shift first so the rect stays inside the box; width/height are already <= 100, so no shrinking is ever left to do.
+  const left = Math.min(Math.max(x as number, 0), 100 - width);
+  const top = Math.min(Math.max(y as number, 0), 100 - height);
+
+  return { x: left, y: top, w: width, h: height };
 }
 
 function normalizedItemImagePosition(source: Record<string, unknown> | undefined, key: "imagePositionX" | "imagePositionY") {
@@ -386,9 +406,10 @@ export function normalizePresentationSettings(
         const imagePositionX = normalizedItemImagePosition(overrideValue, "imagePositionX");
         const imagePositionY = normalizedItemImagePosition(overrideValue, "imagePositionY");
         const imageScale = normalizedItemImageScale(overrideValue);
-        const hasValue = imageUrl || imageFit !== "contain" || imageFrameSize !== "current" || imagePosition !== "center" || imagePositionX !== 50 || imagePositionY !== 50 || imageScale !== 1;
+        const imageRect = normalizePresentationImageRect(overrideValue.imageRect);
+        const hasValue = imageUrl || imageFit !== "contain" || imageFrameSize !== "current" || imagePosition !== "center" || imagePositionX !== 50 || imagePositionY !== 50 || imageScale !== 1 || imageRect;
         return hasValue
-          ? [key, { imageUrl, imageFit, imageFrameSize, imagePosition, imagePositionX, imagePositionY, imageScale }]
+          ? [key, { imageUrl, imageFit, imageFrameSize, imagePosition, imagePositionX, imagePositionY, imageScale, ...(imageRect ? { imageRect } : {}) }]
           : null;
       })
       .filter((entry): entry is [string, PresentationItemOverride] => Boolean(entry)),

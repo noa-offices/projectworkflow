@@ -26,6 +26,8 @@ import {
 import { getWorkspaceDocument, saveWorkspaceDocument } from "@/lib/local/quotation-db";
 import { acknowledgePublication, beginPublication, publicationMetadata, validateWorkspace, withPublication, type PublicationAttempt } from "@/lib/local/quotation-publication";
 import { fetchServerVersion, requestPublication } from "@/lib/local/quotation-publication-request";
+import { exportQuotationToExcel } from "@/lib/quotations/export-to-excel";
+import { exportPresentationToPptx } from "@/components/quotations/presentation-pptx-export-button";
 import {
   beginReplacementPublication,
   discardRejectedAttempt,
@@ -679,6 +681,7 @@ function DownloadMenuRow({
   description,
   disabled,
   downloadHref,
+  extraAction,
   previewHref,
   previewLabel,
   title,
@@ -686,10 +689,29 @@ function DownloadMenuRow({
   description: string;
   disabled: boolean;
   downloadHref: string;
+  // Optional extra download (Excel / PPTX): runs a client-side export of the saved server quotation.
+  extraAction?: { label: string; run: () => Promise<void> };
   previewHref: string;
   previewLabel: string;
   title: string;
 }) {
+  const [extraBusy, setExtraBusy] = useState(false);
+  const [extraError, setExtraError] = useState<string | null>(null);
+  const extraDisabled = disabled || extraBusy;
+
+  async function runExtraAction() {
+    if (!extraAction || extraDisabled) return;
+    setExtraBusy(true);
+    setExtraError(null);
+    try {
+      await extraAction.run();
+    } catch (error) {
+      setExtraError(error instanceof Error ? error.message : `${extraAction.label} failed.`);
+    } finally {
+      setExtraBusy(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-3">
       <div className="min-w-0">
@@ -712,7 +734,23 @@ function DownloadMenuRow({
         >
           Download PDF
         </LocalServerViewLink>
+        {extraAction ? (
+          <button
+            type="button"
+            disabled={extraDisabled}
+            onClick={() => void runExtraAction()}
+            title={disabled ? "Save to Software before opening server-based preview or download." : undefined}
+            className={`inline-flex h-10 items-center rounded-md px-3 text-[11px] font-semibold xl:h-8 ${
+              extraDisabled
+                ? "cursor-not-allowed border border-zinc-200 bg-zinc-100 text-zinc-400"
+                : "border border-zinc-300 bg-white text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+            }`}
+          >
+            {extraBusy ? "Downloading..." : extraAction.label}
+          </button>
+        ) : null}
       </div>
+      {extraError ? <p role="alert" className="text-[11px] text-red-700">{extraError}</p> : null}
     </div>
   );
 }
@@ -3466,6 +3504,7 @@ export function LocalQuotationBuilder({
                             previewHref={`/quotations/${workspace.server_quotation_id}/pdf`}
                             previewLabel="Preview"
                             downloadHref={`/quotations/${workspace.server_quotation_id}/download-pdf`}
+                            extraAction={{ label: "Download Excel", run: () => exportQuotationToExcel(workspace.server_quotation_id) }}
                           />
                           <DownloadMenuRow
                             disabled={workspace.has_unsaved_changes}
@@ -3482,6 +3521,7 @@ export function LocalQuotationBuilder({
                             previewHref={`/quotations/${workspace.server_quotation_id}/presentation`}
                             previewLabel="Preview"
                             downloadHref={`/quotations/${workspace.server_quotation_id}/download-presentation`}
+                            extraAction={{ label: "Download PPTX", run: () => exportPresentationToPptx(workspace.server_quotation_id) }}
                           />
                           <DownloadMenuRow
                             disabled={workspace.has_unsaved_changes}

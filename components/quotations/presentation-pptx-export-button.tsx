@@ -1,9 +1,10 @@
 "use client";
 
+import { FileUp } from "lucide-react";
 import { useState } from "react";
-const PPTX_LAYOUT_NAME = "A4_LANDSCAPE";
-const PPTX_SLIDE_WIDTH = 11.69;
-const PPTX_SLIDE_HEIGHT = 8.27;
+const PPTX_LAYOUT_NAME = "WIDESCREEN_16_9";
+const PPTX_SLIDE_WIDTH = 13.333;
+const PPTX_SLIDE_HEIGHT = 7.5;
 const PRESENTATION_SLIDE_SELECTOR = "[data-presentation-slide='true']";
 const PRESENTATION_IMAGE_PROXY_PATH = "/api/presentation-image-proxy";
 
@@ -138,6 +139,25 @@ async function prepareSlideImagesForExport(slide: HTMLElement, slideNumber: numb
   };
 }
 
+// Downloads the editable PPTX of the SAVED presentation for a quotation (the server loads the data itself, so no page state is needed).
+export async function exportPresentationToPptx(quotationId: string) {
+  const response = await fetch(`/api/quotations/${encodeURIComponent(quotationId)}/presentation-pptx`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(payload?.error || "Failed to export editable PPTX.");
+  }
+
+  const content = await response.blob();
+  const disposition = response.headers.get("content-disposition") || "";
+  const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1] || "quotation-presentation.pptx";
+  const downloadUrl = URL.createObjectURL(content);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(downloadUrl);
+}
+
 export function PresentationPptxExportButton() {
   const [isExporting, setIsExporting] = useState(false);
   const [isNativeExporting, setIsNativeExporting] = useState(false);
@@ -260,24 +280,17 @@ export function PresentationPptxExportButton() {
   }
 
   return (
-    <div className="flex flex-col items-start gap-2 print:hidden">
-      <p className="text-xs text-amber-700">PPTX uses saved settings. Save first.</p>
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-col items-start gap-1 print:hidden">
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-xs text-zinc-500">PPTX uses saved settings. Save first.</p>
         <button
           type="button"
           disabled={isNativeExporting || isExporting}
           onClick={handleNativeExport}
-          className="inline-flex h-10 items-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-400"
+          className="inline-flex h-10 items-center gap-2 rounded-[10px] border border-[#D5DAE2] bg-white px-4 text-sm font-semibold text-[#151A24] transition hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800 disabled:cursor-not-allowed disabled:border-transparent disabled:bg-[#D3D7DE] disabled:text-[#9AA1AD]"
         >
+          <FileUp aria-hidden="true" className="h-4 w-4" />
           {isNativeExporting ? "Exporting PPTX..." : "Export PPTX"}
-        </button>
-        <button
-          type="button"
-          disabled={isNativeExporting || isExporting}
-          onClick={handleExport}
-          className="inline-flex h-10 items-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-400"
-        >
-          {isExporting ? "Exporting Image PPTX..." : "Image PPTX (not editable)"}
         </button>
       </div>
       {statusMessage ? <p className="text-xs text-zinc-500">{statusMessage}</p> : null}
