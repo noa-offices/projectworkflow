@@ -42,9 +42,15 @@ function pgClient(db: PGlite) {
           return copy;
         });
       };
-      return { select() { return this; }, eq(key: string, value: unknown) { filters.push([key, value]); return this; }, neq(key: string, value: unknown) { assert.equal(key, "template_ids"); assert.equal(value, "{}"); targeted = true; return this; }, gt(key: string, value: unknown) { seeks.push([key, value]); return this; }, order(column: string) { order = column; return this; }, range(from: number, to: number) { start = from; end = to; return this; },
+      // The lighter select used by supplierFamilyReviewFacts: key, classification:data->>classification, targets:data->targets.
+      let lightMatches = false;
+      const lightRow = (row: Record<string, unknown>) => {
+        const data = (row.data ?? {}) as { classification?: unknown; targets?: unknown };
+        return { key: row.key, classification: data.classification === undefined ? null : String(data.classification), targets: data.targets ?? null };
+      };
+      return { select(columns?: string) { lightMatches = typeof columns === "string" && columns.includes("data->>classification") && columns.includes("data->targets"); return this; }, eq(key: string, value: unknown) { filters.push([key, value]); return this; }, neq(key: string, value: unknown) { assert.equal(key, "template_ids"); assert.equal(value, "{}"); targeted = true; return this; }, gt(key: string, value: unknown) { seeks.push([key, value]); return this; }, order(column: string) { order = column; return this; }, range(from: number, to: number) { start = from; end = to; return this; },
         async single() { const rows = await execute(); return { data: rows.length === 1 ? rows[0] : null, error: rows.length === 1 ? null : { message: "Record unavailable" } }; },
-        then(resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) { return execute().then((data) => resolve({ data, error: null }), reject); } };
+        then(resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) { return execute().then((data) => resolve({ data: lightMatches ? data.map(lightRow) : data, error: null }), reject); } };
     },
     async rpc(name: string, args: Record<string, unknown>) {
       const keys = Object.keys(args);
