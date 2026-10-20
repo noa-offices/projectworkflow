@@ -1999,7 +1999,21 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
     }
   }
 
-  const supplierPriceStatusByTemplate = await supplierPriceStatusPromise;
+  // Not awaited: the supplier status only feeds each row's status badge, so it streams in after the rows are shown.
+  const priceStatusOverridesPromise = supplierPriceStatusPromise.then((statusByTemplate) => {
+    const overrides: Record<string, { detail: string; label: string; tone: "ok" | "notice" | "warning" | "neutral" }> = {};
+    for (const [templateId, supplierStatus] of statusByTemplate) {
+      if (supplierStatus.status === "legacy_manual") continue;
+      const presentation = supplierFamilyStatusPresentation(supplierStatus);
+      overrides[templateId] = {
+        detail: presentation.detail,
+        label: presentation.label,
+        tone: presentation.tone === "success" ? "ok" : presentation.tone === "info" ? "notice" : presentation.tone === "danger" ? "warning" : presentation.tone,
+      };
+    }
+    return overrides;
+  });
+  priceStatusOverridesPromise.catch(() => undefined);
 
   function buildManagementTemplateResult(template: ProductTemplate): ProductManagementTemplateResult {
     const firstVisibleImageSlot = proposedImageSlots.find((slot) =>
@@ -2016,16 +2030,14 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
       latestPriceListUpdateByBrand.get(template.brand_id),
       brandPriceBaselineByBrand.get(template.brand_id),
     );
-    const supplierStatus = supplierPriceStatusByTemplate.get(template.id);
-    const status = supplierStatus && supplierStatus.status !== "legacy_manual"
-      ? supplierFamilyStatusPresentation(supplierStatus)
-      : {
-        label: legacyStatus.label,
-        tone: legacyStatus.tone === "ok" ? "success" as const : legacyStatus.tone === "notice" ? "info" as const : legacyStatus.tone === "warning" ? "warning" as const : "neutral" as const,
-        detail: legacyStatus.key === "checked" && template.last_price_checked_at
-          ? `Checked ${formatShortDate(template.last_price_checked_at)} by ${actorDisplayName(actorNameById, template.last_price_checked_by)}`
-          : legacyStatus.detail,
-      };
+    // The supplier status (when present) replaces this once it streams in; see priceStatusOverridesPromise.
+    const status = {
+      label: legacyStatus.label,
+      tone: legacyStatus.tone === "ok" ? "success" as const : legacyStatus.tone === "notice" ? "info" as const : legacyStatus.tone === "warning" ? "warning" as const : "neutral" as const,
+      detail: legacyStatus.key === "checked" && template.last_price_checked_at
+        ? `Checked ${formatShortDate(template.last_price_checked_at)} by ${actorDisplayName(actorNameById, template.last_price_checked_by)}`
+        : legacyStatus.detail,
+    };
 
     return {
       id: template.id,
@@ -2053,8 +2065,9 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
           : "No sub category",
       ].join(" / "),
       priceStatusDetail: status.detail,
+      priceStatusPending: true,
       priceStatusLabel: status.label,
-      priceStatusTone: status.tone === "success" ? "ok" : status.tone === "info" ? "notice" : status.tone === "danger" ? "warning" : status.tone,
+      priceStatusTone: status.tone === "success" ? "ok" : status.tone === "info" ? "notice" : status.tone,
       priceText: formatMoney(template.currency, template.default_unit_price),
       searchText: templateSearchText(template, brandMap, categoryMap),
       templateCodeText: template.template_code || template.item_code
@@ -2925,6 +2938,7 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
                       emptyTitle="No products found."
                       returnTo={managementListHref}
                       showCount={false}
+                      priceStatusOverridesPromise={priceStatusOverridesPromise}
                       templates={globalManagementResults}
                     />
                   </div>
@@ -2958,6 +2972,7 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
                         emptyTitle="No products found in this brand."
                         returnTo={managementListHref}
                         searchPlaceholder={`Search within ${selectedBrand.name}...`}
+                        priceStatusOverridesPromise={priceStatusOverridesPromise}
                         templates={localBrandResults}
                       />
                     </div>
@@ -3048,6 +3063,7 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
                         : selectedMainCategory
                           ? `Search within ${selectedMainCategory.name}...`
                           : "Search within this category..."}
+                      priceStatusOverridesPromise={priceStatusOverridesPromise}
                       templates={localCategoryResults}
                     />
                     {!localCategoryResults.length ? (

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { archiveProductTemplate, bulkArchiveProductTemplates, markProductTemplateDiscontinued, markTemplatePriceChecked } from "@/app/products/templates/actions";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
@@ -27,6 +27,8 @@ export type ProductManagementTemplateResult = {
   priceStatusDetail: string;
   priceStatusLabel: string;
   priceStatusTone: PriceStatusTone;
+  // True while the supplier price status is still being streamed in; the row shows a neutral placeholder until then.
+  priceStatusPending?: boolean;
   priceText: string;
   quoteName: string;
   searchText: string;
@@ -38,6 +40,8 @@ type ProductManagementTemplateResultsProps = {
   emptyDescription: string;
   emptyTitle: string;
   returnTo: string;
+  // Supplier price status overrides, streamed from the server. Missing/failed: rows keep their own (legacy) status.
+  priceStatusOverridesPromise?: Promise<Record<string, { detail: string; label: string; tone: PriceStatusTone }>>;
   searchPlaceholder?: string;
   showCount?: boolean;
   templates: ProductManagementTemplateResult[];
@@ -221,11 +225,42 @@ function CompactPriceCheckStatus({
 export function ProductManagementTemplateResults({
   emptyDescription,
   emptyTitle,
+  priceStatusOverridesPromise,
   returnTo,
   searchPlaceholder,
   showCount = true,
-  templates,
+  templates: baseTemplates,
 }: ProductManagementTemplateResultsProps) {
+  const [priceStatusOverrides, setPriceStatusOverrides] = useState<Record<string, { detail: string; label: string; tone: PriceStatusTone }> | null>(
+    priceStatusOverridesPromise ? null : {},
+  );
+  useEffect(() => {
+    if (!priceStatusOverridesPromise) return;
+    let cancelled = false;
+    // A streamed server promise can be a bare thenable, so await it instead of chaining .then().catch().
+    void (async () => {
+      try {
+        const value = await priceStatusOverridesPromise;
+        if (!cancelled) setPriceStatusOverrides(value);
+      } catch {
+        if (!cancelled) setPriceStatusOverrides({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [priceStatusOverridesPromise]);
+  const templates = useMemo(
+    () => baseTemplates.map((template) => {
+      if (!template.priceStatusPending) return template;
+      if (priceStatusOverrides === null) {
+        return { ...template, priceStatusLabel: "Checking price status…", priceStatusDetail: "", priceStatusTone: "neutral" as const };
+      }
+      const override = priceStatusOverrides[template.id];
+      return override
+        ? { ...template, priceStatusLabel: override.label, priceStatusDetail: override.detail, priceStatusTone: override.tone, priceStatusPending: false }
+        : { ...template, priceStatusPending: false };
+    }),
+    [baseTemplates, priceStatusOverrides],
+  );
   const [localSearch, setLocalSearch] = useState("");
   const deferredLocalSearch = useDeferredValue(localSearch);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
