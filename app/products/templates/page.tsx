@@ -2003,6 +2003,16 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
         editTemplate: null,
         addTemplate: null,
       }),
+      brandName: brandMap.get(template.brand_id) ?? "Unknown brand",
+      categoryText: [
+        template.main_category_id
+          ? categoryMap.get(template.main_category_id) ?? "Main category"
+          : "No main category",
+        template.sub_category_id
+          ? categoryMap.get(template.sub_category_id) ?? "No sub category"
+          : "No sub category",
+      ].join(" / "),
+      imageCount: productLibraryImageCount(template),
       path: [
         brandMap.get(template.brand_id) ?? "Unknown brand",
         template.main_category_id
@@ -2441,6 +2451,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
 
   return (
     <ErpAppShell
+      eyebrow={isManagementView ? "ProjectWorkflow" : undefined}
       title={isManagementView ? "Product Management" : "Product Library"}
       description={isManagementView
         ? "Add, edit, archive, and maintain reusable product templates and configurable options."
@@ -2486,6 +2497,14 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                 selectedMainCategoryId={selectedMainFilter}
                 selectedSubCategoryId={selectedSubFilter}
                 subCategoryOptions={visibleSubCategories}
+                summary={isManagementView ? {
+                  current: priceCheckSummary.current + priceCheckSummary.checked,
+                  due: priceCheckSummary.due,
+                  needs_check: priceCheckSummary.needs_check,
+                  no_price_list_date: priceCheckSummary.no_price_list_date,
+                  scheduled: priceCheckSummary.scheduled,
+                  total: priceCheckSummary.total,
+                } : undefined}
               />
 
               {showAddTemplate ? (
@@ -2526,20 +2545,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
 
           {isManagementView ? (
           <section className="mt-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h2 className="text-sm font-semibold uppercase text-zinc-500">Price check summary</h2>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
-                  <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-700">Total: {priceCheckSummary.total}</span>
-                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-900">Current: {priceCheckSummary.current + priceCheckSummary.checked}</span>
-                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">Needs check: {priceCheckSummary.needs_check}</span>
-                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">Due: {priceCheckSummary.due}</span>
-                  <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-700">No price list date: {priceCheckSummary.no_price_list_date}</span>
-                  {priceCheckSummary.scheduled > 0 ? (
-                    <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-sky-900">Scheduled: {priceCheckSummary.scheduled}</span>
-                  ) : null}
-                </div>
-              </div>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
               {filteredTemplates.length ? (
                 <form action={markVisibleProductTemplatesPriceChecked}>
                   {filteredTemplates.map((template) => (
