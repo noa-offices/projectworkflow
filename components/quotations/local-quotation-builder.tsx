@@ -1704,9 +1704,15 @@ export function LocalQuotationBuilder({
   useEffect(() => {
     if (!supplierPresentationsPromise) return;
     let cancelled = false;
-    supplierPresentationsPromise
-      .then((value) => { if (!cancelled) setSupplierPresentations(value); })
-      .catch(() => { if (!cancelled) setSupplierPresentations({}); });
+    // A streamed server promise can be a bare thenable whose .then() returns nothing, so await it instead of chaining.
+    void (async () => {
+      try {
+        const value = await supplierPresentationsPromise;
+        if (!cancelled) setSupplierPresentations(value);
+      } catch {
+        if (!cancelled) setSupplierPresentations({});
+      }
+    })();
     return () => { cancelled = true; };
   }, [supplierPresentationsPromise]);
   const productTemplates = useMemo(
