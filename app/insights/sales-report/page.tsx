@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { DateRangeSelector } from "@/components/insights/date-range-selector";
 import { SalesPerformanceCharts } from "@/components/insights/sales-performance-charts";
 import { SalesRepSparkline } from "@/components/insights/sales-rep-sparkline";
@@ -408,7 +410,30 @@ type PageProps = {
 };
 
 export default async function SalesReportPage({ searchParams }: PageProps) {
-  const { user, profile, displayName } = await requireActiveUser();
+  // Auth, status checks and redirects run here, before the Suspense boundary.
+  const auth = await requireActiveUser();
+  const { user, profile, displayName } = auth;
+
+  return (
+    <ErpAppShell
+      eyebrow="INSIGHTS"
+      title="Sales Report"
+      description="Project File-qualified approvals, quoted value, and conversion per sales person."
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <SalesReportContent searchParams={searchParams} auth={auth} />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Awaited<ReturnType<typeof requireActiveUser>> }) {
+  const { profile } = auth;
   const supabase = await createSupabaseClient();
 
   // ── Range param ─────────────────────────────────────────────────────────────
@@ -698,16 +723,6 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
   const conversionChange = pctChange(conversionCurrent, conversionPrior);
 
   return (
-    <ErpAppShell
-      eyebrow="INSIGHTS"
-      title="Sales Report"
-      description="Project File-qualified approvals, quoted value, and conversion per sales person."
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <div className="px-4 py-5 sm:px-6 lg:px-8">
 
         {/* ── Filter bar ──────────────────────────────────────────────────── */}
@@ -1320,6 +1335,5 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
           </div>
         ) : null}
       </div>
-    </ErpAppShell>
   );
 }

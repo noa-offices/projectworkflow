@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
+import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { requireProductLibraryManager } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
@@ -406,7 +408,29 @@ type ArchiveItem = {
 };
 
 export default async function BrandsPage({ searchParams }: BrandsPageProps) {
-  const { user, profile, displayName } = await requireProductLibraryManager();
+  // Auth, role checks and redirects run here, before the Suspense boundary.
+  const auth = await requireProductLibraryManager();
+  const { user, profile, displayName } = auth;
+
+  return (
+    <ErpAppShell
+      title="Brands"
+      description="Manage brands, origins, categories, and subcategories used by products and materials."
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <BrandsContent searchParams={searchParams} auth={auth} />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function BrandsContent({ searchParams, auth }: BrandsPageProps & { auth: Awaited<ReturnType<typeof requireProductLibraryManager>> }) {
+  const { user } = auth;
   const params = (await searchParams) ?? {};
   const message = stringParam(params.message);
   const searchQuery = stringParam(params.q).trim();
@@ -543,15 +567,6 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
   ];
 
   return (
-    <ErpAppShell
-      title="Brands"
-      description="Manage brands, origins, categories, and subcategories used by products and materials."
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <div className="px-5 py-6 sm:px-8">
           <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1021,6 +1036,5 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
             </div>
           </section>
       </div>
-    </ErpAppShell>
   );
 }

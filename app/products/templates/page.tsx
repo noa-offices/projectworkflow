@@ -1,8 +1,9 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { type DeskingSizePricingRow } from "@/components/products/desking-size-pricing-table";
 import {
   DeactivateGroupForm,
@@ -1572,8 +1573,47 @@ function DetailPriceRow({
   );
 }
 
+type ProductTemplatesContentProps = TemplatesPageProps & {
+  auth?: Awaited<ReturnType<typeof requireProductLibraryManager>>;
+  // Render the page body without the shell (the caller already drew it).
+  bodyOnly?: boolean;
+};
+
 export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps) {
-  const { user, profile, displayName } = await requireProductLibraryManager();
+  // Auth, role checks and every redirect run here, BEFORE any Suspense boundary.
+  const auth = await requireProductLibraryManager();
+  const params = (await searchParams) ?? {};
+
+  // Draw the shell at once (title chosen from the search params, as each view did before); the data-heavy body
+  // streams in under a content-area skeleton.
+  const isManagement = stringParam(params.manage) === "1";
+  const isPriceUpdates = !isManagement && stringParam(params.priceStatus) === "due";
+  const { profile, displayName, user } = auth;
+  return (
+    <ErpAppShell
+      title={isManagement ? "Product Management" : isPriceUpdates ? "Price Updates" : "Product Library"}
+      description={
+        isManagement
+          ? "Add, edit, archive, and maintain reusable product templates and configurable options."
+          : isPriceUpdates
+            ? "Review products due for source price checks and price-list follow-up."
+            : "Browse reusable product templates by brand, category, or search."
+      }
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <ProductTemplatesContent searchParams={Promise.resolve(params)} auth={auth} bodyOnly />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: ProductTemplatesContentProps) {
+  const { user, profile, displayName } = auth ?? await requireProductLibraryManager();
   const canManageBrandPriceLists = canReviewBrandPrices(profile?.role, profile?.account_status);
   const params = (await searchParams) ?? {};
   const message = stringParam(params.message);
@@ -2191,20 +2231,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
   const localCategoryResults = selectedCategoryTemplates.map(buildManagementTemplateResult);
 
   if (!isManagementView) {
-    return (
-      <ErpAppShell
-        title={isPriceUpdatesView ? "Price Updates" : "Product Library"}
-        description={
-          isPriceUpdatesView
-            ? "Review products due for source price checks and price-list follow-up."
-            : "Browse reusable product templates by brand, category, or search."
-        }
-        role={profile?.role ?? null}
-        userDisplayName={displayName}
-        userEmail={user.email}
-        userAvatarUrl={profile?.avatar_url ?? null}
-        userRole={profile?.role ?? null}
-      >
+    const libraryBody = (
         <div className="px-5 py-6 sm:px-8">
             <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <Link
@@ -2435,22 +2462,30 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
               </section>
             )}
         </div>
+    );
+
+    if (bodyOnly) return libraryBody;
+
+    return (
+      <ErpAppShell
+        title={isPriceUpdatesView ? "Price Updates" : "Product Library"}
+        description={
+          isPriceUpdatesView
+            ? "Review products due for source price checks and price-list follow-up."
+            : "Browse reusable product templates by brand, category, or search."
+        }
+        role={profile?.role ?? null}
+        userDisplayName={displayName}
+        userEmail={user.email}
+        userAvatarUrl={profile?.avatar_url ?? null}
+        userRole={profile?.role ?? null}
+      >
+        {libraryBody}
       </ErpAppShell>
     );
   }
 
-  return (
-    <ErpAppShell
-      title={isManagementView ? "Product Management" : "Product Library"}
-      description={isManagementView
-        ? "Add, edit, archive, and maintain reusable product templates and configurable options."
-        : "Browse reusable product templates, search by brand or category, and open product details when you need them."}
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
+  const pageBody = (
       <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {isManagementView ? <div /> : (
@@ -4034,6 +4069,23 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
             </div>
           </section>
       </div>
+  );
+
+  if (bodyOnly) return pageBody;
+
+  return (
+    <ErpAppShell
+      title={isManagementView ? "Product Management" : "Product Library"}
+      description={isManagementView
+        ? "Add, edit, archive, and maintain reusable product templates and configurable options."
+        : "Browse reusable product templates, search by brand or category, and open product details when you need them."}
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      {pageBody}
     </ErpAppShell>
   );
 }

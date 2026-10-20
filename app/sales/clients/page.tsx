@@ -1,6 +1,8 @@
-import { requireActiveUser } from "@/lib/auth";
+import { Suspense } from "react";
+import { requireActiveUser, type AuthenticatedUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { ClientsManager } from "@/components/sales/clients-manager";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +28,29 @@ export type ClientRow = {
 export type ClientWithCount = ClientRow & { quotationCount: number; projectCount: number };
 
 export default async function ClientsPage() {
-  const { user, profile, displayName } = await requireActiveUser();
+  // Auth, status checks and redirects run here, before the Suspense boundary.
+  const auth = await requireActiveUser();
+  const { user, profile, displayName } = auth;
+
+  return (
+    <ErpAppShell
+      title="Clients"
+      description="Manage client records, merge duplicates, and deactivate inactive clients."
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <ClientsContent auth={auth} />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function ClientsContent({ auth }: { auth: AuthenticatedUser }) {
+  const { profile } = auth;
 
   const adminResult = createAdminClient();
   if (!adminResult.client) throw new Error(adminResult.error ?? "Admin client unavailable");
@@ -73,18 +97,8 @@ export default async function ClientsPage() {
     profile?.role === "sales_coordinator";
 
   return (
-    <ErpAppShell
-      title="Clients"
-      description="Manage client records, merge duplicates, and deactivate inactive clients."
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <div className="px-5 py-6 sm:px-8">
         <ClientsManager clients={clientsWithCounts} canManage={canManage} />
       </div>
-    </ErpAppShell>
   );
 }

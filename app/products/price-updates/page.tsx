@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { PriceUpdatesBrandSummaryCard, PriceUpdatesSummaryCards, type PriceUpdatesBrandSummary } from "@/components/products/price-updates-brands";
 import { requireProductPricingManager } from "@/lib/auth";
 import { canReviewBrandPrices } from "@/lib/products/brand-price-permissions";
@@ -23,7 +25,21 @@ const workspaceHref = (brandId: string) => `/products/price-updates/supplier-sou
  * categories, price-list history or review rows are loaded here. Brand status comes from the shared Family and Brand resolvers.
  */
 export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPageProps) {
-  const { user, profile, displayName } = await requireProductPricingManager();
+  // Auth, role checks and redirects run here, before the Suspense boundary.
+  const auth = await requireProductPricingManager();
+  const { user, profile, displayName } = auth;
+
+  return (
+    <ErpAppShell title="Price Updates" description="Choose a Brand to review its Supplier price lists." role={profile?.role ?? null} userDisplayName={displayName} userEmail={user.email} userAvatarUrl={profile?.avatar_url ?? null} userRole={profile?.role ?? null}>
+      <Suspense fallback={<ListPageSkeleton />}>
+        <PriceUpdatesContent searchParams={searchParams} auth={auth} />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function PriceUpdatesContent({ searchParams, auth }: PriceUpdatesPageProps & { auth: Awaited<ReturnType<typeof requireProductPricingManager>> }) {
+  const { profile } = auth;
   const params = (await searchParams) ?? {};
   const searchQuery = stringParam(params.q).trim().toLowerCase();
   const selectedState = stringParam(params.state);
@@ -56,7 +72,6 @@ export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPag
   const totals = summarizePriceUpdates(views);
 
   return (
-    <ErpAppShell title="Price Updates" description="Choose a Brand to review its Supplier price lists." role={profile?.role ?? null} userDisplayName={displayName} userEmail={user.email} userAvatarUrl={profile?.avatar_url ?? null} userRole={profile?.role ?? null}>
       <div className="space-y-5 text-sm">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div><p className="text-xs text-zinc-500">Which Brand needs attention?</p><h2 className="text-base font-semibold text-zinc-950">Price status by Brand</h2></div>
@@ -74,6 +89,5 @@ export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPag
         {visible.length === 0 ? <p className="rounded-lg border border-zinc-200 bg-white p-6 text-center text-sm text-zinc-600">No Brands match these filters.</p> : null}
         <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-label="Brands">{visible.map((summary) => <PriceUpdatesBrandSummaryCard key={summary.view.brandId} summary={summary} />)}</ul>
       </div>
-    </ErpAppShell>
   );
 }
