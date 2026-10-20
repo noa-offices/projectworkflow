@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { Ellipsis, LayoutGrid, List } from "lucide-react";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { archiveProductTemplate, bulkArchiveProductTemplates, markProductTemplateDiscontinued, markTemplatePriceChecked } from "@/app/products/templates/actions";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
@@ -40,7 +41,128 @@ export type ProductManagementTemplateResult = {
   templateName: string;
 };
 
+// A result row plus the ids/keys the browser needs to filter without asking the server.
+export type ProductManagementTemplateRow = ProductManagementTemplateResult & {
+  brandId: string;
+  mainCategoryId: string;
+  priceKey: string;
+  subCategoryId: string;
+};
+
+type FilterValues = { brand: string; main: string; priceStatus: string; q: string; sub: string };
+type CategoryOption = { brandId: string; id: string; name: string; parentId: string };
+type PriceSummary = { current: number; due: number; needs_check: number; no_price_list_date: number; scheduled: number; total: number };
+
+type FilterContextValue = {
+  filteredRows: ProductManagementTemplateRow[];
+  filters: FilterValues;
+  mainOptions: CategoryOption[];
+  resetFilters: () => void;
+  setBrand: (value: string) => void;
+  setMain: (value: string) => void;
+  setPriceStatus: (value: string) => void;
+  setSearch: (value: string) => void;
+  setSub: (value: string) => void;
+  subOptions: CategoryOption[];
+  summary: PriceSummary;
+};
+
+const FilterContext = createContext<FilterContextValue | null>(null);
+const emptyRows: ProductManagementTemplateResult[] = [];
+const priceStatusKeys = ["current", "needs_check", "due", "no_price_list_date", "scheduled", "checked"];
+const filtersKey = (filters: FilterValues) => JSON.stringify([filters.q, filters.brand, filters.main, filters.sub, filters.priceStatus]);
+
+export function useProductManagementFilters() {
+  return useContext(FilterContext);
+}
+
+// Filters the rows already loaded, in the browser. Search/main/sub/price status only touch the URL with history.replaceState
+// (the server does not re-render); a brand change also refreshes the server data (inside a transition) so the Brand tools card updates.
+export function ProductManagementFilterProvider({
+  children,
+  initialFilters,
+  mainCategories,
+  rows,
+  subCategories,
+}: {
+  children: ReactNode;
+  initialFilters: FilterValues;
+  mainCategories: CategoryOption[];
+  rows: ProductManagementTemplateRow[];
+  subCategories: CategoryOption[];
+}) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const [, startTransition] = useTransition();
+  const [filters, setFilters] = useState<FilterValues>(initialFilters);
+  const deferredQuery = useDeferredValue(filters.q);
+  const lastWrittenRef = useRef(filtersKey(initialFilters));
+
+  const urlFor = useCallback((values: FilterValues, includeBrand: boolean) => {
+    const next = new URLSearchParams(window.location.search);
+    next.set("manage", "1");
+    const entries: Array<[string, string]> = [["q", values.q.trim()], ["main", values.main], ["sub", values.sub], ["priceStatus", values.priceStatus]];
+    if (includeBrand) entries.push(["brand", values.brand]);
+    for (const [key, value] of entries) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
+    for (const key of ["template", "editTemplate", "addTemplate", "message", "returnTo", "quoteImportMode", "quoteImportDraft", "quoteImportAction"]) next.delete(key);
+    return `${pathname}?${next.toString()}`;
+  }, [pathname]);
+
+  useEffect(() => {
+    const key = filtersKey(filters);
+    if (key === lastWrittenRef.current) return;
+    lastWrittenRef.current = key;
+    window.history.replaceState(null, "", urlFor(filters, false));
+  }, [filters, urlFor]);
+
+  const changeBrand = useCallback((next: FilterValues) => {
+    lastWrittenRef.current = filtersKey(next);
+    setFilters(next);
+    startTransition(() => router.replace(urlFor(next, true), { scroll: false }));
+  }, [router, urlFor]);
+
+  const value = useMemo<FilterContextValue>(() => {
+    const words = deferredQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const structureRows = rows.filter((row) =>
+      (!filters.brand || row.brandId === filters.brand) &&
+      (!filters.main || row.mainCategoryId === filters.main) &&
+      (!filters.sub || row.subCategoryId === filters.sub) &&
+      words.every((word) => row.searchText.includes(word)));
+    const summary: PriceSummary = { current: 0, due: 0, needs_check: 0, no_price_list_date: 0, scheduled: 0, total: structureRows.length };
+    for (const row of structureRows) {
+      if (row.priceKey === "current" || row.priceKey === "checked") summary.current += 1;
+      else if (row.priceKey in summary) summary[row.priceKey as keyof PriceSummary] += 1;
+    }
+    return {
+      filteredRows: priceStatusKeys.includes(filters.priceStatus) ? structureRows.filter((row) => row.priceKey === filters.priceStatus) : structureRows,
+      filters,
+      mainOptions: mainCategories.filter((category) => !filters.brand || category.brandId === filters.brand),
+      resetFilters: () => {
+        const empty = { brand: "", main: "", priceStatus: "", q: "", sub: "" };
+        if (filters.brand) changeBrand(empty);
+        else setFilters(empty);
+      },
+      setBrand: (brand) => changeBrand({ ...filters, brand, main: "", sub: "" }),
+      setMain: (main) => setFilters((current) => ({ ...current, main, sub: "" })),
+      setPriceStatus: (priceStatus) => setFilters((current) => ({ ...current, priceStatus })),
+      setSearch: (q) => setFilters((current) => ({ ...current, q })),
+      setSub: (sub) => setFilters((current) => ({ ...current, sub })),
+      subOptions: subCategories.filter((category) => filters.main
+        ? category.parentId === filters.main
+        : !filters.brand || category.brandId === filters.brand),
+      summary,
+    };
+  }, [changeBrand, deferredQuery, filters, mainCategories, rows, subCategories]);
+
+  return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>;
+}
+
 type ProductManagementTemplateResultsProps = {
+  // Optional buttons shown under the empty-state text (for example Reset filters, + Add Product Template).
+  emptyActions?: ReactNode;
   emptyDescription: string;
   emptyTitle: string;
   returnTo: string;
@@ -48,7 +170,8 @@ type ProductManagementTemplateResultsProps = {
   priceStatusOverridesPromise?: Promise<Record<string, { detail: string; label: string; tone: PriceStatusTone }>>;
   searchPlaceholder?: string;
   showCount?: boolean;
-  templates: ProductManagementTemplateResult[];
+  // Omit inside ProductManagementFilterProvider: the rows then come from the live filters.
+  templates?: ProductManagementTemplateResult[];
 };
 
 function TemplateLifecycleBadge({
@@ -234,14 +357,17 @@ function CompactPriceCheckStatus({
 }
 
 export function ProductManagementTemplateResults({
+  emptyActions,
   emptyDescription,
   emptyTitle,
   priceStatusOverridesPromise,
   returnTo,
   searchPlaceholder,
   showCount = true,
-  templates: baseTemplates,
+  templates: templatesProp,
 }: ProductManagementTemplateResultsProps) {
+  const filterContext = useProductManagementFilters();
+  const baseTemplates = templatesProp ?? filterContext?.filteredRows ?? emptyRows;
   const [priceStatusOverrides, setPriceStatusOverrides] = useState<Record<string, { detail: string; label: string; tone: PriceStatusTone }> | null>(
     priceStatusOverridesPromise ? null : {},
   );
@@ -355,7 +481,7 @@ export function ProductManagementTemplateResults({
       {filteredTemplates.length ? (
         <div
           className="grid gap-4"
-          style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+          style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 280px), 1fr))" }}
         >
           {filteredTemplates.map((template) => (
             <article
@@ -434,6 +560,20 @@ export function ProductManagementTemplateResults({
         <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-10 text-center shadow-sm">
           <h3 className="text-lg font-semibold text-zinc-950">{emptyTitle}</h3>
           <p className="mt-2 text-sm text-zinc-500">{emptyDescription}</p>
+          {emptyActions || filterContext ? (
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+              {filterContext ? (
+                <button
+                  type="button"
+                  onClick={filterContext.resetFilters}
+                  className="inline-flex h-10 items-center justify-center rounded-lg border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                >
+                  Reset filters
+                </button>
+              ) : null}
+              {emptyActions}
+            </div>
+          ) : null}
         </section>
       )}
     </div>

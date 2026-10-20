@@ -17,8 +17,10 @@ import {
 import { ProductLibraryPreviewImage } from "@/components/products/product-library-preview-image";
 import { ProductManagementFilterBar } from "@/components/products/product-management-filter-bar";
 import {
+  ProductManagementFilterProvider,
   ProductManagementTemplateResults,
   type ProductManagementTemplateResult,
+  type ProductManagementTemplateRow,
 } from "@/components/products/product-management-template-results";
 import {
   ProductManagementArchiveResults,
@@ -1620,9 +1622,10 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
   const message = stringParam(params.message);
   const isManagementView = stringParam(params.manage) === "1";
   const searchQuery = stringParam(params.q).trim();
-  const selectedBrandFilter = stringParam(params.brand);
-  const selectedMainFilter = stringParam(params.main);
-  const selectedSubFilter = stringParam(params.sub);
+  // Old links may still carry panelBrand/panelMain/panelSub; in Product Management they act as the same filters.
+  const selectedBrandFilter = stringParam(params.brand) || (isManagementView ? stringParam(params.panelBrand) : "");
+  const selectedMainFilter = stringParam(params.main) || (isManagementView ? stringParam(params.panelMain) : "");
+  const selectedSubFilter = stringParam(params.sub) || (isManagementView ? stringParam(params.panelSub) : "");
   const selectedPanelBrandId = stringParam(params.panelBrand);
   const selectedPanelMainId = stringParam(params.panelMain);
   const selectedPanelSubId = stringParam(params.panelSub);
@@ -2016,7 +2019,7 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
   });
   priceStatusOverridesPromise.catch(() => undefined);
 
-  function buildManagementTemplateResult(template: ProductTemplate): ProductManagementTemplateResult {
+  function buildManagementTemplateResult(template: ProductTemplate): ProductManagementTemplateRow {
     const firstVisibleImageSlot = proposedImageSlots.find((slot) =>
       Boolean(templateImageValue(template, slot.field)),
     );
@@ -2042,6 +2045,10 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
 
     return {
       id: template.id,
+      brandId: template.brand_id,
+      mainCategoryId: template.main_category_id ?? "",
+      priceKey: legacyStatus.key,
+      subCategoryId: template.sub_category_id ?? "",
       editHref: templatesHref(params, {
         template: template.id,
         editTemplate: template.id,
@@ -2250,7 +2257,8 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
     }))
     .filter((brand) => brand.count > 0);
   const libraryResultTemplates = templatesMatchingStructure;
-  const globalManagementResults = filteredTemplates.map(buildManagementTemplateResult);
+  // Every active template: the browser filters this list instantly (see ProductManagementFilterProvider).
+  const allManagementRows = activeTemplateList.map(buildManagementTemplateResult);
   const localBrandResults = selectedBrandTemplates.map(buildManagementTemplateResult);
   const localCategoryResults = selectedCategoryTemplates.map(buildManagementTemplateResult);
 
@@ -2509,7 +2517,25 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
     );
   }
 
+  const toolsBrand = selectedBrandFilter ? brandList.find((brand) => brand.id === selectedBrandFilter) ?? null : null;
+  const toolsBrandTemplates = toolsBrand ? activeTemplateList.filter((template) => template.brand_id === toolsBrand.id) : [];
+  const toolsBrandLatestRecord = toolsBrand
+    ? (priceListUpdatesByBrand.get(toolsBrand.id) ?? []).find((update) => update.status === "draft" || update.status === "active")
+    : undefined;
+
   const pageBody = (
+    <ProductManagementFilterProvider
+      initialFilters={{
+        brand: selectedBrandFilter,
+        main: selectedMainFilter,
+        priceStatus: selectedPriceStatusFilter,
+        q: searchQuery,
+        sub: selectedSubFilter,
+      }}
+      mainCategories={mainCategories.map((category) => ({ brandId: category.brand_id, id: category.id, name: category.name, parentId: "" }))}
+      rows={allManagementRows}
+      subCategories={subCategories.map((category) => ({ brandId: category.brand_id, id: category.id, name: category.name, parentId: category.parent_id ?? "" }))}
+    >
       <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {isManagementView ? <div /> : (
@@ -2534,25 +2560,10 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
           <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3">
               <ProductManagementFilterBar
-                key={`${selectedBrandFilter}:${selectedMainFilter}:${selectedSubFilter}:${selectedPriceStatusFilter}:${searchQuery}`}
                 addBrandHref={manageBrandsHref}
                 addTemplateHref={templatesHref(params, { addTemplate: "1" })}
                 brandOptions={brandList}
-                mainCategoryOptions={visibleMainCategories}
-                priceStatus={selectedPriceStatusFilter}
-                searchQuery={searchQuery}
-                selectedBrandId={selectedBrandFilter}
-                selectedMainCategoryId={selectedMainFilter}
-                selectedSubCategoryId={selectedSubFilter}
-                subCategoryOptions={visibleSubCategories}
-                summary={isManagementView ? {
-                  current: priceCheckSummary.current + priceCheckSummary.checked,
-                  due: priceCheckSummary.due,
-                  needs_check: priceCheckSummary.needs_check,
-                  no_price_list_date: priceCheckSummary.no_price_list_date,
-                  scheduled: priceCheckSummary.scheduled,
-                  total: priceCheckSummary.total,
-                } : undefined}
+                markVisibleAction={markVisibleProductTemplatesPriceChecked}
               />
 
               {showAddTemplate ? (
@@ -2591,260 +2602,22 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
             </div>
           </section>
 
-          {isManagementView ? (
-          <section className="mt-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
-              {filteredTemplates.length ? (
-                <form action={markVisibleProductTemplatesPriceChecked}>
-                  {filteredTemplates.map((template) => (
-                    <input key={template.id} type="hidden" name="template_id[]" value={template.id} />
-                  ))}
-                  <ConfirmSubmitButton
-                    message="Mark all visible templates as price checked now?"
-                    className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
-                    pendingLabel="Marking checked..."
-                  >
-                    Mark visible templates checked now
-                  </ConfirmSubmitButton>
-                </form>
-              ) : null}
-            </div>
-          </section>
-          ) : null}
-
-          <section className={selectedTemplate ? "mt-6 space-y-6" : "mt-6 grid gap-6 2xl:grid-cols-[360px_1fr]"}>
-            {!selectedTemplate ? (
-            <aside className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-              <div className="border-b border-zinc-200 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                  Product Library
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-500">
-                  <Link href={templatesHref(params, {
-                    panelBrand: null,
-                    panelMain: null,
-                    panelSub: null,
-                    template: null,
-                    editTemplate: null,
-                  })} className={selectedBrand ? "font-medium text-zinc-500 transition hover:text-zinc-700" : "font-semibold text-zinc-950"}>
-                    Product Library
-                  </Link>
-                  {selectedBrand ? (
-                    <>
-                      <span>/</span>
-                      <Link href={templatesHref(params, {
-                        panelBrand: selectedBrand.id,
-                        panelMain: null,
-                        panelSub: null,
-                        template: null,
-                        editTemplate: null,
-                      })} className={selectedCategory ? "font-medium text-zinc-500 transition hover:text-zinc-700" : "font-semibold text-zinc-950"}>
-                        {selectedBrand.name}
-                      </Link>
-                    </>
-                  ) : null}
-                  {selectedCategory ? (
-                    <>
-                      <span>/</span>
-                      <span className="font-semibold text-zinc-950">{selectedCategory.name}</span>
-                    </>
-                  ) : null}
-                </div>
-                <p className="mt-2 text-sm text-zinc-500">
-                  {!selectedBrand
-                    ? `${brandList.length} brands`
-                    : !selectedCategory
-                      ? `${selectedBrandCategories.length} categories in ${selectedBrand.name}`
-                      : `${selectedCategoryTemplates.length} templates in ${selectedCategory.name}`}
-                </p>
-              </div>
-              <div className="max-h-[720px] space-y-3 overflow-auto p-4">
-                {!selectedBrand ? (
-                  brandList.map((brand) => {
-                    const allBrandTemplates = templateList.filter((template) => template.brand_id === brand.id);
-                    const activeBrandTemplates = activeTemplateList.filter((template) => template.brand_id === brand.id);
-                    const matchingBrandTemplates = filteredTemplates.filter((template) => template.brand_id === brand.id);
-                    const latestPriceListUpdate = latestPriceListUpdateByBrand.get(brand.id) ?? null;
-                    const latestBaselineDate = brandPriceBaselineByBrand.get(brand.id) ?? null;
-                    const hasPriceListDate = Boolean(latestBaselineDate);
-                    const brandStatusLabel = hasPriceListDate ? "Price list date recorded" : "No price list date";
-                    const matchingStatusSummary = matchingBrandTemplates.reduce(
-                      (summary, template) => {
-                        const key = priceCheckState(
-                          template,
-                          latestPriceListUpdateByBrand.get(template.brand_id),
-                          brandPriceBaselineByBrand.get(template.brand_id),
-                        ).key;
-
-                        return {
-                          ...summary,
-                          [key]: summary[key] + 1,
-                        };
-                      },
-                      { current: 0, needs_check: 0, due: 0, no_price_list_date: 0, scheduled: 0, checked: 0 } satisfies Record<PriceSummaryKey, number>,
-                    );
-                    const badgeClass = hasPriceListDate
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                      : "border-zinc-200 bg-zinc-50 text-zinc-700";
-
-                    return (
-                      <div key={brand.id} className="rounded-xl border border-zinc-200 bg-white p-4 transition hover:border-zinc-300 hover:shadow-sm">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <h2 className="truncate text-base font-semibold text-zinc-950">{brand.name}</h2>
-                            <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-semibold text-zinc-700">
-                                {allBrandTemplates.length} templates
-                              </span>
-                              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-semibold text-zinc-700">
-                                {activeBrandTemplates.length} active
-                              </span>
-                              <span className={`rounded-full border px-2 py-0.5 font-semibold ${badgeClass}`}>
-                                {brandStatusLabel}
-                              </span>
-                            </div>
-                          </div>
-                          <Link
-                            href={templatesHref(params, {
-                              panelBrand: brand.id,
-                              panelMain: null,
-                              panelSub: null,
-                              template: null,
-                              editTemplate: null,
-                            })}
-                            className="inline-flex h-9 shrink-0 items-center rounded-md border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                          >
-                            View
-                          </Link>
-                        </div>
-                        <div className="mt-3 grid gap-1 text-xs text-zinc-500">
-                          <p>Matching current filters: {matchingBrandTemplates.length}</p>
-                          <p>
-                            Latest price list: {latestBaselineDate ? formatShortDate(latestBaselineDate) : "No update recorded"}
-                          </p>
-                          <p>
-                            Current: {matchingStatusSummary.current + matchingStatusSummary.checked}{" "}
-                            • Needs check: {matchingStatusSummary.needs_check} • No price list date: {matchingStatusSummary.no_price_list_date}
-                          </p>
-                          {matchingStatusSummary.due > 0 ? <p>Due: {matchingStatusSummary.due}</p> : null}
-                          {latestPriceListUpdate?.title ? <p>Latest update record: {latestPriceListUpdate.title}</p> : null}
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <>
-                    <Link
-                      href={templatesHref(params, {
-                        panelBrand: null,
-                        panelMain: null,
-                        panelSub: null,
-                        template: null,
-                        editTemplate: null,
-                      })}
-                      className="inline-flex text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
-                    >
-                      ← Back to brands
-                    </Link>
-                    <details data-state-key={`template-library-main-category-create-${selectedBrand.id}`}>
-                      <summary className="cursor-pointer text-xs font-semibold text-emerald-900">
-                        + Main Category
-                      </summary>
-                      <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                        <QuickCategoryForm brandId={selectedBrand.id} />
-                      </div>
-                    </details>
-                    {selectedBrandCategories.map((mainCategory) => {
-                      const categoryTemplates = selectedBrandTemplates.filter(
-                        (template) => template.main_category_id === mainCategory.id,
-                      );
-                      const subcategoryCount = subCategories.filter(
-                        (category) => category.parent_id === mainCategory.id,
-                      ).length;
-                      const isActive = selectedMainCategory?.id === mainCategory.id;
-
-                      return (
-                        <div
-                          key={mainCategory.id}
-                          className={`rounded-xl border p-4 transition ${
-                            isActive
-                              ? "border-emerald-200 bg-emerald-50/40"
-                              : "border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-sm"
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <h3 className="truncate font-semibold text-zinc-950">{mainCategory.name}</h3>
-                              {categoryTemplates.length > 0 || subcategoryCount > 0 ? (
-                                <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                                  {categoryTemplates.length > 0 ? (
-                                    <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-semibold text-zinc-700">
-                                      {categoryTemplates.length} templates
-                                    </span>
-                                  ) : null}
-                                  {subcategoryCount > 0 ? (
-                                    <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-semibold text-zinc-700">
-                                      {subcategoryCount} subcategories
-                                    </span>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </div>
-                            <Link
-                              href={templatesHref(params, {
-                                panelBrand: selectedBrand.id,
-                                panelMain: mainCategory.id,
-                                panelSub: null,
-                                template: null,
-                                editTemplate: null,
-                              })}
-                              className="inline-flex h-9 shrink-0 items-center rounded-md border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                            >
-                              View
-                            </Link>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {!selectedBrandCategories.length ? (
-                      <div className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
-                        No main categories yet for {selectedBrand.name}.
-                      </div>
-                    ) : null}
-                  </>
-                )}
-                {!brandList.length ? (
-                  <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
-                    No brands yet.{" "}
-                    <Link
-                      href={manageBrandsHref}
-                      className="font-semibold text-emerald-900 transition hover:text-emerald-800"
-                    >
-                      Create a brand first.
-                    </Link>
-                  </p>
-                ) : null}
-              </div>
-            </aside>
-            ) : null}
-
+          <section className="mt-6 space-y-6">
             <div className="space-y-5">
               {!selectedTemplate ? (
               <>
-              {selectedBrand && !hasGlobalSearchOrFilters ? (
+              {toolsBrand ? (
                 <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div>
-                      <h2 className="font-semibold text-zinc-950">{selectedBrand.name}</h2>
+                      <h2 className="font-semibold text-zinc-950">{toolsBrand.name}</h2>
                       <p className="mt-1 text-sm text-zinc-500">
-                        {!selectedCategory
-                          ? "Choose a category to open its templates."
-                          : `Showing templates for ${selectedCategory.name}.`}
+                        {toolsBrandTemplates.length} {toolsBrandTemplates.length === 1 ? "template" : "templates"}
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <form action={markBrandPriceListCheckedAction}>
-                        <input type="hidden" name="brand_id" value={selectedBrand.id} />
+                        <input type="hidden" name="brand_id" value={toolsBrand.id} />
                         <PendingSubmitButton
                           className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                           pendingLabel="Applying..."
@@ -2852,11 +2625,11 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
                           Check brand prices
                         </PendingSubmitButton>
                       </form>
-                      {selectedBrandTemplates.length ? (
+                      {toolsBrandTemplates.length ? (
                         <form action={markBrandTemplatesPriceChecked}>
-                          <input type="hidden" name="brand_id" value={selectedBrand.id} />
+                          <input type="hidden" name="brand_id" value={toolsBrand.id} />
                           <ConfirmSubmitButton
-                            message={`Mark all active templates under ${selectedBrand.name} as price checked now?`}
+                            message={`Mark all active templates under ${toolsBrand.name} as price checked now?`}
                             className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                             pendingLabel="Marking checked..."
                           >
@@ -2871,17 +2644,17 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
                       <p>
                         Template status basis:{" "}
                         <span className="font-semibold text-zinc-950">
-                          {brandPriceBaselineByBrand.get(selectedBrand.id) ? "Price list date recorded" : "No price list date"}
+                          {brandPriceBaselineByBrand.get(toolsBrand.id) ? "Price list date recorded" : "No price list date"}
                         </span>
                       </p>
                       <p className="mt-1">
-                        Latest price list: {brandPriceBaselineByBrand.get(selectedBrand.id)
-                          ? formatShortDate(brandPriceBaselineByBrand.get(selectedBrand.id) ?? null)
+                        Latest price list: {brandPriceBaselineByBrand.get(toolsBrand.id)
+                          ? formatShortDate(brandPriceBaselineByBrand.get(toolsBrand.id) ?? null)
                           : "No update recorded"}
                       </p>
-                      {(latestPriceListUpdateByBrand.get(selectedBrand.id) ?? null)?.title ? (
+                      {(latestPriceListUpdateByBrand.get(toolsBrand.id) ?? null)?.title ? (
                         <p className="mt-1">
-                          Latest update record: {(latestPriceListUpdateByBrand.get(selectedBrand.id) ?? null)?.title}
+                          Latest update record: {(latestPriceListUpdateByBrand.get(toolsBrand.id) ?? null)?.title}
                         </p>
                       ) : null}
                     </div>
@@ -2890,30 +2663,30 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
                         Price list updates
                       </summary>
                       <div className="mt-3 space-y-3 text-xs leading-5 text-zinc-600">
-                        {canManageBrandPriceLists ? <details data-state-key={`template-library-price-updates-add-${selectedBrand.id}`}>
+                        {canManageBrandPriceLists ? <details data-state-key={`template-library-price-updates-add-${toolsBrand.id}`}>
                           <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50">
                             Add update
                           </summary>
                           <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                            <BrandPriceListUpdateForm brandId={selectedBrand.id} />
+                            <BrandPriceListUpdateForm brandId={toolsBrand.id} />
                           </div>
                         </details> : null}
-                        {canManageBrandPriceLists && selectedBrandLatestRecord ? (
+                        {canManageBrandPriceLists && toolsBrandLatestRecord ? (
                           <>
-                            <details data-state-key={`template-library-price-updates-edit-${selectedBrand.id}`}>
+                            <details data-state-key={`template-library-price-updates-edit-${toolsBrand.id}`}>
                               <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50">
                                 Edit latest
                               </summary>
                               <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
                                 <BrandPriceListUpdateForm
-                                  brandId={selectedBrand.id}
-                                  update={selectedBrandLatestRecord}
+                                  brandId={toolsBrand.id}
+                                  update={toolsBrandLatestRecord}
                                 />
                               </div>
                             </details>
-                            {selectedBrandLatestRecord.status !== "archived" ? (
+                            {toolsBrandLatestRecord.status !== "archived" ? (
                               <form action={archiveBrandPriceListUpdate}>
-                                <input type="hidden" name="id" value={selectedBrandLatestRecord.id} />
+                                <input type="hidden" name="id" value={toolsBrandLatestRecord.id} />
                                 <ConfirmSubmitButton
                                   message="Archive this price list update?"
                                   className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50"
@@ -2924,173 +2697,46 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
                             ) : null}
                           </>
                         ) : (
-                          <p>{selectedBrandLatestRecord ? "Price list records available; management requires a Brand price reviewer." : "No active or draft price list updates recorded yet."}</p>
+                          <p>{toolsBrandLatestRecord ? "Price list records available; management requires a Brand price reviewer." : "No active or draft price list updates recorded yet."}</p>
                         )}
                       </div>
                     </details>
                   </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <details className="rounded-md border border-zinc-200 bg-white p-2">
+                      <summary className="cursor-pointer text-xs font-semibold text-zinc-700">+ Main Category</summary>
+                      <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                        <QuickCategoryForm brandId={toolsBrand.id} />
+                      </div>
+                    </details>
+                    {selectedMainFilter && categoryList.some((category) => category.id === selectedMainFilter && category.brand_id === toolsBrand.id) ? (
+                      <details className="rounded-md border border-zinc-200 bg-white p-2">
+                        <summary className="cursor-pointer text-xs font-semibold text-zinc-700">+ Sub Category</summary>
+                        <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                          <QuickCategoryForm brandId={toolsBrand.id} parentId={selectedMainFilter} />
+                        </div>
+                      </details>
+                    ) : null}
+                  </div>
                 </section>
               ) : null}
 
-              {hasGlobalSearchOrFilters ? (
-                <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-                  <div className="border-b border-zinc-200 pb-4">
-                    <h2 className="text-lg font-semibold text-zinc-950">Search Results</h2>
-                    <p className="mt-1 text-sm text-zinc-500">{templateCountLabel(globalManagementResults.length)}</p>
-                  </div>
-                  <div className="pt-4">
-                    <ProductManagementTemplateResults
-                      emptyDescription="Try another name, code, brand, category, or supplier code."
-                      emptyTitle="No products found."
-                      returnTo={managementListHref}
-                      showCount={false}
-                      priceStatusOverridesPromise={priceStatusOverridesPromise}
-                      templates={globalManagementResults}
-                    />
-                  </div>
-                </section>
-              ) : !selectedBrand ? (
-                <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-10 text-center shadow-sm">
-                  <h2 className="text-lg font-semibold text-zinc-950">Start from a brand</h2>
-                  <p className="mt-2 text-sm text-zinc-500">
-                    The library now opens in a cleaner drill-down mode. Select a brand to view its categories, then open a category to view product templates.
-                  </p>
-                </section>
-              ) : !selectedCategory ? (
-                <>
-                  <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-10 text-center shadow-sm">
-                    <h2 className="text-lg font-semibold text-zinc-950">Choose a category</h2>
-                    <p className="mt-2 text-sm text-zinc-500">
-                      Showing only {selectedBrand.name} categories. Select one to open its templates.
-                    </p>
-                  </section>
-                  <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-                    <div className="border-b border-zinc-200 p-4">
-                      <h2 className="font-semibold text-zinc-950">{selectedBrand.name}</h2>
-                      <p className="mt-1 text-sm text-zinc-500">
-                        Search within {selectedBrand.name} without changing the global top search.
-                      </p>
-                    </div>
-                    <div className="p-4">
-                      <ProductManagementTemplateResults
-                        key={`brand-local:${selectedBrand.id}`}
-                        emptyDescription="No products found in this brand."
-                        emptyTitle="No products found in this brand."
-                        returnTo={managementListHref}
-                        searchPlaceholder={`Search within ${selectedBrand.name}...`}
-                        priceStatusOverridesPromise={priceStatusOverridesPromise}
-                        templates={localBrandResults}
-                      />
-                    </div>
-                  </section>
-                </>
-              ) : (
-                <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-                  <div className="border-b border-zinc-200 p-4">
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div>
-                        <h2 className="font-semibold text-zinc-950">{selectedCategory.name}</h2>
-                        <p className="mt-1 text-sm text-zinc-500">
-                          Compact templates for {selectedBrand?.name} / {selectedCategory.name}
-                        </p>
-                      </div>
-                      <Link
-                        href={templatesHref(params, {
-                          panelBrand: selectedBrand?.id ?? null,
-                          panelMain: null,
-                          panelSub: null,
-                          template: null,
-                          editTemplate: null,
-                        })}
-                        className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                      >
-                        Back to categories
-                      </Link>
-                    </div>
-                    {selectedMainCategory && selectedCategorySubcategories.length ? (
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        <Link
-                          href={templatesHref(params, {
-                            panelBrand: selectedBrand?.id ?? null,
-                            panelMain: selectedMainCategory.id,
-                            panelSub: null,
-                            template: null,
-                            editTemplate: null,
-                          })}
-                          className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
-                            !selectedSubCategory
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                              : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50"
-                          }`}
-                        >
-                          All
-                        </Link>
-                        {selectedCategorySubcategories.map((subCategory) => (
-                          <Link
-                            key={subCategory.id}
-                            href={templatesHref(params, {
-                              panelBrand: selectedBrand?.id ?? null,
-                              panelMain: selectedMainCategory.id,
-                              panelSub: subCategory.id,
-                              template: null,
-                              editTemplate: null,
-                            })}
-                            className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
-                              selectedSubCategory?.id === subCategory.id
-                                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                                : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50"
-                            }`}
-                          >
-                            {subCategory.name}
-                          </Link>
-                        ))}
-                        <details data-state-key={`template-library-sub-category-create-${selectedMainCategory.id}`}>
-                          <summary className="cursor-pointer rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
-                            + Sub Category
-                          </summary>
-                          <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                            <QuickCategoryForm
-                              brandId={selectedBrand?.id ?? ""}
-                              parentId={selectedMainCategory.id}
-                            />
-                          </div>
-                        </details>
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="p-4">
-                    <ProductManagementTemplateResults
-                      key={`category-local:${selectedBrand.id}:${selectedCategory.id}`}
-                      emptyDescription="No products found in this category."
-                      emptyTitle="No products found in this category."
-                      returnTo={managementListHref}
-                      searchPlaceholder={selectedSubCategory
-                        ? `Search within ${selectedSubCategory.name}...`
-                        : selectedMainCategory
-                          ? `Search within ${selectedMainCategory.name}...`
-                          : "Search within this category..."}
-                      priceStatusOverridesPromise={priceStatusOverridesPromise}
-                      templates={localCategoryResults}
-                    />
-                    {!localCategoryResults.length ? (
-                      <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
-                        <Link
-                          href={manageBrandsHref}
-                          className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                        >
-                          Manage Brands
-                        </Link>
-                        <Link
-                          href={templatesHref(params, { addTemplate: "1" })}
-                          className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                        >
-                          + Add Product Template
-                        </Link>
-                      </div>
-                    ) : null}
-                  </div>
-                </section>
-              )}
+              <ProductManagementTemplateResults
+                emptyActions={
+                  toolsBrand ? (
+                    <Link
+                      href={templatesHref(params, { addTemplate: "1" })}
+                      className="inline-flex h-10 items-center justify-center rounded-lg bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                    >
+                      + Add Product Template
+                    </Link>
+                  ) : undefined
+                }
+                emptyDescription="Try another name, code, brand, category, or price status."
+                emptyTitle="No products found"
+                returnTo={managementListHref}
+                priceStatusOverridesPromise={priceStatusOverridesPromise}
+              />
               </>
               ) : null}
 
@@ -4091,6 +3737,7 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
             </div>
           </section>
       </div>
+    </ProductManagementFilterProvider>
   );
 
   if (bodyOnly) return pageBody;
