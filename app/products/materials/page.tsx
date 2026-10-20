@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
+import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import {
   BatchMaterialDialogButton,
@@ -609,7 +611,28 @@ function MaterialCollection({
 }
 
 export default async function BrandMaterialsPage({ searchParams }: MaterialsPageProps) {
-  const { user, profile, displayName } = await requireProductLibraryManager();
+  // Auth, role checks and redirects run here, before the Suspense boundary.
+  const auth = await requireProductLibraryManager();
+  const { user, profile, displayName } = auth;
+
+  return (
+    <ErpAppShell
+      title="Brand Material Library"
+      description="Manage reusable finish groups and swatches by brand."
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <BrandMaterialsContent searchParams={searchParams} />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function BrandMaterialsContent({ searchParams }: MaterialsPageProps) {
   const params = (await searchParams) ?? {};
   const selectedBrandId = stringParam(params.brand);
   const message = stringParam(params.message);
@@ -766,15 +789,6 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
   const addBrandHref = "/products/brands?addBrand=1";
 
   return (
-    <ErpAppShell
-      title="Brand Material Library"
-      description="Manage reusable finish groups and swatches by brand."
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-3">
@@ -1199,6 +1213,5 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
             </section>
           )}
       </div>
-    </ErpAppShell>
   );
 }

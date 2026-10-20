@@ -1,6 +1,7 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import {
   activityDateInTimeZone,
   effectiveOpenActivityIntervalEnd,
@@ -119,7 +120,19 @@ function summarizeUsers(profiles: ProfileRow[], dailyRows: DailyRow[]): UserSumm
 }
 
 export default async function ActivityManagementPage({ searchParams }: ActivityManagementPageProps) {
+  // Auth, role checks and redirects run here, before the Suspense boundary.
   const { profile, displayName } = await requireSystemOwner();
+
+  return (
+    <ErpAppShell title="ProjectWorkflow Activity" description="Review user active application time." role={profile?.role ?? null} userDisplayName={displayName} userAvatarUrl={profile?.avatar_url ?? null} userRole={profile?.role ?? null}>
+      <Suspense fallback={<ListPageSkeleton />}>
+        <ActivityManagementContent searchParams={searchParams} />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function ActivityManagementContent({ searchParams }: ActivityManagementPageProps) {
   const params = (await searchParams) ?? {};
   const period = resolveActivityPeriod(params.period);
   const supabase = await createClient();
@@ -145,13 +158,11 @@ export default async function ActivityManagementPage({ searchParams }: ActivityM
 
   if (!settings || !today || profilesError) {
     return (
-      <ErpAppShell title="ProjectWorkflow Activity" description="Review user active application time." role={profile?.role ?? null} userDisplayName={displayName} userAvatarUrl={profile?.avatar_url ?? null} userRole={profile?.role ?? null}>
         <div className="mx-auto grid max-w-6xl gap-5 px-5 py-6 sm:px-8">
           <Link href="/settings" className="text-sm font-semibold text-emerald-900 hover:text-emerald-800">Back to settings</Link>
           <Card><p className="text-sm text-zinc-600">Activity-time reporting is unavailable right now. ProjectWorkflow remains available.</p></Card>
           <Card><p className="text-sm leading-6 text-zinc-600">This shows ProjectWorkflow active application time. It is not verified attendance or total working hours.</p></Card>
         </div>
-      </ErpAppShell>
     );
   }
 
@@ -197,7 +208,6 @@ export default async function ActivityManagementPage({ searchParams }: ActivityM
   const selectedIntervals = (selectedIntervalData as IntervalRow[] | null) ?? [];
 
   return (
-    <ErpAppShell title="ProjectWorkflow Activity" description="Review user active application time." role={profile?.role ?? null} userDisplayName={displayName} userAvatarUrl={profile?.avatar_url ?? null} userRole={profile?.role ?? null}>
       <div className="mx-auto grid max-w-6xl gap-5 px-5 py-6 sm:px-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link href="/settings" className="text-sm font-semibold text-emerald-900 hover:text-emerald-800">Back to settings</Link>
@@ -276,6 +286,5 @@ export default async function ActivityManagementPage({ searchParams }: ActivityM
 
         <Card><p className="text-sm leading-6 text-zinc-600">This shows ProjectWorkflow active application time. It is not verified attendance or total working hours.</p></Card>
       </div>
-    </ErpAppShell>
   );
 }

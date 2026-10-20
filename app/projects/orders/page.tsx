@@ -1,4 +1,6 @@
+import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { ActiveProjectsTable } from "@/components/projects/active-projects-table";
 import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
@@ -8,7 +10,28 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 export default async function ActiveProjectsPage() {
+  // Auth, status checks and redirects run here, before the Suspense boundary.
   const { user, profile, displayName } = await requireActiveUser();
+
+  return (
+    <ErpAppShell
+      eyebrow="PROJECTS"
+      title="Active Project Files"
+      description="All confirmed project files created from approved quotations."
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <ActiveProjectsContent />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function ActiveProjectsContent() {
   const supabase = await createSupabaseClient();
 
   const [{ data: quotations }, { data: clients }] = await Promise.all([
@@ -45,16 +68,6 @@ export default async function ActiveProjectsPage() {
   }));
 
   return (
-    <ErpAppShell
-      eyebrow="PROJECTS"
-      title="Active Project Files"
-      description="All confirmed project files created from approved quotations."
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <div className="px-5 py-6 sm:px-8">
         {projectFilesWithClient.length === 0 ? (
           <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center xl:px-6 xl:py-16">
@@ -67,6 +80,5 @@ export default async function ActiveProjectsPage() {
           <ActiveProjectsTable projectFiles={projectFilesWithClient} />
         )}
       </div>
-    </ErpAppShell>
   );
 }

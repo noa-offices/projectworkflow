@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { ProcurementOrdersTable } from "@/components/procurement/procurement-orders-table";
 import { ProcurementSummaryCards } from "@/components/procurement/procurement-summary-cards";
 import { requireActiveUser } from "@/lib/auth";
@@ -23,6 +25,25 @@ export default async function ProcurementOrdersPage() {
     redirect("/dashboard?message=You+do+not+have+permission+to+access+the+Procurement+Workspace.");
   }
 
+  return (
+    <ErpAppShell
+      eyebrow="PROCUREMENT"
+      title="Procurement Workspace"
+      description="Multi-vendor procurement folders for all confirmed project files."
+      role={role}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <ProcurementOrdersContent />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function ProcurementOrdersContent() {
   const supabase = await createSupabaseClient();
 
   const [{ data: quotations }, { data: clients }] = await Promise.all([
@@ -61,16 +82,6 @@ export default async function ProcurementOrdersPage() {
   const summary = await loadProcurementSummary(orders.map((order) => order.orderNo));
 
   return (
-    <ErpAppShell
-      eyebrow="PROCUREMENT"
-      title="Procurement Workspace"
-      description="Multi-vendor procurement folders for all confirmed project files."
-      role={role}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <div className="px-5 py-6 sm:px-8">
         <div className="mb-5">
           <ProcurementSummaryCards summary={summary} />
@@ -88,6 +99,5 @@ export default async function ProcurementOrdersPage() {
           <ProcurementOrdersTable orders={orders} />
         )}
       </div>
-    </ErpAppShell>
   );
 }

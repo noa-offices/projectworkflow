@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { WorkersTable } from "@/components/settings/workers-table";
 import { requireSettingsManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -15,7 +17,28 @@ type WorkersPageProps = {
 };
 
 export default async function WorkersPage({ searchParams }: WorkersPageProps) {
+  // Auth, role checks and redirects run here, before the Suspense boundary.
   const { user, profile, displayName } = await requireSettingsManager();
+
+  return (
+    <ErpAppShell
+      eyebrow="SYSTEM"
+      title="Workers Directory"
+      description="Manage field staff records and document expiry."
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <WorkersContent searchParams={searchParams} />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function WorkersContent({ searchParams }: WorkersPageProps) {
   const params = (await searchParams) ?? {};
   const message = params.message;
   const messageType = params.messageType;
@@ -42,16 +65,6 @@ export default async function WorkersPage({ searchParams }: WorkersPageProps) {
       : "border-emerald-200 bg-emerald-50 text-emerald-950";
 
   return (
-    <ErpAppShell
-      eyebrow="SYSTEM"
-      title="Workers Directory"
-      description="Manage field staff records and document expiry."
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <div className="px-5 py-6 sm:px-8">
         <div className="mb-5 flex items-center justify-between gap-4">
           <Link
@@ -68,6 +81,5 @@ export default async function WorkersPage({ searchParams }: WorkersPageProps) {
         </div>
         <WorkersTable workers={workers ?? []} />
       </div>
-    </ErpAppShell>
   );
 }

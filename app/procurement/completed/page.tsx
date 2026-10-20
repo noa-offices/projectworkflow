@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
@@ -32,6 +34,25 @@ export default async function CompletedProcurementPage() {
     );
   }
 
+  return (
+    <ErpAppShell
+      eyebrow="PROCUREMENT"
+      title="Completed Procurement"
+      description="Read-only procurement folders for completed project files."
+      role={role}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <CompletedProcurementContent />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function CompletedProcurementContent() {
   const supabase = await createSupabaseClient();
 
   const [{ data: quotations }, { data: clients }] = await Promise.all([
@@ -104,16 +125,6 @@ export default async function CompletedProcurementPage() {
     );
 
   return (
-    <ErpAppShell
-      eyebrow="PROCUREMENT"
-      title="Completed Procurement"
-      description="Read-only procurement folders for completed project files."
-      role={role}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <div className="px-5 py-6 sm:px-8">
         {completedOrders.length === 0 ? (
           <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-6 py-16 text-center">
@@ -190,6 +201,5 @@ export default async function CompletedProcurementPage() {
           </section>
         )}
       </div>
-    </ErpAppShell>
   );
 }

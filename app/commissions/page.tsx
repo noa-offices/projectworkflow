@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { transitionCommission } from "@/app/commissions/actions";
+import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { requireCommissionViewer } from "@/lib/auth";
 import {
   commissionBasisLabel,
@@ -59,7 +61,33 @@ function SummaryCard({
 }
 
 export default async function CommissionsPage({ searchParams }: PageProps) {
-  const { user, profile, displayName } = await requireCommissionViewer();
+  // Auth, role checks and redirects run here, before the Suspense boundary.
+  const auth = await requireCommissionViewer();
+  const { user, profile, displayName } = auth;
+  const isPersonal = profile?.role === "sales_designer";
+
+  return (
+    <ErpAppShell
+      eyebrow={isPersonal ? "MY SALES" : "FINANCIAL CONTROL"}
+      title={isPersonal ? "My Commission" : "Commissions"}
+      description={isPersonal
+        ? "Review your own earned, pending, approved, paid, and reversed commission records."
+        : "Review calculated commissions, resolve setup issues, and control approval and payment status."}
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <CommissionsContent searchParams={searchParams} auth={auth} />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function CommissionsContent({ searchParams, auth }: PageProps & { auth: Awaited<ReturnType<typeof requireCommissionViewer>> }) {
+  const { user, profile, displayName } = auth;
   const params = await searchParams;
   const supabase = await createClient();
   let query = supabase
@@ -122,18 +150,6 @@ export default async function CommissionsPage({ searchParams }: PageProps) {
     : [];
 
   return (
-    <ErpAppShell
-      eyebrow={isPersonal ? "MY SALES" : "FINANCIAL CONTROL"}
-      title={isPersonal ? "My Commission" : "Commissions"}
-      description={isPersonal
-        ? "Review your own earned, pending, approved, paid, and reversed commission records."
-        : "Review calculated commissions, resolve setup issues, and control approval and payment status."}
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <div className="grid gap-6 px-5 py-6 sm:px-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           {profile?.role !== "sales_designer" ? (
@@ -280,6 +296,5 @@ export default async function CommissionsPage({ searchParams }: PageProps) {
           </div>
         </section>
       </div>
-    </ErpAppShell>
   );
 }

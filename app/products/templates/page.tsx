@@ -1,8 +1,9 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { type DeskingSizePricingRow } from "@/components/products/desking-size-pricing-table";
 import {
   DeactivateGroupForm,
@@ -1572,8 +1573,48 @@ function DetailPriceRow({
   );
 }
 
+type ProductTemplatesContentProps = TemplatesPageProps & {
+  auth?: Awaited<ReturnType<typeof requireProductLibraryManager>>;
+  // Render the page body without the shell (the caller already drew it).
+  bodyOnly?: boolean;
+};
+
 export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps) {
-  const { user, profile, displayName } = await requireProductLibraryManager();
+  // Auth, role checks and every redirect run here, BEFORE any Suspense boundary.
+  const auth = await requireProductLibraryManager();
+  const params = (await searchParams) ?? {};
+
+  // Draw the shell at once (title chosen from the search params, as each view did before); the data-heavy body
+  // streams in under a content-area skeleton.
+  const isManagement = stringParam(params.manage) === "1";
+  const isPriceUpdates = !isManagement && stringParam(params.priceStatus) === "due";
+  const { profile, displayName, user } = auth;
+  return (
+    <ErpAppShell
+      eyebrow={isManagement ? "ProjectWorkflow" : undefined}
+      title={isManagement ? "Product Management" : isPriceUpdates ? "Price Updates" : "Product Library"}
+      description={
+        isManagement
+          ? "Add, edit, archive, and maintain reusable product templates and configurable options."
+          : isPriceUpdates
+            ? "Review products due for source price checks and price-list follow-up."
+            : "Browse reusable product templates by brand, category, or search."
+      }
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <ProductTemplatesContent searchParams={Promise.resolve(params)} auth={auth} bodyOnly />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: ProductTemplatesContentProps) {
+  const { user, profile, displayName } = auth ?? await requireProductLibraryManager();
   const canManageBrandPriceLists = canReviewBrandPrices(profile?.role, profile?.account_status);
   const params = (await searchParams) ?? {};
   const message = stringParam(params.message);
@@ -1959,7 +2000,21 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
     }
   }
 
-  const supplierPriceStatusByTemplate = await supplierPriceStatusPromise;
+  // Not awaited: the supplier status only feeds each row's status badge, so it streams in after the rows are shown.
+  const priceStatusOverridesPromise = supplierPriceStatusPromise.then((statusByTemplate) => {
+    const overrides: Record<string, { detail: string; label: string; tone: "ok" | "notice" | "warning" | "neutral" }> = {};
+    for (const [templateId, supplierStatus] of statusByTemplate) {
+      if (supplierStatus.status === "legacy_manual") continue;
+      const presentation = supplierFamilyStatusPresentation(supplierStatus);
+      overrides[templateId] = {
+        detail: presentation.detail,
+        label: presentation.label,
+        tone: presentation.tone === "success" ? "ok" : presentation.tone === "info" ? "notice" : presentation.tone === "danger" ? "warning" : presentation.tone,
+      };
+    }
+    return overrides;
+  });
+  priceStatusOverridesPromise.catch(() => undefined);
 
   function buildManagementTemplateResult(template: ProductTemplate): ProductManagementTemplateResult {
     const firstVisibleImageSlot = proposedImageSlots.find((slot) =>
@@ -1976,16 +2031,14 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
       latestPriceListUpdateByBrand.get(template.brand_id),
       brandPriceBaselineByBrand.get(template.brand_id),
     );
-    const supplierStatus = supplierPriceStatusByTemplate.get(template.id);
-    const status = supplierStatus && supplierStatus.status !== "legacy_manual"
-      ? supplierFamilyStatusPresentation(supplierStatus)
-      : {
-        label: legacyStatus.label,
-        tone: legacyStatus.tone === "ok" ? "success" as const : legacyStatus.tone === "notice" ? "info" as const : legacyStatus.tone === "warning" ? "warning" as const : "neutral" as const,
-        detail: legacyStatus.key === "checked" && template.last_price_checked_at
-          ? `Checked ${formatShortDate(template.last_price_checked_at)} by ${actorDisplayName(actorNameById, template.last_price_checked_by)}`
-          : legacyStatus.detail,
-      };
+    // The supplier status (when present) replaces this once it streams in; see priceStatusOverridesPromise.
+    const status = {
+      label: legacyStatus.label,
+      tone: legacyStatus.tone === "ok" ? "success" as const : legacyStatus.tone === "notice" ? "info" as const : legacyStatus.tone === "warning" ? "warning" as const : "neutral" as const,
+      detail: legacyStatus.key === "checked" && template.last_price_checked_at
+        ? `Checked ${formatShortDate(template.last_price_checked_at)} by ${actorDisplayName(actorNameById, template.last_price_checked_by)}`
+        : legacyStatus.detail,
+    };
 
     return {
       id: template.id,
@@ -2023,8 +2076,9 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
           : "No sub category",
       ].join(" / "),
       priceStatusDetail: status.detail,
+      priceStatusPending: true,
       priceStatusLabel: status.label,
-      priceStatusTone: status.tone === "success" ? "ok" : status.tone === "info" ? "notice" : status.tone === "danger" ? "warning" : status.tone,
+      priceStatusTone: status.tone === "success" ? "ok" : status.tone === "info" ? "notice" : status.tone,
       priceText: formatMoney(template.currency, template.default_unit_price),
       searchText: templateSearchText(template, brandMap, categoryMap),
       templateCodeText: template.template_code || template.item_code
@@ -2201,20 +2255,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
   const localCategoryResults = selectedCategoryTemplates.map(buildManagementTemplateResult);
 
   if (!isManagementView) {
-    return (
-      <ErpAppShell
-        title={isPriceUpdatesView ? "Price Updates" : "Product Library"}
-        description={
-          isPriceUpdatesView
-            ? "Review products due for source price checks and price-list follow-up."
-            : "Browse reusable product templates by brand, category, or search."
-        }
-        role={profile?.role ?? null}
-        userDisplayName={displayName}
-        userEmail={user.email}
-        userAvatarUrl={profile?.avatar_url ?? null}
-        userRole={profile?.role ?? null}
-      >
+    const libraryBody = (
         <div className="px-5 py-6 sm:px-8">
             <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <Link
@@ -2445,23 +2486,30 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
               </section>
             )}
         </div>
+    );
+
+    if (bodyOnly) return libraryBody;
+
+    return (
+      <ErpAppShell
+        title={isPriceUpdatesView ? "Price Updates" : "Product Library"}
+        description={
+          isPriceUpdatesView
+            ? "Review products due for source price checks and price-list follow-up."
+            : "Browse reusable product templates by brand, category, or search."
+        }
+        role={profile?.role ?? null}
+        userDisplayName={displayName}
+        userEmail={user.email}
+        userAvatarUrl={profile?.avatar_url ?? null}
+        userRole={profile?.role ?? null}
+      >
+        {libraryBody}
       </ErpAppShell>
     );
   }
 
-  return (
-    <ErpAppShell
-      eyebrow={isManagementView ? "ProjectWorkflow" : undefined}
-      title={isManagementView ? "Product Management" : "Product Library"}
-      description={isManagementView
-        ? "Add, edit, archive, and maintain reusable product templates and configurable options."
-        : "Browse reusable product templates, search by brand or category, and open product details when you need them."}
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
+  const pageBody = (
       <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {isManagementView ? <div /> : (
@@ -2896,6 +2944,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                       emptyTitle="No products found."
                       returnTo={managementListHref}
                       showCount={false}
+                      priceStatusOverridesPromise={priceStatusOverridesPromise}
                       templates={globalManagementResults}
                     />
                   </div>
@@ -2929,6 +2978,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                         emptyTitle="No products found in this brand."
                         returnTo={managementListHref}
                         searchPlaceholder={`Search within ${selectedBrand.name}...`}
+                        priceStatusOverridesPromise={priceStatusOverridesPromise}
                         templates={localBrandResults}
                       />
                     </div>
@@ -3019,6 +3069,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                         : selectedMainCategory
                           ? `Search within ${selectedMainCategory.name}...`
                           : "Search within this category..."}
+                      priceStatusOverridesPromise={priceStatusOverridesPromise}
                       templates={localCategoryResults}
                     />
                     {!localCategoryResults.length ? (
@@ -4040,6 +4091,24 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
             </div>
           </section>
       </div>
+  );
+
+  if (bodyOnly) return pageBody;
+
+  return (
+    <ErpAppShell
+      eyebrow={isManagementView ? "ProjectWorkflow" : undefined}
+      title={isManagementView ? "Product Management" : "Product Library"}
+      description={isManagementView
+        ? "Add, edit, archive, and maintain reusable product templates and configurable options."
+        : "Browse reusable product templates, search by brand or category, and open product details when you need them."}
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      {pageBody}
     </ErpAppShell>
   );
 }

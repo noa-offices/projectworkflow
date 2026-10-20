@@ -1,8 +1,10 @@
+import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { QuotationFolderForm } from "@/components/quotations/quotation-folder-form";
 import { QuotationListLiveFilter } from "@/components/quotations/quotation-list-live-filter";
-import { requireActiveUser } from "@/lib/auth";
+import { requireActiveUser, type AuthenticatedUser } from "@/lib/auth";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createQuotation, createQuotationClient } from "./actions";
@@ -156,7 +158,29 @@ function QuotationForm({
 }
 
 export default async function QuotationsPage({ searchParams }: QuotationsPageProps) {
-  const { user, profile, displayName } = await requireActiveUser();
+  // Auth, status checks and redirects run here, before the Suspense boundary.
+  const auth = await requireActiveUser();
+  const { user, profile, displayName } = auth;
+
+  return (
+    <ErpAppShell
+      title="Quotations"
+      description="Create quotations directly from client enquiries, then build revisions, options, and Project Files."
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <QuotationsContent searchParams={searchParams} auth={auth} />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function QuotationsContent({ searchParams, auth }: QuotationsPageProps & { auth: AuthenticatedUser }) {
+  const { user, profile } = auth;
   const resolvedSearchParams = await searchParams;
   const message = resolvedSearchParams?.message;
   const query = resolvedSearchParams?.q?.trim() ?? "";
@@ -180,33 +204,40 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
     profile?.role === "designer";
   const supabase = await createSupabaseClient();
 
-  const { data: clients, error: clientsError } = await supabase
-    .from("clients")
-    .select("id,company_name")
-    .order("company_name", { ascending: true })
-    .returns<Client[]>();
-
   const adminResult = createAdminClient();
   if (!adminResult.client) throw new Error(adminResult.error ?? "Admin client unavailable");
-  const { data: salespersonProfiles } = await adminResult.client
-    .from("profiles")
-    .select("id,full_name,email")
-    .eq("role", "sales_designer")
-    .eq("account_status", "active")
-    .order("full_name", { ascending: true })
-    .returns<SalespersonProfile[]>();
+  const adminClient = adminResult.client;
 
-  const { data: projects, error: projectsError } = await supabase
-    .from("projects")
-    .select("id,client_id,project_name,project_number,project_code,project_year")
-    .order("project_name", { ascending: true })
-    .returns<Project[]>();
-
-  const { data: quotations, error: quotationsError } = await supabase
-    .from("quotations")
-    .select("id,client_id,project_id,legacy_reference,quotation_no,title,quotation_date,status,layout_mode,currency,grand_total,is_active,approved_salesperson_id,salesperson_id,layout_settings")
-    .order("created_at", { ascending: false })
-    .returns<Quotation[]>();
+  // The four reads are independent of each other, so they run together.
+  const [
+    { data: clients, error: clientsError },
+    { data: salespersonProfiles },
+    { data: projects, error: projectsError },
+    { data: quotations, error: quotationsError },
+  ] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("id,company_name")
+      .order("company_name", { ascending: true })
+      .returns<Client[]>(),
+    adminClient
+      .from("profiles")
+      .select("id,full_name,email")
+      .eq("role", "sales_designer")
+      .eq("account_status", "active")
+      .order("full_name", { ascending: true })
+      .returns<SalespersonProfile[]>(),
+    supabase
+      .from("projects")
+      .select("id,client_id,project_name,project_number,project_code,project_year")
+      .order("project_name", { ascending: true })
+      .returns<Project[]>(),
+    supabase
+      .from("quotations")
+      .select("id,client_id,project_id,legacy_reference,quotation_no,title,quotation_date,status,layout_mode,currency,grand_total,is_active,approved_salesperson_id,salesperson_id,layout_settings")
+      .order("created_at", { ascending: false })
+      .returns<Quotation[]>(),
+  ]);
 
   if (clientsError) console.error("QUOTATION CLIENTS LIST ERROR", clientsError.message);
   if (projectsError) console.error("QUOTATION PROJECTS LIST ERROR", projectsError.message);
@@ -226,15 +257,6 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
   ).sort((a, b) => b - a);
 
   return (
-    <ErpAppShell
-      title="Quotations"
-      description="Create quotations directly from client enquiries, then build revisions, options, and Project Files."
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <div className="px-4 py-4 sm:px-8 sm:py-6">
         <div className="mb-3 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
           <p className="hidden text-sm text-zinc-500 sm:block">
@@ -285,6 +307,5 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
           ) : null}
         </QuotationListLiveFilter>
       </div>
-    </ErpAppShell>
   );
 }
