@@ -42,3 +42,9 @@ next-env.d.ts
 
 # Local dev logs
 .next-dev-*.log
+
+# Logs and local tools
+*.log
+.next-*
+reference-excel/
+supabase/.temp/

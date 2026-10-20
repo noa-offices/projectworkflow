@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import {
   type UserManagementProfileRow,
   UserManagementTable,
@@ -16,7 +18,30 @@ type UsersPageProps = {
 };
 
 export default async function UsersPage({ searchParams }: UsersPageProps) {
-  const { user, profile, displayName } = await requireSystemOwner();
+  // Auth, role checks and redirects run here, before the Suspense boundary.
+  const auth = await requireSystemOwner();
+  const { user, profile, displayName } = auth;
+
+  return (
+    <ErpAppShell
+      eyebrow="SYSTEM"
+      title="User Management"
+      description="Approve users, manage roles, and control account access."
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <UsersContent searchParams={searchParams} auth={auth} />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function UsersContent({ searchParams, auth }: UsersPageProps & { auth: Awaited<ReturnType<typeof requireSystemOwner>> }) {
+  const { user } = auth;
   const message = (await searchParams)?.message;
   const supabase = await createClient();
   const { data: profiles, error } = await supabase
@@ -30,16 +55,6 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
   }
 
   return (
-    <ErpAppShell
-      eyebrow="SYSTEM"
-      title="User Management"
-      description="Approve users, manage roles, and control account access."
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <div className="px-5 py-6 sm:px-8">
         <div className="mb-5 flex items-center justify-between gap-4">
           <Link
@@ -56,6 +71,5 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
         </div>
         <UserManagementTable currentUserId={user.id} profiles={profiles ?? []} />
       </div>
-    </ErpAppShell>
   );
 }

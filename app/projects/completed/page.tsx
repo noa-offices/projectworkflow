@@ -1,4 +1,6 @@
+import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { CompletedProjectsTable, type CompletedProjectFileItem } from "@/components/projects/completed-projects-table";
 import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
@@ -8,7 +10,28 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 export default async function CompletedProjectsPage() {
+  // Auth, status checks and redirects run here, before the Suspense boundary.
   const { user, profile, displayName } = await requireActiveUser();
+
+  return (
+    <ErpAppShell
+      eyebrow="PROJECTS"
+      title="Completed Projects"
+      description="Project files that have been marked as completed."
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <CompletedProjectsContent />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function CompletedProjectsContent() {
   const supabase = await createSupabaseClient();
 
   const [{ data: quotations }, { data: clients }] = await Promise.all([
@@ -71,16 +94,6 @@ export default async function CompletedProjectsPage() {
     .sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime());
 
   return (
-    <ErpAppShell
-      eyebrow="PROJECTS"
-      title="Completed Projects"
-      description="Project files that have been marked as completed."
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <div className="px-5 py-6 sm:px-8">
         {projectFiles.length === 0 ? (
           <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-6 py-16 text-center">
@@ -92,6 +105,5 @@ export default async function CompletedProjectsPage() {
           <CompletedProjectsTable projectFiles={projectFiles} />
         )}
       </div>
-    </ErpAppShell>
   );
 }
