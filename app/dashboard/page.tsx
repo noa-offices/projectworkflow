@@ -1,5 +1,7 @@
+import { Suspense } from "react";
 import { ERPDashboard } from "@/components/dashboard/erp-dashboard";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import {
   canAccessProcurement,
   canManageProductLibrary,
@@ -21,7 +23,28 @@ import {
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
+  // Auth, status checks and redirects run here, before the Suspense boundary.
   const { user, profile, displayName } = await requireActiveUser();
+
+  return (
+    <ErpAppShell
+      eyebrow="Dashboard"
+      title="ERP Overview"
+      description="Live view of projects, quotations, procurement pipeline, and recent activity."
+      role={profile?.role ?? null}
+      userDisplayName={displayName}
+      userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
+    >
+      <Suspense fallback={<ListPageSkeleton />}>
+        <DashboardContent profile={profile} />
+      </Suspense>
+    </ErpAppShell>
+  );
+}
+
+async function DashboardContent({ profile }: { profile: Awaited<ReturnType<typeof requireActiveUser>>["profile"] }) {
 
   const isManager =
     profile?.role === "system_owner" || profile?.role === "admin_manager";
@@ -43,16 +66,6 @@ export default async function DashboardPage() {
     : [null, []];
 
   return (
-    <ErpAppShell
-      eyebrow="Dashboard"
-      title="ERP Overview"
-      description="Live view of projects, quotations, procurement pipeline, and recent activity."
-      role={profile?.role ?? null}
-      userDisplayName={displayName}
-      userEmail={user.email}
-      userAvatarUrl={profile?.avatar_url ?? null}
-      userRole={profile?.role ?? null}
-    >
       <ERPDashboard
         stats={stats}
         projects={projects}
@@ -66,6 +79,5 @@ export default async function DashboardPage() {
         procurementAttention={procurementAttention}
         upcomingDeliveries={upcomingDeliveries}
       />
-    </ErpAppShell>
   );
 }

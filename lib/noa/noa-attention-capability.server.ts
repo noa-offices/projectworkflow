@@ -416,36 +416,45 @@ export async function fetchNoaAttentionCapability(
 
   const supabase = await createClient();
 
-  let productPriceAvailable = true;
-  let priceItems: NoaAttentionItem[] = [];
-  try {
-    await requireProductLibraryManager();
-    priceItems = await productPriceFindings(supabase);
-  } catch (error) {
-    if (!isNextRedirectError(error)) throw error;
-    productPriceAvailable = false;
-  }
+  // Price findings and the Project File scan do not depend on each other, so they run together.
+  const pricePromise = (async (): Promise<{ available: boolean; items: NoaAttentionItem[] }> => {
+    try {
+      await requireProductLibraryManager();
+      return { available: true, items: await productPriceFindings(supabase) };
+    } catch (error) {
+      if (!isNextRedirectError(error)) throw error;
+      return { available: false, items: [] };
+    }
+  })();
 
   // N2A2 PART 3: fetched once here and shared by both Procurement and Client Payment - never a
   // second independent Project File scan.
-  const activeOrders = await boundedActiveProjectFiles(supabase);
+  const [priceResult, activeOrders] = await Promise.all([pricePromise, boundedActiveProjectFiles(supabase)]);
+  const productPriceAvailable = priceResult.available;
+  const priceItems = priceResult.items;
 
-  let procurementAvailable = true;
-  let procurementItems: NoaAttentionItem[] = [];
-  try {
-    await requireProcurementManager();
-    procurementItems = await procurementFindings(supabase, activeOrders);
-  } catch (error) {
-    if (!isNextRedirectError(error)) throw error;
-    procurementAvailable = false;
-  }
+  // Procurement and Client Payment both need activeOrders but not each other, so they run together.
+  const procurementPromise = (async (): Promise<{ available: boolean; items: NoaAttentionItem[] }> => {
+    try {
+      await requireProcurementManager();
+      return { available: true, items: await procurementFindings(supabase, activeOrders) };
+    } catch (error) {
+      if (!isNextRedirectError(error)) throw error;
+      return { available: false, items: [] };
+    }
+  })();
 
   // N2A2 PART 2: canViewClientPayments() is a plain boolean helper (never a redirect-throwing
   // requireX()) - reused directly against the role already returned by the base
   // requireActiveUser() call above, per the explicit "do not create a new requireClientPayments()
   // helper" instruction. Denial contributes zero findings and never queries a payment table.
   const clientPaymentsAvailable = canViewClientPayments(profileRole);
-  const paymentItems = clientPaymentsAvailable ? await clientPaymentFindings(supabase, activeOrders) : [];
+  const [procurementResult, paymentItems] = await Promise.all([
+    procurementPromise,
+    clientPaymentsAvailable ? clientPaymentFindings(supabase, activeOrders) : Promise.resolve([]),
+  ]);
+  const procurementAvailable = procurementResult.available;
+  const procurementItems = procurementResult.items;
 
   // PART 11/18: Price findings, then Procurement, then Client Payment overdue - a fixed,
   // documented order, never a severity ranking. PART 19: the display/structured list is bounded
