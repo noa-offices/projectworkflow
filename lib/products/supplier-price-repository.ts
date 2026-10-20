@@ -1207,14 +1207,16 @@ export async function supplierFamilyReviewFacts(client: SupabaseClient, brandId:
     const [matches, decisions] = await Promise.all([
       // Only matches with targets contribute to Family facts (the loop below skips empty targets) and template_ids mirrors targets, so the
       // untargeted majority of a batch (unmatched/companion rows, ~97% of rows, ~1.2 KB each) is never transferred.
-      supplierRows<{ key: string; data: PriceMatch }>(client, "supplier_price_matches", "key,data", { batch_id: batch.id }, "key", true),
+      // Only the classification and each target's template_id/key are used below, so only those parts of `data` are sent back.
+      supplierRows<{ key: string; classification: string; targets: Array<Pick<PriceMatch["targets"][number], "key" | "template_id">> }>(
+        client, "supplier_price_matches", "key,classification:data->>classification,targets:data->targets", { batch_id: batch.id }, "key", true),
       supplierRows<{ key: string; decision: string }>(client, "supplier_price_decisions", "key,decision", { batch_id: batch.id }, "key"),
     ]);
     const decided = new Map(decisions.map((row) => [row.key, row.decision]));
     const total = new Map<string, Set<string>>(), excluded = new Map<string, Set<string>>(), resolved = new Map<string, Set<string>>(), open = new Map<string, Set<string>>();
     const add = (map: Map<string, Set<string>>, templateId: string, targetKey: string) => { map.set(templateId, (map.get(templateId) ?? new Set()).add(targetKey)); };
-    for (const { key, data: match } of matches) {
-      const outcome = supplierTargetOutcome(match.classification, decided.get(key));
+    for (const match of matches) {
+      const outcome = supplierTargetOutcome(match.classification, decided.get(match.key));
       if (outcome === "not_reviewable") continue;
       for (const target of match.targets) {
         add(total, target.template_id, target.key);

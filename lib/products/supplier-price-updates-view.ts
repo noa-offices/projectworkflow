@@ -100,11 +100,19 @@ export function filterPriceUpdatesView(views: PriceUpdatesBrandView[], filters: 
 
 /** Shared inputs for every Brand, with bounded fact loading and complete, paged metadata reads. */
 export async function loadSupplierPriceUpdatesInputs(client: SupabaseClient, brandIds: string[]) {
-  if (!brandIds.length) return { definitions: [], facts: [] };
+  if (!brandIds.length) return { definitions: [], facts: [], failedBrandIds: [] as string[] };
   const [definitionsResult, versionsResult, factsByBrand] = await Promise.all([
     readProductPages((from, to) => client.from("supplier_source_definitions").select("id,brand_id,name,is_active").in("brand_id", brandIds).order("id").range(from, to).returns<Array<{ id: string; brand_id: string; name: string; is_active: boolean }>>()),
     readProductPages((from, to) => client.from("supplier_source_versions").select("id,definition_id,title,status,effective_from,created_at").in("brand_id", brandIds).eq("status", "imported").order("id").range(from, to).returns<Array<SupplierVersionRef & { definition_id: string | null }>>()),
-    mapSupplierReads(brandIds, (brandId) => supplierFamilyReviewFacts(client, brandId)),
+    // One Brand's failed read (for example a statement timeout) must not fail the whole page: it is logged and reported back.
+    mapSupplierReads(brandIds, async (brandId) => {
+      try {
+        return { brandId, facts: await supplierFamilyReviewFacts(client, brandId), failed: false };
+      } catch (error) {
+        console.error("PRICE UPDATES BRAND FACTS ERROR", brandId, error instanceof Error ? error.message : error);
+        return { brandId, facts: [] as SupplierFamilyReviewFact[], failed: true };
+      }
+    }),
   ]);
   if (definitionsResult.error) throw Error(`Supplier definitions: ${definitionsResult.error.message}`);
   if (versionsResult.error) throw Error(`Supplier versions: ${versionsResult.error.message}`);
@@ -118,7 +126,11 @@ export async function loadSupplierPriceUpdatesInputs(client: SupabaseClient, bra
     familyIds: (familiesResult.data ?? []).filter((link) => link.definition_id === row.id).map((link) => link.template_id),
     versions: (versionsResult.data ?? []).filter((version) => version.definition_id === row.id).map((version) => ({ id: version.id, title: version.title, status: version.status, effective_from: version.effective_from, created_at: version.created_at })),
   }));
-  return { definitions, facts: factsByBrand.flat() };
+  return {
+    definitions,
+    facts: factsByBrand.flatMap((entry) => entry.facts),
+    failedBrandIds: factsByBrand.filter((entry) => entry.failed).map((entry) => entry.brandId),
+  };
 }
 
 export { supplierFamilyStatusLabels };

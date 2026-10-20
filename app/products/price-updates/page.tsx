@@ -56,20 +56,23 @@ async function PriceUpdatesContent({ searchParams, auth }: PriceUpdatesPageProps
   if (openBatchesResult.error) console.error("PRICE UPDATES REVIEWS ERROR", openBatchesResult.error.message);
   const brandList = brandsResult.data ?? [], familyList = familiesResult.data ?? [];
 
-  const { definitions, facts } = await loadSupplierPriceUpdatesInputs(supabase, brandList.map((brand) => brand.id));
+  const { definitions, facts, failedBrandIds } = await loadSupplierPriceUpdatesInputs(supabase, brandList.map((brand) => brand.id));
+  // A Brand whose supplier facts could not be read gets a notice card instead of a status that would be wrong.
+  const failedBrands = new Set(failedBrandIds);
   const views = buildSupplierPriceUpdatesView({
     businessDate: supplierBusinessDate(),
     brands: brandList,
     families: familyList.map((family) => ({ id: family.id, brandId: family.brand_id, name: family.template_name })),
     definitions, facts, legacyDetail: () => "Manual price check",
   });
-  const summaries: PriceUpdatesBrandSummary[] = views.map((view) => {
+  const summaries: PriceUpdatesBrandSummary[] = views.filter((view) => !failedBrands.has(view.brandId)).map((view) => {
     const versions = definitions.filter((definition) => definition.brandId === view.brandId && definition.isActive).flatMap((definition) => definition.versions.map((version) => ({ ...version, definition_id: definition.id })));
     const counts = supplierPriceListLifecycleCounts(versions, (openBatchesResult.data ?? []).filter((batch) => batch.brand_id === view.brandId), supplierBusinessDate());
     return { view, href: workspaceHref(view.brandId), priceLists: counts.current, reviewsInProgress: counts.updates, upcomingLists: counts.upcoming };
   });
   const visible = summaries.filter(({ view }) => (!searchQuery || view.brandName.toLowerCase().includes(searchQuery)) && (!selectedState || view.state === selectedState));
-  const totals = summarizePriceUpdates(views);
+  const totals = summarizePriceUpdates(views.filter((view) => !failedBrands.has(view.brandId)));
+  const failedVisible = brandList.filter((brand) => failedBrands.has(brand.id) && !selectedState && (!searchQuery || brand.name.toLowerCase().includes(searchQuery)));
 
   return (
       <div className="space-y-5 text-sm">
@@ -86,8 +89,17 @@ async function PriceUpdatesContent({ searchParams, auth }: PriceUpdatesPageProps
           <button className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50">Apply</button>
         </form>
 
-        {visible.length === 0 ? <p className="rounded-lg border border-zinc-200 bg-white p-6 text-center text-sm text-zinc-600">No Brands match these filters.</p> : null}
-        <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-label="Brands">{visible.map((summary) => <PriceUpdatesBrandSummaryCard key={summary.view.brandId} summary={summary} />)}</ul>
+        {visible.length === 0 && failedVisible.length === 0 ? <p className="rounded-lg border border-zinc-200 bg-white p-6 text-center text-sm text-zinc-600">No Brands match these filters.</p> : null}
+        <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-label="Brands">
+          {visible.map((summary) => <PriceUpdatesBrandSummaryCard key={summary.view.brandId} summary={summary} />)}
+          {failedVisible.map((brand) => (
+            <li key={brand.id} className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm">
+              <p className="font-semibold text-zinc-950">{brand.name}</p>
+              <p className="mt-1 text-amber-900">Could not load price status. Reload to try again.</p>
+              <Link href={workspaceHref(brand.id)} className="mt-3 inline-flex text-xs font-semibold text-emerald-900 hover:text-emerald-800">Open Brand workspace</Link>
+            </li>
+          ))}
+        </ul>
       </div>
   );
 }

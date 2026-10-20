@@ -71,7 +71,8 @@ test("complete product paging retains more than 1000 rows and fails closed on a 
   const ranges: number[][] = [];
   const result = await readProductPages(async (from, to) => { ranges.push([from, to]); return { data: rows.slice(from, to + 1), error: null }; });
   assert.deepEqual(result.data, rows);
-  assert.deepEqual(ranges, [[0, 499], [500, 999], [1000, 1499]]);
+  // First page alone, then the remaining pages four at a time (the last two are empty and ignored).
+  assert.deepEqual(ranges, [[0, 499], [500, 999], [1000, 1499], [1500, 1999], [2000, 2499]]);
   const failed = await readProductPages(async (from, to) => from ? { data: null, error: { message: "timeout" } } : { data: rows.slice(from, to + 1), error: null });
   assert.equal(failed.data, null);
   assert.equal(failed.error?.message, "timeout");
@@ -157,10 +158,10 @@ test("parallel batch facts retain completed, excluded and open target outcomes",
       { id: "open", brand_id: "b", source_id: "s2", status: "review", scope: "complete", coverage_template_ids: ["f"], completed_at: null },
     ],
     supplier_price_matches: [
-      { batch_id: "complete", key: "a", template_ids: ["f"], data: { classification: "changed", targets: [{ template_id: "f", key: "a" }] } },
-      { batch_id: "complete", key: "b", template_ids: ["f"], data: { classification: "target_not_represented", targets: [{ template_id: "f", key: "b" }] } },
-      { batch_id: "open", key: "c", template_ids: ["f"], data: { classification: "changed", targets: [{ template_id: "f", key: "c" }] } },
-      { batch_id: "open", key: "d", template_ids: [], data: { classification: "unmatched", targets: [] } },
+      { batch_id: "complete", key: "a", template_ids: ["f"], classification: "changed", targets: [{ template_id: "f", key: "a" }] },
+      { batch_id: "complete", key: "b", template_ids: ["f"], classification: "target_not_represented", targets: [{ template_id: "f", key: "b" }] },
+      { batch_id: "open", key: "c", template_ids: ["f"], classification: "changed", targets: [{ template_id: "f", key: "c" }] },
+      { batch_id: "open", key: "d", template_ids: [], classification: "unmatched", targets: [] },
     ],
     supplier_price_decisions: [{ batch_id: "complete", key: "b", decision: "excluded_from_source" }],
   });
