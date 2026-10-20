@@ -159,6 +159,8 @@ export type ProductLibraryTemplate = {
     tone: "success" | "info" | "warning" | "danger" | "neutral";
     detail: string;
   };
+  // True until the (streamed) supplier status has arrived; shows a neutral placeholder instead of the legacy label.
+  supplier_family_price_loading?: boolean;
 };
 
 type DeskingSizePricingRow = {
@@ -467,6 +469,13 @@ function PriceCheckBadge({
   template: ProductLibraryTemplate;
 }) {
   const supplierPresentation = template.supplier_family_price_presentation ?? null;
+  if (template.supplier_family_price_loading) {
+    return (
+      <span className={compact ? "mt-1 block" : "grid gap-1"}>
+        <span className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-bold text-zinc-500">Checking price status…</span>
+      </span>
+    );
+  }
   const status = priceCheckState(template);
   // Same state as before, in plain words. Selecting a Product is never blocked by its health.
   const legacyHealth = friendlyPriceHealth(status, template.latest_brand_price_list_update, "quotation");
@@ -4427,7 +4436,7 @@ export function ProductLibrarySelector({
                                 {formatQuotationMoney(previewCurrency, effectiveQuoteUnitPrice)}
                               </p>
                               <PriceCheckBadge template={template} />
-                              {!template.supplier_family_price_presentation && priceCheckState(template).tone === "warning" ? (
+                              {!template.supplier_family_price_loading && !template.supplier_family_price_presentation && priceCheckState(template).tone === "warning" ? (
                                 <>
                                   <p className="max-w-52 text-[11px] leading-4 text-amber-700">
                                     Please verify source price before finalizing quotation.

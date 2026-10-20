@@ -232,10 +232,16 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
     updatesByBrand.set(update.brand_id, [...(updatesByBrand.get(update.brand_id) ?? []), update]);
   }
   const brandById = new Map((productBrands ?? []).map((brand) => [brand.id, brand]));
-  const supplierPriceStatusByTemplate = await loadSupplierFamilyPriceStatusMap(supabase, productTemplates ?? []);
+  // Started now, not awaited: it only feeds a picker badge, so the builder streams it in when ready.
+  const supplierPresentationsPromise = loadSupplierFamilyPriceStatusMap(supabase, productTemplates ?? []).then((statusByTemplate) => {
+    const presentations: Record<string, ReturnType<typeof supplierFamilyStatusPresentation>> = {};
+    for (const [templateId, supplierStatus] of statusByTemplate) {
+      if (supplierStatus.status !== "legacy_manual") presentations[templateId] = supplierFamilyStatusPresentation(supplierStatus);
+    }
+    return presentations;
+  });
 
   const productTemplatesWithPriceChecks = (productTemplates ?? []).map((template) => {
-    const supplierStatus = supplierPriceStatusByTemplate.get(template.id);
     return {
       ...template,
       brand_latest_price_list_at: brandPriceBaselineDate({
@@ -243,9 +249,6 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
         latestBrandPriceListUpdate: latestBrandPriceListUpdate(updatesByBrand.get(template.brand_id) ?? []) ?? null,
       }),
       latest_brand_price_list_update: latestBrandPriceListUpdate(updatesByBrand.get(template.brand_id) ?? []) ?? null,
-      supplier_family_price_presentation: supplierStatus && supplierStatus.status !== "legacy_manual"
-        ? supplierFamilyStatusPresentation(supplierStatus)
-        : undefined,
     };
   });
 
@@ -341,6 +344,7 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
         productComponents={productComponents ?? []}
         productLinkedFamilies={linkedFamilies ?? []}
         productTemplates={productTemplatesWithPriceChecks}
+        supplierPresentationsPromise={supplierPresentationsPromise}
         projectName={
           resolvedDocumentSetup.header.reference ||
           formatProjectReferenceDisplay(project) ||
