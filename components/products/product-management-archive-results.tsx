@@ -1,6 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { removeArchivedProductFamilyLink } from "@/app/products/templates/archived-link-actions";
+import { ArchiveFamilyLinksPanel } from "./archive-family-links-panel";
+import { archiveLinksForTemplate, type ArchiveLinkDisplay } from "@/lib/products/archive-family-links";
 import {
   bulkPermanentlyDeleteProductTemplates,
   bulkRestoreProductTemplates,
@@ -23,6 +27,9 @@ type ProductManagementArchiveResultsProps = {
   mode: "archive" | "discontinued";
   returnTo: string;
   templates: ArchivedTemplateResult[];
+  familyLinks?: ArchiveLinkDisplay[];
+  canRemoveLinks?: boolean;
+  linksLoadError?: boolean;
 };
 
 const deleteBlockedNotice = "Linked to product families - cannot delete";
@@ -119,7 +126,12 @@ export function ProductManagementArchiveResults({
   mode,
   returnTo,
   templates,
+  familyLinks = [],
+  canRemoveLinks = false,
+  linksLoadError = false,
 }: ProductManagementArchiveResultsProps) {
+  const router = useRouter();
+  const [openLinksId, setOpenLinksId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const preview = computeDeleteEligibilityPreview(selectedIds, templates);
 
@@ -203,6 +215,13 @@ export function ProductManagementArchiveResults({
                 </form>
               ) : null}
               {template.linked ? (
+                mode === "archive" ? <button type="button"
+                  aria-expanded={openLinksId === template.id}
+                  aria-controls={`archive-links-${template.id}`}
+                  onClick={() => setOpenLinksId(openLinksId === template.id ? null : template.id)}
+                  className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700">
+                  Manage Links
+                </button> :
                 <span className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-semibold text-zinc-500">
                   {deleteBlockedNotice}
                 </span>
@@ -219,6 +238,12 @@ export function ProductManagementArchiveResults({
                 </form>
               )}
             </div>
+            {mode === "archive" && openLinksId === template.id ? <div id={`archive-links-${template.id}`} className="md:col-span-3">
+              <button type="button" className="mb-2 text-xs underline" onClick={() => setOpenLinksId(null)}>Close links</button>
+              <ArchiveFamilyLinksPanel templateId={template.id} templateName={template.name}
+                links={archiveLinksForTemplate(template.id, familyLinks)} canRemove={canRemoveLinks}
+                loadError={linksLoadError} removeAction={removeArchivedProductFamilyLink} refresh={() => router.refresh()} />
+            </div> : null}
           </div>
         ))}
         {!templates.length ? <p className="p-6 text-sm text-zinc-500">{emptyMessage}</p> : null}
