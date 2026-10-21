@@ -129,3 +129,18 @@ test("spec lines are not names", () => {
   const raw = [text("FA01", 0, 0), text("630 g/rm", 0, 12), text("448 g/m²", 0, 24), text("jet black", 0, 36)].map((item) => ({ ...item, fontSize: 10, bold: false }));
   assert.equal(parseLabel(raw, "code-then-name").nameMain, "Jet black");
 });
+test("spread page: left titles split the whole page into strips (Era / Manhattan / Strick)", () => {
+  const images = [95, 195, 295].flatMap((y) => [150, 250, 650, 750].map((x) => ({ x, y, w: 80, h: 60 })))
+    .concat([150, 250, 650, 750].map((x) => ({ x, y: 445, w: 80, h: 60 })), [150, 650].map((x) => ({ x, y: 595, w: 80, h: 60 })));
+  const labels = images.flatMap((image, i) => [text(`E${100 + i}`, image.x, image.y + 70), text("jet black", image.x, image.y + 84)]);
+  const result = detectSwatches({ pageWidth: 1000, pageHeight: 800, images,
+    text: [text("Fabric group 1", 10, 10, 14), text("Era", 20, 100, 14), text("95% New wool", 20, 116, 8), text("Manhattan", 20, 440, 14), text("630 g/rm", 20, 456, 8), text("Strick", 20, 600, 14), text("5% Polyamid", 20, 616, 8), ...labels] });
+  assert.equal(result.length, images.length);
+  const byRow = (item: (typeof result)[number]) => item.box.y * 800;
+  assert.ok(result.filter((item) => byRow(item) < 400).every((item) => item.collection === "Era"));
+  assert.equal(result.filter((item) => byRow(item) < 400).length, 12);
+  assert.ok(result.filter((item) => byRow(item) >= 400 && byRow(item) < 560).every((item) => item.collection === "Manhattan"));
+  assert.ok(result.filter((item) => byRow(item) >= 560).every((item) => item.collection === "Strick"));
+  assert.ok(result.every((item) => item.grade === "Fabric group 1"));
+  assert.ok(result.filter((item) => byRow(item) < 400 && item.box.x > 0.5).length === 6); // both halves of the spread
+});

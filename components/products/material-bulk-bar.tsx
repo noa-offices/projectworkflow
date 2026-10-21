@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { deleteMaterialsPermanently, setMaterialsActive } from "@/app/products/materials/actions";
+import { deleteMaterialsPermanently, setMaterialsActive, setMaterialsSubgroup } from "@/app/products/materials/actions";
 import { materialDeleteSummary, type MaterialDeleteResult } from "@/lib/products/material-delete";
 import { readCacheDb } from "@/lib/local-read-cache/db";
 import { fetchReadProjection, notifyReadCache } from "@/lib/local-read-cache/runtime";
@@ -12,8 +12,8 @@ type UpdateResult = Awaited<ReturnType<typeof setMaterialsActive>>["results"][nu
 const notReady = "Delete is not ready: the database update has not been applied yet.";
 const button = "rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-40";
 
-export function MaterialBulkBar({ groupId, selected, onSelectAll, onClear, onDone, onBusy, onResults, onBanner }: {
-  groupId: string; selected: Item[]; onSelectAll: () => void; onClear: () => void; onDone: () => void;
+export function MaterialBulkBar({ groupId, selected, subgroups, onSelectAll, onClear, onDone, onBusy, onResults, onBanner }: {
+  groupId: string; subgroups: Array<{ id: string; label: string }>; selected: Item[]; onSelectAll: () => void; onClear: () => void; onDone: () => void;
   onBusy: (busy: boolean) => void;
   onResults: (results: Array<MaterialDeleteResult | UpdateResult>) => void;
   onBanner: (message: string) => void;
@@ -23,6 +23,8 @@ export function MaterialBulkBar({ groupId, selected, onSelectAll, onClear, onDon
   const running = useRef(false);
   const [confirming, setConfirming] = useState(false);
   const [typed, setTyped] = useState("");
+  // "" = nothing chosen yet, "none" = No sub-group, otherwise a sub-group id.
+  const [target, setTarget] = useState("");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const dialog = useRef<HTMLDialogElement>(null);
   const needsTyped = selected.length >= 10 || selected.some((item) => item.isActive);
@@ -78,6 +80,33 @@ export function MaterialBulkBar({ groupId, selected, onSelectAll, onClear, onDon
     }
   };
 
+  const move = async () => {
+    if (running.current || !selected.length || !target) return;
+    running.current = true; setBusy(true); onBusy(true);
+    const ids = selected.map((item) => item.id);
+    const moved: Awaited<ReturnType<typeof setMaterialsSubgroup>>["results"] = [];
+    let interrupted = "";
+    setProgress({ done: 0, total: ids.length });
+    try {
+      for (let offset = 0; offset < ids.length; offset += 50) {
+        const chunk = ids.slice(offset, offset + 50);
+        moved.push(...(await setMaterialsSubgroup({ groupId, ids: chunk, subgroupId: target === "none" ? null : target })).results);
+        setProgress({ done: Math.min(offset + chunk.length, ids.length), total: ids.length });
+      }
+    } catch {
+      interrupted = "Could not confirm the move. Refresh the group before trying again.";
+    } finally {
+      const done = moved.filter((result) => result.status === "moved").length;
+      const skipped = moved.filter((result) => result.status === "error");
+      const reasons = [...new Set(skipped.map((result) => (result.message || "").replace(/^./, (letter) => letter.toLowerCase())).filter(Boolean))];
+      onBanner([`Moved ${done}.`, skipped.length ? `Skipped ${skipped.length}${reasons.length ? ` (${reasons.join("; ")})` : ""}.` : "", moved.some((result) => result.status === "not_found") ? `${moved.filter((result) => result.status === "not_found").length} not found.` : "", interrupted].filter(Boolean).join(" "));
+      onResults(moved.map((result) => ({ ...result, status: result.status === "moved" ? "updated" as const : result.status })));
+      onClear(); setTarget("");
+      router.refresh();
+      running.current = false; setBusy(false); onBusy(false);
+    }
+  };
+
   return <>
     <div className="sticky bottom-2 z-40 flex flex-wrap items-center gap-2 rounded-xl border border-zinc-300 bg-white p-3 shadow-lg" aria-label="Bulk material actions">
       <span className="mr-2 text-sm font-semibold" aria-live="polite">{selected.length} selected</span>
@@ -85,6 +114,12 @@ export function MaterialBulkBar({ groupId, selected, onSelectAll, onClear, onDon
       <button type="button" disabled={busy || !selected.length} onClick={onClear} className={button}>Clear</button>
       <button type="button" disabled={busy || !selected.length} onClick={() => void run("deactivate")} className={button}>Deactivate</button>
       <button type="button" disabled={busy || !selected.length} onClick={() => void run("activate")} className={button}>Activate</button>
+      <select aria-label="Move to sub-group" value={target} disabled={busy} onChange={(event) => setTarget(event.target.value)} className="rounded-lg border border-zinc-300 bg-white px-2 py-2 text-sm">
+        <option value="">Move to...</option>
+        <option value="none">No sub-group</option>
+        {subgroups.map((sub) => <option key={sub.id} value={sub.id}>{sub.label}</option>)}
+      </select>
+      <button type="button" disabled={busy || !selected.length || !target} onClick={() => void move()} className={button}>Move</button>
       <button type="button" disabled={busy || !selected.length} onClick={() => { setTyped(""); setConfirming(true); }} className={`${button} border-red-300 text-red-700`}>Delete permanently</button>
       <button type="button" disabled={busy} onClick={onDone} className={button}>Done</button>
       {busy ? <span role="status" className="w-full text-sm">Processing {progress.done} of {progress.total}…</span> : null}

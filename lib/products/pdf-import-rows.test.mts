@@ -11,15 +11,18 @@ test("same code in the same sub-group is a duplicate (case and spaces ignored); 
   assert.equal(blocked.checked, false);
   const fresh = buildReviewRows([swatch], "english", [], [here("a01", "other")])[0];
   assert.equal(fresh.duplicate, false);
-  assert.equal(fresh.checked, true);
-  assert.equal(fresh.name, "Red");
+  assert.equal(fresh.checked, false); // also in another sub-group: allowed, but unticked by default
+  assert.deepEqual(fresh.alsoIn, ["CAT C - Time"]);
+  const clean = buildReviewRows([swatch], "english", [], [])[0];
+  assert.equal(clean.checked, true);
+  assert.equal(clean.name, "Red");
   assert.deepEqual(fresh.newSubgroup, { name: "TIME", grade: "CAT C" });
 });
 
 test("same code in another sub-group is allowed and listed as 'also in'", () => {
   const row = buildReviewRows([swatch], "english", [time], [{ code: "A01", label: "CAT B - Crepe", subgroupId: "crepe" }])[0];
   assert.equal(row.duplicate, false);
-  assert.equal(row.checked, true);
+  assert.equal(row.checked, false);
   assert.deepEqual(row.alsoIn, ["CAT B - Crepe"]);
   // null sub-group equals only null: a code directly in the group does not block a sub-group row.
   const direct = buildReviewRows([swatch], "english", [time], [here("A01", null)])[0];

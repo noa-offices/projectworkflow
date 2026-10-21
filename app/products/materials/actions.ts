@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireProductLibraryManager } from "@/lib/auth";
+import { moveCodeKey, moveDecision } from "@/lib/products/material-move";
 import { materialTextForSubgroup } from "@/lib/products/material-subgroup-sync";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -71,6 +72,59 @@ export async function setMaterialsActive(input: { groupId: string; ids: string[]
       } catch { results.push({ id, status: "error", message: "Material could not be updated." }); }
     }
   } catch { return fail("Materials could not be updated."); }
+  try { revalidatePath("/products/materials"); revalidatePath(`/products/materials/groups/${input.groupId}`); } catch { /* Keep confirmed results. */ }
+  return { results };
+}
+
+// Moves materials of one group into a sub-group (or out of every sub-group with null). Never redirects or throws for row problems.
+export async function setMaterialsSubgroup(input: { groupId: string; ids: string[]; subgroupId: string | null }) {
+  type Result = { id: string; status: "moved" | "not_found" | "error"; message?: string };
+  const ids = Array.isArray(input?.ids) ? [...new Set(input.ids.map((id) => typeof id === "string" ? id.toLowerCase() : id))] : [];
+  const fail = (message: string) => ({ results: ids.map((id): Result => ({ id, status: "error", message })) });
+  try { await requireProductLibraryManager(); } catch { return fail("You do not have permission to manage materials. Sign in with an allowed account."); }
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const target = input?.subgroupId ?? null;
+  if (!uuid.test(input?.groupId || "") || !Array.isArray(input?.ids) || input.ids.length > 100 || (target !== null && !uuid.test(target)) || ids.some((id) => typeof id !== "string" || !uuid.test(id))) return fail("Choose a group, a sub-group and at most 100 valid material ids.");
+  const results: Result[] = [];
+  try {
+    const supabase = await createClient();
+    let subgroup: { id: string; name: string; grade: string | null } | null = null;
+    if (target) {
+      const { data, error } = await supabase.from("brand_material_subgroups").select("id,name,grade,is_active,material_group_id").eq("id", target).maybeSingle();
+      if (error || !data || data.material_group_id !== input.groupId) return fail("That sub-group does not belong to this group.");
+      if (!data.is_active) return fail("Activate this sub-group first.");
+      subgroup = { grade: data.grade, id: data.id, name: data.name };
+    }
+    const { data: found, error: foundError } = await supabase.from("brand_materials").select("id,material_code,subgroup_id,is_active").eq("material_group_id", input.groupId).in("id", ids);
+    if (foundError) return fail("Materials could not be checked. Try again.");
+    const byId = new Map((found || []).map((row) => [row.id as string, row]));
+    // Codes of the ACTIVE materials already in the target sub-group.
+    const targetCodes = new Set<string>();
+    if (target) {
+      for (let offset = 0; ; offset += 1000) {
+        const page = await supabase.from("brand_materials").select("material_code").eq("subgroup_id", target).eq("is_active", true).order("id").range(offset, offset + 999);
+        if (page.error) return fail("Could not check existing codes. Try again.");
+        for (const row of page.data || []) if (moveCodeKey(row.material_code)) targetCodes.add(moveCodeKey(row.material_code));
+        if ((page.data?.length || 0) < 1000) break;
+      }
+    }
+    const text = materialTextForSubgroup(subgroup);
+    for (const id of ids) {
+      const row = byId.get(id);
+      if (!row) { results.push({ id, status: "not_found" }); continue; }
+      try {
+        const material = { code: row.material_code as string | null, isActive: Boolean(row.is_active), subgroupId: (row.subgroup_id as string | null) ?? null };
+        if (moveDecision(material, target, targetCodes) === "duplicate") { results.push({ id, status: "error", message: "Same code already exists in that sub-group" }); continue; }
+        // With a sub-group the old text columns follow the sync rule; with none they are left as they are.
+        const { data, error } = await supabase.from("brand_materials").update(text ? { subgroup_id: target, ...text } : { subgroup_id: null }).eq("id", id).eq("material_group_id", input.groupId).select("id");
+        if (error) results.push({ id, status: "error", message: error.message.includes("sub-group must belong") ? "That sub-group does not belong to this group." : "Material could not be moved." });
+        else {
+          results.push({ id, status: data?.length ? "moved" : "not_found" });
+          if (data?.length && material.isActive && moveCodeKey(material.code)) targetCodes.add(moveCodeKey(material.code));
+        }
+      } catch { results.push({ id, status: "error", message: "Material could not be moved." }); }
+    }
+  } catch { return fail("Materials could not be moved."); }
   try { revalidatePath("/products/materials"); revalidatePath(`/products/materials/groups/${input.groupId}`); } catch { /* Keep confirmed results. */ }
   return { results };
 }

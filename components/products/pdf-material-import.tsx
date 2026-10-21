@@ -73,7 +73,7 @@ function refreshRows<R extends ReviewRow & { status: ListStatus }>(rows: R[], kn
     return {
       ...row,
       alsoIn: state.alsoIn,
-      checked: state.duplicate ? false : wasBlocked ? Boolean(row.name.trim()) : row.checked,
+      checked: state.duplicate ? false : wasBlocked ? Boolean(row.name.trim()) && state.alsoIn.length === 0 : row.checked,
       duplicate: state.duplicate,
       status: state.duplicate ? "duplicate" : wasBlocked ? "ready" : row.status,
     };
@@ -487,13 +487,16 @@ export function PdfMaterialImport({
     try {
       // The parent view may show only one sub-group; check the whole group before flagging duplicates.
       const client = createClient();
+      // Labels for every sub-group of the group, inactive ones too ("CAT B - Crepe (inactive)").
+      const subgroupRead = await client.from("brand_material_subgroups").select("id,name,grade,is_active").eq("material_group_id", groupId);
+      const labelById = new Map((subgroupRead.data || []).map((sub) => [sub.id as string, `${subgroupText({ grade: sub.grade, name: sub.name })}${sub.is_active ? "" : " (inactive)"}`]));
       const allMaterials: ExistingMaterial[] = [];
       for (let offset = 0; ; offset += 1000) {
         const result = await client.from("brand_materials").select("material_code,subgroup_id").eq("material_group_id", groupId).eq("is_active", true).order("id").range(offset, offset + 999);
         if (result.error) throw new Error("Could not check existing codes.");
         for (const item of result.data || []) {
           const sub = reviewSubgroups.find((candidate) => candidate.id === item.subgroup_id);
-          allMaterials.push({ code: item.material_code || "", label: sub ? subgroupText(sub) : item.subgroup_id ? "another sub-group" : "", subgroupId: item.subgroup_id ?? null });
+          allMaterials.push({ code: item.material_code || "", label: item.subgroup_id ? labelById.get(item.subgroup_id) ?? (sub ? subgroupText(sub) : "another sub-group") : "", subgroupId: item.subgroup_id ?? null });
         }
         if ((result.data?.length || 0) < 1000) break;
       }
@@ -975,9 +978,9 @@ export function PdfMaterialImport({
   };
   const toggleSection = (section: { rows: Row[] }, on: boolean) => {
     const ids = new Set(section.rows.map((row) => row.id));
-    setRows((current) => current.map((row) => ids.has(row.id) && row.status !== "created" ? { ...row, checked: on && row.status !== "duplicate" && Boolean(row.name.trim()) && Boolean(row.code.trim()) } : row));
+    setRows((current) => current.map((row) => ids.has(row.id) && row.status !== "created" ? { ...row, checked: on && row.status !== "duplicate" && row.alsoIn.length === 0 && Boolean(row.name.trim()) && Boolean(row.code.trim()) } : row));
   };
-  const selectNewOnly = () => setRows((current) => current.map((row) => row.status === "created" ? row : { ...row, checked: row.status !== "duplicate" && row.status !== "error" && Boolean(row.name.trim()) && Boolean(row.code.trim()) }));
+  const selectNewOnly = () => setRows((current) => current.map((row) => row.status === "created" ? row : { ...row, checked: row.status === "ready" && row.alsoIn.length === 0 && Boolean(row.name.trim()) && Boolean(row.code.trim()) }));
   const chip = (row: Row) => {
     if (row.status === "created") return <span className="inline-flex rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-semibold text-zinc-600">Saved</span>;
     if (row.status === "error") return <span className="inline-flex rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-800">{row.message || "Error"}</span>;

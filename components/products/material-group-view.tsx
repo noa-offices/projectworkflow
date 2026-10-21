@@ -448,7 +448,7 @@ export function MaterialGroupView({
           {visible.length === 0 ? <p className="rounded-xl border border-dashed border-zinc-200 bg-white p-6 text-center text-sm text-zinc-500">No materials match.</p> : null}
         </div>
       )}
-      {editing && mode === "swatches" ? <MaterialBulkBar key={scope} groupId={group.id} selected={swatches.filter((item) => selectedIds.has(item.id))} onSelectAll={selectAll} onClear={() => { setSelectedIds(new Set()); anchor.current = null; }} onDone={doneEditing} onBusy={setBulkBusy} onBanner={setBulkBanner} onResults={(results) => {
+      {editing && mode === "swatches" ? <MaterialBulkBar key={scope} groupId={group.id} subgroups={subgroupOptions} selected={swatches.filter((item) => selectedIds.has(item.id))} onSelectAll={selectAll} onClear={() => { setSelectedIds(new Set()); anchor.current = null; }} onDone={doneEditing} onBusy={setBulkBusy} onBanner={setBulkBanner} onResults={(results) => {
         const cleared = new Set(results.filter((result) => ["deleted", "updated", "not_found"].includes(result.status)).map((result) => result.id));
         setSelectedIds((current) => new Set([...current].filter((id) => !cleared.has(id))));
         setBlocked((current) => {

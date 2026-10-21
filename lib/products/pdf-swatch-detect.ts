@@ -128,16 +128,32 @@ export function detectSwatchPage(input: DetectInput, style: LabelStyleId | "auto
   const headings = assigned.filter((entry) => entry.owner < 0).map((entry) => entry.line).filter((line) => !ignore.test(line.str) && line.str.length >= 2 && !specHeading.test(line.str));
   const grades = headings.filter((line) => gradePattern.test(gradeText(line.str))).map((line) => ({ ...line, str: gradeText(line.str) }));
   const titles = headings.filter((line) => !gradePattern.test(gradeText(line.str)) && (line.bold || line.fontSize > labelFont || !headings.some((above) => above !== line && above.y < line.y && line.y - above.y < 2 * line.h && Math.min(above.x + above.w, line.x + line.w) > Math.max(above.x, line.x))));
-  type Band = { top: number; bottom: number; left: number; side: number; owners: number[]; collection: string };
+  type Band = { top: number; bottom: number; left: number; side: number; owners: number[]; collection: string; fixed?: boolean };
   const bands: Band[] = [];
-  for (const side of [0, 1]) for (const { image, owner } of images.map((image, owner) => ({ image, owner })).filter(({ image }) => Number(image.x + image.w / 2 >= input.pageWidth / 2) === side).sort((a, b) => a.image.y - b.image.y || a.image.x - b.image.x)) {
+  // Spread pages: two or more titles at the LEFT of every picture split the page into horizontal strips across the WHOLE width
+  // (strip k starts 0.6 picture heights above its title and ends where the next strip starts). A picture belongs to the strip holding
+  // its vertical centre; pictures above the first strip keep the gap-based banding below.
+  const leftEdge = Math.min(...images.map((image) => image.x));
+  const leftTitles = titles.filter((line) => line.x + line.w <= leftEdge).sort((a, b) => a.y - b.y);
+  const averageHeight = images.reduce((sum, image) => sum + image.h, 0) / Math.max(1, images.length);
+  const stripStarts = leftTitles.map((line) => line.y - 0.6 * averageHeight);
+  const stripOf = (image: ImageRect) => leftTitles.length >= 2 ? stripStarts.findLastIndex((start) => start <= image.y + image.h / 2) : -1;
+  if (leftTitles.length >= 2) {
+    leftTitles.forEach((title, k) => {
+      const owners = images.map((image, owner) => ({ image, owner })).filter(({ image }) => stripOf(image) === k);
+      if (!owners.length) return;
+      bands.push({ top: Math.min(...owners.map(({ image }) => image.y)), bottom: Math.max(...owners.map(({ image }) => image.y + image.h)), left: Math.min(...owners.map(({ image }) => image.x)), side: 0,
+        owners: owners.map(({ owner }) => owner), collection: title.str.split(" / ")[0], fixed: true });
+    });
+  }
+  for (const side of [0, 1]) for (const { image, owner } of images.map((image, owner) => ({ image, owner })).filter(({ image }) => stripOf(image) < 0).filter(({ image }) => Number(image.x + image.w / 2 >= input.pageWidth / 2) === side).sort((a, b) => a.image.y - b.image.y || a.image.x - b.image.x)) {
     const previous = bands.findLast((band) => band.side === side);
     const headingBetween = headings.some((line) => line.y > (previous?.bottom ?? Infinity) && line.y + line.h <= image.y && Number(line.x + line.w / 2 >= input.pageWidth / 2) === side);
     if (previous && image.y - previous.bottom <= 1.5 * image.h && !headingBetween) { previous.owners.push(owner); previous.bottom = Math.max(previous.bottom, image.y + image.h); previous.left = Math.min(previous.left, image.x); }
     else bands.push({ top: image.y, bottom: image.y + image.h, left: image.x, side, owners: [owner], collection: "" });
   }
   bands.sort((a, b) => a.top - b.top || a.side - b.side);
-  for (const band of bands) {
+  for (const band of bands.filter((entry) => !entry.fixed)) {
     const sameSide = titles.filter((line) => Number(line.x + line.w / 2 >= input.pageWidth / 2) === band.side);
     const above = sameSide.filter((line) => line.y + line.h <= band.top).sort((a, b) => b.y - a.y || a.x - b.x)[0];
     const left = sameSide.filter((line) => line.x + line.w <= band.left && line.y >= band.top && line.y <= band.bottom).sort((a, b) => b.x - a.x)[0];

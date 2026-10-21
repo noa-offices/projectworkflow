@@ -57,7 +57,8 @@ export function buildReviewRows(swatches: DetectedSwatch[], language: ImportLang
       duplicate: false, alsoIn: [] as string[], checked: Boolean(name) };
   });
   const states = evaluateRows(rows, existing);
-  return rows.map((row, index) => ({ ...row, ...states[index], checked: !states[index].duplicate && row.checked }));
+  // Ticked by default only when Ready: a code that also exists in another sub-group starts unticked (the user can still tick it).
+  return rows.map((row, index) => ({ ...row, ...states[index], checked: !states[index].duplicate && states[index].alsoIn.length === 0 && row.checked }));
 }
 export function chunkImportRows<T>(rows: T[]): T[][] {
   return Array.from({ length: Math.ceil(rows.length / 20) }, (_, index) => rows.slice(index * 20, index * 20 + 20));
