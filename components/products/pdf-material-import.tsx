@@ -85,6 +85,7 @@ export function PdfMaterialImport({
   currentSubgroupId,
   groupId,
   groupName,
+  brandName,
   onClose,
   minimizeToken = 0,
   onLayout,
@@ -96,6 +97,7 @@ export function PdfMaterialImport({
   currentSubgroupId: string;
   groupId: string;
   groupName: string;
+  brandName: string;
   onClose: () => void;
   // Bumped by the page when another side panel (the swatch viewer) opens: a side-docked panel then minimizes (it stays mounted).
   minimizeToken?: number;
@@ -1099,7 +1101,7 @@ export function PdfMaterialImport({
           />
         ) : null}
         <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-3 py-2">
-          <h2 className="text-base font-semibold text-zinc-950">Import from PDF - {groupName}</h2>
+          <h2 className="text-base font-semibold text-zinc-950">Import from PDF - {brandName} / {groupName}</h2>
           {fileName ? <span className="max-w-[14rem] truncate text-sm text-zinc-500">{fileName}</span> : null}
           <span className="text-sm text-zinc-500">Saved: {savedCount}</span>
           <div className="ml-auto flex items-center gap-2">
