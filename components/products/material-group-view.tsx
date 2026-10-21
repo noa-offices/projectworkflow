@@ -135,6 +135,8 @@ export function MaterialGroupView({
   };
 
   const groupPath = `/products/materials/groups/${group.id}`;
+  // The library with this brand already open (same libBrand param the overview uses).
+  const brandHref = `/products/materials?libBrand=${encodeURIComponent(brandId)}`;
   const returnTo = sub ? `${groupPath}?sub=${encodeURIComponent(sub.id)}` : groupPath;
   const groups = [{ id: group.id, group_name: group.name }];
   // New materials get the group (and, inside a sub-group, its grade/collection text) pre-filled; the dialogs save exactly as before.
@@ -226,9 +228,9 @@ export function MaterialGroupView({
 
   return (
     <div className="space-y-5 px-4 py-5 sm:px-8 sm:py-6" style={panelPadding + viewerPadding ? { paddingRight: panelPadding + viewerPadding + 16 } : undefined}>
-      <Link href={sub ? groupPath : "/products/materials"} className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-900 hover:text-emerald-800">
+      <Link href={sub ? groupPath : brandHref} className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-900 hover:text-emerald-800">
         <ArrowLeft aria-hidden="true" className="h-4 w-4" />
-        {sub ? `Back to ${group.name}` : "Back to Material Library"}
+        {sub ? `Back to ${group.name}` : `Back to ${brandName}`}
       </Link>
 
       {message ? <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">{message}</p> : null}
@@ -240,7 +242,7 @@ export function MaterialGroupView({
           <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${group.isActive ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-zinc-200 bg-zinc-100 text-zinc-600"}`}>{group.isActive ? "Active" : "Inactive"}</span>
           {needsReviewCount > 0 ? <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-900">Needs review {needsReviewCount}</span> : null}
         </div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{brandName}</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500"><Link href={brandHref} className="hover:underline">{brandName}</Link></p>
         {group.description ? <p className="max-w-2xl text-sm text-zinc-600">{group.description}</p> : null}
         <div className="flex flex-wrap items-center gap-2">
           <details className="relative">
@@ -298,6 +300,7 @@ export function MaterialGroupView({
           existingMaterials={swatches.filter((item) => item.isActive).map((item) => ({ code: item.code, label: (item.record.subgroup_id ? subgroupLabels[item.record.subgroup_id] ?? "" : "").replace(" · ", " - "), subgroupId: item.record.subgroup_id }))}
           groupId={group.id}
           groupName={group.name}
+          brandName={brandName}
           onClose={() => { setImportOpen(false); setPanelPadding(0); }}
           minimizeToken={minimizePdf}
           onLayout={setPanelPadding}

@@ -34,6 +34,7 @@ type MaterialsSearchParams = {
   edit?: string | string[];
   libBrand?: string | string[];
   libGroup?: string | string[];
+  libLevel?: string | string[];
   libSort?: string | string[];
   libStatus?: string | string[];
   libView?: string | string[];
@@ -762,13 +763,14 @@ async function BrandMaterialsContent({ searchParams }: MaterialsPageProps) {
         ) : null}
         <MaterialLibraryOverview
           addBrandHref="/products/brands?addBrand=1"
-          brands={brandList.filter((brand) => brand.is_active).map((brand) => ({ id: brand.id, name: brand.name }))}
+          brands={brandList.map((brand) => ({ code: brand.code, id: brand.id, isActive: brand.is_active, name: brand.name }))}
           createGroupAction={createMaterialGroup}
           deactivateGroupAction={deactivateMaterialGroup}
           groups={libraryGroups}
           initialFilters={{
             brand: stringParam(params.libBrand),
             group: stringParam(params.libGroup),
+            level: stringParam(params.libLevel) === "groups" ? "groups" : "brands",
             q: searchQuery,
             sort: stringParam(params.libSort) || "updated",
             status: stringParam(params.libStatus),
@@ -916,8 +918,8 @@ async function BrandMaterialsContent({ searchParams }: MaterialsPageProps) {
       <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-3">
-              <Link href="/products/materials" className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800">
-                Back to Material Library
+              <Link href={selectedBrand ? `/products/materials?libBrand=${encodeURIComponent(selectedBrand.id)}` : "/products/materials"} className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800">
+                {selectedBrand ? `Back to ${selectedBrand.name}` : "Back to Material Library"}
               </Link>
               <Link
                 href={addBrandHref}
