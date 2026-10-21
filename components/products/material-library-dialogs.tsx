@@ -14,9 +14,12 @@ type MaterialGroupOption = {
   group_name: string;
 };
 
+export type MaterialSubgroupOption = { id: string; label: string };
+
 type MaterialRecord = {
   id: string;
   material_group_id: string;
+  subgroup_id?: string | null;
   material_category: string | null;
   material_collection: string | null;
   material_code: string | null;
@@ -32,7 +35,27 @@ type MaterialPrefill = {
   collection?: string;
   grade?: string;
   groupId?: string;
+  subgroupId?: string;
 };
+
+// Only rendered where sub-groups are offered (the group page). The classic view passes none, so its dialogs stay as before.
+function SubgroupField({ onChange, subgroups, value }: { onChange: (value: string) => void; subgroups: MaterialSubgroupOption[]; value: string }) {
+  return (
+    <Field label="Sub-group">
+      <select
+        name="subgroup_id"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+      >
+        <option value="">No sub-group</option>
+        {subgroups.map((subgroup) => (
+          <option key={subgroup.id} value={subgroup.id}>{subgroup.label}</option>
+        ))}
+      </select>
+    </Field>
+  );
+}
 
 const priceCategorySuggestions = ["CAT A", "CAT B", "CAT C", "CAT D", "CAT E", "CAT F", "CAT G", "CAT H", "A", "B", "C", "D"];
 
@@ -132,6 +155,7 @@ function MaterialEditorForm({
   material,
   prefill,
   returnTo,
+  subgroups,
 }: {
   brandId: string;
   brandName: string;
@@ -139,9 +163,12 @@ function MaterialEditorForm({
   material?: MaterialRecord;
   prefill?: MaterialPrefill;
   returnTo: string;
+  subgroups?: MaterialSubgroupOption[];
 }) {
   const initialGroupId = material?.material_group_id ?? prefill?.groupId ?? groups[0]?.id ?? "";
   const [selectedGroupId, setSelectedGroupId] = useState(initialGroupId);
+  const [subgroupId, setSubgroupId] = useState(material ? material.subgroup_id ?? "" : prefill?.subgroupId ?? "");
+  const usesSubgroup = Boolean(subgroups) && Boolean(subgroupId);
 
   return (
     <form action={material ? updateMaterial : createMaterial} className="grid gap-3 md:grid-cols-2">
@@ -171,33 +198,39 @@ function MaterialEditorForm({
         </select>
       </Field>
 
-      <datalist id={`material-price-category-suggestions-${material?.id ?? "new"}`}>
-        {priceCategorySuggestions.map((category) => (
-          <option key={category} value={category} />
-        ))}
-      </datalist>
+      {subgroups ? <SubgroupField onChange={setSubgroupId} subgroups={subgroups} value={subgroupId} /> : null}
 
-      <Field label="Grade / Category">
-        <div>
-          <input
-            name="material_price_category"
-            list={`material-price-category-suggestions-${material?.id ?? "new"}`}
-            defaultValue={material?.material_category ?? prefill?.grade ?? ""}
-            placeholder="CAT B, B, CAT H"
-            className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+      {usesSubgroup ? null : (
+        <>
+          <datalist id={`material-price-category-suggestions-${material?.id ?? "new"}`}>
+            {priceCategorySuggestions.map((category) => (
+              <option key={category} value={category} />
+            ))}
+          </datalist>
+
+          <Field label="Grade / Category">
+            <div>
+              <input
+                name="material_price_category"
+                list={`material-price-category-suggestions-${material?.id ?? "new"}`}
+                defaultValue={material?.material_category ?? prefill?.grade ?? ""}
+                placeholder="CAT B, B, CAT H"
+                className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+              />
+              <span className="mt-1 block text-[11px] text-zinc-500">
+                Optional for wood and metal. If blank, Collection / Finish Type will still be used for grouping.
+              </span>
+            </div>
+          </Field>
+
+          <TextInput
+            name="material_collection"
+            label="Collection / Finish Type"
+            defaultValue={material?.material_collection ?? prefill?.collection ?? ""}
+            placeholder="Crepe, New, Melamine, Powder Coat"
           />
-          <span className="mt-1 block text-[11px] text-zinc-500">
-            Optional for wood and metal. If blank, Collection / Finish Type will still be used for grouping.
-          </span>
-        </div>
-      </Field>
-
-      <TextInput
-        name="material_collection"
-        label="Collection / Finish Type"
-        defaultValue={material?.material_collection ?? prefill?.collection ?? ""}
-        placeholder="Crepe, New, Melamine, Powder Coat"
-      />
+        </>
+      )}
       <TextInput name="material_code" label="Code" defaultValue={material?.material_code} />
       <TextInput name="material_name" label="Name" defaultValue={material?.material_name} required />
       <BrandMaterialSwatchInput brandId={brandId} groupId={selectedGroupId} defaultValue={material?.image_url} />
@@ -223,15 +256,19 @@ function BatchMaterialEditorForm({
   groups,
   prefill,
   returnTo,
+  subgroups,
 }: {
   brandId: string;
   brandName: string;
   groups: MaterialGroupOption[];
   prefill?: MaterialPrefill;
   returnTo: string;
+  subgroups?: MaterialSubgroupOption[];
 }) {
   const initialGroupId = prefill?.groupId ?? groups[0]?.id ?? "";
   const [selectedGroupId, setSelectedGroupId] = useState(initialGroupId);
+  const [subgroupId, setSubgroupId] = useState(prefill?.subgroupId ?? "");
+  const usesSubgroup = Boolean(subgroups) && Boolean(subgroupId);
 
   return (
     <form action={createMaterialsBatch} className="grid gap-3 md:grid-cols-2">
@@ -257,33 +294,39 @@ function BatchMaterialEditorForm({
         </select>
       </Field>
 
-      <datalist id="batch-material-price-category-suggestions">
-        {priceCategorySuggestions.map((category) => (
-          <option key={category} value={category} />
-        ))}
-      </datalist>
+      {subgroups ? <SubgroupField onChange={setSubgroupId} subgroups={subgroups} value={subgroupId} /> : null}
 
-      <Field label="Grade / Category">
-        <div>
-          <input
-            name="material_price_category"
-            list="batch-material-price-category-suggestions"
-            defaultValue={prefill?.grade ?? ""}
-            placeholder="CAT B, B, CAT H"
-            className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+      {usesSubgroup ? null : (
+        <>
+          <datalist id="batch-material-price-category-suggestions">
+            {priceCategorySuggestions.map((category) => (
+              <option key={category} value={category} />
+            ))}
+          </datalist>
+
+          <Field label="Grade / Category">
+            <div>
+              <input
+                name="material_price_category"
+                list="batch-material-price-category-suggestions"
+                defaultValue={prefill?.grade ?? ""}
+                placeholder="CAT B, B, CAT H"
+                className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+              />
+              <span className="mt-1 block text-[11px] text-zinc-500">
+                Optional batch default. Leave blank for groups that should group by Collection / Finish Type instead.
+              </span>
+            </div>
+          </Field>
+
+          <TextInput
+            name="material_collection"
+            label="Collection / Finish Type"
+            defaultValue={prefill?.collection ?? ""}
+            placeholder="Crepe, New, Melamine, Powder Coat"
           />
-          <span className="mt-1 block text-[11px] text-zinc-500">
-            Optional batch default. Leave blank for groups that should group by Collection / Finish Type instead.
-          </span>
-        </div>
-      </Field>
-
-      <TextInput
-        name="material_collection"
-        label="Collection / Finish Type"
-        defaultValue={prefill?.collection ?? ""}
-        placeholder="Crepe, New, Melamine, Powder Coat"
-      />
+        </>
+      )}
 
       <label className="block md:col-span-2">
         <span className="text-xs font-semibold uppercase text-zinc-500">Rows</span>
@@ -317,6 +360,7 @@ export function MaterialDialogButton({
   material,
   prefill,
   returnTo,
+  subgroups,
   title,
   triggerClassName,
   triggerLabel,
@@ -327,6 +371,7 @@ export function MaterialDialogButton({
   material?: MaterialRecord;
   prefill?: MaterialPrefill;
   returnTo: string;
+  subgroups?: MaterialSubgroupOption[];
   title: string;
   triggerClassName: string;
   triggerLabel: string;
@@ -346,6 +391,7 @@ export function MaterialDialogButton({
           material={material}
           prefill={prefill}
           returnTo={returnTo}
+          subgroups={subgroups}
         />
       </ModalFrame>
     </>
@@ -358,6 +404,7 @@ export function BatchMaterialDialogButton({
   groups,
   prefill,
   returnTo,
+  subgroups,
   triggerClassName,
   triggerLabel,
 }: {
@@ -366,6 +413,7 @@ export function BatchMaterialDialogButton({
   groups: MaterialGroupOption[];
   prefill?: MaterialPrefill;
   returnTo: string;
+  subgroups?: MaterialSubgroupOption[];
   triggerClassName: string;
   triggerLabel: string;
 }) {
@@ -383,6 +431,7 @@ export function BatchMaterialDialogButton({
           groups={groups}
           prefill={prefill}
           returnTo={returnTo}
+          subgroups={subgroups}
         />
       </ModalFrame>
     </>

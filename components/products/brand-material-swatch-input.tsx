@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { ChangeEvent, ClipboardEvent } from "react";
+import type { ChangeEvent, ClipboardEvent, DragEvent } from "react";
+import { ImageCropDialog } from "@/components/products/image-crop-dialog";
 import { uploadBrandMaterialImage } from "@/lib/quotation-image-upload";
 import { createClient } from "@/lib/supabase/client";
 
@@ -66,6 +67,8 @@ export function BrandMaterialSwatchInput({
   const [previewUrl, setPreviewUrl] = useState("");
   const [status, setStatus] = useState<UploadStatus>("idle");
   const [errorMessage, setErrorMessage] = useState("");
+  // A chosen / dropped / pasted image waits here until the crop dialog is answered.
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,20 +106,34 @@ export function BrandMaterialSwatchInput({
     }
   }
 
-  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-
-    await uploadFile(file);
+  // Allowed image types go to the crop dialog first; anything else goes straight to the upload so its own type/size message shows.
+  function offerFile(file: File) {
+    if (extensionByType[file.type]) {
+      setErrorMessage("");
+      setPendingFile(file);
+    } else {
+      void uploadFile(file);
+    }
   }
 
-  async function handlePaste(event: ClipboardEvent<HTMLDivElement>) {
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) offerFile(file);
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLDivElement>) {
     const file = clipboardImageFile(event);
     if (!file) return;
 
     event.preventDefault();
-    await uploadFile(file);
+    offerFile(file);
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    const file = Array.from(event.dataTransfer.files).find((item) => item.type.startsWith("image/"));
+    event.preventDefault();
+    if (file) offerFile(file);
   }
 
   return (
@@ -125,6 +142,8 @@ export function BrandMaterialSwatchInput({
       <div
         tabIndex={0}
         onPaste={handlePaste}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={handleDrop}
         className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-md border border-dashed border-zinc-300 bg-white outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20"
         aria-label="Material swatch paste area"
       >
@@ -154,7 +173,7 @@ export function BrandMaterialSwatchInput({
         </label>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs text-zinc-500">
-            {status === "uploading" ? "Uploading..." : "Click the swatch box, then paste an image."}
+            {status === "uploading" ? "Uploading..." : "Drop, paste or choose an image. You can crop it."}
           </span>
           {value ? (
             <button
@@ -168,6 +187,23 @@ export function BrandMaterialSwatchInput({
         </div>
         {status === "failed" && errorMessage ? <p className="text-xs text-red-700">{errorMessage}</p> : null}
       </div>
+      {pendingFile ? (
+        <ImageCropDialog
+          key={`${pendingFile.name}-${pendingFile.size}-${pendingFile.lastModified}`}
+          file={pendingFile}
+          onCancel={() => setPendingFile(null)}
+          onReplaceFile={(next) => setPendingFile(next)}
+          onUseCrop={(cropped) => {
+            setPendingFile(null);
+            void uploadFile(cropped);
+          }}
+          onUseOriginal={() => {
+            const original = pendingFile;
+            setPendingFile(null);
+            void uploadFile(original);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

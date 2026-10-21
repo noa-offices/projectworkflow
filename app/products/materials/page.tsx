@@ -8,6 +8,7 @@ import {
   BatchMaterialDialogButton,
   MaterialDialogButton,
 } from "@/components/products/material-library-dialogs";
+import { MaterialLibraryOverview, type MaterialLibraryGroup } from "@/components/products/material-library-overview";
 import { requireProductLibraryManager } from "@/lib/auth";
 import {
   materialCollectionLabel,
@@ -15,6 +16,7 @@ import {
   materialPriceCategoryLabel,
   UNCATEGORIZED_MATERIAL_LABEL,
 } from "@/lib/products/material-classification";
+import { readProductPages } from "@/lib/products/supplier-price-repository";
 import { createClient } from "@/lib/supabase/server";
 import {
   createMaterialGroup,
@@ -28,6 +30,14 @@ export const dynamic = "force-dynamic";
 type MaterialsSearchParams = {
   brand?: string | string[];
   category?: string | string[];
+  // New library view: filters (never brand/group, which open the detail view) and the open/edit hints used by View Group / Edit.
+  edit?: string | string[];
+  libBrand?: string | string[];
+  libGroup?: string | string[];
+  libSort?: string | string[];
+  libStatus?: string | string[];
+  libView?: string | string[];
+  open?: string | string[];
   group?: string | string[];
   message?: string | string[];
   q?: string | string[];
@@ -115,6 +125,89 @@ async function signedProductImageUrl(value: string | null, supabase: Awaited<Ret
   }
 
   return data.signedUrl;
+}
+
+type LibraryMaterialRow = {
+  id: string;
+  image_url: string | null;
+  is_active: boolean;
+  material_code: string | null;
+  material_group_id: string;
+  material_name: string;
+  review_status: string | null;
+  sort_order: number;
+};
+
+// Lightweight rows for the new library: counts, up to 5 thumbnails per group (signed in ONE batch call) and a search text.
+async function loadMaterialLibraryGroups(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  brandList: Brand[],
+): Promise<MaterialLibraryGroup[]> {
+  const brandById = new Map(brandList.map((brand) => [brand.id, brand]));
+  const [groupsResult, materialsResult] = await Promise.all([
+    supabase
+      .from("brand_material_groups")
+      .select("id,brand_id,group_name,description,sort_order,is_active,updated_at")
+      .order("brand_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("group_name", { ascending: true })
+      .returns<Array<MaterialGroup & { updated_at: string }>>(),
+    readProductPages((from, to) => supabase
+      .from("brand_materials")
+      .select("id,material_group_id,material_code,material_name,image_url,sort_order,is_active,review_status")
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<LibraryMaterialRow[]>()),
+  ]);
+
+  if (groupsResult.error) console.error("MATERIAL LIBRARY GROUPS ERROR", groupsResult.error.message);
+  if (materialsResult.error) console.error("MATERIAL LIBRARY MATERIALS ERROR", materialsResult.error.message);
+
+  const materialsByGroup = new Map<string, LibraryMaterialRow[]>();
+  for (const material of materialsResult.data ?? []) {
+    materialsByGroup.set(material.material_group_id, [...(materialsByGroup.get(material.material_group_id) ?? []), material]);
+  }
+
+  const groupRows = (groupsResult.data ?? []).map((group) => {
+    const materials = materialsByGroup.get(group.id) ?? [];
+    const active = materials
+      .filter((material) => material.is_active)
+      .sort((left, right) => left.sort_order - right.sort_order || left.material_name.localeCompare(right.material_name));
+    return { group, materials, active, firstFive: active.slice(0, 5) };
+  });
+
+  const storagePath = (value: string) => value.startsWith("product-images:") ? value.slice("product-images:".length) : value;
+  const pathsToSign = Array.from(new Set(groupRows.flatMap((row) => row.firstFive
+    .filter((material) => material.image_url && !isDirectImageUrl(material.image_url))
+    .map((material) => storagePath(material.image_url as string)))));
+  const signedByPath = new Map<string, string>();
+  if (pathsToSign.length) {
+    const { data, error } = await supabase.storage.from("product-images").createSignedUrls(pathsToSign, 60 * 60);
+    if (error) console.error("MATERIAL LIBRARY THUMBNAIL SIGN ERROR", error.message);
+    for (const item of data ?? []) if (item.path && item.signedUrl) signedByPath.set(item.path, item.signedUrl);
+  }
+
+  return groupRows.map(({ group, materials, active, firstFive }) => {
+    const brand = brandById.get(group.brand_id);
+    return {
+      activeCount: active.length,
+      brandId: group.brand_id,
+      brandLabel: [brand?.name ?? "Unknown brand", brand?.code].filter(Boolean).join(" / "),
+      description: group.description ?? "",
+      id: group.id,
+      isActive: group.is_active,
+      name: group.group_name,
+      needsReview: materials.some((material) => material.review_status === "needs_review"),
+      searchText: [group.group_name, group.description, brand?.name, ...materials.flatMap((material) => [material.material_name, material.material_code])]
+        .filter(Boolean).join(" ").toLowerCase(),
+      sortOrder: group.sort_order,
+      thumbs: firstFive.map((material) => ({
+        code: material.material_code ?? material.material_name,
+        url: material.image_url ? (isDirectImageUrl(material.image_url) ? material.image_url : signedByPath.get(storagePath(material.image_url)) ?? null) : null,
+      })),
+      updatedAt: group.updated_at,
+    };
+  });
 }
 
 function StatusBadge({ active }: { active: boolean }) {
@@ -614,9 +707,12 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
   // Auth, role checks and redirects run here, before the Suspense boundary.
   const auth = await requireProductLibraryManager();
   const { user, profile, displayName } = auth;
+  const params = (await searchParams) ?? {};
+  const isLibraryView = !stringParam(params.brand) && !stringParam(params.group);
 
   return (
     <ErpAppShell
+      eyebrow={isLibraryView ? "ProjectWorkflow" : undefined}
       title="Brand Material Library"
       description="Manage reusable finish groups and swatches by brand."
       role={profile?.role ?? null}
@@ -626,7 +722,7 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
       userRole={profile?.role ?? null}
     >
       <Suspense fallback={<ListPageSkeleton />}>
-        <BrandMaterialsContent searchParams={searchParams} />
+        <BrandMaterialsContent searchParams={Promise.resolve(params)} />
       </Suspense>
     </ErpAppShell>
   );
@@ -655,6 +751,34 @@ async function BrandMaterialsContent({ searchParams }: MaterialsPageProps) {
   if (brandsError) console.error("BRAND MATERIALS BRANDS ERROR", brandsError.message);
 
   const brandList = brands ?? [];
+
+  // No brand and no group in the URL: the new library overview. Otherwise the detail view below is unchanged.
+  if (!selectedBrandId && !selectedGroupId) {
+    const libraryGroups = await loadMaterialLibraryGroups(supabase, brandList);
+    return (
+      <div className="px-5 py-6 sm:px-8">
+        {message ? (
+          <p className="mb-5 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">{message}</p>
+        ) : null}
+        <MaterialLibraryOverview
+          addBrandHref="/products/brands?addBrand=1"
+          brands={brandList.filter((brand) => brand.is_active).map((brand) => ({ id: brand.id, name: brand.name }))}
+          createGroupAction={createMaterialGroup}
+          deactivateGroupAction={deactivateMaterialGroup}
+          groups={libraryGroups}
+          initialFilters={{
+            brand: stringParam(params.libBrand),
+            group: stringParam(params.libGroup),
+            q: searchQuery,
+            sort: stringParam(params.libSort) || "updated",
+            status: stringParam(params.libStatus),
+            view: stringParam(params.libView) === "list" ? "list" : "grid",
+          }}
+          updateGroupAction={updateMaterialGroup}
+        />
+      </div>
+    );
+  }
   const activeBrands = brandList.filter((brand) => brand.is_active);
   const selectedBrand =
     brandList.find((brand) => brand.id === selectedBrandId) ??
@@ -792,8 +916,8 @@ async function BrandMaterialsContent({ searchParams }: MaterialsPageProps) {
       <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-3">
-              <Link href="/products" className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800">
-                Back to products
+              <Link href="/products/materials" className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800">
+                Back to Material Library
               </Link>
               <Link
                 href={addBrandHref}
@@ -1027,7 +1151,7 @@ async function BrandMaterialsContent({ searchParams }: MaterialsPageProps) {
                   const groupSummary = summarizeMaterialGroup(groupMaterials);
 
                   return (
-                    <details id={`group-${group.id}`} key={group.id} className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+                    <details id={`group-${group.id}`} key={group.id} open={stringParam(params.open) === "1" && selectedGroupId === group.id} className="rounded-lg border border-zinc-200 bg-white shadow-sm">
                       <summary className="cursor-pointer list-none border-b border-zinc-200 p-5">
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                           <div>
@@ -1073,7 +1197,7 @@ async function BrandMaterialsContent({ searchParams }: MaterialsPageProps) {
                             triggerClassName="inline-flex h-10 items-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                             triggerLabel="+ Batch add materials"
                           />
-                          <details>
+                          <details open={stringParam(params.edit) === "1" && selectedGroupId === group.id}>
                             <summary className="cursor-pointer text-sm font-semibold text-zinc-600 transition hover:text-zinc-950">
                               Edit group
                             </summary>
