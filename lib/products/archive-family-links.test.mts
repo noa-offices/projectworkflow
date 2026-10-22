@@ -13,6 +13,7 @@ const active = { ...inactive, id: "link2", is_active: true };
 const render = (links: ArchiveLinkDisplay[], canRemove = true, templateId = "parent", loadError = false) => renderToStaticMarkup(React.createElement(ArchiveFamilyLinksPanel, {
   templateId, templateName: "Archived desk", links, canRemove, loadError,
   removeAction: async () => { assert.fail("Rendering must never mutate"); }, refresh: () => { assert.fail("Rendering must never refresh"); },
+  deactivateAction: async () => { assert.fail("Rendering must never deactivate"); },
 }));
 
 test("zero, single and multiple links render counts and only inactive removal controls", () => {
@@ -23,7 +24,7 @@ test("zero, single and multiple links render counts and only inactive removal co
   assert.equal((render([inactive, { ...inactive, id: "third" }]).match(/Remove permanently/g) ?? []).length, 2);
   const html = render([inactive, active]);
   assert.match(html, /2 relationships/);
-  assert.match(html, /Active — deactivate in product setup/);
+  assert.match(html, /Deactivate link/);
   assert.equal((html.match(/Remove permanently/g) ?? []).length, 1);
 });
 
@@ -40,6 +41,8 @@ test("actual DB roles only; disabled accounts and failed reads offer no removal"
   for (const role of ["designer", "procurement", "viewer", null]) assert.equal(canRemoveArchiveLinks(role, "active"), false);
   assert.equal(canRemoveArchiveLinks("system_owner", "disabled"), false);
   assert.doesNotMatch(render([inactive], false), /Remove permanently/);
+  assert.doesNotMatch(render([active], false), /Deactivate link/);
+  assert.doesNotMatch(render([active], true, "parent", true), /Deactivate link/);
   assert.match(render([inactive], false), /Your role cannot/);
   assert.doesNotMatch(render([inactive], true, "parent", true), /Remove permanently/);
   assert.match(render([], true, "parent", true), /Could not load all relationships/);
@@ -69,6 +72,9 @@ test("UI wiring uses Phase A only, explicit confirmation and no automatic templa
   const panel = readFileSync(new URL("../../components/products/archive-family-links-panel.tsx", import.meta.url), "utf8");
   const archive = readFileSync(new URL("../../components/products/product-management-archive-results.tsx", import.meta.url), "utf8");
   assert.match(panel, /window\.confirm/);
+  assert.equal((panel.match(/window\.confirm/g) ?? []).length, 2);
+  assert.match(panel, /Future product configurations, required products, quantities and pricing may change/);
+  assert.match(archive, /deactivateAction=\{deactivateArchivedProductFamilyLink\}/);
   assert.doesNotMatch(panel, /permanentlyDeleteProductTemplate|supabase|\.delete\(/);
   assert.match(archive, /removeAction=\{removeArchivedProductFamilyLink\}/);
   assert.match(archive, /refresh=\{\(\) => router\.refresh\(\)\}/);

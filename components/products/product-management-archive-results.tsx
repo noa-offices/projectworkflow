@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { removeArchivedProductFamilyLink } from "@/app/products/templates/archived-link-actions";
+import { deactivateArchivedProductFamilyLink, removeArchivedProductFamilyLink } from "@/app/products/templates/archived-link-actions";
 import { ArchiveFamilyLinksPanel } from "./archive-family-links-panel";
 import { archiveLinksForTemplate, type ArchiveLinkDisplay } from "@/lib/products/archive-family-links";
 import {
@@ -242,7 +242,8 @@ export function ProductManagementArchiveResults({
               <button type="button" className="mb-2 text-xs underline" onClick={() => setOpenLinksId(null)}>Close links</button>
               <ArchiveFamilyLinksPanel templateId={template.id} templateName={template.name}
                 links={archiveLinksForTemplate(template.id, familyLinks)} canRemove={canRemoveLinks}
-                loadError={linksLoadError} removeAction={removeArchivedProductFamilyLink} refresh={() => router.refresh()} />
+                loadError={linksLoadError} removeAction={removeArchivedProductFamilyLink}
+                deactivateAction={deactivateArchivedProductFamilyLink} refresh={() => router.refresh()} />
             </div> : null}
           </div>
         ))}
