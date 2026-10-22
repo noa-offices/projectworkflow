@@ -26,6 +26,7 @@ import {
   ProductManagementArchiveResults,
   type ArchivedTemplateResult,
 } from "@/components/products/product-management-archive-results";
+import { canRemoveArchiveLinks } from "@/lib/products/archive-family-links";
 import {
   TemplateDetailImageGallery,
 } from "@/components/products/template-image-galleries";
@@ -1802,6 +1803,7 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
   const brandList = brands ?? [];
   const categoryList = categories ?? [];
   const templateList = templates ?? [];
+  const archiveEndpointById = new Map(templateList.map((template) => [template.id, template]));
   const templateLifecycleById = new Map<string, "active" | "archived" | "discontinued">(
     templateList.map((template) => [template.id, normalizeTemplateLifecycleStatus(template)]),
   );
@@ -1837,7 +1839,7 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
     code: template.template_code,
     id: template.id,
     lifecycleStatus,
-    linked: linkedTemplateIds.has(template.id),
+    linked: Boolean(linkedFamiliesError) || linkedTemplateIds.has(template.id),
     name: template.template_name,
     usedInQuotations: usedTemplateIds.has(template.id),
   });
@@ -3658,6 +3660,19 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
                 mode="archive"
                 returnTo={managementListHref}
                 templates={archivedTemplateResults}
+                canRemoveLinks={canRemoveArchiveLinks(profile?.role, profile?.account_status)}
+                linksLoadError={Boolean(linkedFamiliesError || templatesError || brandsError)}
+                familyLinks={(linkedFamilies ?? []).map((link) => {
+                  const parent = archiveEndpointById.get(link.parent_template_id);
+                  const linked = archiveEndpointById.get(link.linked_template_id);
+                  return { id: link.id, parent_template_id: link.parent_template_id,
+                    linked_template_id: link.linked_template_id, is_active: link.is_active,
+                    parentName: parent?.template_name ?? "Unavailable parent template",
+                    linkedName: linked?.template_name ?? "Unavailable linked template",
+                    parentBrand: brandMap.get(parent?.brand_id ?? "") ?? "Unknown brand",
+                    linkedBrand: brandMap.get(linked?.brand_id ?? "") ?? "Unknown brand",
+                  };
+                })}
               />
               <div className="border-t border-zinc-200">
                 <details>
