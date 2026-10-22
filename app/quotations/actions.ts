@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { prepareSharedSnapshotImages } from "@/lib/quotation-shared-image";
 import { redirect } from "next/navigation";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
@@ -3548,6 +3549,7 @@ async function copyQuotation(
   });
 
   if (itemPayloads.length) {
+    await prepareSharedSnapshotImages(supabase, itemPayloads);
     const { error: itemInsertError } = await supabase
       .from("quotation_items")
       .insert(itemPayloads);
@@ -5775,6 +5777,7 @@ export async function createQuotationItem(formData: FormData) {
   }
 
   const supabase = await createSupabaseClient();
+  await prepareSharedSnapshotImages(supabase, [payload]);
   const { data: createdItem, error } = await supabase
     .from("quotation_items")
     .insert(payload)
@@ -7088,6 +7091,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     created_by: user.id,
   };
 
+  await prepareSharedSnapshotImages(supabase, [payload]);
   const { data: createdItem, error } = await supabase
     .from("quotation_items")
     .insert(payload)
@@ -7164,6 +7168,7 @@ export async function updateQuotationItem(formData: FormData) {
     net_total: payload.net_total,
     unit_price: payload.unit_price,
   };
+  await prepareSharedSnapshotImages(supabase, [payload]);
   const { error } = await supabase.from("quotation_items").update(payload).eq("id", id);
 
   if (error) {
@@ -7423,6 +7428,7 @@ export async function updateQuotationItemInline(formData: FormData) {
     unit_price: linePricing.unitPrice,
   };
 
+  await prepareSharedSnapshotImages(supabase, [payload]);
   const { error } = await supabase.from("quotation_items").update(payload).eq("id", id);
 
   if (error) {
@@ -7721,6 +7727,7 @@ export async function copyQuotationItem(formData: FormData) {
   void _manualSerial;
   void _sourceSortOrder;
 
+  await prepareSharedSnapshotImages(supabase, [copyPayload]);
   const { data: createdItem, error: insertError } = await supabase
     .from("quotation_items")
     .insert({
@@ -7903,6 +7910,7 @@ export async function duplicateQuotationItemBelow(formData: FormData) {
   void _manualSerial;
   void _sortOrder;
 
+  await prepareSharedSnapshotImages(supabase, [copySource]);
   const sortOrder = sourceIndex >= 0
     ? (sourceIndex + 2) * 10
     : await nextSortOrder(quotationId, sourceItem.section_id);
@@ -8046,6 +8054,7 @@ export async function pasteCopiedQuotationItem(formData: FormData) {
 
   const payload = sanitizeCopiedRowSnapshot(parsedSnapshot);
   const supabase = await createSupabaseClient();
+  await prepareSharedSnapshotImages(supabase, [payload]);
   const { data: createdItem, error } = await supabase
     .from("quotation_items")
     .insert({
@@ -8182,6 +8191,7 @@ export async function autosaveQuotationItemInline(formData: FormData) {
     unit_price: linePricing.unitPrice,
   };
 
+  await prepareSharedSnapshotImages(supabase, [payload]);
   const { error } = await supabase
     .from("quotation_items")
     .update(payload)
