@@ -35,6 +35,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
   suggestedTitle: string; advancedHref: string; approver: boolean;
 }) {
   const router = useRouter();
+  const skipReview = useRef(false);
   const [step, setStep] = useState<Step>(1), [busy, setBusy] = useState(false), [message, setMessage] = useState("");
   const [file, setFile] = useState<File | null>(null), [rows, setRows] = useState<RawSupplierRow[]>([]);
   const [saved, setSaved] = useState<WizardProfileOption | null>(null), [useSaved, setUseSaved] = useState(false);
@@ -100,7 +101,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
     if (!conflict || !window.confirm("Archive the earlier import of this file and import it again with the new settings?\nThe earlier import stays in history and its reviews are kept. If it is the current price list, it may stop being current until the new import finishes.")) return;
     let archived = false;
     await run(async () => { const result = await archiveBlockingSupplierSource(brandId, conflict.sourceId, conflict.hash); archived = true; setConflict(null); setMessage(result.wasCurrent ? `${result.title} was archived; it was the current price list until now.` : `${result.title} was archived.`); });
-    if (archived) void startReview();
+    if (archived) void startReview(skipReview.current);
   }
   async function cancelImport() {
     if (!unfinished || !window.confirm("Cancel this unfinished import and remove its partial data? A completed import is never removed.")) return;
@@ -127,8 +128,10 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
     });
   }
 
-  async function startReview() {
+  async function startReview(withoutReview = false) {
     if (!file || !mapping || !profile) return;
+    if (withoutReview && (replace || !noFamilies || !definitionReady)) return;
+    skipReview.current = withoutReview;
     await run(async () => {
       setMessage("Reading the price list. Codes stay exactly as written.");
       const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -159,10 +162,14 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
         setReplaced({ ...verdict, existing: result.existing }); setFile(null); setRows([]); setStep(1); router.refresh(); return;
       }
       const before = new Set(definition?.familyIds ?? []);
-      if (coverageId && (definitionId === "new" || selected.length !== before.size || selected.some((id) => !before.has(id)))) await confirmSupplierCoverage(coverageId, selected);
+      if (!withoutReview && coverageId && (definitionId === "new" || selected.length !== before.size || selected.some((id) => !before.has(id)))) await confirmSupplierCoverage(coverageId, selected);
       // Stage 1 is over only when the database says imported: describe the stored source and the resolver's verdict, then stage 2 (review) separately.
       const verdict = await describeSupplierImport(brandId, result.id);
       setReplaced({ ...verdict, existing: result.existing }); setImportedSourceId(result.id); setFile(null); setRows([]); setStep(1); router.refresh();
+      if (withoutReview) {
+        if (verdict.status !== "not_imported") router.push(`/products/price-updates/supplier-sources?${new URLSearchParams({ brand: brandId, tab: "current", source: result.id, view: "summary" })}`);
+        return;
+      }
       if (verdict.status !== "not_imported") await prepareReview(result.id);
     });
   }
@@ -188,6 +195,9 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
   };
   const mappingReady = Boolean(mapping?.fullCode && mapping.priceColumns.length && !profileError);
   const familiesReady = selected.length > 0 && (definitionId !== "new" || newName.trim() !== "") && definitionId !== "";
+  const definitionReady = definitionId === "new" ? Boolean(newName.trim()) : Boolean(definition);
+  const noFamilies = selected.length === 0 || families.length === 0;
+  const conflictNotice = conflict ? <div role="alert" className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm"><p className="font-semibold text-amber-950">This exact file was already imported with different settings.</p><p className="text-xs text-amber-900">You can import it again with the settings you chose. The earlier import is archived, not deleted.</p><button type="button" className={button} disabled={busy} onClick={() => void importWithNewSettings()}>Import with New Settings</button></div> : null;
 
   return <section className={`${card} space-y-4 p-4`} aria-label="Import new price list">
     {replaced ? <SupplierImportResult verdict={replaced} existing={replaced.existing} review={review} brandId={brandId} sourceId={importedSourceId} replaceMode={Boolean(replace)} busy={busy} onRetryReview={() => importedSourceId && void prepareReview(importedSourceId)} /> : null}
@@ -246,7 +256,12 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
         <button type="button" className={button} onClick={() => setSelected(definition.familyIds)}>Use previous Families</button></div> : null}
       <fieldset className="space-y-1"><legend className="text-sm font-medium text-zinc-800">Families covered by this price list</legend>
         <ul className="grid gap-1 sm:grid-cols-2">{families.map((family) => <li key={family.id}><label className="flex items-center gap-2 rounded border border-zinc-100 px-2 py-1 text-sm"><input type="checkbox" className="accent-emerald-900" checked={selected.includes(family.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, family.id] : current.filter((id) => id !== family.id))} />{family.name}</label></li>)}</ul></fieldset>
-      <div className="flex gap-2"><button type="button" className={button} onClick={() => setStep(3)}>Back</button><button type="button" className={primary} disabled={!familiesReady} onClick={() => setStep(5)}>Next: review</button></div></div> : null}
+      {conflictNotice}
+      <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={busy} onClick={() => setStep(3)}>Back</button><button type="button" className={primary} disabled={busy || !familiesReady} onClick={() => setStep(5)}>Next: review</button>
+        {noFamilies ? <button type="button" className={button} disabled={busy || !definitionReady || !profile || !file} onClick={() => void startReview(true)}>Finish import without review</button> : null}</div>
+      {noFamilies ? <p className="text-xs text-zinc-500">No products yet. You can add products later. Smart Setup will use this price list.</p> : null}
+      {progress && (busy || unfinished) ? <p role="status" className="text-xs text-zinc-700">{phase}: {progress.done} / {progress.total} parts</p> : null}
+    </div> : null}
 
     {step === 5 && mapping ? <div className="space-y-3"><dl className="grid gap-3 text-sm sm:grid-cols-2">
       {([["Brand", brandName], ["Price list", title], ["Effective from", effective || "Not set"], ["Currency", known && saved ? saved.config.currency : mapping.currency], ["Price basis", (known && saved ? saved.config.basis : mapping.basis) === "net" ? "Net" : "List"], ["Families", String(selected.length)], ["Rows detected", rows.length.toLocaleString("en-US")]] as const).map(([label, value]) =>
@@ -260,7 +275,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
           <p><span className="text-xs text-zinc-500">Replacement: </span>{title} · {file.name} · effective {effective || "—"} · {proposedCurrency} · {proposedBasis} price</p>
           <p className={preview.becomesCurrent ? "font-semibold text-emerald-900" : "font-semibold text-amber-900"}>{preview.headline}</p>{preview.warnings.map((warning) => <p key={warning} className="text-amber-900">{warning}</p>)}
           <p className="text-xs text-zinc-500">The earlier price list stays in History. This replacement changes no prices.</p></div>; })() : null}
-      {conflict ? <div role="alert" className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm"><p className="font-semibold text-amber-950">This exact file was already imported with different settings.</p><p className="text-xs text-amber-900">You can import it again with the settings you chose. The earlier import is archived, not deleted.</p><button type="button" className={button} disabled={busy} onClick={() => void importWithNewSettings()}>Import with New Settings</button></div> : null}
+      {conflictNotice}
       <div className="flex gap-2"><button type="button" className={button} disabled={busy} onClick={() => setStep(replace ? 3 : 4)}>Back</button><button type="button" className={primary} disabled={busy || !profile || (Boolean(replace) && !destinationConfirmed)} onClick={() => void startReview()}>{busy ? "Working…" : unfinished ? (phase === "Finalizing" ? "Resume Finalization" : "Resume Import") : replace ? "Confirm Replacement" : "Start review"}</button>{unfinished && !busy ? <button type="button" className={button} onClick={() => void cancelImport()}>Cancel Import</button> : null}</div>{progress && (busy || unfinished) ? <p role="status" className="text-xs text-zinc-700">{phase}: {progress.done} / {progress.total} parts{unfinished && !busy ? " — the import is not finished. Resume it or cancel it." : ""}</p> : null}</div> : null}
 
     <p className="text-xs text-zinc-500">Technical import profiles, vocabulary and coverage tools are under <Link href={advancedHref} className="underline">Advanced import settings</Link>.</p>

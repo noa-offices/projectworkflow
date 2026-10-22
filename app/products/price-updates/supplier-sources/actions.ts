@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { compactAfterSupplierImport } from "@/lib/products/supplier-post-import-compaction";
 import { supplierRefreshReviewAfterMapping } from "@/lib/products/supplier-price-repository";
 import { requireBrandPriceReviewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -75,8 +76,11 @@ export async function finalizeSupplierSource(sourceId: string, maxCells?: number
   const { data, error } = await client.rpc("supplier_finalize_source_step", size ? { p_source_id: sourceId, p_max_cells: size } : { p_source_id: sourceId });
   if (error) throw Error(error.message);
   const result = data as { id: string; done: boolean; status?: string; remaining_codes: number; identity_count?: number };
+  const compactionWarning = await compactAfterSupplierImport(result, sourceId, async () =>
+    client.rpc("supplier_compact_imported_source_step", { p_source_id: sourceId }));
+  if (compactionWarning) console.warn("SUPPLIER IMPORT: raw cleanup incomplete; import remains successful.");
   if (result.done) revalidatePath(workspacePath);
-  return result;
+  return { ...result, compactionWarning };
 }
 /** Bounded compaction of staging payloads before the last finalize step. Reports { unavailable } when the database function is not deployed yet. */
 export async function compactSupplierSourceChunks(sourceId: string) {
