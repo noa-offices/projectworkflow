@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { collectTemplatePictures, removeTemplatePictures } from "@/lib/products/template-picture-cleanup.server";
+import { pictureCleanupMessage, type PictureCleanup } from "@/lib/products/template-picture-cleanup";
 import { redirect } from "next/navigation";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import { requireBrandPriceReviewer, requireProductLibraryManager } from "@/lib/auth";
@@ -1943,7 +1945,7 @@ export async function restoreProductTemplate(formData: FormData) {
 }
 
 type PermanentDeleteTemplateResult =
-  | { status: "deleted"; id: string }
+  | { status: "deleted"; id: string; pictures: PictureCleanup }
   | { status: "blocked_linked"; id: string }
   | { status: "blocked_active"; id: string }
   | { status: "not_found"; id: string }
@@ -1961,9 +1963,9 @@ async function permanentlyDeleteProductTemplateById(
 ): Promise<PermanentDeleteTemplateResult> {
   const { data: template, error: templateError } = await supabase
     .from("product_templates")
-    .select("id,is_active,lifecycle_status")
+    .select("*")
     .eq("id", id)
-    .maybeSingle<{ id: string; is_active: boolean; lifecycle_status: ProductTemplateLifecycleStatus }>();
+    .maybeSingle<{ id: string; is_active: boolean; lifecycle_status: ProductTemplateLifecycleStatus; [key: string]: unknown }>();
   const { count: linkedFamilyCount, error: linkedFamilyError } = await supabase
     .from("product_template_linked_families")
     .select("id", { count: "exact", head: true })
@@ -1994,6 +1996,7 @@ async function permanentlyDeleteProductTemplateById(
     return { id, status: "blocked_linked" };
   }
 
+  const picturePaths = await collectTemplatePictures(supabase, template.id, template);
   // Belt-and-suspenders ahead of the price-history FK's own ON DELETE SET NULL behavior: detach the
   // now-dangling source template reference first. quotation_item_price_history rows are never deleted -
   // only this column is cleared. If this fails, abort before touching product_templates.
@@ -2007,14 +2010,22 @@ async function permanentlyDeleteProductTemplateById(
     return { id, message: "Product template could not be permanently deleted.", status: "failed" };
   }
 
-  const { error } = await supabase.from("product_templates").delete().eq("id", id);
+  const { data: deleted, error } = await supabase.from("product_templates").delete().eq("id", id).select("id");
 
-  if (error) {
-    console.error("PRODUCT TEMPLATE PERMANENT DELETE ERROR", error.message);
+  if (error || deleted?.length !== 1 || deleted[0].id !== template.id) {
+    console.error("PRODUCT TEMPLATE PERMANENT DELETE ERROR", error?.message ?? "Deletion was not confirmed");
+    if (error?.code === "23503") {
+      const constraint = error.message.match(/constraint "([^"]+)"/i)?.[1] ?? "";
+      const kind = constraint.includes("supplier_template_review_units") ? "supplier review units"
+        : constraint.includes("supplier_source_definition") ? "supplier source definition" : null;
+      return { id, status: "failed", message: "This product is linked to supplier price list data and cannot be deleted. Remove those links first."
+        + (kind ? ` Linked data: ${kind}.` : "") };
+    }
     return { id, message: "Product template could not be permanently deleted.", status: "failed" };
   }
 
-  return { id, status: "deleted" };
+  const pictures = await removeTemplatePictures(supabase, picturePaths);
+  return { id, status: "deleted", pictures };
 }
 
 export async function permanentlyDeleteProductTemplate(formData: FormData) {
@@ -2049,7 +2060,7 @@ export async function permanentlyDeleteProductTemplate(formData: FormData) {
   }
 
   revalidatePath("/products/templates");
-  redirectWithMessageToPath(redirectPath, "Product template permanently deleted.");
+  redirectWithMessageToPath(redirectPath, `Product template permanently deleted.${result.status === "deleted" ? pictureCleanupMessage(result.pictures) : ""}`);
 }
 
 export async function bulkArchiveProductTemplates(formData: FormData) {
@@ -2116,6 +2127,7 @@ export async function bulkPermanentlyDeleteProductTemplates(formData: FormData) 
   let blockedLinkedCount = 0;
   let blockedActiveCount = 0;
   let failedCount = 0;
+  const pictures = { removed: 0, kept: 0, warning: false, guardFailed: false };
 
   // Every id is revalidated here regardless of what the client's selection preview showed -
   // eligibility can change between preview and submit (e.g. a link added concurrently), so the
@@ -2125,6 +2137,10 @@ export async function bulkPermanentlyDeleteProductTemplates(formData: FormData) 
 
     if (result.status === "deleted") {
       deletedCount += 1;
+      pictures.removed += result.pictures.removed;
+      pictures.kept += result.pictures.kept;
+      pictures.warning ||= result.pictures.warning;
+      pictures.guardFailed ||= Boolean(result.pictures.guardFailed);
     } else if (result.status === "blocked_linked") {
       blockedLinkedCount += 1;
     } else if (result.status === "blocked_active") {
@@ -2137,7 +2153,7 @@ export async function bulkPermanentlyDeleteProductTemplates(formData: FormData) 
   revalidatePath("/products/templates");
   redirectWithMessageToPath(
     redirectPath,
-    bulkDeleteResultMessage({ blockedActiveCount, blockedLinkedCount, deletedCount, failedCount }),
+    bulkDeleteResultMessage({ blockedActiveCount, blockedLinkedCount, deletedCount, failedCount }) + (deletedCount ? pictureCleanupMessage(pictures) : ""),
   );
 }
 
