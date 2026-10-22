@@ -18,7 +18,7 @@ export type SupplierUploadPhase = "Uploading" | "Finalizing" | "Complete";
 export type SupplierUploadDeps = {
   storeFile: (path: string) => Promise<void>; attachFile: (sourceId: string, path: string) => Promise<void>;
   status: (sourceId: string) => Promise<SupplierUploadProgress>; uploadChunk: (sourceId: string, index: number, rows: RawSupplierRow[]) => Promise<unknown>;
-  finalize: (sourceId: string, maxCells?: number) => Promise<{ done: boolean; remaining_codes: number; status?: string }>;
+  finalize: (sourceId: string, maxCells?: number) => Promise<{ done: boolean; remaining_codes: number; status?: string; compactionWarning?: string }>;
   /** Optional bounded compaction of staging payloads before the last finalize step; { unavailable } when the database function is not deployed. */
   compact?: (sourceId: string) => Promise<{ remaining: number; unavailable?: boolean }>;
   onPhase: (phase: SupplierUploadPhase, progress: { done: number; total: number } | null) => void; onMessage: (text: string) => void;
@@ -54,6 +54,7 @@ export async function finalizeSupplierImport(deps: SupplierUploadDeps, sourceId:
       const progress = await deps.finalize(sourceId, budget); step++;
       if (progress.done) {
         if (progress.status !== undefined && progress.status !== "imported") throw Error("Finalization finished but the database did not confirm the imported status. Resume Finalization.");
+        if (progress.compactionWarning) deps.onMessage(progress.compactionWarning);
         deps.onPhase("Complete", null); return;
       }
       const elapsed = now() - started; timeouts = 0;

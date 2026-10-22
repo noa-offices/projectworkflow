@@ -442,6 +442,24 @@ test("price-list state rule: decided only from the batch status and its unit tot
   assert.equal(supplierPriceListState({ hasSource: true, hasCoverage: true, batchStatus: "completed", unresolved: 0 }), "completed");
 });
 
+test("an imported list without coverage stays visible without creating a review and supports later coverage", async () => {
+  await withDb(async (f) => {
+    const definitions = (await supplierCoverageOverview(f.client, brand)).definitions;
+    const card = (await supplierPriceListCards(f.client, brand, definitions)).find((item) => item.sourceId === emptySource);
+    assert.ok(card);
+    assert.equal(card.state, "no_coverage");
+    assert.equal(card.families, 0);
+    assert.equal(card.batchId, null);
+    assert.equal((await f.db.query("select id from public.supplier_price_batches where source_id=$1", [emptySource])).rows.length, 0);
+    const lookup = await supplierProductSourceLookup(f.client, { brandId: brand, definitionId: emptyDefinition, code: "F1" });
+    assert.equal(lookup.source?.id, emptySource);
+    await assert.rejects(supplierCreateReviewBatch(f.client, emptySource, "complete", []), /coverage|Famil/i);
+    await supplierAssignFamilyToSource(f.client, emptyDefinition, lead);
+    const batch = await supplierCreateReviewBatch(f.client, emptySource, "complete", []);
+    assert.ok(batch.id);
+  });
+});
+
 test("two sources of one Brand each resolve their own latest review; one card per current price list", async () => {
   await withDb(async (f) => {
     const furnitureBatch = await supplierCreateReviewBatch(f.client, furnitureSource, "complete", []);

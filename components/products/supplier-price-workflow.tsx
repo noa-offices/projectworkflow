@@ -60,6 +60,7 @@ export function SupplierImportSummary({ brandName, source, families, warnings, c
 /** Technical import facts, kept one click away from the summary. */
 export function SupplierImportDetails({ source, workingFileUrl }: { source: SourceVersion; workingFileUrl?: string }) {
   return <details className={`${card} p-4 text-xs`} open><summary className="cursor-pointer text-sm font-semibold text-zinc-950">Import details</summary>
+    {source.rows_compacted_at ? <p className="mt-2 text-zinc-500">Raw rows were removed after import to save space.</p> : source.status === "imported" ? <p role="status" className="mt-2 text-zinc-500">Import succeeded. Raw row cleanup is not complete; remaining raw data is retained.</p> : null}
     <dl className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">{[["File", source.filename], ["Raw rows", count(source.stored_rows)], ["Price cells", count(source.stored_cells)], ["Commercial identities", count(source.identity_count)], ...(source.effective_from ? [["Effective date", source.effective_from]] : []), ...(source.received_at ? [["Received date", source.received_at]] : [])].map(([label, value]) =>
       <div key={label}><dt className="text-zinc-500">{label}</dt><dd className="break-words font-semibold">{value}</dd></div>)}</dl>
     {workingFileUrl ? <a className="mt-2 inline-block font-medium underline" href={workingFileUrl} target="_blank" rel="noopener noreferrer">Download retained working source</a> : null}

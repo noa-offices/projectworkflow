@@ -1096,7 +1096,8 @@ export async function supplierPriceListCards(client: SupabaseClient, brandId: st
     const hasCoverage = Boolean(definition && definition.families.length);
     const priceListState = resolveSupplierPriceListLifecycleState(version, versions, batches, businessDate);
     if (priceListState === "previous" || priceListState === "archived") continue;
-    if (priceListState === "update_in_progress" && batch?.status !== "review" && batch?.status !== "matching") continue;
+    // An imported list with no products/review must stay discoverable for later coverage.
+    if (priceListState === "update_in_progress" && batch?.status !== "review" && batch?.status !== "matching" && (!definition?.isActive || hasCoverage || batch !== null)) continue;
     cards.push({ priceListState, effectiveFrom: version.effective_from, createdAt: version.created_at, sourceId: version.id, definitionId: version.definition_id ?? null, filename: version.filename, basis: version.basis, sourceName: definition?.name ?? null, title: version.title, currency: version.currency, profileId: definition?.profileId ?? null,
       families: definition ? definition.families.length : null, sourceRows: version.stored_rows, items: version.identity_count, compacted: Boolean(version.rows_compacted_at),
       batchId: batch?.id ?? null, batchStatus: batch?.status ?? null, scope: batch?.scope ?? null,
