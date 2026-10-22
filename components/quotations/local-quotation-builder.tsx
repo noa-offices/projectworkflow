@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { prepareQuotationSharedImages } from "@/app/quotations/shared-image-actions";
 import { useRouter } from "next/navigation";
 import { Fragment, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
@@ -2749,6 +2750,16 @@ export function LocalQuotationBuilder({
     let sent = false;
     let prepared = false;
     try {
+      let imagePaths: Record<string, string> = {};
+      const sharedSnapshot = (value: LocalQuotationWorkspace): LocalQuotationWorkspace => ({ ...value, items: value.items.map((item) => ({
+        ...item,
+        specified_image_url_snapshot: imagePaths[item.specified_image_url_snapshot ?? ""] ?? item.specified_image_url_snapshot,
+        proposed_image_url_snapshot: imagePaths[item.proposed_image_url_snapshot ?? ""] ?? item.proposed_image_url_snapshot,
+      })) });
+      // Freeze these paths in the persisted attempt; never re-copy an uncertain retry.
+      const prepareImages = async () => {
+        imagePaths = await prepareQuotationSharedImages(workspace.items.flatMap((item) => [item.specified_image_url_snapshot, item.proposed_image_url_snapshot])).catch(() => ({}));
+      };
       let attempt: PublicationAttempt;
       let pending: LocalQuotationWorkspace;
       if (replace) {
@@ -2758,7 +2769,8 @@ export function LocalQuotationBuilder({
           setSaveMessage(latest.error);
           return;
         }
-        ({ attempt, pending } = beginReplacementPublication(workspace, latest.version));
+        await prepareImages();
+        ({ attempt, pending } = beginReplacementPublication(sharedSnapshot(workspace), latest.version));
       } else {
         // A retry of a pending attempt must stay byte-identical, so only a fresh save is preflighted.
         // The probe is a hint, not a lock: if it fails the atomic RPC still decides.
@@ -2771,14 +2783,15 @@ export function LocalQuotationBuilder({
             return;
           }
         }
-        attempt = beginPublication(workspace);
-        pending = withPublication(workspace, { ...publicationMetadata(workspace), pending: attempt });
+        if (!state.pending) await prepareImages();
+        attempt = beginPublication(sharedSnapshot(workspace));
+        pending = withPublication(sharedSnapshot(workspace), { ...publicationMetadata(workspace), pending: attempt });
       }
       prepared = true;
       setSaveState("saving");
       setSaveMessage("");
       setLocalDraftSaved(false);
-      setWorkspace((current) => withPublication(current, {
+      setWorkspace((current) => withPublication(sharedSnapshot(current), {
         ...publicationMetadata(current),
         ...(replace ? { baseVersion: attempt.baseVersion } : {}),
         pending: attempt,
