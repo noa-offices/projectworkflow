@@ -1,3 +1,4 @@
+import { isWarehouseStaffRequest } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { fetchNoaAttentionCapability } from "@/lib/noa/noa-attention-capability.server";
 
@@ -13,6 +14,9 @@ import { fetchNoaAttentionCapability } from "@/lib/noa/noa-attention-capability.
 // to a safe `{ ok: false }` result, never a thrown/redirecting error, so this route never needs
 // its own separate auth check.
 export async function GET() {
+  if (await isWarehouseStaffRequest()) {
+    return Response.json({ error: "Forbidden." }, { status: 403 });
+  }
   try {
     const result = await fetchNoaAttentionCapability("", { pathname: "", section: "other" });
     if (!result.ok) {

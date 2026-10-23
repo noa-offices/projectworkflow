@@ -1,6 +1,6 @@
 "use server";
 
-import { requireActiveUser } from "@/lib/auth";
+import { requireInventoryUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { NotificationRow } from "@/lib/notifications/actions";
@@ -12,7 +12,7 @@ export type EnrichedNotification = NotificationRow & {
 export async function getRecentNotificationsWithSenders(
   limit = 10,
 ): Promise<{ ok: true; data: EnrichedNotification[] } | { ok: false; error: string }> {
-  const { user } = await requireActiveUser();
+  const { user } = await requireInventoryUser();
 
   // Session client for notifications — RLS SELECT policy allows reading own rows.
   const supabase = await createClient();

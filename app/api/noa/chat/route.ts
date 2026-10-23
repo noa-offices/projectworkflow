@@ -1,3 +1,4 @@
+import { isWarehouseStaffRequest } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { logServerActionError } from "@/lib/action-errors";
 import { isNoaConversationReference } from "@/lib/noa/noa-conversation-reference";
@@ -40,6 +41,9 @@ function isValidRecentMessage(value: unknown): value is { role: "user" | "assist
 }
 
 export async function POST(request: Request) {
+  if (await isWarehouseStaffRequest()) {
+    return Response.json({ error: "Forbidden." }, { status: 403 });
+  }
   // Non-redirecting on purpose, matching the same pattern app/layout.tsx uses for NOA's own
   // visibility: a route handler consumed via fetch() by the client must never let
   // requireActiveUser()'s redirect() escape as an actual HTTP redirect (the JSON caller can't

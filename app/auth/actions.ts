@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { redirectWarehouseStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { AccountStatus, AppRole } from "@/lib/supabase/types";
 
@@ -37,6 +38,7 @@ function validEmail(value: string) {
 }
 
 export async function login(formData: FormData) {
+  await redirectWarehouseStaff();
   const email = formValue(formData, "email");
   const password = formValue(formData, "password");
 
@@ -91,6 +93,7 @@ export async function login(formData: FormData) {
 }
 
 export async function signup(formData: FormData) {
+  await redirectWarehouseStaff();
   const fullName = formValue(formData, "full_name");
   const email = formValue(formData, "email");
   const password = formValue(formData, "password");
@@ -131,6 +134,7 @@ export async function signOut() {
 }
 
 export async function requestPasswordReset(formData: FormData) {
+  await redirectWarehouseStaff();
   const email = formValue(formData, "email");
 
   if (!validEmail(email)) {
@@ -188,6 +192,7 @@ export async function requestPasswordReset(formData: FormData) {
 }
 
 export async function updatePassword(formData: FormData) {
+  await redirectWarehouseStaff();
   const password = formValue(formData, "password");
   const confirmPassword = formValue(formData, "confirmPassword");
 

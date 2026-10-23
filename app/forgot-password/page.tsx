@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirectWarehouseStaff } from "@/lib/auth";
 import { requestPasswordReset } from "@/app/auth/actions";
 
 type ForgotPasswordPageProps = {
@@ -16,6 +17,7 @@ const resultMessages = {
 } as const;
 
 export default async function ForgotPasswordPage({ searchParams }: ForgotPasswordPageProps) {
+  await redirectWarehouseStaff();
   const params = (await searchParams) ?? {};
   const result = params.result;
   const message = result && result in resultMessages

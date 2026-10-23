@@ -94,6 +94,7 @@ function roleLabel(role: string | null): string {
     case "sales_coordinator": return "Sales Coordinator";
     case "designer": return "Designer";
     case "viewer": return "Viewer";
+    case "warehouse_staff": return "Warehouse Staff";
     default: return "Unknown";
   }
 }

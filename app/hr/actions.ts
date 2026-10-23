@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
-import { requireSettingsManager } from "@/lib/auth";
+import { redirectWarehouseStaff, requireSettingsManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -78,6 +78,7 @@ function getAdminClient() {
 // ─── Actions ──────────────────────────────────────────────────────────────────
 
 export async function getHrDetails(profileId: string): Promise<HrRow | null> {
+  await redirectWarehouseStaff();
   const adminClient = getAdminClient();
 
   const { data, error } = await adminClient

@@ -1,6 +1,10 @@
+import { isWarehouseStaffRequest } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
 export async function POST() {
+  if (await isWarehouseStaffRequest()) {
+    return Response.json({ error: "Forbidden." }, { status: 403 });
+  }
   const supabase = await createClient();
   const {
     data: { user },

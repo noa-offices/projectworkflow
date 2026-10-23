@@ -8,6 +8,7 @@ export const USER_ROLE_OPTIONS = [
   "sales_coordinator",
   "designer",
   "viewer",
+  "warehouse_staff",
 ] satisfies AppRole[];
 
 export const USER_STATUS_OPTIONS = [
@@ -32,6 +33,8 @@ export function userRoleLabel(role: AppRole | null | undefined) {
       return "Designer";
     case "viewer":
       return "Viewer";
+    case "warehouse_staff":
+      return "Warehouse Staff";
     default:
       return "Unknown role";
   }

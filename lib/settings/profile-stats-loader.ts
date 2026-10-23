@@ -634,11 +634,13 @@ function primaryContributionForRole(role: string | null) {
     case "system_owner": return "System administration";
     case "admin_manager": return "Administration";
     case "viewer": return "Read-only";
+    case "warehouse_staff": return "Inventory only";
     default: return "Operational contribution";
   }
 }
 
 function activitiesForRole(rows: TeamActivityRow[], role: string | null) {
+  if (role === "warehouse_staff") return [];
   if (role === "sales_designer" || role === "sales_coordinator") {
     return rows.filter((row) => row.entity_type.startsWith("quotation"));
   }

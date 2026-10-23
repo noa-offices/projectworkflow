@@ -5,6 +5,7 @@ export type AppRole =
   | "sales_designer"
   | "sales_coordinator"
   | "designer"
-  | "viewer";
+  | "viewer"
+  | "warehouse_staff";
 
 export type AccountStatus = "pending" | "active" | "disabled";

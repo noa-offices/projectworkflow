@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirectWarehouseStaff } from "@/lib/auth";
 import { login } from "@/app/auth/actions";
 
 type LoginPageProps = {
@@ -8,6 +9,7 @@ type LoginPageProps = {
 };
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
+  await redirectWarehouseStaff();
   const message = (await searchParams)?.message;
 
   return (

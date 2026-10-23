@@ -140,6 +140,7 @@ function sidebarRoleLabel(role: AppRole): string {
     case "sales_coordinator": return "Sales Coordinator";
     case "procurement_manager": return "Procurement";
     case "viewer": return "Viewer";
+    case "warehouse_staff": return "Warehouse Staff";
     default: return role;
   }
 }
@@ -219,6 +220,13 @@ export function ErpSidebar({
 
   const sections: SidebarSection[] = useMemo(
     () => {
+      if (role === "warehouse_staff") {
+        return [{
+          title: "Workspace",
+          iconColors: { bg: "bg-emerald-100", icon: "text-emerald-700" },
+          items: [{ label: "Inventory", href: "/inventory", icon: Package, active: pathname === "/inventory" }],
+        }];
+      }
       const canProcure = role === "system_owner" || role === "admin_manager" || role === "procurement_manager";
       const canManageProducts =
         role === "system_owner" ||
@@ -393,7 +401,7 @@ export function ErpSidebar({
         >
           <Menu className="h-5 w-5" aria-hidden="true" />
         </button>
-        <Link href="/dashboard" className="flex min-w-0 items-center gap-2">
+        <Link href={role === "warehouse_staff" ? "/inventory" : "/dashboard"} className="flex min-w-0 items-center gap-2">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-900 text-xs font-bold text-white">
             PW
           </span>

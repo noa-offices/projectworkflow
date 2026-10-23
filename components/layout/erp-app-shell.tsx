@@ -31,7 +31,7 @@ export function ErpAppShell({
   return (
     <div className="min-h-screen bg-zinc-100 text-zinc-950 lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
       <ErpSidebar
-        role={role ?? null}
+        role={role === "warehouse_staff" || userRole === "warehouse_staff" ? "warehouse_staff" : role ?? null}
         isCompletedProject={isCompletedProject}
         userDisplayName={userDisplayName}
         userAvatarUrl={userAvatarUrl}

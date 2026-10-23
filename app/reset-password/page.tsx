@@ -1,4 +1,5 @@
 import { updatePassword } from "@/app/auth/actions";
+import { redirectWarehouseStaff } from "@/lib/auth";
 
 type ResetPasswordPageProps = {
   searchParams?: Promise<{
@@ -8,6 +9,7 @@ type ResetPasswordPageProps = {
 };
 
 export default async function ResetPasswordPage({ searchParams }: ResetPasswordPageProps) {
+  await redirectWarehouseStaff();
   const params = (await searchParams) ?? {};
   const message = params.message;
   const type = params.type;

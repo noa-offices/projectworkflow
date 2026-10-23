@@ -8,6 +8,7 @@ const ROLE_GUIDE_ROLES = [
   "Sales Coordinator",
   "Designer",
   "Viewer",
+  "Warehouse Staff",
 ] as const;
 
 const ROLE_GUIDE_ROWS: Array<{
@@ -106,6 +107,9 @@ export function RoleGuide() {
                   className="min-w-32 px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-zinc-500"
                 >
                   {role}
+                  {role === "Warehouse Staff" ? (
+                    <span className="mt-1 block text-[10px] font-normal normal-case">Inventory only</span>
+                  ) : null}
                 </th>
               ))}
             </tr>
@@ -122,6 +126,7 @@ export function RoleGuide() {
                     {access}
                   </td>
                 ))}
+                <td className="px-4 py-3 text-center text-sm font-semibold text-zinc-400">No access</td>
               </tr>
             ))}
           </tbody>

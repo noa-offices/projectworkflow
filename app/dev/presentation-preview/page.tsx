@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirectWarehouseStaff } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { QuotationPresentation } from "@/components/quotations/quotation-presentation";
 import { buildMockPresentationPreviewData } from "@/lib/quotations/mock-presentation-data";
@@ -69,6 +70,7 @@ function VariantLink({
 }
 
 export default async function DevPresentationPreviewPage({ searchParams }: DevPresentationPreviewPageProps) {
+  await redirectWarehouseStaff();
   if (process.env.NODE_ENV === "production") {
     notFound();
   }

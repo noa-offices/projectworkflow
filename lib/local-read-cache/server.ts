@@ -16,7 +16,7 @@ export async function readProjection(request: Request, entity: string, createDb:
     if (!user) return failure(401, "UNAUTHORIZED");
     const { data: profile, error: profileError } = await db.from("profiles").select("role,account_status").eq("id", user.id).single();
     if (profileError) return failure(503, "UNAVAILABLE");
-    if (profile?.account_status !== "active") return failure(403, "FORBIDDEN");
+    if (profile?.account_status !== "active" || profile.role === "warehouse_staff") return failure(403, "FORBIDDEN");
     if (["products", "products:management", "brands:list", "materials:library"].includes(entity) && !canManageProductLibrary(profile.role)) return failure(403, "FORBIDDEN");
     if (entity === "session") return Response.json({ ok: true, userId: user.id }, { headers });
     if (entity === "builder") {
