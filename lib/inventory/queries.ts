@@ -3,6 +3,7 @@ import "server-only";
 import { requireInventoryUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { canSeeCosts, canViewInventory } from "./access";
+import { InventoryPageRangeError } from "./page-range-error";
 import { buildProductFilters, movementFilters, pagination, requestFilters } from "./filters";
 import { CATEGORY_COLUMNS, COST_COLUMNS, IMAGE_COLUMNS, MOVEMENT_COLUMNS, MOVEMENT_REQUEST_COLUMNS, PRODUCT_COLUMNS, PRODUCT_REQUEST_COLUMNS, STOCK_COLUMNS, SUMMARY_COLUMNS, categoryTree, pageResult, pick, summarizeStock } from "./mapping";
 import type { StockRow } from "./mapping";
@@ -119,6 +120,7 @@ export async function listProducts(filters: ProductFilters = {}, page = 1): Prom
   for (const key of ["brand_id", "category_id", "subcategory_id", "status", "item_type"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
   if (plan.location_column) query = query.gt(plan.location_column, 0);
   const response = await query.order(plan.order.column, { ascending: plan.order.ascending }).order("id").range(range.from, range.to).returns<InventoryProductRow[]>();
+  if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
   const products = rows(response), productIds = products.map(row => row.id);
   const [labels, costs, imageRows] = await Promise.all([
     names(client, products), costRows(client, canSeeCosts(profile?.role), "product_costs", productIds),
