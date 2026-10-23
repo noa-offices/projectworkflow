@@ -101,6 +101,9 @@ begin
   end if;
 end $$;
 
+-- Test-only, inside this transaction; the final rollback restores the trigger.
+alter table storage.objects disable trigger protect_objects_delete;
+
 set local role authenticated;
 select set_config('request.jwt.claims', jsonb_build_object(
   'sub', id::text, 'role', 'authenticated')::text, true)
@@ -146,15 +149,10 @@ begin
   where bucket_id = 'avatars' and name = auth.uid()::text || '/' || (select marker from lockdown_fixture) || '-write.png';
   get diagnostics changed = row_count;
   if changed <> 1 then raise exception 'Warehouse avatar update failed'; end if;
-  -- Supabase's storage.protect_delete() rejects direct SQL deletes (42501) after RLS allows the row.
-  begin
-    delete from storage.objects
-    where bucket_id = 'avatars' and name = auth.uid()::text || '/' || (select marker from lockdown_fixture) || '-write.png';
-    get diagnostics changed = row_count;
-    if changed <> 1 then raise exception 'Warehouse avatar delete failed'; end if;
-  exception when sqlstate '42501' then
-    null; -- row passed the delete policy; Supabase blocks the physical delete
-  end;
+  delete from storage.objects
+  where bucket_id = 'avatars' and name = auth.uid()::text || '/' || (select marker from lockdown_fixture) || '-write.png';
+  get diagnostics changed = row_count;
+  if changed <> 1 then raise exception 'Warehouse avatar delete failed'; end if;
 end $$;
 
 -- Existing-role positive controls use populated fixtures, not empty-table assertions.
@@ -212,4 +210,5 @@ begin
     raise exception 'Inventory helper EXECUTE grants mismatch';
   end if;
 end $$;
+alter table storage.objects enable trigger protect_objects_delete;
 rollback;
