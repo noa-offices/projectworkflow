@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { redirectWarehouseStaff } from "@/lib/auth";
+import { isWarehouseStaffRequest, redirectWarehouseStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { AccountStatus, AppRole } from "@/lib/supabase/types";
 
@@ -192,7 +192,6 @@ export async function requestPasswordReset(formData: FormData) {
 }
 
 export async function updatePassword(formData: FormData) {
-  await redirectWarehouseStaff();
   const password = formValue(formData, "password");
   const confirmPassword = formValue(formData, "confirmPassword");
 
@@ -217,5 +216,6 @@ export async function updatePassword(formData: FormData) {
     redirect("/reset-password?message=Password+could+not+be+updated&type=error");
   }
 
+  if (await isWarehouseStaffRequest()) redirect("/inventory");
   redirect("/dashboard?message=Password+updated+successfully");
 }

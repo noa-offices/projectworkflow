@@ -46,6 +46,7 @@ export const getProfileForUser = cache(async function getProfileForUser(userId: 
 
   if (error) {
     console.error("AUTH PROFILE ERROR", error.message);
+    return null;
   }
 
   return data;
@@ -54,8 +55,12 @@ export const getProfileForUser = cache(async function getProfileForUser(userId: 
 export async function isWarehouseStaffRequest(): Promise<boolean> {
   const user = await getRequestUser();
   if (!user) return false;
-  const profile = await getProfileForUser(user.id);
-  return profile?.role === "warehouse_staff";
+  try {
+    const profile = await getProfileForUser(user.id);
+    return !profile || profile.role === "warehouse_staff";
+  } catch {
+    return true;
+  }
 }
 
 export async function redirectWarehouseStaff(): Promise<void> {

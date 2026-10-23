@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
     await supabase.auth.exchangeCodeForSession(code);
   }
 
-  if (await isWarehouseStaffRequest()) {
+  if (!next.startsWith("/reset-password") && await isWarehouseStaffRequest()) {
     return NextResponse.redirect(new URL("/inventory", request.url));
   }
   return NextResponse.redirect(new URL(next, request.url));
