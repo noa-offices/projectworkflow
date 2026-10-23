@@ -6,8 +6,8 @@ export function InventoryOverviewView({ overview, productsHref = "/inventory/pro
   const stats = [
     { label: "Products", value: overview.product_count },
     { label: "Low stock products", value: overview.low_stock_count },
-    { label: "Pending product requests", value: overview.pending_product_requests },
-    { label: "Pending movement requests", value: overview.pending_movement_requests },
+    { label: "Pending product requests", value: overview.pending_product_requests, href: '/inventory/requests?tab=products&status=pending_review' },
+    { label: "Pending movement requests", value: overview.pending_movement_requests, href: '/inventory/requests?tab=movements&status=pending_review' },
   ];
 
   return (
@@ -24,9 +24,9 @@ export function InventoryOverviewView({ overview, productsHref = "/inventory/pro
       </section>
 
       <dl className="grid min-w-0 grid-cols-2 gap-3 lg:grid-cols-4">
-        {stats.map(({ label, value }) => (
+        {stats.map(({ label, value, href }) => (
           <div key={label} className="min-w-0 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-            <dt className="break-words text-sm text-zinc-600">{label}</dt>
+            <dt className="break-words text-sm text-zinc-600">{href ? <Link className="inline-flex min-h-11 items-center font-medium text-emerald-900 underline underline-offset-4" href={href}>{label}</Link> : label}</dt>
             <dd className="mt-3 break-words text-2xl font-semibold tabular-nums text-zinc-950">{formatInventoryNumber(value)}</dd>
           </div>
         ))}

@@ -63,6 +63,34 @@ mock.module("@/lib/auth", { namedExports: { requireInventoryUser: async () => {
 mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => { clientCalls++; return client; } } });
 const queries = await import("./queries");
 
+test('request images use the signed-in client, are batched and never query costs', async () => {
+  reset('warehouse_staff');
+  fixtures.product_images = fixtures.product_images.map(image => ({...image, product_id:null,product_request_id:'r1'}));
+  const images = await queries.getProductRequestImages('r1');
+  assert.equal(images.length, 3);
+  assert.equal(calls.filter(call => call.url.pathname.includes('/storage/')).length, 1);
+  assert.ok(images.every(image => image.signed_url));
+  assert.equal(calls.some(call => call.table.includes('costs')), false);
+  assert.ok(calls.find(call => call.table === 'product_images')!.url.searchParams.get('product_request_id') === 'eq.r1');
+});
+test('pending product movement requests respect product/status filters and RLS names', async () => {
+  reset();
+  fixtures.movement_requests.push({...fixtures.movement_requests[0],id:'reviewed',request_status:'approved'});
+  const result = await queries.getPendingProductMovementRequests('p1');
+  assert.equal(result.length, 1);
+  assert.equal(result[0].submitter_display_name, null);
+  assert.equal(calls.some(call => call.table.includes('costs')), false);
+});
+test('approved request photos follow the approved product after photos are relinked', async () => {
+  reset();
+  fixtures.product_requests[0].request_status = 'approved';
+  const images = await queries.getProductRequestImages('r1');
+  assert.equal(images.length, 3);
+  assert.equal(calls.find(call => call.table === 'product_images')!.url.searchParams.get('product_id'), 'eq.p1');
+  assert.equal(calls.some(call => call.table.includes('costs')), false);
+  assert.deepEqual(await queries.getProductRequestImages('missing'), []);
+});
+
 test("out-of-range product pages preserve a specific error for URL recovery", async () => {
   reset(); failPageRange = true;
   await assert.rejects(() => queries.listProducts({}, 99), { name: "InventoryPageRangeError" });
