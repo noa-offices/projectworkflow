@@ -1,3 +1,4 @@
+import { isWarehouseStaffRequest } from "@/lib/auth";
 import type { NextRequest } from "next/server";
 import * as fs from "fs";
 import * as path from "path";
@@ -67,6 +68,9 @@ function sumFormula(col: string, rows: number[]) {
 // ── Route ──────────────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
+  if (await isWarehouseStaffRequest()) {
+    return Response.json({ error: "Forbidden." }, { status: 403 });
+  }
   try {
     await requireActiveUser();
   } catch {

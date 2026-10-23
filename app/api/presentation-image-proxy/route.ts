@@ -1,3 +1,4 @@
+import { isWarehouseStaffRequest } from "@/lib/auth";
 import { isIP } from "node:net";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -94,6 +95,9 @@ async function requireProxyAccess() {
 }
 
 export async function GET(request: Request) {
+  if (await isWarehouseStaffRequest()) {
+    return Response.json({ error: "Forbidden." }, { status: 403 });
+  }
   if (!await requireProxyAccess()) {
     return errorResponse("Unauthorized", 401);
   }

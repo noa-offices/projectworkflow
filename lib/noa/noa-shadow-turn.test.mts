@@ -18,7 +18,8 @@ mock.module("@/lib/supabase/server", { namedExports: { createClient: async () =>
   auth: { getUser: async () => ({ data: { user: { id: "fixture-user" } } }) },
   from: (table: string) => {
     assert.equal(table, "profiles"); // the route itself never touches noa_sessions directly
-    return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { full_name: null } }) }) }) };
+    const profile = { data: { full_name: null, role: "viewer", account_status: "active" } };
+    return { select: () => ({ eq: () => ({ maybeSingle: async () => profile, single: async () => profile }) }) };
   },
 }) } });
 const routeStore = createNoaGoldenSessionStore();

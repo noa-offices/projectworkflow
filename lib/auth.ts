@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { AccountStatus, AppRole } from "@/lib/supabase/types";
 import { isClientPaymentAttachmentManager } from "@/lib/projects/client-payment-attachment-permissions";
 import { canReviewBrandPrices } from "@/lib/products/brand-price-permissions";
+import { activeUserRedirect } from "@/lib/auth-access";
 
 export type UserProfile = {
   id: string;
@@ -45,12 +46,35 @@ export const getProfileForUser = cache(async function getProfileForUser(userId: 
 
   if (error) {
     console.error("AUTH PROFILE ERROR", error.message);
+    return null;
   }
 
   return data;
 });
 
+export async function isWarehouseStaffRequest(): Promise<boolean> {
+  const user = await getRequestUser();
+  if (!user) return false;
+  try {
+    const profile = await getProfileForUser(user.id);
+    return !profile || profile.role === "warehouse_staff";
+  } catch {
+    return true;
+  }
+}
+
+export async function redirectWarehouseStaff(): Promise<void> {
+  if (await isWarehouseStaffRequest()) redirect("/inventory");
+}
+
 export async function requireActiveUser(): Promise<AuthenticatedUser> {
+  const authenticatedUser = await requireInventoryUser();
+  const destination = activeUserRedirect(authenticatedUser.profile);
+  if (destination) redirect(destination);
+  return authenticatedUser;
+}
+
+export async function requireInventoryUser(): Promise<AuthenticatedUser> {
   const user = await getRequestUser();
 
   if (!user) {
@@ -62,18 +86,16 @@ export async function requireActiveUser(): Promise<AuthenticatedUser> {
   if (profile?.account_status === "disabled") {
     const supabase = await createClient();
     await supabase.auth.signOut();
-    redirect("/login?message=Your%20account%20has%20been%20disabled.");
   }
 
-  if (profile?.account_status !== "active") {
-    redirect("/pending-approval");
-  }
+  const destination = activeUserRedirect(profile, true);
+  if (destination) redirect(destination);
 
   return {
     user,
     profile,
     displayName:
-      profile.full_name ?? user.user_metadata.full_name ?? user.email ?? "User",
+      profile?.full_name ?? user.user_metadata.full_name ?? user.email ?? "User",
   };
 }
 

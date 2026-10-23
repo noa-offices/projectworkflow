@@ -1,6 +1,6 @@
 "use server";
 
-import { canSendNotifications, requireActiveUser } from "@/lib/auth";
+import { canSendNotifications, requireActiveUser, requireInventoryUser } from "@/lib/auth";
 import { USER_ROLE_OPTIONS } from "@/lib/user-management";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -216,7 +216,7 @@ export async function getMyNotifications(): Promise<{ ok: true; data: Notificati
 // ─── 4. getUnreadCount ───────────────────────────────────────────────────────
 
 export async function getUnreadCount(): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
-  const { user } = await requireActiveUser();
+  const { user } = await requireInventoryUser();
 
   const supabase = await createClient();
 
@@ -239,7 +239,7 @@ export async function getUnreadCount(): Promise<{ ok: true; count: number } | { 
 // ─── 5. markNotificationRead ─────────────────────────────────────────────────
 
 export async function markNotificationRead(notificationId: string): Promise<ActionResult> {
-  const { user } = await requireActiveUser();
+  const { user } = await requireInventoryUser();
 
   const { client, error: clientError } = getAdminClient();
   if (!client) return { ok: false, error: clientError! };
@@ -265,7 +265,7 @@ export async function markNotificationRead(notificationId: string): Promise<Acti
 // ─── 6. markAllNotificationsRead ─────────────────────────────────────────────
 
 export async function markAllNotificationsRead(): Promise<ActionResult> {
-  const { user } = await requireActiveUser();
+  const { user } = await requireInventoryUser();
 
   const { client, error: clientError } = getAdminClient();
   if (!client) return { ok: false, error: clientError! };
@@ -364,7 +364,7 @@ export async function respondToNotification(
   notificationId: string,
   response: "accepted" | "declined",
 ): Promise<ActionResult> {
-  const { user } = await requireActiveUser();
+  const { user } = await requireInventoryUser();
 
   const { client, error: clientError } = getAdminClient();
   if (!client) return { ok: false, error: clientError! };

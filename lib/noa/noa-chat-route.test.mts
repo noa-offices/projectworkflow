@@ -9,7 +9,8 @@ mock.module("@/lib/supabase/server", { namedExports: { createClient: async () =>
   auth: { getUser: async () => ({ data: { user: authenticated ? { id: "fixture-user" } : null } }) },
   from: (table: string) => {
     assert.equal(table, "profiles");
-    return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { full_name: null } }) }) }) };
+    const profile = { data: { full_name: null, role: "viewer", account_status: "active" } };
+    return { select: () => ({ eq: () => ({ maybeSingle: async () => profile, single: async () => profile }) }) };
   },
 }) } });
 const { POST } = await import("../../app/api/noa/chat/route");

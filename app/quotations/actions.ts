@@ -7,6 +7,7 @@ import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import {
   requireActiveUser,
+  redirectWarehouseStaff,
   requireProductLibraryManager,
   requireQuotationActionUser,
   requireQuotationManager as requireRecordsManager,
@@ -2075,6 +2076,7 @@ function itemPayload(formData: FormData, userId?: string) {
 }
 
 export async function recalculateQuotationTotals(quotationId: string) {
+  await redirectWarehouseStaff();
   const supabase = await createSupabaseClient();
   const { data: quotation, error: quotationError } = await supabase
     .from("quotations")

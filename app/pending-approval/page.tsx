@@ -34,6 +34,7 @@ export default async function PendingApprovalPage() {
   }
 
   if (profile?.account_status === "active") {
+    if (profile.role === "warehouse_staff") redirect("/inventory");
     redirect("/dashboard");
   }
 

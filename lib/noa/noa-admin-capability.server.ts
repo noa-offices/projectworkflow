@@ -46,6 +46,7 @@ const ROLE_LABEL: Record<AppRole, string> = {
   sales_designer: "Sales Designer",
   system_owner: "System Owner",
   viewer: "Viewer",
+  warehouse_staff: "Warehouse Staff",
 };
 
 const STATUS_LABEL: Record<AccountStatus, string> = {

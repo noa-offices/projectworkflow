@@ -83,6 +83,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const noaAuth = await currentNoaAuthContext();
+  const isWarehouseStaff = noaAuth?.appRole === "warehouse_staff";
 
   return (
     <html
@@ -96,15 +97,17 @@ export default async function RootLayout({
         </Suspense>
         <PwaServiceWorkerRegister />
         <Suspense fallback={null}>
-          <LocalReadRuntime key={noaAuth?.userId ?? "signed-out"} userId={noaAuth?.userId ?? null} />
+          <LocalReadRuntime key={isWarehouseStaff ? "inventory-only" : noaAuth?.userId ?? "signed-out"} userId={isWarehouseStaff ? null : noaAuth?.userId ?? null} />
         </Suspense>
         <Suspense fallback={null}>
           <GlobalLoadingIndicator />
         </Suspense>
-        <Suspense fallback={null}>
-          <NoaAssistant auth={noaAuth} />
-        </Suspense>
-        {noaAuth?.appRole ? (
+        {!isWarehouseStaff ? (
+          <Suspense fallback={null}>
+            <NoaAssistant auth={noaAuth} />
+          </Suspense>
+        ) : null}
+        {noaAuth?.appRole && !isWarehouseStaff ? (
           <Suspense fallback={null}>
             <ProjectWorkflowActivityTracker />
           </Suspense>

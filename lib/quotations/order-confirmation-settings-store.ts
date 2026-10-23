@@ -84,7 +84,7 @@ async function activeUser(): Promise<AuthFailure | ActiveUserAuthSuccess> {
     } satisfies AuthFailure;
   }
 
-  if (profile?.account_status !== "active") {
+  if (profile?.account_status !== "active" || profile.role === "warehouse_staff") {
     return { supabase, error: "Forbidden.", status: 403 } satisfies AuthFailure;
   }
 

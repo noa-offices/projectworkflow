@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { isWarehouseStaffRequest } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
@@ -12,5 +13,8 @@ export async function GET(request: NextRequest) {
     await supabase.auth.exchangeCodeForSession(code);
   }
 
+  if (!next.startsWith("/reset-password") && await isWarehouseStaffRequest()) {
+    return NextResponse.redirect(new URL("/inventory", request.url));
+  }
   return NextResponse.redirect(new URL(next, request.url));
 }

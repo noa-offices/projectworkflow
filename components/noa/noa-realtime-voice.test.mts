@@ -102,7 +102,7 @@ function route(path: "session" | "speech", options: { auth?: boolean; flag?: boo
   const calls: any[] = [];
   const logs: any[] = [];
   const env = { NEXT_PUBLIC_NOA_REALTIME_VOICE: options.flag === false ? "false" : "true", OPENAI_API_KEY: "standard-secret" };
-  const { POST } = compile(`app/api/noa/voice/${path}/route.ts`, { "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user: options.auth === false ? null : { id: "user" } } }) } }) } }, {
+  const { POST } = compile(`app/api/noa/voice/${path}/route.ts`, { "@/lib/auth": { isWarehouseStaffRequest: async () => false }, "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user: options.auth === false ? null : { id: "user" } } }) } }) } }, {
     process: { env }, console: { error: (entry: unknown) => logs.push(entry) }, fetch: async (url: string, init: any) => {
       calls.push({ url, ...init, body: JSON.parse(init.body) });
       if (options.fetchError) throw options.fetchError;

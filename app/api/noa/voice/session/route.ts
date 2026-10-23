@@ -1,3 +1,4 @@
+import { isWarehouseStaffRequest } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
 // gpt-live-transcribe requires client-side VAD + explicit commits. Keep the supported
@@ -17,6 +18,9 @@ function safeErrorField(value: unknown, secrets: string[]): string | null {
 }
 
 export async function POST(request: Request) {
+  if (await isWarehouseStaffRequest()) {
+    return Response.json({ error: "Forbidden." }, { status: 403 });
+  }
   if (process.env.NEXT_PUBLIC_NOA_REALTIME_VOICE !== "true") return new Response(null, { status: 404 });
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
