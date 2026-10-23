@@ -10,10 +10,11 @@ let fixtures: Record<string, Record<string, unknown>[]>;
 let cap = 1000;
 let failTable: string | null = null;
 let failSigning = false;
+let failPageRange = false;
 const product = { id: "p1", brand_id: "b1", category_id: "c1", subcategory_id: null, item_name: "Chair", item_code: "C1", stock_ref: "S1", model_name: "M1", quantity: 3, low_stock_at: 3, warehouse_quantity: 2, dubai_showroom_quantity: 1, abudhabi_showroom_quantity: 0, mockup_quantity: 0, temporary_out_quantity: 0, sold_quantity: 10, is_active: true, price: 999, total_cost: 999, costs: { price: 999 } };
 const costs = { price: 10, freight_cost: 1, c_and_f: 2, transport: 3, custom_duty: 4, labour: 5, vat: 6, total_cost: 31 };
 function reset(nextRole = "viewer") {
-  role = nextRole; authError = false; clientCalls = 0; calls = []; cap = 1000; failTable = null; failSigning = false;
+  role = nextRole; authError = false; clientCalls = 0; calls = []; cap = 1000; failTable = null; failSigning = false; failPageRange = false;
   fixtures = {
     products: [product], product_requests: [{ ...product, id: "r1", submitted_by: "hidden", approved_product_id: "p1", request_status: "pending_review" }],
     product_costs: [{ product_id: "p1", ...costs }], product_request_costs: [{ product_request_id: "r1", ...costs }],
@@ -40,6 +41,7 @@ const client = createSupabaseClient("https://inventory.test", "test-publishable-
     }
     assert.ok(["GET", "HEAD"].includes(method), "database calls must only read");
     assert.equal(headers.get("Accept-Profile"), ["brands", "profiles"].includes(table) ? "public" : "inventory");
+    if (failPageRange && table === "products") return Response.json({ code: "PGRST103", message: "Requested range not satisfiable" }, { status: 416 });
     if (table === failTable) return Response.json({ message: "fixture failure" }, { status: 500 });
     let rows = fixtures[table] ?? [];
     for (const [key, value] of url.searchParams) {
@@ -60,6 +62,12 @@ mock.module("@/lib/auth", { namedExports: { requireInventoryUser: async () => {
 } } });
 mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => { clientCalls++; return client; } } });
 const queries = await import("./queries");
+
+test("out-of-range product pages preserve a specific error for URL recovery", async () => {
+  reset(); failPageRange = true;
+  await assert.rejects(() => queries.listProducts({}, 99), { name: "InventoryPageRangeError" });
+  assert.equal(calls.length, 1);
+});
 
 test("six non-manager roles never query cost tables or receive cost fields", async () => {
   for (const nextRole of ["procurement_manager", "sales_designer", "sales_coordinator", "designer", "viewer", "warehouse_staff"]) {
