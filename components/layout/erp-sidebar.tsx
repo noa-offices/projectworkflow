@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import type { AppRole } from "@/lib/supabase/types";
+import { canViewInventory } from "@/lib/inventory/access";
 import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 import {
   Archive,
@@ -224,7 +225,7 @@ export function ErpSidebar({
         return [{
           title: "Workspace",
           iconColors: { bg: "bg-emerald-100", icon: "text-emerald-700" },
-          items: [{ label: "Inventory", href: "/inventory", icon: Package, active: pathname === "/inventory" }],
+          items: [{ label: "Inventory", href: "/inventory", icon: Package, active: pathname === "/inventory" || pathname.startsWith("/inventory/") }],
         }];
       }
       const canProcure = role === "system_owner" || role === "admin_manager" || role === "procurement_manager";
@@ -260,6 +261,7 @@ export function ErpSidebar({
         items: [
           { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, active: isDashboardActive(pathname) },
           { label: "Notifications", href: "/notifications", icon: Bell, active: isNotificationsActive(pathname) },
+          ...(canViewInventory(role) ? [{ label: "Inventory", href: "/inventory", icon: Package, active: pathname === "/inventory" || pathname.startsWith("/inventory/") }] : []),
         ],
       },
       {
