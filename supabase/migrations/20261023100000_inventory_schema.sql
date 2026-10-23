@@ -142,16 +142,6 @@ create table if not exists inventory.products (
   dimension_width numeric(12, 2),
   dimension_height numeric(12, 2),
   dimension_unit inventory.dimension_unit,
-  price numeric(12, 2) not null default 0,
-  freight_cost numeric(12, 2) not null default 0,
-  c_and_f numeric(12, 2) not null default 0,
-  transport numeric(12, 2) not null default 0,
-  custom_duty numeric(12, 2) not null default 0,
-  labour numeric(12, 2) not null default 0,
-  vat numeric(12, 2) not null default 0,
-  total_cost numeric(12, 2) generated always as (
-    price + freight_cost + c_and_f + transport + custom_duty + labour + vat
-  ) stored,
   is_active boolean not null default true,
   removed_at timestamptz,
   removed_by uuid references public.profiles(id) on delete set null,
@@ -179,15 +169,6 @@ create table if not exists inventory.products (
     quantity = warehouse_quantity + dubai_showroom_quantity + abudhabi_showroom_quantity + mockup_quantity + temporary_out_quantity
   ),
   constraint products_low_stock_not_negative check (low_stock_at >= 0),
-  constraint products_costs_not_negative check (
-    price >= 0
-    and freight_cost >= 0
-    and c_and_f >= 0
-    and transport >= 0
-    and custom_duty >= 0
-    and labour >= 0
-    and vat >= 0
-  ),
   constraint products_dimensions_complete check (
     (
       dimension_length is null
@@ -224,16 +205,6 @@ create table if not exists inventory.product_requests (
   dimension_width numeric(12, 2),
   dimension_height numeric(12, 2),
   dimension_unit inventory.dimension_unit,
-  price numeric(12, 2) not null default 0,
-  freight_cost numeric(12, 2) not null default 0,
-  c_and_f numeric(12, 2) not null default 0,
-  transport numeric(12, 2) not null default 0,
-  custom_duty numeric(12, 2) not null default 0,
-  labour numeric(12, 2) not null default 0,
-  vat numeric(12, 2) not null default 0,
-  total_cost numeric(12, 2) generated always as (
-    price + freight_cost + c_and_f + transport + custom_duty + labour + vat
-  ) stored,
   request_status inventory.product_request_status not null default 'pending_review',
   submitted_by uuid not null references public.profiles(id) on delete restrict,
   submitted_at timestamptz not null default now(),
@@ -250,15 +221,6 @@ create table if not exists inventory.product_requests (
   constraint product_requests_item_name_not_blank check (length(trim(item_name)) > 0),
   constraint product_requests_model_name_not_blank check (length(trim(model_name)) > 0),
   constraint product_requests_quantity_positive check (quantity > 0),
-  constraint product_requests_costs_not_negative check (
-    price >= 0
-    and freight_cost >= 0
-    and c_and_f >= 0
-    and transport >= 0
-    and custom_duty >= 0
-    and labour >= 0
-    and vat >= 0
-  ),
   constraint product_requests_dimensions_complete check (
     (
       dimension_length is null
@@ -272,6 +234,46 @@ create table if not exists inventory.product_requests (
       and dimension_height > 0
       and dimension_unit is not null
     )
+  )
+);
+
+create table if not exists inventory.product_costs (
+  product_id uuid primary key references inventory.products(id) on delete cascade,
+  price numeric(12, 2) not null default 0,
+  freight_cost numeric(12, 2) not null default 0,
+  c_and_f numeric(12, 2) not null default 0,
+  transport numeric(12, 2) not null default 0,
+  custom_duty numeric(12, 2) not null default 0,
+  labour numeric(12, 2) not null default 0,
+  vat numeric(12, 2) not null default 0,
+  total_cost numeric(12, 2) generated always as (
+    price + freight_cost + c_and_f + transport + custom_duty + labour + vat
+  ) stored,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint product_costs_not_negative check (
+    price >= 0 and freight_cost >= 0 and c_and_f >= 0 and transport >= 0
+    and custom_duty >= 0 and labour >= 0 and vat >= 0
+  )
+);
+
+create table if not exists inventory.product_request_costs (
+  product_request_id uuid primary key references inventory.product_requests(id) on delete cascade,
+  price numeric(12, 2) not null default 0,
+  freight_cost numeric(12, 2) not null default 0,
+  c_and_f numeric(12, 2) not null default 0,
+  transport numeric(12, 2) not null default 0,
+  custom_duty numeric(12, 2) not null default 0,
+  labour numeric(12, 2) not null default 0,
+  vat numeric(12, 2) not null default 0,
+  total_cost numeric(12, 2) generated always as (
+    price + freight_cost + c_and_f + transport + custom_duty + labour + vat
+  ) stored,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint product_request_costs_not_negative check (
+    price >= 0 and freight_cost >= 0 and c_and_f >= 0 and transport >= 0
+    and custom_duty >= 0 and labour >= 0 and vat >= 0
   )
 );
 
@@ -473,6 +475,18 @@ drop trigger if exists set_movement_requests_updated_at on inventory.movement_re
 create trigger set_movement_requests_updated_at before update on inventory.movement_requests
 for each row execute function inventory.set_updated_at();
 
+drop trigger if exists set_product_costs_updated_at on inventory.product_costs;
+create trigger set_product_costs_updated_at before update on inventory.product_costs
+for each row execute function inventory.set_updated_at();
+
+drop trigger if exists set_product_request_costs_updated_at on inventory.product_request_costs;
+create trigger set_product_request_costs_updated_at before update on inventory.product_request_costs
+for each row execute function inventory.set_updated_at();
+
+-- Cost data is separate from the broadly readable product/request records.
+comment on table inventory.product_costs is 'Product costs; access and edits require inventory.can_manage().';
+comment on table inventory.product_request_costs is 'Product request costs; access and edits require inventory.can_manage().';
+
 -- Location display names: warehouse = Warehouse; dubai_showroom = Dubai Showroom;
 -- abudhabi_showroom = Abu Dhabi Showroom; mockup = Mockup;
 -- temporary_out = Temporary Out; sold = Sold. Sold is cumulative and excluded from live quantity.
@@ -565,6 +579,8 @@ on conflict do nothing;
 
 -- ROLLBACK (manual; first undo the RLS/storage migration).
 -- BEGIN;
+-- drop table if exists inventory.product_costs;
+-- drop table if exists inventory.product_request_costs;
 -- drop table if exists inventory.product_images;
 -- drop table if exists inventory.movement_requests;
 -- drop table if exists inventory.product_requests;

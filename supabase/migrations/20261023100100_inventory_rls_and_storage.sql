@@ -20,8 +20,10 @@ alter table inventory.product_requests enable row level security;
 alter table inventory.product_images enable row level security;
 alter table inventory.movements enable row level security;
 alter table inventory.movement_requests enable row level security;
+alter table inventory.product_costs enable row level security;
+alter table inventory.product_request_costs enable row level security;
 
--- SELECT is available to all eight active roles, independently of write permissions.
+-- Non-cost SELECT is available to all eight active roles, independently of write permissions.
 drop policy if exists categories_select on inventory.categories;
 create policy categories_select on inventory.categories for select to authenticated
   using (inventory.can_view());
@@ -41,12 +43,19 @@ drop policy if exists movement_requests_select on inventory.movement_requests;
 create policy movement_requests_select on inventory.movement_requests for select to authenticated
   using (inventory.can_view());
 
--- Products, reference categories, movement history and photo metadata are manager-written.
--- Requests may have photo metadata, but no non-manager metadata write policy is granted.
+-- Cost SELECT is restricted independently from the parent product/request records.
+drop policy if exists product_costs_select on inventory.product_costs;
+create policy product_costs_select on inventory.product_costs for select to authenticated
+  using (inventory.can_manage());
+drop policy if exists product_request_costs_select on inventory.product_request_costs;
+create policy product_request_costs_select on inventory.product_request_costs for select to authenticated
+  using (inventory.can_manage());
+
+-- Direct writes are manager-only except for the pending-request photo INSERT below.
 do $$
 declare target_table text;
 begin
-  foreach target_table in array array['categories', 'products', 'movements', 'product_images'] loop
+  foreach target_table in array array['categories', 'products', 'movements', 'product_images', 'product_costs', 'product_request_costs'] loop
     execute format('drop policy if exists %I on inventory.%I', target_table || '_insert', target_table);
     execute format('create policy %I on inventory.%I for insert to authenticated with check (inventory.can_manage())', target_table || '_insert', target_table);
     execute format('drop policy if exists %I on inventory.%I', target_table || '_update', target_table);
@@ -55,6 +64,22 @@ begin
     execute format('create policy %I on inventory.%I for delete to authenticated using (inventory.can_manage())', target_table || '_delete', target_table);
   end loop;
 end $$;
+
+drop policy if exists product_images_insert_request_submitter on inventory.product_images;
+create policy product_images_insert_request_submitter on inventory.product_images
+  for insert to authenticated
+  with check (
+    product_request_id is not null
+    and product_id is null
+    and uploaded_by = auth.uid()
+    and inventory.can_request_add_take()
+    and exists (
+      select 1 from inventory.product_requests request
+      where request.id = product_images.product_request_id
+        and request.submitted_by = auth.uid()
+        and request.request_status = 'pending_review'
+    )
+  );
 
 drop policy if exists product_requests_insert on inventory.product_requests;
 create policy product_requests_insert on inventory.product_requests for insert to authenticated
@@ -138,10 +163,11 @@ create policy inventory_images_delete on storage.objects for delete to authentic
 -- drop policy if exists inventory_images_insert on storage.objects;
 -- drop policy if exists inventory_images_update on storage.objects;
 -- drop policy if exists inventory_images_delete on storage.objects;
+-- drop policy if exists product_images_insert_request_submitter on inventory.product_images;
 -- do $$
 -- declare target_table text; operation text;
 -- begin
---   foreach target_table in array array['categories', 'products', 'movements', 'product_images', 'product_requests', 'movement_requests'] loop
+--   foreach target_table in array array['categories', 'products', 'movements', 'product_images', 'product_requests', 'movement_requests', 'product_costs', 'product_request_costs'] loop
 --     foreach operation in array array['select', 'insert', 'update', 'delete'] loop
 --       execute format('drop policy if exists %I on inventory.%I', target_table || '_' || operation, target_table);
 --     end loop;

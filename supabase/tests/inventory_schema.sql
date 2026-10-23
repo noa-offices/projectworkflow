@@ -36,6 +36,7 @@ on conflict (id) do update set role = excluded.role, account_status = excluded.a
 create temporary table inventory_test_fixture on commit drop as
 select gen_random_uuid() as brand_id, gen_random_uuid() as category_id,
   gen_random_uuid() as product_id, gen_random_uuid() as product_request_id,
+  gen_random_uuid() as other_product_request_id, gen_random_uuid() as approved_product_request_id,
   gen_random_uuid() as product_image_id, gen_random_uuid() as movement_id,
   gen_random_uuid() as movement_request_id,
   'inventory-test-' || gen_random_uuid()::text as marker;
@@ -56,6 +57,21 @@ insert into inventory.product_requests (
 select f.product_request_id, f.brand_id, f.category_id, f.marker, f.marker,
   f.marker, f.marker, 1, a.id
 from inventory_test_fixture f, inventory_test_actors a where a.label = 'warehouse_staff';
+insert into inventory.product_requests (
+  id, brand_id, category_id, stock_ref, item_code, item_name, model_name,
+  quantity, submitted_by, request_status
+)
+select f.other_product_request_id, f.brand_id, f.category_id, f.marker, f.marker,
+  f.marker, f.marker, 1, a.id, 'pending_review'::inventory.product_request_status
+from inventory_test_fixture f, inventory_test_actors a where a.label = 'admin_manager'
+union all
+select f.approved_product_request_id, f.brand_id, f.category_id, f.marker, f.marker,
+  f.marker, f.marker, 1, a.id, 'approved'::inventory.product_request_status
+from inventory_test_fixture f, inventory_test_actors a where a.label = 'warehouse_staff';
+insert into inventory.product_costs (product_id, price, updated_at)
+select product_id, 10, '2000-01-01'::timestamptz from inventory_test_fixture;
+insert into inventory.product_request_costs (product_request_id, price, updated_at)
+select product_request_id, 20, '2000-01-01'::timestamptz from inventory_test_fixture;
 insert into inventory.product_images (id, product_id, storage_path, sort_order, is_main)
 select product_image_id, product_id, 'products/' || product_id::text || '/main.jpg', 0, true
 from inventory_test_fixture;
@@ -222,10 +238,88 @@ begin
   end loop;
 end $$;
 
+-- Cost fixtures exist throughout: non-manager SELECT checks cannot pass vacuously.
+do $$
+declare actor record; cost_table text; parent_key text; sql_text text; changed bigint;
+begin
+  for actor in select * from inventory_test_actors order by label loop
+    perform set_config('request.jwt.claims', jsonb_build_object(
+      'sub', actor.id::text, 'role', 'authenticated')::text, true);
+    foreach cost_table in array array['product_costs', 'product_request_costs'] loop
+      parent_key := case when cost_table = 'product_costs' then 'product_id' else 'product_request_id' end;
+      sql_text := format(
+        'insert into inventory.%I (%I, price) select %I, 17 from inventory_test_fixture',
+        cost_table, parent_key, parent_key);
+      if actor.account_status = 'active' and actor.app_role in ('system_owner', 'admin_manager') then
+        perform pg_temp.inventory_expect_count(format('select count(*) from inventory.%I', cost_table), 1);
+        execute format('update inventory.%I set price=11, freight_cost=2, c_and_f=3, transport=4, custom_duty=5, labour=6, vat=7', cost_table);
+        get diagnostics changed = row_count;
+        if changed <> 1 then raise exception 'Manager cost UPDATE failed: %', cost_table; end if;
+        perform pg_temp.inventory_expect_count(format(
+          'select count(*) from inventory.%I where total_cost=38 and updated_at=now()', cost_table), 1);
+        execute format('delete from inventory.%I', cost_table);
+        get diagnostics changed = row_count;
+        if changed <> 1 then raise exception 'Manager cost DELETE failed: %', cost_table; end if;
+        begin
+          execute replace(sql_text, ', 17 ', ', -1 ');
+          raise exception 'Negative cost accepted: %', cost_table;
+        exception when check_violation then null;
+        end;
+        execute sql_text;
+        perform pg_temp.inventory_expect_count(format(
+          'select count(*) from inventory.%I where total_cost=17', cost_table), 1);
+      else
+        perform pg_temp.inventory_expect_count(format('select count(*) from inventory.%I', cost_table), 0);
+        perform pg_temp.inventory_expect_denied(sql_text);
+        perform pg_temp.inventory_expect_count(format(
+          'with changed as (update inventory.%I set price=99 returning %I) select count(*) from changed',
+          cost_table, parent_key), 0);
+        perform pg_temp.inventory_expect_count(format(
+          'with changed as (delete from inventory.%I returning %I) select count(*) from changed',
+          cost_table, parent_key), 0);
+      end if;
+    end loop;
+  end loop;
+end $$;
+
+select set_config('request.jwt.claims', jsonb_build_object(
+  'sub', id::text, 'role', 'authenticated')::text, true)
+from inventory_test_actors where label = 'warehouse_staff';
+do $$
+declare photo_sql text; photo_id uuid;
+begin
+  photo_sql := $sql$insert into inventory.product_images
+    (product_request_id, uploaded_by, storage_path, sort_order, is_main)
+    select product_request_id, auth.uid(), 'requests/' || product_request_id::text || '/main.jpg', 0, true
+    from inventory_test_fixture$sql$;
+  execute photo_sql || ' returning id' into photo_id;
+  perform pg_temp.inventory_expect_denied(replace(photo_sql, 'select product_request_id,', 'select other_product_request_id,'));
+  perform pg_temp.inventory_expect_denied(replace(photo_sql, 'select product_request_id,', 'select approved_product_request_id,'));
+  perform pg_temp.inventory_expect_denied(replace(photo_sql, 'auth.uid()',
+    '(select id from inventory_test_actors where label = ''admin_manager'')'));
+  perform pg_temp.inventory_expect_denied(
+    'insert into inventory.product_images (product_id, uploaded_by, storage_path, sort_order)
+     select product_id, auth.uid(), ''products/'' || product_id::text || ''/denied.jpg'', 1 from inventory_test_fixture');
+  perform pg_temp.inventory_expect_denied(
+    'insert into inventory.product_images (product_id, product_request_id, uploaded_by, storage_path, sort_order)
+     select product_id, product_request_id, auth.uid(), ''requests/'' || product_request_id::text || ''/denied.jpg'', 1 from inventory_test_fixture');
+  perform pg_temp.inventory_expect_count(format(
+    'with changed as (update inventory.product_images set alt_text=''denied'' where id=%L returning id) select count(*) from changed', photo_id), 0);
+  perform pg_temp.inventory_expect_count(format(
+    'with changed as (delete from inventory.product_images where id=%L returning id) select count(*) from changed', photo_id), 0);
+end $$;
+
 reset role;
 do $$
 declare helper text; target_table text; policy_record record;
 begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'inventory' and table_name in ('products', 'product_requests')
+      and column_name in ('price', 'freight_cost', 'c_and_f', 'transport', 'custom_duty', 'labour', 'vat', 'total_cost')
+  ) then
+    raise exception 'Cost columns remain on non-cost records';
+  end if;
   if has_schema_privilege('anon', 'inventory', 'usage') then
     raise exception 'Anon has inventory schema access';
   end if;
@@ -236,7 +330,7 @@ begin
       raise exception 'Helper grants mismatch: %', helper;
     end if;
   end loop;
-  foreach target_table in array array['categories', 'products', 'product_requests', 'product_images', 'movements', 'movement_requests'] loop
+  foreach target_table in array array['categories', 'products', 'product_requests', 'product_images', 'movements', 'movement_requests', 'product_costs', 'product_request_costs'] loop
     if not (select relrowsecurity from pg_class where oid = format('inventory.%I', target_table)::regclass)
       or has_table_privilege('anon', format('inventory.%I', target_table), 'select,insert,update,delete') then
       raise exception 'RLS/table grants mismatch: %', target_table;
@@ -292,7 +386,7 @@ set local role anon;
 do $$
 declare target_table text;
 begin
-  foreach target_table in array array['categories', 'products', 'product_requests', 'product_images', 'movements', 'movement_requests'] loop
+  foreach target_table in array array['categories', 'products', 'product_requests', 'product_images', 'movements', 'movement_requests', 'product_costs', 'product_request_costs'] loop
     perform pg_temp.inventory_expect_denied(format('select * from inventory.%I', target_table));
     perform pg_temp.inventory_expect_denied(format('insert into inventory.%I default values', target_table));
   end loop;
