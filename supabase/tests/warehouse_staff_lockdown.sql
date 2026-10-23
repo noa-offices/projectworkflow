@@ -101,9 +101,6 @@ begin
   end if;
 end $$;
 
--- Test-only, inside this transaction; the final rollback restores the trigger.
-alter table storage.objects disable trigger protect_objects_delete;
-
 set local role authenticated;
 select set_config('request.jwt.claims', jsonb_build_object(
   'sub', id::text, 'role', 'authenticated')::text, true)
@@ -142,17 +139,13 @@ begin
   perform pg_temp.lockdown_expect_count(
     'select count(*) from storage.objects where bucket_id in (''quote-images'', ''product-images'', ''project-documents'')', 0);
 
-  -- Exercise all avatar exceptions, retaining the existing own-folder constraint.
+  -- Exercise avatar insert and update exceptions, retaining the existing own-folder constraint.
   insert into storage.objects (bucket_id, name)
   select 'avatars', auth.uid()::text || '/' || marker || '-write.png' from lockdown_fixture;
   update storage.objects set metadata = '{"lockdown_test":true}'::jsonb
   where bucket_id = 'avatars' and name = auth.uid()::text || '/' || (select marker from lockdown_fixture) || '-write.png';
   get diagnostics changed = row_count;
   if changed <> 1 then raise exception 'Warehouse avatar update failed'; end if;
-  delete from storage.objects
-  where bucket_id = 'avatars' and name = auth.uid()::text || '/' || (select marker from lockdown_fixture) || '-write.png';
-  get diagnostics changed = row_count;
-  if changed <> 1 then raise exception 'Warehouse avatar delete failed'; end if;
 end $$;
 
 -- Existing-role positive controls use populated fixtures, not empty-table assertions.
@@ -202,6 +195,25 @@ begin
 end $$;
 
 reset role;
+-- Direct deletes on storage.objects are blocked by Supabase, so the delete policy is checked structurally; insert and update are tested for real above.
+do $$
+declare policy_count integer; policy_qual text;
+begin
+  select count(*), min(qual) into policy_count, policy_qual
+  from pg_policies
+  where schemaname = 'storage'
+    and tablename = 'objects'
+    and policyname = 'avatars_delete_own'
+    and cmd = 'DELETE';
+
+  if policy_count <> 1 or not coalesce(policy_qual like all (array[
+    '%bucket_id%', '%avatars%', '%foldername%', '%auth.uid()%',
+    '%current_account_status%', '%active%'
+  ]), false) then
+    raise exception 'Avatar delete policy structure mismatch';
+  end if;
+end $$;
+
 do $$
 begin
   if has_function_privilege('anon', 'public.current_user_can_access_inventory()', 'execute')
@@ -210,5 +222,4 @@ begin
     raise exception 'Inventory helper EXECUTE grants mismatch';
   end if;
 end $$;
-alter table storage.objects enable trigger protect_objects_delete;
 rollback;
