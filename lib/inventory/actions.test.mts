@@ -16,6 +16,8 @@ const client=sdkClient("https://inventory.test","publishable-fixture",{auth:{per
     assert.equal(new Headers(init?.headers).get("Content-Profile"),"inventory");
     if(failure)return Response.json(failure,{status:400});
     if(name==="remove_product_photo")return Response.json(`products/${id}/image.jpg`);
+    if(name==="submit_product_request")return Response.json({request_id:id,product_id:role && ["system_owner","admin_manager"].includes(role)?other:null});
+    if(name==="submit_movement_request")return Response.json({request_id:id,movement_id:role && ["system_owner","admin_manager"].includes(role)?other:null,reservation_id:null});
     return Response.json(["review_movement_request","update_product","remove_product","set_main_product_photo"].includes(name)?null:id);
   }
   if(url.pathname.includes("/storage/")){
@@ -26,6 +28,7 @@ const client=sdkClient("https://inventory.test","publishable-fixture",{auth:{per
   if(name==="product_images"&&method==="POST"&&photoInsertFailure)return Response.json({code:"42501",message:"Photos require a pending product request"},{status:403});
   if(method!=="GET")return Response.json(name==="categories"?[{id}]:[],{status:200});
   if(name==="product_images")return Response.json(images);
+  if(name==="reservations")return Response.json([{created_by:requestOwner}]);
   if(name==="product_requests")return Response.json([{id,submitted_by:requestOwner,request_status:requestStatus}]);
   if(name==="categories")return Response.json(categoryRows);
   return Response.json([{id,is_active:true}]);
@@ -48,6 +51,8 @@ const office=new Set(["procurement_manager","sales_designer","sales_coordinator"
 test("role matrix covers every action; denied roles never create a database client",async()=>{
   for(const nextRole of [...managers,...office,"warehouse_staff","viewer","unknown"]){
     const probes:[string,()=>Promise<{ok:boolean}>,boolean][]=[
+      ["review edits",()=>actions.reviewProductRequestWithEdits({requestId:id,decision:"approved",edits:{}}),managers.has(nextRole)],
+      ["fulfil",()=>actions.fulfilReservation({reservationId:id,actionType:"sale",fromLocation:"warehouse"}),managers.has(nextRole)],
       ["direct",()=>actions.recordDirectMovement({productId:id,actionType:"receive_stock",quantity:1}),managers.has(nextRole)],
       ["review movement",()=>actions.reviewMovementRequest({requestId:id,decision:"approved"}),managers.has(nextRole)],
       ["submit product",()=>actions.submitProductRequest(product),managers.has(nextRole)||nextRole==="warehouse_staff"],
@@ -63,7 +68,7 @@ test("role matrix covers every action; denied roles never create a database clie
       ["remove photo",()=>actions.removeProductPhoto({photoId:id}),managers.has(nextRole)],
     ];
     for(const kind of ["hold","book","take","move"]){
-      probes.push([`submit ${kind}`,()=>actions.submitMovementRequest({productId:id,requestType:kind,actionType:"internal_transfer",fromLocation:"warehouse",toLocation:"dubai_showroom",quantity:1}),managers.has(nextRole)||(office.has(nextRole)?["hold","book"].includes(kind):nextRole==="warehouse_staff"&&["take","move"].includes(kind))]);
+      probes.push([`submit ${kind}`,()=>actions.submitMovementRequest({productId:id,requestType:kind,referenceNote:kind === "book" ? "Project reference" : null,actionType:"internal_transfer",fromLocation:"warehouse",toLocation:"dubai_showroom",quantity:1}),managers.has(nextRole)||(office.has(nextRole)?["hold","book"].includes(kind):nextRole==="warehouse_staff"&&["take","move"].includes(kind))]);
     }
     for(const [name,run,allowed] of probes){
       reset(nextRole); categoryRows=[{id,parent_id:null}];
@@ -80,6 +85,13 @@ test("auth redirects propagate before client access; invalid input never reaches
   for(const run of [()=>actions.recordDirectMovement({productId:id,actionType:"sale",quantity:0}),()=>actions.removeProduct({productId:id,reason:"  "}),()=>actions.updateProduct({productId:"bad",patch:{item_name:"New"}})])assert.equal((await run()).ok,false);
   assert.equal(calls.length,0);
 });
+test('manager submission returns linked product and movement ids; requesters get pending ids',async()=>{
+  reset();
+  assert.deepEqual(await actions.submitProductRequest(product),{ok:true,requestId:id,productId:other});
+  assert.deepEqual(await actions.submitMovementRequest({productId:id,requestType:'take',actionType:'sale',fromLocation:'warehouse',quantity:1}),{ok:true,requestId:id,movementId:other,reservationId:null});
+  reset('warehouse_staff');
+  assert.deepEqual(await actions.submitProductRequest(product),{ok:true,requestId:id,productId:null});
+});
 test("RPC payloads are whitelisted, costs are stripped for warehouse, hold/book normalized",async()=>{
   reset("warehouse_staff");
   const result=await actions.submitProductRequest({...product,costs:{price:"invalid"},submitted_by:other,request_status:"approved"});
@@ -87,8 +99,8 @@ test("RPC payloads are whitelisted, costs are stripped for warehouse, hold/book 
   assert.equal("submitted_by" in (calls[0].body as {payload:object}).payload,false);
   reset("admin_manager");await actions.submitProductRequest({...product,costs:{price:10,total_cost:100}});
   assert.deepEqual((calls[0].body as {payload:{costs:object}}).payload.costs,{price:10});
-  reset("designer");await actions.submitMovementRequest({productId:id,requestType:"book",quantity:1});
-  assert.deepEqual(calls[0].body,{product_id:id,request_type:"book",action_type:"internal_transfer",from_location:null,to_location:null,quantity:1,note:null});
+  reset("designer");await actions.submitMovementRequest({productId:id,requestType:"book",referenceNote:" Project reference ",quantity:1});
+  assert.deepEqual(calls[0].body,{product_id:id,request_type:"book",action_type:"internal_transfer",from_location:null,to_location:null,quantity:1,note:null,project_id:null,reference_note:"Project reference",expires_at:null});
 });
 test("known RPC errors are friendly; unexpected errors are logged without returning details",async()=>{
   reset();failure={code:"P0001",message:"Only 2 units are in warehouse"};
@@ -143,4 +155,24 @@ test("category hierarchy prevents self-parenting, deeper nesting and reparenting
   const update=calls.find(c=>c.method==="PATCH")!.body as Record<string,unknown>;
   assert.equal("parent_id" in update,false);
   assert.equal(update.name,"Renamed");
+});
+
+test('reservation creator can release; other nonmanagers cannot; fulfil is manager-only',async()=>{
+  for(const nextRole of ['system_owner','admin_manager','procurement_manager','sales_designer','sales_coordinator','designer','warehouse_staff','viewer']) {
+    reset(nextRole);
+    assert.equal((await actions.releaseReservation({reservationId:other,note:'Done'})).ok,true,nextRole);
+    assert.equal(calls.at(-1)?.url.pathname,'/rest/v1/rpc/release_reservation');
+    reset(nextRole);requestOwner=other;
+    assert.equal((await actions.releaseReservation({reservationId:other})).ok,managers.has(nextRole),nextRole);
+    if(!managers.has(nextRole)) assert.equal(calls.some(call=>call.method==='POST'),false);
+  }
+  reset();assert.equal((await actions.fulfilReservation({reservationId:id,actionType:'adjustment',fromLocation:'warehouse'})).ok,false);assert.equal(calls.length,0);
+  reset();assert.equal((await actions.fulfilReservation({reservationId:id,actionType:'internal_transfer',fromLocation:'warehouse',toLocation:'warehouse'})).ok,false);assert.equal(calls.length,0);
+});
+test('review edits ignore rejected edits and require a rejection note before RPC',async()=>{
+  reset();assert.equal((await actions.reviewProductRequestWithEdits({requestId:id,decision:'rejected',edits:'invalid'})).ok,false);assert.equal(calls.length,0);
+  assert.equal((await actions.reviewProductRequestWithEdits({requestId:id,decision:'rejected',reviewNote:'Wrong item',edits:'invalid'})).ok,true);
+  assert.deepEqual((calls.at(-1)?.body as Record<string,unknown>).edits,{});
+  reset();assert.equal((await actions.reviewProductRequestWithEdits({requestId:id,decision:'approved',edits:{quantity:2,initial_stock:{mockup:2},costs:{price:10,total_cost:999},reviewed_by:other}})).ok,true);
+  assert.deepEqual((calls.at(-1)?.body as Record<string,unknown>).edits,{quantity:2,initial_stock:{mockup:2},costs:{price:10}});
 });

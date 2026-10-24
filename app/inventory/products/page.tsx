@@ -4,8 +4,10 @@ import { inventoryProductsHref, parseInventoryProductParams } from "@/lib/invent
 import type { InventorySearchParams } from "@/lib/inventory/presentation";
 import { listActiveBrands, listCategories, listProducts } from "@/lib/inventory/queries";
 import { InventoryPageRangeError } from "@/lib/inventory/page-range-error";
+import { requireInventoryUser } from '@/lib/auth';
 
 export default async function InventoryProductsPage({ searchParams }: { searchParams: Promise<InventorySearchParams> }) {
+  const { profile } = await requireInventoryUser();
   const { state, filters, page } = parseInventoryProductParams(await searchParams);
   const products = listProducts(filters, page).catch(error => {
     if (page > 1 && error instanceof InventoryPageRangeError) redirect(inventoryProductsHref(state, { page: 1 }));
@@ -13,5 +15,5 @@ export default async function InventoryProductsPage({ searchParams }: { searchPa
   });
   const [result, brands, categories] = await Promise.all([products, listActiveBrands(), listCategories()]);
   if (page > Math.max(1, result.page_count)) redirect(inventoryProductsHref(state, { page: Math.max(1, result.page_count) }));
-  return <ProductsBrowser result={result} state={state} brands={brands} categories={categories} />;
+  return <ProductsBrowser result={result} state={state} brands={brands} categories={categories} role={profile?.role ?? null} />;
 }

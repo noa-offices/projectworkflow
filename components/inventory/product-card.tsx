@@ -31,6 +31,8 @@ export function ProductCard({ product, href }: { product: InventoryProduct; href
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
             <span className="max-w-full break-words rounded-full border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-medium text-zinc-700">{inventoryLabel(product.status)}</span>
             <span className="max-w-full break-words rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-900">{formatInventoryNumber(product.quantity)} live</span>
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-950">Reserved {formatInventoryNumber(product.reserved_quantity)}</span>
+            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-950">Available {formatInventoryNumber(product.available_quantity)}</span>
           </div>
         </div>
       </div>

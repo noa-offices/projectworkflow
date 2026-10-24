@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { photoSelectionError } from "@/lib/inventory/product-request-submission";
 
 type PickedPhoto = { id: string; file: File; url: string };
-export function RequestPhotoPicker({ onChange, disabled = false }: { onChange: (files: File[]) => void; disabled?: boolean }) {
+export function RequestPhotoPicker({ onChange, disabled = false, ownerType = 'request' }: { onChange: (files: File[]) => void; disabled?: boolean; ownerType?: 'request' | 'product' }) {
   const [photos, setPhotos] = useState<PickedPhoto[]>([]), [error, setError] = useState("");
   const urls = useRef(new Set<string>());
   useEffect(() => () => { for (const url of urls.current) URL.revokeObjectURL(url); }, []);
@@ -21,7 +21,7 @@ export function RequestPhotoPicker({ onChange, disabled = false }: { onChange: (
   }
   const pickerStyle = "flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 focus-within:ring-2 focus-within:ring-emerald-800";
   return <section aria-labelledby="request-photos-heading" className="min-w-0 space-y-3">
-    <div><h2 id="request-photos-heading" className="font-semibold text-zinc-900">Photos <span className="text-sm font-normal text-zinc-500">({photos.length}/3)</span></h2><p className="mt-1 text-sm text-zinc-600">Optional. The main photo appears first. Photos are attached after your request is sent.</p></div>
+    <div><h2 id="request-photos-heading" className="font-semibold text-zinc-900">Photos <span className="text-sm font-normal text-zinc-500">({photos.length}/3)</span></h2><p className="mt-1 text-sm text-zinc-600">Optional. The main photo appears first. {ownerType === 'product' ? 'Photos are attached after the item is saved.' : 'Photos are attached after your request is sent.'}</p></div>
     <div className="grid min-w-0 grid-cols-2 gap-2">
       <label className={pickerStyle + (disabled || photos.length === 3 ? " cursor-not-allowed opacity-50" : "")}><Camera size={18} aria-hidden="true" />Camera<input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={disabled || photos.length === 3} aria-label="Take a photo" onChange={event => { add(event.target.files); event.target.value = ""; }} /></label>
       <label className={pickerStyle + (disabled || photos.length === 3 ? " cursor-not-allowed opacity-50" : "")}><ImagePlus size={18} aria-hidden="true" />Gallery<input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={disabled || photos.length === 3} aria-label="Choose photos from gallery" onChange={event => { add(event.target.files); event.target.value = ""; }} /></label>
