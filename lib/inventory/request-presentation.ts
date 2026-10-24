@@ -20,6 +20,7 @@ export function parseRequestParams(params: InventorySearchParams, manager: boole
     tab: first('tab') === 'movements' ? 'movements' as const : 'products' as const,
     status: status === 'all' || REQUEST_STATUSES.includes(status as typeof REQUEST_STATUSES[number]) ? status as typeof REQUEST_STATUSES[number] | 'all' : manager ? 'pending_review' as const : 'all' as const,
     mine: first('mine') === '1',
+    q: (first('q') ?? '').trim().slice(0, 100),
     page: /^\d+$/.test(page) && Number(page) >= 1 && Number(page) <= 1000000 ? Number(page) : 1,
   };
 }

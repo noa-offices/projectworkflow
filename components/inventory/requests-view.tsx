@@ -17,7 +17,7 @@ import { ProductRequestForm } from './product-request-form';
 type Request = InventoryProductRequest | InventoryMovementRequest;
 type Tab = "products" | "movements";
 type Status = "pending_review" | "approved" | "rejected" | "all";
-type Props = { products: InventoryProductRequest[]; movements: InventoryMovementRequest[]; tab: Tab; status: Status; mine: boolean; userId: string; role: string | null; page: number; pageCount: number; total: number; preview?: boolean; previewImages?: InventoryImage[]; brands?: InventoryBrand[]; categories?: InventoryCategoryNode[] };
+type Props = { q?: string; products: InventoryProductRequest[]; movements: InventoryMovementRequest[]; tab: Tab; status: Status; mine: boolean; userId: string; role: string | null; page: number; pageCount: number; total: number; preview?: boolean; previewImages?: InventoryImage[]; brands?: InventoryBrand[]; categories?: InventoryCategoryNode[] };
 const controlBase = "inline-flex min-h-11 items-center justify-center rounded-lg border font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:opacity-50";
 const buttonBase = `${controlBase} px-4 py-2.5 text-sm`;
 const button = `${buttonBase} border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50`;
@@ -131,17 +131,18 @@ function ReviewDialog({ request, decision, preview, onClose, onSuccess }: { requ
 }
 
 export function RequestsView(props: Props) {
-  const { products, movements, tab, status, mine, userId, role, page, pageCount, total, preview = false } = props;
+  const { products, movements, tab, status, mine, userId, role, page, pageCount, total, preview = false } = props, q = props.q ?? "";
   const router = useRouter();
   const [details, setDetails] = useState<Request | null>(null);
   const [review, setReview] = useState<{ request: Request; decision: "approved" | "rejected" } | null>(null);
   const [message, setMessage] = useState("");
   const manager = canManageInventory(role);
-  function href(patch: Partial<{ tab: Tab; status: Status; mine: boolean; page: number }> = {}) {
-    const next = { tab, status, mine, page: 1, ...patch };
+  function href(patch: Partial<{ tab: Tab; status: Status; mine: boolean; page: number; q: string }> = {}) {
+    const next = { tab, status, mine, q, page: 1, ...patch };
     const query = new URLSearchParams(preview ? `view=requests&frame=1&role=${encodeURIComponent(role ?? '')}` : "");
     query.set("tab", next.tab); query.set("status", next.status);
     if (next.mine) query.set("mine", "1");
+    if (next.q) query.set("q", next.q);
     if (next.page > 1) query.set("page", String(next.page));
     return `${preview ? "/dev/inventory-preview" : "/inventory/requests"}?${query}`;
   }
@@ -150,6 +151,13 @@ export function RequestsView(props: Props) {
     <header className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-semibold tracking-tight text-zinc-950">Requests</h1><p className="mt-1 text-sm text-zinc-500">Track new items and stock requests.</p></div>{manager || canSubmitAddTake(role) ? <Link href={preview ? `/dev/inventory-preview?view=new-product&frame=1&role=${encodeURIComponent(role ?? "")}` : "/inventory/requests/new-product"} className={primary}><Plus className="mr-2 h-4 w-4" aria-hidden="true" />Add item</Link> : null}</header>
     {message ? <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950">{message}</p> : null}
     <nav aria-label="Request types" className="grid grid-cols-2 gap-1 rounded-lg border border-zinc-200 bg-white p-1">{(["products", "movements"] as const).map(value => <Link key={value} href={href({ tab: value })} aria-current={tab === value ? "page" : undefined} className={`${controlBase} border-transparent px-2 py-2.5 text-center text-sm ${tab === value ? "bg-emerald-50 text-emerald-900 hover:bg-emerald-100" : "bg-white text-zinc-700 hover:bg-zinc-50"}`}>{value === "products" ? "Product requests" : "Movement requests"}</Link>)}</nav>
+    <form method="get" action={preview ? "/dev/inventory-preview" : "/inventory/requests"} role="search" aria-label="Search requests" className="space-y-2 rounded-lg border border-zinc-200 bg-white p-3">
+      {preview ? <><input type="hidden" name="view" value="requests" /><input type="hidden" name="frame" value="1" /><input type="hidden" name="role" value={role ?? ""} /></> : null}
+      <input type="hidden" name="tab" value={tab} /><input type="hidden" name="status" value={status} />{mine ? <input type="hidden" name="mine" value="1" /> : null}
+      <label htmlFor="request-search" className="block text-sm font-medium text-zinc-700">Search requests</label>
+      <div className="flex min-w-0 gap-2"><input id="request-search" type="search" name="q" defaultValue={q} maxLength={100} placeholder={manager ? "Product, stock ref, code, model or person" : "Product, stock ref, code or model"} className="min-h-11 w-0 min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 text-base outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100" /><button type="submit" className={primary}>Search</button></div>
+      {q ? <p className="flex flex-wrap items-center gap-2 text-sm text-zinc-700"><span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 font-medium text-emerald-900 [overflow-wrap:anywhere]">Search: {q}</span><Link href={href({ q: "" })} className="inline-flex min-h-11 items-center font-semibold underline underline-offset-4">Clear search</Link></p> : null}
+    </form>
     <section aria-label="Filter requests" className="space-y-3 rounded-lg border border-zinc-200 bg-white p-3"><nav aria-label="Request status" className="grid grid-cols-4 gap-1">{(["pending_review", "approved", "rejected", "all"] as const).map(value => <Link key={value} href={href({ status: value })} aria-current={status === value ? "page" : undefined} className={`${controlBase} px-1 py-2.5 text-xs ${status === value ? "border-zinc-200 bg-zinc-100 text-zinc-950" : "border-transparent bg-white text-zinc-700 hover:bg-zinc-50"}`}>{statusLabel(value)}</Link>)}</nav><Link href={href({ mine: !mine })} aria-current={mine ? "page" : undefined} className={`${buttonBase} w-full gap-2 ${mine ? "border-emerald-300 bg-emerald-50 text-emerald-900 hover:bg-emerald-100" : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"}`}><span aria-hidden="true" className={`flex h-4 w-4 items-center justify-center rounded border ${mine ? "border-emerald-700 bg-emerald-700 text-white" : "border-zinc-400"}`}>{mine ? "✓" : ""}</span>My requests {mine ? "only" : ""}</Link></section>
     <p className="text-sm text-zinc-500">{formatInventoryNumber(total)} {total === 1 ? "request" : "requests"}{mine ? " submitted by you" : ""}</p>
     {requests.length ? <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">{requests.map(request => {

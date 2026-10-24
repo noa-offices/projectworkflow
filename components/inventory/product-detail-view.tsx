@@ -10,6 +10,7 @@ import {
   orderedProductImages,
 } from "@/lib/inventory/presentation";
 import { LOCATION_LABELS, type InventoryProductDetail } from "@/lib/inventory/types";
+import { canUseManagerMovements } from "@/lib/inventory/movement-form";
 import { ProductReservations } from "./product-reservations";
 import { ProductImageGallery } from "./product-image-gallery";
 import { StockByLocation } from "./stock-by-location";
@@ -124,7 +125,8 @@ export function ProductDetailView({ product, productsHref = "/inventory/products
       ) : null}
 
       <section aria-labelledby="movements-heading" className={cardClass}>
-        <h2 id="movements-heading" className="text-base font-semibold text-zinc-950">Recent movements</h2>
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2"><h2 id="movements-heading" className="text-base font-semibold text-zinc-950">Recent movements</h2>
+          {canUseManagerMovements(role) ? <Link href={preview ? `/dev/inventory-preview?view=movements&frame=1&role=${encodeURIComponent(role ?? "")}&product=${product.id}` : `/inventory/movements?product=${product.id}`} className="inline-flex min-h-11 items-center text-sm font-semibold text-emerald-900 underline underline-offset-4">All movements for this product</Link> : null}</div>
         {product.recent_movements.length ? (
           <ol className="mt-4 divide-y divide-zinc-100">
             {product.recent_movements.map((movement) => (

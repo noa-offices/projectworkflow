@@ -13,7 +13,10 @@ import * as submission from './product-request-submission';
 import * as validation from './action-validation';
 import * as types from './types';
 import * as productEdit from './product-edit';
-import {previewBrands,previewCategories,previewOverview,previewProduct} from './preview-data';
+import * as movementForm from './movement-form';
+import * as movementHistory from './movement-history';
+import * as categoryForm from './category-form';
+import {previewBrands,previewCategories,previewOverview,previewProduct,previewPickerProducts,previewMovementHistory,previewCategoryOverview} from './preview-data';
 import {previewProductRequests} from './request-preview-data';
 
 type Component = React.ComponentType<Record<string, unknown>>;
@@ -26,7 +29,7 @@ async function load(path: string, dependencies: Record<string,unknown> = {}) {
   return compiledModule.exports;
 }
 const shared = {
-  'next/link':{__esModule:true,default:Link}, 'next/navigation':{useRouter:()=>({push(){},refresh(){}})},
+  'next/link':{__esModule:true,default:Link}, 'next/navigation':{useRouter:()=>({push(){},refresh(){}}),usePathname:()=>'/inventory'}, '@/lib/inventory/movement-form':movementForm, '@/lib/inventory/movement-history':movementHistory, '@/lib/inventory/category-form':categoryForm,
   '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
   '@/lib/inventory/request-presentation':requests, '@/lib/inventory/types':types,
   '@/lib/inventory/product-request-submission':submission, '@/lib/inventory/action-validation':validation,
@@ -36,7 +39,8 @@ const html = (component:Component,props:Record<string,unknown>) => renderToStati
 
 test('overview and products show a full-width Add item link for only managers and warehouse staff',async()=>{
   const add = await load('../../components/inventory/add-item-button.tsx',shared);
-  const dependencies = {...shared,'./add-item-button':add,'./product-type-tabs':{ProductTypeTabs:stub},'./product-filters':{ProductFilters:stub},'./product-list-view':{ProductListView:stub}};
+  const shortcuts = await load('../../components/inventory/manager-shortcuts.tsx',shared);
+  const dependencies = {...shared,'./add-item-button':add,'./manager-shortcuts':shortcuts,'./product-type-tabs':{ProductTypeTabs:stub},'./product-filters':{ProductFilters:stub},'./product-list-view':{ProductListView:stub}};
   const overview = (await load('../../components/inventory/overview-view.tsx',dependencies)).InventoryOverviewView;
   const browser = (await load('../../components/inventory/products-browser.tsx',dependencies)).ProductsBrowser;
   const state = presentation.parseInventoryProductParams({}).state;
@@ -226,4 +230,73 @@ test('photo manager shows add controls until three photos, and nothing to other 
   assert.ok(two.includes('(2/3)')); assert.doesNotMatch(two,/<input[^>]*type="file"[^>]*disabled=""/);
   assert.match(two,/accept="image\/jpeg,image\/png,image\/webp"/); assert.ok(two.includes('Set as main')); assert.ok(two.includes('Remove photo 1'));
   assert.doesNotMatch(html(manager,{...props,images,role:'warehouse_staff'}),/Set as main|type="file"/);
+});
+
+test('Move stock and Manage categories shortcuts, and the Movements tab, show only to managers',async()=>{
+  const add = await load('../../components/inventory/add-item-button.tsx',shared);
+  const shortcuts = await load('../../components/inventory/manager-shortcuts.tsx',shared);
+  const overview = (await load('../../components/inventory/overview-view.tsx',{...shared,'./add-item-button':add,'./manager-shortcuts':shortcuts})).InventoryOverviewView;
+  const browser = (await load('../../components/inventory/products-browser.tsx',{...shared,'./add-item-button':add,'./manager-shortcuts':shortcuts,'./product-type-tabs':{ProductTypeTabs:stub},'./product-filters':{ProductFilters:stub},'./product-list-view':{ProductListView:stub}})).ProductsBrowser;
+  const nav = (await load('../../components/inventory/inventory-nav.tsx',shared)).InventoryNav;
+  const state = presentation.parseInventoryProductParams({}).state;
+  for(const role of ['system_owner','admin_manager','warehouse_staff','viewer','designer','sales_designer','sales_coordinator','procurement_manager','unknown',null]) {
+    const manager=['system_owner','admin_manager'].includes(role ?? '');
+    for(const markup of [html(overview,{overview:previewOverview,role}),html(browser,{result:{items:[],total:0,page:1,page_count:0},counts:{all:0,product:0,accessory:0,temporary:0},state,brands:[],categories:[],role})]) {
+      assert.equal(markup.includes('href="/inventory/move"'),manager,String(role));
+      assert.equal(markup.includes('href="/inventory/categories"'),manager,String(role));
+    }
+    const tabs=html(nav,{showMovements:manager});
+    assert.equal(tabs.includes('href="/inventory/movements"'),manager);
+    assert.ok(tabs.includes('href="/inventory/requests"'));
+  }
+});
+test('Move, Movements and Categories screens give other roles a permission message and no controls',async()=>{
+  const dialog={RequestDialog:stub};
+  const move=(await load('../../components/inventory/move-stock-form.tsx',{...shared,'next/image':{__esModule:true,default:stub}})).MoveStockForm;
+  const movements=(await load('../../components/inventory/movements-view.tsx',{...shared,'next/image':{__esModule:true,default:stub}})).MovementsView;
+  const categories=(await load('../../components/inventory/category-manager.tsx',{...shared,'./request-dialog':dialog})).CategoryManager;
+  const picker=previewPickerProducts[0], page={items:previewMovementHistory,total:3,page:1,page_count:1,page_size:24};
+  const state=movementHistory.parseMovementParams({}).state;
+  for(const role of ['warehouse_staff','viewer','designer','sales_designer','sales_coordinator','procurement_manager','unknown',null]) {
+    for(const markup of [html(move,{role,initialProduct:picker}),html(movements,{role,result:page,state}),html(categories,{role,categories:previewCategoryOverview})]) {
+      assert.match(markup,/do not have permission/); assert.doesNotMatch(markup,/<form|<input|<table|Save movement|Add category/);
+    }
+  }
+  for(const role of ['system_owner','admin_manager']) {
+    const form=html(move,{role,initialProduct:picker,initialQuantity:'2'});
+    assert.ok(form.includes('Move between locations')); assert.ok(form.includes('Save movement')); assert.match(form,/After saving/);
+    assert.doesNotMatch(form,/price|cost|vat/i);
+    const list=html(movements,{role,result:page,state});
+    assert.ok(list.includes('<table')); assert.ok(list.includes('Received')); assert.ok(list.includes('Moved')); assert.ok(list.includes('Sold')); assert.ok(list.includes('Stock request'));
+    const cats=html(categories,{role,categories:previewCategoryOverview});
+    assert.ok(cats.includes('Add category')); assert.ok(cats.includes('Add subcategory')); assert.ok(cats.includes('Rename')); assert.ok(cats.includes('Hidden')); assert.doesNotMatch(cats,/Delete/);
+  }
+});
+test('Move stock blocks Save and shows the preview and plain-words error',async()=>{
+  const move=(await load('../../components/inventory/move-stock-form.tsx',{...shared,'next/image':{__esModule:true,default:stub}})).MoveStockForm;
+  const picker={...previewPickerProducts[0],warehouse_quantity:10,dubai_showroom_quantity:1,quantity:11,reserved_quantity:3,available_quantity:8};
+  const ok=html(move,{role:'admin_manager',initialProduct:picker,initialQuantity:'3'});
+  assert.ok(ok.includes('Warehouse')); assert.doesNotMatch(ok,/<button[^>]*disabled=""[^>]*>Save movement/);
+  const blocked=html(move,{role:'admin_manager',initialProduct:picker,initialQuantity:'9'});
+  assert.ok(blocked.includes('Only 8 units are available; 3 are reserved.')); assert.match(blocked,/<button[^>]*disabled=""[^>]*>Save movement/);
+});
+test('Requests tab has a search box that keeps the URL state and explains who can be searched',async()=>{
+  const view=(await load('../../components/inventory/requests-view.tsx',{...shared,'./product-image-gallery':{ProductImageGallery:stub},'./request-dialog':{RequestDialog:stub},'./product-request-form':{ProductRequestForm:stub},'@/lib/inventory/request-reads':{loadProductRequestImages:async()=>[]}})).RequestsView;
+  const props={products:[],movements:[],tab:'movements',status:'all',mine:false,userId:'u',page:1,pageCount:1,total:0};
+  const manager=html(view,{...props,role:'admin_manager',q:'chair'});
+  assert.match(manager,/<input[^>]*name="q"[^>]*value="chair"/); assert.match(manager,/Product, stock ref, code, model or person/);
+  assert.match(manager,/name="tab" value="movements"/); assert.match(manager,/name="status" value="all"/); assert.ok(manager.includes('Clear search'));
+  const staff=html(view,{...props,role:'warehouse_staff',q:''});
+  assert.match(staff,/Product, stock ref, code or model/); assert.doesNotMatch(staff,/or person/); assert.doesNotMatch(staff,/Clear search/);
+});
+test('the new pages send non-managers away before reading anything',async()=>{
+  const redirects:string[]=[]; let reads=0;
+  const navigation={notFound(){throw new Error('Not found');},redirect(path:string){redirects.push(path);throw new Error('redirect');}};
+  const queriesMock={getProduct:async()=>{reads++;return null;},listMovements:async()=>{reads++;return {items:[],total:0,page:1,page_count:1,page_size:24};},listCategoryOverview:async()=>{reads++;return [];}};
+  for(const [path,role] of [['move','viewer'],['movements','warehouse_staff'],['categories','designer'],['movements',null],['categories','procurement_manager']] as const) {
+    const pageModule=await load(`../../app/inventory/${path}/page.tsx`,{...shared,'next/navigation':navigation,'@/lib/auth':{requireInventoryUser:async()=>({profile:{role},user:{id:'u'}})},'@/lib/inventory/queries':queriesMock,
+      '@/components/inventory/move-stock-form':{MoveStockForm:stub},'@/components/inventory/movements-view':{MovementsView:stub},'@/components/inventory/category-manager':{CategoryManager:stub},'@/lib/inventory/page-range-error':{InventoryPageRangeError:class extends Error{}}});
+    await assert.rejects(()=>(pageModule.default as unknown as (props:object)=>Promise<unknown>)({searchParams:Promise.resolve({})}),/redirect/);
+  }
+  assert.equal(redirects.length,5); assert.ok(redirects.every(path=>path==='/inventory')); assert.equal(reads,0);
 });

@@ -1,4 +1,4 @@
-import { ITEM_TYPES, LOCATION_QUANTITY_COLUMNS, MOVEMENT_TYPES, PRODUCT_STATUSES, STOCK_FILTERS, REQUEST_STATUSES, REQUEST_TYPES } from "./types";
+import { ITEM_TYPES, LOCATION_QUANTITY_COLUMNS, MOVEMENT_ACTIONS, MOVEMENT_TYPES, PRODUCT_STATUSES, STOCK_FILTERS, REQUEST_STATUSES, REQUEST_TYPES } from "./types";
 import type { MovementFilters, ProductFilters, ProductSort, RequestFilters } from "./types";
 
 export const PAGE_SIZE = 24;
@@ -40,8 +40,19 @@ export function buildProductFilters(filters: ProductFilters = {}) {
     order: orders[sort],
   };
 }
+/** Free text for people or product lookups: trimmed, bounded, and safe inside a PostgREST ilike. */
+export function lookupText(value?: string): string | null {
+  const text = value?.trim().slice(0, 100).replace(/[\%_,()*"]/g, " ").replace(/\s+/g, " ").trim();
+  return text || null;
+}
+/** Request search: product fields for everyone, plus submitter ids that only managers are given. */
+export function requestSearchFilter(productFields: string | null, personIds: readonly string[]): string | null {
+  const parts = [productFields, personIds.length ? `submitted_by.in.(${personIds.join(",")})` : null].filter((part): part is string => !!part);
+  return parts.length ? parts.join(",") : null;
+}
 export function requestFilters(filters: RequestFilters = {}) {
   return {
+    search: lookupText(filters.search),
     request_status: allowed(filters.request_status, REQUEST_STATUSES),
     request_type: allowed(filters.request_type, REQUEST_TYPES),
     submitted_by: filters.submitted_by ?? null, product_id: filters.product_id ?? null,
@@ -57,7 +68,8 @@ export function movementFilters(filters: MovementFilters = {}) {
   if (from && to && from > to) throw new Error("Invalid inventory date range");
   return {
     product_id: filters.product_id ?? null, created_by: filters.created_by ?? null,
-    movement_type: allowed(filters.movement_type, MOVEMENT_TYPES),
+    movement_type: allowed(filters.movement_type, MOVEMENT_TYPES), action_type: allowed(filters.action_type, MOVEMENT_ACTIONS),
+    search: lookupText(filters.search), person: lookupText(filters.person),
     location: allowed(filters.location, Object.keys(LOCATION_QUANTITY_COLUMNS) as (keyof typeof LOCATION_QUANTITY_COLUMNS)[]),
     from, to,
   };
