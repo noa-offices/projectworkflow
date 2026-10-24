@@ -18,6 +18,7 @@ import { parseRequestParams } from "@/lib/inventory/request-presentation";
 import { canManageInventory, canViewInventory } from "@/lib/inventory/access";
 import { previewMovementRequests, previewProductRequests, previewRequestUserId } from "@/lib/inventory/request-preview-data";
 
+const stockMatches = (product: typeof previewProducts[number], stock?: string) => !stock || (stock === "live" ? product.quantity > 0 : stock === "reserved" ? product.reserved_quantity > 0 : product.quantity <= product.low_stock_at);
 export const dynamic = "force-dynamic";
 export default async function InventoryPreviewPage({ searchParams }: { searchParams: Promise<InventorySearchParams> }) {
   await redirectWarehouseStaff();
@@ -38,7 +39,7 @@ export default async function InventoryPreviewPage({ searchParams }: { searchPar
   const matchingProducts = previewProducts.filter(product => (!filters.search || [product.item_name, product.item_code, product.stock_ref, product.model_name].some(value => value?.toLowerCase().includes(filters.search!.toLowerCase()) ?? false))
     && (!filters.brand_id || product.brand_id === filters.brand_id) && (!filters.category_id || product.category_id === filters.category_id)
     && (!filters.subcategory_id || product.subcategory_id === filters.subcategory_id) && (!filters.status || product.status === filters.status)
-    && (filters.active === "all" || product.is_active === (filters.active ?? true)) && (!filters.location || product[LOCATION_QUANTITY_COLUMNS[filters.location]] > 0));
+    && stockMatches(product, filters.stock) && (filters.active === "all" || product.is_active === (filters.active ?? true)) && (!filters.location || product[LOCATION_QUANTITY_COLUMNS[filters.location]] > 0));
   const counts: ProductTypeCounts = { all: matchingProducts.length, product: 0, accessory: 0, temporary: 0 };
   for (const product of matchingProducts) counts[product.item_type]++;
   const products = matchingProducts.filter(product => !filters.item_type || product.item_type === filters.item_type);

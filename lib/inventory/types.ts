@@ -15,6 +15,9 @@ export const REQUEST_TYPES = ["take", "move", "hold", "book"] as const;
 export type RequestType = typeof REQUEST_TYPES[number];
 export const ITEM_TYPES = ["product", "accessory", "temporary"] as const;
 export type ItemType = typeof ITEM_TYPES[number];
+export const STOCK_FILTERS = ["live", "reserved", "low_stock"] as const;
+export type StockFilter = typeof STOCK_FILTERS[number];
+export const STOCK_FILTER_LABELS: Record<StockFilter, string> = { live: "In stock", reserved: "Reserved", low_stock: "Low stock" };
 export type ProductTypeCounts = Record<"all" | ItemType, number>;
 export const MOVEMENT_TYPES = ["stock_in", "stock_out", "transfer", "adjustment"] as const;
 export type MovementType = typeof MOVEMENT_TYPES[number];
@@ -197,6 +200,7 @@ export interface InventoryStockSummary {
 }
 export interface InventoryOverview extends InventoryStockSummary {
   reserved_quantity: number;
+  reserved_product_count: number;
   pending_product_requests: number;
   pending_movement_requests: number;
 }
@@ -204,7 +208,7 @@ export interface InventoryOverview extends InventoryStockSummary {
 export type ProductSort = "name_asc" | "name_desc" | "newest" | "oldest" | "quantity_asc" | "quantity_desc";
 export interface ProductFilters {
   search?: string; brand_id?: string; category_id?: string; subcategory_id?: string;
-  status?: ProductStatus; item_type?: ItemType; location?: InventoryLocation;
+  status?: ProductStatus; item_type?: ItemType; location?: InventoryLocation; stock?: StockFilter;
   active?: boolean | "all"; sort?: ProductSort;
 }
 export interface RequestFilters {

@@ -1,4 +1,4 @@
-import { ITEM_TYPES, LOCATION_QUANTITY_COLUMNS, MOVEMENT_TYPES, PRODUCT_STATUSES, REQUEST_STATUSES, REQUEST_TYPES } from "./types";
+import { ITEM_TYPES, LOCATION_QUANTITY_COLUMNS, MOVEMENT_TYPES, PRODUCT_STATUSES, STOCK_FILTERS, REQUEST_STATUSES, REQUEST_TYPES } from "./types";
 import type { MovementFilters, ProductFilters, ProductSort, RequestFilters } from "./types";
 
 export const PAGE_SIZE = 24;
@@ -35,6 +35,7 @@ export function buildProductFilters(filters: ProductFilters = {}) {
     search: searchFilter(filters.search), brand_id: filters.brand_id ?? null,
     category_id: filters.category_id ?? null, subcategory_id: filters.subcategory_id ?? null,
     status: allowed(filters.status, PRODUCT_STATUSES), item_type: allowed(filters.item_type, ITEM_TYPES),
+    stock: allowed(filters.stock, STOCK_FILTERS),
     location_column: location ? LOCATION_QUANTITY_COLUMNS[location] : null,
     order: orders[sort],
   };

@@ -46,6 +46,7 @@ const client = createSupabaseClient("https://inventory.test", "test-publishable-
     let rows = fixtures[table] ?? [];
     for (const [key, value] of url.searchParams) {
       if (value.startsWith("eq.")) rows = rows.filter(row => String(row[key]) === value.slice(3));
+      if (value.startsWith("gt.")) rows = rows.filter(row => Number(row[key]) > Number(value.slice(3)));
       if (value.startsWith("in.(")) rows = rows.filter(row => value.slice(4, -1).split(",").includes(String(row[key])));
     }
     const total = rows.length;
@@ -277,4 +278,43 @@ test('generated stock refs remain searchable and nullable request and product id
   assert.equal(detail?.stock_ref,'02-0001');assert.equal(detail?.item_code,null);assert.equal(detail?.model_name,null);
   const requests=await queries.listProductRequests();
   assert.equal(requests.items[0].stock_ref,null);assert.equal(requests.items[0].item_code,null);assert.equal(requests.items[0].model_name,null);
+});
+
+test("every Overview card opens a Products list with the same number of products", async () => {
+  reset();
+  const stock = { warehouse_quantity: 0, dubai_showroom_quantity: 0, abudhabi_showroom_quantity: 0, mockup_quantity: 0, temporary_out_quantity: 0, sold_quantity: 0, quantity: 0, low_stock_at: 2, item_type: "product", is_active: true };
+  fixtures.products = [
+    { ...product, ...stock, id: "a", item_type: "product", warehouse_quantity: 5, dubai_showroom_quantity: 2, quantity: 7, sold_quantity: 4 },
+    { ...product, ...stock, id: "b", item_type: "accessory", warehouse_quantity: 1, quantity: 1 },
+    { ...product, ...stock, id: "c", item_type: "temporary", mockup_quantity: 3, quantity: 3, sold_quantity: 1 },
+    { ...product, ...stock, id: "d", item_type: "product", quantity: 0, sold_quantity: 9 },
+    { ...product, ...stock, id: "e", item_type: "accessory", abudhabi_showroom_quantity: 4, quantity: 4 },
+    { ...product, ...stock, id: "x", is_active: false, warehouse_quantity: 9, quantity: 9 },
+  ];
+  const future = "2999-01-01T00:00:00Z", past = "2000-01-01T00:00:00Z";
+  fixtures.reservations = [
+    { id: "r1", product_id: "a", quantity: 2, status: "active", expires_at: null },
+    { id: "r2", product_id: "a", quantity: 1, status: "active", expires_at: future },
+    { id: "r3", product_id: "b", quantity: 1, status: "active", expires_at: past },
+    { id: "r4", product_id: "c", quantity: 1, status: "released", expires_at: null },
+    { id: "r5", product_id: "e", quantity: 1, status: "active", expires_at: future },
+  ];
+  const overview = await queries.getInventoryOverview();
+  const cards: [string, number, Record<string, string>][] = [
+    ["units/products", overview.product_count, { stock: "live" }],
+    ["accessories", overview.item_type_counts.accessory, { item_type: "accessory", stock: "live" }],
+    ["temporary", overview.item_type_counts.temporary, { item_type: "temporary", stock: "live" }],
+    ["reserved", overview.reserved_product_count, { stock: "reserved" }],
+    ["low stock", overview.low_stock_count, { stock: "low_stock" }],
+    ...(["warehouse", "dubai_showroom", "abudhabi_showroom", "mockup", "temporary_out", "sold"] as const).map(location => [location, overview.location_product_counts[location], { location }] as [string, number, Record<string, string>]),
+  ];
+  assert.deepEqual([overview.product_count, overview.reserved_quantity, overview.reserved_product_count, overview.low_stock_count], [4, 3 + 1, 2, 2]);
+  for (const [name, count, filters] of cards) {
+    const list = await queries.listProducts(filters as never, 1);
+    assert.equal(list.total, count, name);
+    assert.equal(list.items.length, count, name);
+  }
+  assert.deepEqual(await queries.getProductTypeCounts({ stock: "live" }), { all: 4, product: 1, accessory: 2, temporary: 1 });
+  assert.equal((await queries.listProducts({ stock: "reserved", item_type: "accessory" })).total, 1);
+  await assert.rejects(() => queries.listProducts({ stock: "bogus" } as never));
 });
