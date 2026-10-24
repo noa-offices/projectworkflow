@@ -6,6 +6,7 @@ import {
   formatInventoryDate,
   formatInventoryNumber,
   inventoryLabel,
+  inventoryOptionalText,
   orderedProductImages,
 } from "@/lib/inventory/presentation";
 import { LOCATION_LABELS, type InventoryProductDetail } from "@/lib/inventory/types";
@@ -56,14 +57,14 @@ export function ProductDetailView({ product, productsHref = "/inventory/products
         <section aria-labelledby="product-heading" className={cardClass}>
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Product details</p>
           <h2 id="product-heading" className="mt-2 text-2xl font-semibold tracking-tight text-zinc-950 [overflow-wrap:anywhere]">{product.item_name}</h2>
-          {product.model_name ? <p className="mt-1 text-sm text-zinc-500 [overflow-wrap:anywhere]">{product.model_name}</p> : null}
+          <p className="mt-1 text-sm text-zinc-500 [overflow-wrap:anywhere]">{inventoryOptionalText(product.model_name)}</p>
           <div className="mt-4 flex flex-wrap gap-2">
             <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-900">{inventoryLabel(product.status)}</span>
             <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700">{inventoryLabel(product.condition)}</span>
             <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700">{inventoryLabel(product.item_type)}</span>
           </div>
           <dl className="mt-5 grid min-w-0 grid-cols-2 gap-x-4 gap-y-4 border-t border-zinc-100 pt-5">
-            <DetailField label="Item code">{product.item_code}</DetailField>
+            <DetailField label="Item code">{inventoryOptionalText(product.item_code)}</DetailField>
             <DetailField label="Stock reference">{product.stock_ref}</DetailField>
             <DetailField label="Brand">{product.brand_name}</DetailField>
             <DetailField label="Category">{product.custom_category_name || product.category_name}</DetailField>

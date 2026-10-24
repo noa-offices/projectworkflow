@@ -30,7 +30,7 @@ export default async function InventoryPreviewPage({ searchParams }: { searchPar
     <iframe title={`Phone inventory ${view} preview`} src={`/dev/inventory-preview?${frameQuery}`} className="mx-auto block h-[1900px] w-full max-w-[390px] rounded-lg border border-zinc-200 bg-white shadow-sm" />
   </main>;
   const { state, filters } = parseInventoryProductParams(params);
-  const products = previewProducts.filter(product => (!filters.search || [product.item_name, product.item_code, product.stock_ref, product.model_name].some(value => value.toLowerCase().includes(filters.search!.toLowerCase())))
+  const products = previewProducts.filter(product => (!filters.search || [product.item_name, product.item_code, product.stock_ref, product.model_name].some(value => value?.toLowerCase().includes(filters.search!.toLowerCase()) ?? false))
     && (!filters.brand_id || product.brand_id === filters.brand_id) && (!filters.category_id || product.category_id === filters.category_id)
     && (!filters.subcategory_id || product.subcategory_id === filters.subcategory_id) && (!filters.status || product.status === filters.status)
     && (!filters.item_type || product.item_type === filters.item_type) && (!filters.location || product[LOCATION_QUANTITY_COLUMNS[filters.location]] > 0));

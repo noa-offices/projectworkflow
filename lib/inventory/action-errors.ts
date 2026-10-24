@@ -2,6 +2,7 @@ import { LOCATION_LABELS } from "./types";
 export function inventoryErrorMessage(error: unknown): string | null {
   const value = error && typeof error === "object" ? error as { code?: string; message?: string } : {};
   const message = value.message ?? "";
+  if (message === 'Brand needs a code') return 'Brand needs a code.';
   if (/^Only \d+ units are available; \d+ are reserved$/.test(message)) return `${message}.`;
   if (['Release reservations first','Reservation is no longer active','Book requires a project or reference','Hold until must be in the future','Hold until must be in the future and is only allowed for holds'].includes(message)) return `${message}.`;
   if (message.includes("pending product request")) return "Photos can only be added while the request is pending review.";

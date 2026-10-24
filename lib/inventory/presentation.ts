@@ -33,6 +33,7 @@ export function inventoryProductsHref(state: ProductUrlState, patch: Partial<Pro
   return `${path}${suffix ? `?${suffix}` : ""}`;
 }
 export function hasInventoryFilters(state: ProductUrlState): boolean { return !!(state.q || state.brand || state.category || state.subcategory || state.status || state.itemType || state.location); }
+export function inventoryOptionalText(value: string | null | undefined): string { return value?.trim() || "—"; }
 export function inventoryLabel(value: string): string {
   const special: Record<string, string> = { receive_stock: "Stock received", stock_in: "Stock in", stock_out: "Stock out", return_to_warehouse: "Return to warehouse", internal_transfer: "Internal transfer", project_balance: "Project balance", manual_entry: "Manual entry", temporary_out: "Temporary out", pending_review: "Pending review" };
   const label = special[value] ?? value.replaceAll("_", " ");

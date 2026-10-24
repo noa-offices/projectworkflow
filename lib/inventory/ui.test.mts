@@ -13,6 +13,7 @@ import * as submission from './product-request-submission';
 import * as validation from './action-validation';
 import * as types from './types';
 import {previewBrands,previewCategories,previewOverview,previewProduct} from './preview-data';
+import {previewProductRequests} from './request-preview-data';
 
 type Component = React.ComponentType<Record<string, unknown>>;
 const Link = ({children,...props}: React.ComponentProps<'a'>) => React.createElement('a',props,children);
@@ -54,6 +55,12 @@ test('add form shows manager Add item title and submit, while warehouse submits 
   const form=(await load('../../components/inventory/product-request-form.tsx',{...shared,'./request-photo-picker':{RequestPhotoPicker:stub},'./product-image-gallery':{ProductImageGallery:stub}})).ProductRequestForm;
   for(const role of ['system_owner','admin_manager','warehouse_staff']) {
     const markup=html(form,{role,brands:previewBrands,categories:previewCategories});
+    assert.match(markup,/Stock ref: auto-generated when saved/);
+    assert.doesNotMatch(markup,/<input[^>]*name="stock_ref"/);
+    for(const name of ['item_code','model_name']) {
+      const input=markup.match(new RegExp(`<input[^>]*name="${name}"[^>]*>`));
+      assert.ok(input, name);assert.doesNotMatch(input[0],/required/);
+    }
     if(role==='warehouse_staff') assert.match(markup,/>Send request<\/button>/);
     else {assert.match(markup,/<h1[^>]*>Add item<\/h1>/);assert.match(markup,/>Add item<\/button>/);assert.doesNotMatch(markup,/Add-item request/);}
   }
@@ -80,4 +87,18 @@ test('manager destination preserves a photo-upload warning without hiding the ad
     assert.match(markup,/Saved product/);
     assert.equal(markup.includes('some photos could not be attached'),photoFailures==='2');
   }
+});
+test('saved product detail displays its generated reference and optional identifiers render as em dashes',async()=>{
+  const product={...previewProduct,stock_ref:'02-0001',item_code:null,model_name:null,main_image_url:null};
+  const card=(await load('../../components/inventory/product-card.tsx',shared)).ProductCard;
+  const cardMarkup=html(card,{product});
+  assert.match(cardMarkup,/>—<\/p>/);assert.doesNotMatch(cardMarkup,/>null<|>undefined</);
+  const detail=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-reservations':{ProductReservations:stub},'./product-image-gallery':{ProductImageGallery:stub},'./stock-by-location':{StockByLocation:stub}})).ProductDetailView;
+  const detailMarkup=html(detail,{product});
+  assert.match(detailMarkup,/Stock reference<\/dt><dd[^>]*>02-0001<\/dd>/);
+  assert.match(detailMarkup,/Item code<\/dt><dd[^>]*>—<\/dd>/);
+  assert.doesNotMatch(detailMarkup,/>null<|>undefined</);
+  const requestsView=(await load('../../components/inventory/requests-view.tsx',{...shared,'@/lib/inventory/request-reads':{},'./product-image-gallery':{ProductImageGallery:stub},'./request-dialog':{RequestDialog:stub},'./product-request-form':{ProductRequestForm:stub}})).RequestsView;
+  const requestMarkup=html(requestsView,{products:[{...previewProductRequests[0],stock_ref:null,item_code:null,model_name:null}],movements:[],tab:'products',status:'pending_review',mine:false,userId:'viewer',role:'viewer',page:1,pageCount:1,total:1});
+  assert.match(requestMarkup,/— · —/);assert.doesNotMatch(requestMarkup,/>null<|>undefined</);
 });

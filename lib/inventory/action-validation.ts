@@ -88,8 +88,11 @@ export function initialStockInput(value: unknown, quantity?: number): Record<str
 }
 export function productInput(value: unknown, costsAllowed: boolean, patch: boolean, review = false): Record<string, unknown> {
   const input = object(value), result: Record<string, unknown> = {};
-  const requiredText = { stock_ref: 100, item_code: 100, item_name: 200, model_name: 200 };
+  const requiredText = { item_name: 200, ...(patch && !review ? { stock_ref: 100 } : {}) };
   for (const [key, max] of Object.entries(requiredText)) if (!patch || key in input) result[key] = text(input[key], key.replaceAll("_", " "), max, true);
+  for (const [key,max] of Object.entries({item_code:100,model_name:200})) {
+    if (!patch || key in input) result[key] = text(input[key],key.replaceAll('_',' '),max);
+  }
   for (const [key, max] of Object.entries({ custom_category_name: 200, description: 5000, note: 2000, ...(patch && !review ? { location: 200 } : {}) })) {
     if (key in input) result[key] = text(input[key], key, max);
   }
