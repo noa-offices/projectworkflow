@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { formatInventoryNumber, inventoryOverviewHref } from "@/lib/inventory/presentation";
 import { LOCATION_LABELS, type InventoryLocation, type InventoryOverview } from "@/lib/inventory/types";
 import { AddItemButton } from './add-item-button';
+import { ManagerShortcuts } from './manager-shortcuts';
 
 const cardLink = "group relative block min-h-11 min-w-0 rounded-lg transition hover:border-emerald-400 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700";
 const chipLink = "inline-flex min-h-11 items-center rounded-full bg-zinc-100 px-4 font-medium hover:bg-emerald-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700";
@@ -24,7 +25,7 @@ function OverviewCard({ href, label, value, note, hint, hero }: CardProps) {
 }
 const plural = (count: number) => `${formatInventoryNumber(count)} ${count === 1 ? "product" : "products"}`;
 
-export function InventoryOverviewView({ overview, productsHref = "/inventory/products", role }: { overview: InventoryOverview; productsHref?: string; role?: string | null }) {
+export function InventoryOverviewView({ overview, productsHref = "/inventory/products", role, moveHref, categoriesHref }: { overview: InventoryOverview; productsHref?: string; role?: string | null; moveHref?: string; categoriesHref?: string }) {
   const href = (filter: Parameters<typeof inventoryOverviewHref>[0]) => inventoryOverviewHref(filter, productsHref);
   const stats = [
     { label: "Reserved", value: overview.reserved_quantity, note: plural(overview.reserved_product_count), href: href({ stock: "reserved" }) },
@@ -38,6 +39,7 @@ export function InventoryOverviewView({ overview, productsHref = "/inventory/pro
   return (
     <div className="min-w-0 space-y-5">
       <AddItemButton role={role} />
+      <ManagerShortcuts role={role} moveHref={moveHref} categoriesHref={categoriesHref} />
       <section className="min-w-0 rounded-lg border border-emerald-200 bg-white p-5 shadow-sm sm:p-6">
         <div className="flex min-w-0 flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1">

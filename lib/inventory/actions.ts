@@ -126,6 +126,18 @@ export async function searchInventoryProjects(search: string) {
     return {projects:await listProjectsForInventory(term)};
   });
 }
+/** Product choices for the Move screen. Managers only; stock numbers only, never costs. */
+export async function searchMovementProducts(search: string) {
+  const { profile } = await requireInventoryUser();
+  if (!canManageInventory(profile?.role)) return denied();
+  return perform("search movement products", async () => {
+    const term = text(search, "Search", 100) ?? "";
+    const { listProducts } = await import("./queries");
+    const { toPickerProduct } = await import("./movement-form");
+    const page = await listProducts({ search: term, sort: "name_asc", active: true }, 1);
+    return { products: page.items.map(toPickerProduct) };
+  });
+}
 export async function updateProduct(input: unknown) {
   const { profile } = await requireInventoryUser();
   if (!canManageInventory(profile?.role)) return denied();

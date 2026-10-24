@@ -9,6 +9,7 @@ export function inventoryErrorMessage(error: unknown): string | null {
   if (message === "Reason is required") return "Enter a reason for removing this item.";
   if (message === "Invalid product patch field value") return "One of the values is not valid. Check the numbers and try again.";
   if (message === "Active product not found") return "This item has already been removed or is no longer available.";
+  if (message.includes("categories_root_slug_key") || message.includes("categories_child_slug_key")) return "A category with that name already exists here.";
   if (value.code === "42501") return "You do not have permission to do that.";
   if (message.includes("item code already in use")) return "That item code is already in use.";
   if (message.includes("stock ref already in use")) return "That stock reference is already in use.";

@@ -133,7 +133,8 @@ test("six non-manager roles never query cost tables or receive cost fields", asy
     const products = await queries.listProducts();
     const requests = await queries.listProductRequests();
     const movementRequests = await queries.listMovementRequests();
-    const movements = await queries.listMovements();
+    await assert.rejects(() => queries.listMovements(), /Inventory access denied/);
+    const movements = null;
     assert.ok(detail);
     for (const row of [detail, ...products.items, ...requests.items]) {
       for (const key of Object.keys(costs).concat("costs")) assert.equal(key in row, false, `${nextRole}: ${key}`);
@@ -209,6 +210,7 @@ test("related rows are read in batches and RLS-hidden profile names stay null", 
   const requests = await queries.listMovementRequests({ request_type: "hold" });
   assert.equal(requests.items[0].product?.id, "p1");
   assert.equal(requests.items[0].submitter_display_name, null);
+  role = "system_owner";
   assert.equal((await queries.listMovements()).items[0].actor_display_name, null);
   assert.equal(calls.some(c => c.table.includes("cost")), false);
 });
@@ -317,4 +319,63 @@ test("every Overview card opens a Products list with the same number of products
   assert.deepEqual(await queries.getProductTypeCounts({ stock: "live" }), { all: 4, product: 1, accessory: 2, temporary: 1 });
   assert.equal((await queries.listProducts({ stock: "reserved", item_type: "accessory" })).total, 1);
   await assert.rejects(() => queries.listProducts({ stock: "bogus" } as never));
+});
+
+const callsTo = (table: string) => calls.filter(call => call.table === table);
+test("movement history builds every filter, links requests, and is for managers only", async () => {
+  for (const viewerRole of ["viewer", "warehouse_staff", "procurement_manager"]) {
+    reset(viewerRole);
+    await assert.rejects(() => queries.listMovements(), /Inventory access denied/);
+    assert.equal(clientCalls, 0);
+  }
+  reset("admin_manager");
+  fixtures.profiles = [{ id: "u1", full_name: "Alex" }];
+  fixtures.movements = [{ id: "m1", product_id: "p1", action_type: "sale", movement_type: "stock_out", from_location: "warehouse", to_location: "sold", quantity: 2, previous_quantity: 5, new_quantity: 3, created_by: "u1", created_at: "2026-10-23T00:00:00Z", reference_type: "manual", reference_id: null }];
+  fixtures.movement_requests = [{ id: "mr1", approved_movement_id: "m1" }];
+  const page = await queries.listMovements({ product_id: "p1", action_type: "sale", location: "warehouse", search: "chair", person: "alex", from: "2026-10-01T00:00:00.000Z", to: "2026-10-31T23:59:59.999Z" });
+  const params = callsTo("movements")[0].url.searchParams;
+  assert.deepEqual(params.getAll("product_id").sort(), ["eq.p1", "in.(p1)"]);
+  assert.equal(params.get("action_type"), "eq.sale"); assert.equal(params.get("created_by"), "in.(u1)");
+  assert.equal(params.get("or"), "(from_location.eq.warehouse,to_location.eq.warehouse)");
+  assert.deepEqual(params.getAll("created_at").sort(), ["gte.2026-10-01T00:00:00.000Z", "lte.2026-10-31T23:59:59.999Z"]);
+  assert.equal(params.get("order"), "created_at.desc,id.asc");
+  assert.equal(page.items[0].linked?.kind, "request");
+  assert.equal(page.items[0].actor_display_name, "Alex");
+  assert.equal(calls.some(call => call.table.includes("cost")), false);
+});
+test("movement history returns nothing, without reading movements, when search or person matches nobody", async () => {
+  reset("system_owner"); fixtures.profiles = [];
+  const none = await queries.listMovements({ person: "nobody" });
+  assert.equal(none.total, 0); assert.equal(callsTo("movements").length, 0);
+  reset("system_owner"); fixtures.products = [];
+  assert.equal((await queries.listMovements({ search: "ghost" })).total, 0); assert.equal(callsTo("movements").length, 0);
+});
+test("request search covers product fields for everyone and submitter names for managers only", async () => {
+  reset("system_owner"); fixtures.profiles = [{ id: "u1", full_name: "Alex" }];
+  await queries.listMovementRequests({ search: "chair" });
+  let or = callsTo("movement_requests")[0].url.searchParams.get("or")!;
+  assert.match(or, /product_id\.in\.\(p1\)/); assert.match(or, /submitted_by\.in\.\(u1\)/);
+  reset("system_owner"); fixtures.profiles = [{ id: "u1", full_name: "Alex" }];
+  await queries.listProductRequests({ search: "chair" });
+  or = callsTo("product_requests")[0].url.searchParams.get("or")!;
+  assert.match(or, /item_name\.ilike\./); assert.match(or, /submitted_by\.in\.\(u1\)/);
+  reset("warehouse_staff"); fixtures.profiles = [{ id: "u1", full_name: "Alex" }];
+  await queries.listMovementRequests({ search: "chair" });
+  or = callsTo("movement_requests")[0].url.searchParams.get("or")!;
+  assert.match(or, /product_id\.in\.\(p1\)/); assert.doesNotMatch(or, /submitted_by/);
+  assert.equal(callsTo("profiles").filter(call => call.url.searchParams.has("full_name")).length, 0);
+  reset("warehouse_staff");
+  await queries.listProductRequests({ search: "chair" });
+  assert.doesNotMatch(callsTo("product_requests")[0].url.searchParams.get("or")!, /submitted_by/);
+  reset("system_owner"); fixtures.products = [];
+  assert.equal((await queries.listMovementRequests({ search: "ghost" })).total, 0); assert.equal(callsTo("movement_requests").length, 0);
+});
+test("category overview counts active products per category and is for managers only", async () => {
+  reset("viewer");
+  await assert.rejects(() => queries.listCategoryOverview(), /Inventory access denied/);
+  reset("admin_manager");
+  fixtures.categories = [{ id: "c1", name: "Seating", parent_id: null, sort_order: 0 }, { id: "c2", name: "Task", parent_id: "c1", sort_order: 0 }];
+  fixtures.products = [{ ...product, id: "a", category_id: "c1", subcategory_id: "c2" }, { ...product, id: "b", category_id: "c1", subcategory_id: null }];
+  const tree = await queries.listCategoryOverview();
+  assert.deepEqual([tree[0].item_count, tree[0].children[0].item_count], [2, 1]);
 });

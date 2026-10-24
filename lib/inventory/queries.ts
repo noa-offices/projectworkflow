@@ -4,10 +4,10 @@ import { requireInventoryUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { canSeeCosts, canViewInventory, canManageInventory, canSubmitHoldBook } from "./access";
 import { InventoryPageRangeError } from "./page-range-error";
-import { buildProductFilters, movementFilters, pagination, requestFilters } from "./filters";
-import { CATEGORY_COLUMNS, COST_COLUMNS, IMAGE_COLUMNS, MOVEMENT_COLUMNS, MOVEMENT_REQUEST_COLUMNS, PRODUCT_COLUMNS, PRODUCT_REQUEST_COLUMNS, STOCK_COLUMNS, SUMMARY_COLUMNS, categoryTree, pageResult, pick, summarizeStock } from "./mapping";
+import { buildProductFilters, lookupText, movementFilters, pagination, requestFilters, requestSearchFilter, searchFilter } from "./filters";
+import { CATEGORY_COLUMNS, COST_COLUMNS, IMAGE_COLUMNS, MOVEMENT_COLUMNS, MOVEMENT_REQUEST_COLUMNS, PRODUCT_COLUMNS, PRODUCT_REQUEST_COLUMNS, STOCK_COLUMNS, SUMMARY_COLUMNS, categoryTree, pageResult, pick, summarizeStock, withCategoryCounts } from "./mapping";
 import type { StockRow } from "./mapping";
-import type { InventoryBrand, InventoryCategory, InventoryCosts, InventoryImage, InventoryImageRow, InventoryMovement, InventoryMovementRequest, InventoryMovementRequestRow, InventoryMovementRow, InventoryOverview, InventoryPage, InventoryProduct, InventoryProductDetail, InventoryProductRequest, InventoryProductRequestRow, InventoryProductRow, InventoryProductSummary, MovementFilters, ProductFilters, ProductRequestFilters, RequestFilters } from "./types";
+import type { InventoryCategoryOverview, InventoryMovementLink, InventoryBrand, InventoryCategory, InventoryCosts, InventoryImage, InventoryImageRow, InventoryMovement, InventoryMovementRequest, InventoryMovementRequestRow, InventoryMovementRow, InventoryOverview, InventoryPage, InventoryProduct, InventoryProductDetail, InventoryProductRequest, InventoryProductRequestRow, InventoryProductRow, InventoryProductSummary, MovementFilters, ProductFilters, ProductRequestFilters, RequestFilters } from "./types";
 
 import { isActiveReservation, reservationTotals } from "./reservations";
 import type { InventoryReservationRow, InventoryReservation, InventoryProjectOption } from "./types";
@@ -112,6 +112,20 @@ async function activeReservations(client: Client, productIds: string[]): Promise
   return data.filter(row => isActiveReservation(row,now)).map(row => pick(row, RESERVATION_COLUMNS));
 }
 
+const MAX_LOOKUP_IDS = 200;
+/** Ids of products whose name, stock ref, item code or model match the text (any active state). */
+async function matchingProductIds(client: Client, text: string | null): Promise<string[] | null> {
+  const filter = searchFilter(text ?? undefined);
+  if (!filter) return null;
+  return rows(await client.schema("inventory").from("products").select("id").or(filter).order("id").limit(MAX_LOOKUP_IDS).returns<{ id: string }[]>()).map(row => row.id);
+}
+/** Ids of people whose name matches. Only managers may search by name. */
+async function matchingPersonIds(client: Client, role: string | null | undefined, text: string | null): Promise<string[]> {
+  if (!text || !canManageInventory(role)) return [];
+  return rows(await client.schema("public").from("profiles").select("id").ilike("full_name", `%${text}%`).order("id").limit(100).returns<{ id: string }[]>()).map(row => row.id);
+}
+function emptyPage<T>(page: number): InventoryPage<T> { return pageResult<T>([], 0, page, pagination(page).page_size); }
+
 /** Active products only. Sold is a cumulative bucket, excluded from live quantity. */
 export async function getInventoryOverview(): Promise<InventoryOverview> {
   const { profile } = await requireInventoryUser();
@@ -182,7 +196,7 @@ export async function getProduct(id: string): Promise<InventoryProductDetail | n
   const [labels, costs, imageRows, movementRows, reservationRows] = await Promise.all([
     names(client, [product]), costRows(client, canSeeCosts(profile?.role), "product_costs", [id]),
     client.schema("inventory").from("product_images").select(IMAGE_COLUMNS.join(",")).eq("product_id", id).order("sort_order").order("id").limit(3).returns<InventoryImageRow[]>().then(rows),
-    client.schema("inventory").from("movements").select(MOVEMENT_COLUMNS.join(",")).eq("product_id", id).order("created_at", { ascending: false }).order("id").limit(20).returns<InventoryMovementRow[]>().then(rows),
+    client.schema("inventory").from("movements").select(MOVEMENT_COLUMNS.join(",")).eq("product_id", id).order("created_at", { ascending: false }).order("id").limit(10).returns<InventoryMovementRow[]>().then(rows),
     activeReservations(client, [id]),
   ]);
   const people = await displayNames(client,reservationRows.map(row => row.created_by));
@@ -208,11 +222,12 @@ export async function listActiveBrands(): Promise<InventoryBrand[]> {
 export async function listProductRequests(filters: ProductRequestFilters = {}): Promise<InventoryPage<InventoryProductRequest>> {
   const { profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
-  const plan = requestFilters(filters), productPlan = buildProductFilters(filters), range = pagination(filters.page);
+  const plan = requestFilters(filters), productPlan = buildProductFilters({ ...filters, search: lookupText(filters.search) ?? undefined }), range = pagination(filters.page);
   let query = client.schema("inventory").from("product_requests").select(PRODUCT_REQUEST_COLUMNS.join(","), { count: "exact" });
   for (const key of ["request_status", "submitted_by"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
   for (const key of ["brand_id", "category_id", "subcategory_id", "item_type"] as const) if (productPlan[key] !== null) query = query.eq(key, productPlan[key]);
-  if (productPlan.search) query = query.or(productPlan.search);
+  const search = requestSearchFilter(productPlan.search, await matchingPersonIds(client, profile?.role, plan.search));
+  if (search) query = query.or(search);
   const response = await query.order("submitted_at", { ascending: false }).order("id").range(range.from, range.to).returns<InventoryProductRequestRow[]>();
   if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
   const requests = rows(response);
@@ -230,6 +245,12 @@ export async function listMovementRequests(filters: RequestFilters = {}): Promis
   const plan = requestFilters(filters), range = pagination(filters.page);
   let query = client.schema("inventory").from("movement_requests").select(MOVEMENT_REQUEST_COLUMNS.join(","), { count: "exact" });
   for (const key of ["request_status", "submitted_by", "request_type", "product_id"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
+  if (plan.search) {
+    const [productIds, personIds] = await Promise.all([matchingProductIds(client, plan.search), matchingPersonIds(client, profile?.role, plan.search)]);
+    const parts = [productIds?.length ? `product_id.in.(${productIds.join(",")})` : null, personIds.length ? `submitted_by.in.(${personIds.join(",")})` : null].filter((part): part is string => !!part);
+    if (!parts.length) return emptyPage(range.page);
+    query = query.or(parts.join(","));
+  }
   const response = await query.order("submitted_at", { ascending: false }).order("id").range(range.from, range.to).returns<InventoryMovementRequestRow[]>();
   if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
   const requests = rows(response);
@@ -237,17 +258,54 @@ export async function listMovementRequests(filters: RequestFilters = {}): Promis
   return pageResult(requests.map(row => ({ ...pick(row, MOVEMENT_REQUEST_COLUMNS), product: products.get(row.product_id) ?? null, submitter_display_name: people.get(row.submitted_by) ?? null })), total(response), range.page, range.page_size);
 }
 
+/** Manager movement history. Newest first; filters combine. */
 export async function listMovements(filters: MovementFilters = {}, page = 1): Promise<InventoryPage<InventoryMovement>> {
   const { profile } = await requireInventoryUser();
+  if (!canManageInventory(profile?.role)) throw new Error("Inventory access denied");
   const client = await inventoryClient(profile?.role);
   const plan = movementFilters(filters), range = pagination(page);
   let query = client.schema("inventory").from("movements").select(MOVEMENT_COLUMNS.join(","), { count: "exact" });
-  for (const key of ["product_id", "created_by", "movement_type"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
+  for (const key of ["product_id", "created_by", "movement_type", "action_type"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
+  if (plan.search) {
+    const productIds = await matchingProductIds(client, plan.search);
+    if (!productIds?.length) return emptyPage(range.page);
+    query = query.in("product_id", productIds);
+  }
+  if (plan.person) {
+    const personIds = await matchingPersonIds(client, profile?.role, plan.person);
+    if (!personIds.length) return emptyPage(range.page);
+    query = query.in("created_by", personIds);
+  }
   if (plan.location) query = query.or(`from_location.eq.${plan.location},to_location.eq.${plan.location}`);
   if (plan.from) query = query.gte("created_at", plan.from);
   if (plan.to) query = query.lte("created_at", plan.to);
   const response = await query.order("created_at", { ascending: false }).order("id").range(range.from, range.to).returns<InventoryMovementRow[]>();
-  return pageResult(await enrichMovements(client, rows(response)), total(response), range.page, range.page_size);
+  if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
+  const movements = rows(response), movementIds = movements.map(row => row.id), productIds = ids(movements.map(row => row.product_id));
+  const [enriched, imageRows, requestLinks, reservationLinks] = await Promise.all([
+    enrichMovements(client, movements),
+    productIds.length ? client.schema("inventory").from("product_images").select(IMAGE_COLUMNS.join(",")).in("product_id", productIds).eq("is_main", true).returns<InventoryImageRow[]>().then(rows) : [],
+    movementIds.length ? client.schema("inventory").from("movement_requests").select("id,approved_movement_id").in("approved_movement_id", movementIds).returns<{ id: string; approved_movement_id: string }[]>().then(rows) : [],
+    movementIds.length ? client.schema("inventory").from("reservations").select("id,fulfilled_movement_id").in("fulfilled_movement_id", movementIds).returns<{ id: string; fulfilled_movement_id: string }[]>().then(rows) : [],
+  ]);
+  const images = new Map((await signedImages(client, imageRows)).map(row => [row.product_id, row.signed_url]));
+  const links = new Map<string, InventoryMovementLink>();
+  for (const row of requestLinks) links.set(row.approved_movement_id, { kind: "request", id: row.id });
+  for (const row of reservationLinks) links.set(row.fulfilled_movement_id, { kind: "reservation", id: row.id });
+  const items = enriched.map(row => ({ ...row, main_image_url: images.get(row.product_id) ?? null, linked: links.get(row.id) ?? (row.reference_type === "product_request" && row.reference_id ? { kind: "product_request" as const, id: row.reference_id } : null) }));
+  return pageResult(items, total(response), range.page, range.page_size);
+}
+
+/** Categories with subcategories and how many active products use each. Managers only. */
+export async function listCategoryOverview(): Promise<InventoryCategoryOverview[]> {
+  const { profile } = await requireInventoryUser();
+  if (!canManageInventory(profile?.role)) throw new Error("Inventory access denied");
+  const client = await inventoryClient(profile?.role);
+  const [tree, products] = await Promise.all([
+    listCategories(),
+    allRows<{ id: string; category_id: string; subcategory_id: string | null }>((from, to) => client.schema("inventory").from("products").select("id,category_id,subcategory_id", { count: "exact" }).eq("is_active", true).order("id").range(from, to).returns<{ id: string; category_id: string; subcategory_id: string | null }[]>()),
+  ]);
+  return withCategoryCounts(tree, products);
 }
 
 export async function getProductRequestImages(requestId: string): Promise<InventoryImage[]> {

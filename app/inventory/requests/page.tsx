@@ -10,8 +10,8 @@ import { listMovementRequests, listProductRequests, listCategories, listActiveBr
 export default async function RequestsPage({searchParams}: {searchParams:Promise<InventorySearchParams>}) {
   const {user,profile} = await requireInventoryUser();
   const state = parseRequestParams(await searchParams,canManageInventory(profile?.role));
-  const filters = {request_status:state.status === 'all' ? undefined : state.status, submitted_by:state.mine ? user.id : undefined, page:state.page};
-  const firstPage = `/inventory/requests?tab=${state.tab}&status=${state.status}${state.mine ? '&mine=1' : ''}`;
+  const filters = {request_status:state.status === 'all' ? undefined : state.status, submitted_by:state.mine ? user.id : undefined, page:state.page, search:state.q || undefined};
+  const firstPage = `/inventory/requests?tab=${state.tab}&status=${state.status}${state.mine ? '&mine=1' : ''}${state.q ? `&q=${encodeURIComponent(state.q)}` : ''}`;
   let products, movements;
   try {
     if (state.tab === 'products') products = await listProductRequests(filters);

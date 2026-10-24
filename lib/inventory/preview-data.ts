@@ -32,3 +32,18 @@ export const previewProducts: InventoryProduct[] = [previewProduct,
   { ...previewProduct, id: "88888888-8888-4888-8888-888888888882", item_type: "temporary", item_name: "Arlo loan meeting chair", item_code: null, model_name: null, stock_ref: "02-0007", quantity: 1, reserved_quantity: 0, available_quantity: 1, warehouse_quantity: 0, dubai_showroom_quantity: 1, abudhabi_showroom_quantity: 0, sold_quantity: 0, source: "sample", main_image_url: null },
 ];
 export const previewOverview: InventoryOverview = { reserved_quantity: previewProducts.reduce((sum, product) => sum + product.reserved_quantity, 0), ...summarizeStock(previewProducts), reserved_product_count: previewProducts.filter(product => product.reserved_quantity > 0).length, pending_product_requests: 3, pending_movement_requests: 5 };
+
+import { withCategoryCounts } from "./mapping";
+import { toPickerProduct } from "./movement-form";
+import type { InventoryCategoryOverview, InventoryMovement, MovementPickerProduct } from "./types";
+export const previewPickerProducts: MovementPickerProduct[] = previewProducts.filter(product => product.is_active).map(toPickerProduct);
+export const previewCategoryOverview: InventoryCategoryOverview[] = withCategoryCounts(
+  [...previewCategories, { id: "55555555-5555-4555-8555-5555555555a1", parent_id: null, name: "Storage", slug: "storage", is_active: false, sort_order: 2, created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z", children: [] }],
+  previewProducts,
+);
+const movementBase = { created_by: "preview-user", actor_display_name: "Alex Morgan", reference_id: null, linked: null };
+export const previewMovementHistory: InventoryMovement[] = [
+  { ...movementBase, id: "mh-1", product_id: previewProduct.id, movement_type: "transfer", action_type: "internal_transfer", from_location: "warehouse", to_location: "dubai_showroom", quantity: 3, previous_quantity: 17, new_quantity: 17, note: "Showroom display", reference_type: "manual", created_at: "2026-10-23T06:30:00Z", product: previewProduct, main_image_url: previewProduct.main_image_url },
+  { ...movementBase, id: "mh-2", product_id: previewProducts[1].id, movement_type: "stock_out", action_type: "sale", from_location: "warehouse", to_location: "sold", quantity: 2, previous_quantity: 6, new_quantity: 4, note: null, reference_type: "product_request", reference_id: "req-1", linked: { kind: "request", id: "req-1" }, created_at: "2026-10-22T15:10:00Z", product: previewProducts[1], main_image_url: null },
+  { ...movementBase, id: "mh-3", product_id: previewProduct.id, movement_type: "stock_in", action_type: "receive_stock", from_location: null, to_location: "warehouse", quantity: 17, previous_quantity: 0, new_quantity: 17, note: "New delivery", reference_type: "manual", created_at: "2026-10-22T08:00:00Z", product: previewProduct, main_image_url: previewProduct.main_image_url },
+];

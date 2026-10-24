@@ -1,5 +1,5 @@
 import { LOCATION_QUANTITY_COLUMNS } from "./types";
-import type { InventoryCategory, InventoryCategoryNode, InventoryCosts, InventoryImageRow, InventoryMovementRequestRow, InventoryMovementRow, InventoryPage, InventoryProductRequestRow, InventoryProductRow, InventoryProductSummary, InventoryStockSummary } from "./types";
+import type { InventoryCategory, InventoryCategoryNode, InventoryCategoryOverview, InventoryCosts, InventoryImageRow, InventoryMovementRequestRow, InventoryMovementRow, InventoryPage, InventoryProductRequestRow, InventoryProductRow, InventoryProductSummary, InventoryStockSummary } from "./types";
 
 const identity = ["id", "brand_id", "category_id", "subcategory_id", "custom_category_name", "stock_ref", "item_code", "item_name", "model_name", "description", "condition", "source", "note", "dimension_length", "dimension_width", "dimension_height", "dimension_unit", "item_type", "quantity", "created_at", "updated_at"] as const;
 export const PRODUCT_COLUMNS = [...identity, ...Object.values(LOCATION_QUANTITY_COLUMNS), "low_stock_at", "status", "location", "is_active", "removed_at", "removed_by", "removal_reason", "created_by", "updated_by"] as const satisfies readonly (keyof InventoryProductRow)[];
@@ -64,4 +64,15 @@ export function categoryTree(rows: readonly InventoryCategory[]): InventoryCateg
   }
   sort(roots);
   return roots;
+}
+
+/** Adds the number of products using each category (top level) or subcategory (children). */
+export function withCategoryCounts(tree: readonly InventoryCategoryNode[], products: readonly { category_id: string; subcategory_id: string | null }[]): InventoryCategoryOverview[] {
+  const byCategory = new Map<string, number>(), bySubcategory = new Map<string, number>();
+  for (const product of products) {
+    byCategory.set(product.category_id, (byCategory.get(product.category_id) ?? 0) + 1);
+    if (product.subcategory_id) bySubcategory.set(product.subcategory_id, (bySubcategory.get(product.subcategory_id) ?? 0) + 1);
+  }
+  const count = (node: InventoryCategoryNode, top: boolean): InventoryCategoryOverview => ({ ...node, item_count: (top ? byCategory : bySubcategory).get(node.id) ?? 0, children: node.children.map(child => count(child, false)) });
+  return tree.map(node => count(node, true));
 }

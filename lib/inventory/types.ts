@@ -21,7 +21,8 @@ export const STOCK_FILTER_LABELS: Record<StockFilter, string> = { live: "In stoc
 export type ProductTypeCounts = Record<"all" | ItemType, number>;
 export const MOVEMENT_TYPES = ["stock_in", "stock_out", "transfer", "adjustment"] as const;
 export type MovementType = typeof MOVEMENT_TYPES[number];
-export type MovementAction = "receive_stock" | "internal_transfer" | "return_to_warehouse" | "sale" | "adjustment";
+export const MOVEMENT_ACTIONS = ["receive_stock", "internal_transfer", "return_to_warehouse", "sale", "adjustment"] as const;
+export type MovementAction = typeof MOVEMENT_ACTIONS[number];
 export type ProductCondition = "new" | "used" | "showroom" | "damaged";
 export type ProductSource = "project_balance" | "purchase" | "sample" | "manual_entry";
 export type DimensionUnit = "mm" | "cm" | "m";
@@ -152,10 +153,20 @@ export interface InventoryMovementRow {
   reference_type: "manual" | "product_request" | "take_item" | "adjustment";
   reference_id: string | null; created_by: string; created_at: string;
 }
+export interface InventoryMovementLink { kind: "request" | "reservation" | "product_request"; id: string }
 export interface InventoryMovement extends InventoryMovementRow {
   product: InventoryProductSummary | null;
   actor_display_name: string | null;
+  // Set by the manager movement history only.
+  main_image_url?: string | null;
+  linked?: InventoryMovementLink | null;
 }
+/** Product choice on the Move screen. Never carries costs. */
+export interface MovementPickerProduct extends StockBuckets {
+  id: string; item_name: string; stock_ref: string | null; item_code: string | null; model_name: string | null;
+  quantity: number; reserved_quantity: number; available_quantity: number; main_image_url: string | null;
+}
+export interface InventoryCategoryOverview extends InventoryCategoryNode { item_count: number; children: InventoryCategoryOverview[] }
 export interface InventoryProjectOption { id: string; label: string }
 export interface InventoryReservationRow {
   id: string; product_id: string; kind: "hold" | "book"; quantity: number;
@@ -212,6 +223,7 @@ export interface ProductFilters {
   active?: boolean | "all"; sort?: ProductSort;
 }
 export interface RequestFilters {
+  search?: string;
   request_status?: RequestStatus; submitted_by?: string; request_type?: RequestType; product_id?: string;
   page?: number;
 }
@@ -219,6 +231,7 @@ export interface ProductRequestFilters extends Omit<RequestFilters, "request_typ
   search?: string; brand_id?: string; category_id?: string; subcategory_id?: string; item_type?: ItemType;
 }
 export interface MovementFilters {
-  product_id?: string; created_by?: string; movement_type?: MovementType;
+  product_id?: string; created_by?: string; movement_type?: MovementType; action_type?: MovementAction;
+  search?: string; person?: string;
   location?: InventoryLocation; from?: string; to?: string;
 }

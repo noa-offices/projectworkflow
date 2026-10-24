@@ -24,10 +24,10 @@ test('request buttons match all eight roles and unknown roles', () => {
   for (const role of ['viewer', 'unknown', null]) assert.deepEqual(requestButtons(role), { add: false, takeMove: false, holdBook: false, review: false });
 });
 test('request params have role defaults and validate tab, status, mine and pagination', () => {
-  assert.deepEqual(parseRequestParams({}, true), { tab: 'products', status: 'pending_review', mine: false, page: 1 });
+  assert.deepEqual(parseRequestParams({}, true), { tab: 'products', status: 'pending_review', mine: false, q: '', page: 1 });
   assert.equal(parseRequestParams({}, false).status, 'all');
-  assert.deepEqual(parseRequestParams({ tab: ['movements','products'], status: 'approved', mine: '1', page: '3' }, false), { tab: 'movements', status: 'approved', mine: true, page: 3 });
-  assert.deepEqual(parseRequestParams({ tab: 'invalid', status: 'invalid', page: '1.5' }, false), { tab: 'products', status: 'all', mine: false, page: 1 });
+  assert.deepEqual(parseRequestParams({ tab: ['movements','products'], status: 'approved', mine: '1', page: '3' }, false), { tab: 'movements', status: 'approved', mine: true, q: '', page: 3 });
+  assert.deepEqual(parseRequestParams({ tab: 'invalid', status: 'invalid', page: '1.5' }, false), { tab: 'products', status: 'all', mine: false, q: '', page: 1 });
   for (const page of ['0','-2','Infinity','1000001']) assert.equal(parseRequestParams({page}, false).page, 1);
 });
 test('take uses sale to sold, move uses live locations and checks source availability', () => {

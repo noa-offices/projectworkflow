@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { Camera, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeftRight, Camera, Pencil, Trash2 } from "lucide-react";
 import { removeProduct } from "@/lib/inventory/actions";
 import { canUseProductTools, removalNotice, removeReasonError } from "@/lib/inventory/product-edit";
 import type { InventoryProduct } from "@/lib/inventory/types";
@@ -11,7 +11,8 @@ import { RequestDialog } from "./request-dialog";
 
 const toolStyle = "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700";
 
-export function toolHref(product: Pick<InventoryProduct, "id">, tool: "edit" | "photos", role: string | null, preview: boolean) {
+export function toolHref(product: Pick<InventoryProduct, "id">, tool: "edit" | "photos" | "move", role: string | null, preview: boolean) {
+  if (tool === "move") return preview ? `/dev/inventory-preview?view=move&frame=1&role=${encodeURIComponent(role ?? "")}&id=${product.id}` : `/inventory/move?product=${product.id}`;
   return preview ? `/dev/inventory-preview?view=${tool}&frame=1&role=${encodeURIComponent(role ?? "")}&id=${product.id}` : `/inventory/products/${product.id}/${tool}`;
 }
 
@@ -20,6 +21,7 @@ export function ProductManagerTools({ product, role, preview = false, initialRem
   const [open, setOpen] = useState(initialRemove);
   if (!canUseProductTools(role)) return null;
   return <>
+    <Link href={toolHref(product, "move", role, preview)} className={toolStyle}><ArrowLeftRight size={16} aria-hidden="true" />Move stock</Link>
     <Link href={toolHref(product, "edit", role, preview)} className={toolStyle}><Pencil size={16} aria-hidden="true" />Edit item</Link>
     <Link href={toolHref(product, "photos", role, preview)} className={toolStyle}><Camera size={16} aria-hidden="true" />Manage photos</Link>
     <button type="button" className={`${toolStyle} border-red-200 text-red-800 hover:bg-red-50`} onClick={() => setOpen(true)}><Trash2 size={16} aria-hidden="true" />Remove item</button>
