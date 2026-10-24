@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { CheckCircle2, Send } from "lucide-react";
 import { registerInventoryPhotos, reviewProductRequestWithEdits, submitProductRequest } from "@/lib/inventory/actions";
 import { canManageInventory, canSeeCosts } from "@/lib/inventory/access";
@@ -15,10 +15,12 @@ import { RequestPhotoPicker } from "./request-photo-picker";
 import { ProductImageGallery } from './product-image-gallery';
 
 const fieldStyle = "mt-1 min-h-11 w-full min-w-0 rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
+const totalFieldStyle = "mt-1 min-h-11 w-full min-w-0 cursor-default rounded-md border border-zinc-200 bg-zinc-100 px-3 py-2 text-base text-zinc-500";
 const sectionStyle = "min-w-0 space-y-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-5";
 const costLabels = { price: "Price", freight_cost: "Freight cost", c_and_f: "C & F", transport: "Transport", custom_duty: "Custom duty", labour: "Labour", vat: "VAT" };
 
 export function ProductRequestForm({ brands, categories, role, preview = false, request, images = [], onCancel, onApproved, onBusyChange }: { brands: InventoryBrand[]; categories: InventoryCategoryNode[]; role: string | null; preview?: boolean; request?: InventoryProductRequest; images?: InventoryImage[]; onCancel?: () => void; onApproved?: () => void; onBusyChange?: (busy:boolean) => void }) {
+  const quantityHelpId = useId();
   const [category, setCategory] = useState(request?.category_id ?? ""), [files, setFiles] = useState<File[]>([]), [pending, setPending] = useState(false);
   const locations = Object.keys(LOCATION_LABELS).filter(key => key !== 'sold') as Exclude<keyof typeof LOCATION_LABELS,'sold'>[];
   const [stock, setStock] = useState<Record<string, number>>(() => Object.fromEntries(locations.map(key => [key, request?.initial_stock?.[key] ?? (key === 'warehouse' && !request?.initial_stock ? request?.quantity ?? 1 : 0)])));
@@ -69,14 +71,14 @@ export function ProductRequestForm({ brands, categories, role, preview = false, 
           <label className="min-w-0 text-sm font-medium text-zinc-700">Item type *<select name="item_type" className={fieldStyle} defaultValue={request?.item_type ?? "product"}>{ITEM_TYPES.map(value => <option key={value} value={value}>{inventoryLabel(value)}</option>)}</select></label>
           <p className="text-sm text-zinc-600 sm:col-span-2">Stock ref: auto-generated when saved</p>
           {([{name:"item_code",label:"Item code",max:100,required:false},{name:"item_name",label:"Item name",max:200,required:true},{name:"model_name",label:"Model name",max:200,required:false}] as const).map(field => <label key={field.name} className="min-w-0 text-sm font-medium text-zinc-700">{field.label}{field.required ? ' *' : ''}<input name={field.name} defaultValue={request?.[field.name] ?? ""} required={field.required} maxLength={field.max} className={fieldStyle} /></label>)}
-          <label className="min-w-0 text-sm font-medium text-zinc-700">Quantity *<input name="quantity" type="number" inputMode="numeric" min={1} max={2147483647} step={1} value={totalStock} readOnly required className={fieldStyle} /></label>
+          <div className="min-w-0 sm:col-span-2"><label className="block text-sm font-medium text-zinc-700">Total quantity (from locations below)<input name="quantity" type="number" inputMode="numeric" min={1} max={2147483647} step={1} value={totalStock} readOnly required aria-describedby={quantityHelpId} className={totalFieldStyle} /></label><p id={quantityHelpId} className="mt-1 text-sm text-zinc-500">Change the numbers in Initial stock by location below.</p></div>
+          <section className={sectionStyle + " sm:col-span-2"}><h2 className="font-semibold text-zinc-900">Initial stock by location</h2><p className="text-sm text-zinc-600">Enter whole units. At least one location must be above zero.</p><div className="grid grid-cols-2 gap-4">{locations.map(key => <label key={key} className="min-w-0 text-sm font-medium text-zinc-700">{LOCATION_LABELS[key]}<input name={`stock_${key}`} type="number" inputMode="numeric" min={0} max={2147483647} step={1} required value={stock[key]} onChange={event => setStock(previous => ({...previous,[key]:Number(event.target.value)}))} className={fieldStyle} /></label>)}</div><p role="status" className="text-sm font-semibold text-zinc-900">Total: {totalStock} units</p></section>
           <label className="min-w-0 text-sm font-medium text-zinc-700">Status *<select name="requested_status" defaultValue={request?.requested_status ?? "available"} className={fieldStyle}>{PRODUCT_STATUSES.map(value => <option key={value} value={value}>{inventoryLabel(value)}</option>)}</select></label>
           <label className="min-w-0 text-sm font-medium text-zinc-700">Condition *<select name="condition" defaultValue={request?.condition ?? "new"} className={fieldStyle}>{["new","used","showroom","damaged"].map(value => <option key={value} value={value}>{inventoryLabel(value)}</option>)}</select></label>
           <label className="min-w-0 text-sm font-medium text-zinc-700">Source *<select name="source" defaultValue={request?.source ?? "manual_entry"} className={fieldStyle}>{["project_balance","purchase","sample","manual_entry"].map(value => <option key={value} value={value}>{inventoryLabel(value)}</option>)}</select></label>
         </div>
         <label className="block text-sm font-medium text-zinc-700">Description<textarea name="description" defaultValue={request?.description ?? ''} maxLength={5000} rows={3} className={fieldStyle} /></label>
       </section>
-      <section className={sectionStyle}><h2 className="font-semibold text-zinc-900">Initial stock by location</h2><p className="text-sm text-zinc-600">Enter whole units. At least one location must be above zero.</p><div className="grid grid-cols-2 gap-4">{locations.map(key => <label key={key} className="min-w-0 text-sm font-medium text-zinc-700">{LOCATION_LABELS[key]}<input name={`stock_${key}`} type="number" inputMode="numeric" min={0} max={2147483647} step={1} required value={stock[key]} onChange={event => setStock(previous => ({...previous,[key]:Number(event.target.value)}))} className={fieldStyle} /></label>)}</div><p role="status" className="text-sm font-semibold text-zinc-900">Total: {totalStock} units</p></section>
       <section className={sectionStyle}><h2 className="font-semibold text-zinc-900">Dimensions <span className="text-sm font-normal text-zinc-500">(optional)</span></h2><p className="text-sm text-zinc-600">Fill all three measurements and choose a unit, or leave all measurements empty.</p><div className="grid min-w-0 grid-cols-2 gap-4">
         {["length","width","height"].map(value => <label key={value} className="min-w-0 text-sm font-medium text-zinc-700">{inventoryLabel(value)}<input name={`dimension_${value}`} defaultValue={request?.[`dimension_${value}` as "dimension_length" | "dimension_width" | "dimension_height"] ?? ""} type="number" inputMode="decimal" min="0.01" max="9999999999.99" step="0.01" className={fieldStyle} /></label>)}
         <label className="min-w-0 text-sm font-medium text-zinc-700">Unit<select name="dimension_unit" defaultValue={request?.dimension_unit ?? "mm"} className={fieldStyle}><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option></select></label>
