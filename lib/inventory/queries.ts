@@ -142,9 +142,8 @@ export async function getInventoryOverview(): Promise<InventoryOverview> {
 type ProductReadQuery = ReturnType<ReturnType<ReturnType<Client['schema']>['from']>['select']>;
 /** Product ids for filters that cannot be expressed as a single column comparison. Same rules as the Overview counts. */
 async function stockFilterIds(client: Client, plan: ReturnType<typeof buildProductFilters>): Promise<string[] | null> {
-  if (plan.stock !== "reserved" && plan.stock !== "low_stock") return null;
+  if (plan.stock !== "reserved") return null;
   const stock = await allRows<StockRow & { id: string }>((from, to) => client.schema("inventory").from("products").select(["id", ...STOCK_COLUMNS].join(","), { count: "exact" }).eq("is_active", true).order("id").range(from, to).returns<(StockRow & { id: string })[]>());
-  if (plan.stock === "low_stock") return stock.filter(row => row.quantity <= row.low_stock_at).map(row => row.id);
   return ids((await activeReservations(client, stock.map(row => row.id))).map(row => row.product_id));
 }
 function applyProductFilters(query: ProductReadQuery, plan: ReturnType<typeof buildProductFilters>, stockIds: string[] | null = null) {

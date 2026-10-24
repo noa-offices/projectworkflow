@@ -198,7 +198,6 @@ test("overview reads past API row limits and reports accurate quantities and cou
   assert.equal(overview.product_count, 5);
   assert.equal(overview.total_live_quantity, 15);
   assert.equal(overview.location_quantities.sold, 50);
-  assert.equal(overview.low_stock_count, 5);
   assert.equal(overview.pending_product_requests, 1);
   assert.equal(overview.pending_movement_requests, 1);
   assert.equal(calls.filter(c => c.table === "products").length, 3);
@@ -307,10 +306,9 @@ test("every Overview card opens a Products list with the same number of products
     ["accessories", overview.item_type_counts.accessory, { item_type: "accessory", stock: "live" }],
     ["temporary", overview.item_type_counts.temporary, { item_type: "temporary", stock: "live" }],
     ["reserved", overview.reserved_product_count, { stock: "reserved" }],
-    ["low stock", overview.low_stock_count, { stock: "low_stock" }],
     ...(["warehouse", "dubai_showroom", "abudhabi_showroom", "mockup", "temporary_out", "sold"] as const).map(location => [location, overview.location_product_counts[location], { location }] as [string, number, Record<string, string>]),
   ];
-  assert.deepEqual([overview.product_count, overview.reserved_quantity, overview.reserved_product_count, overview.low_stock_count], [4, 3 + 1, 2, 2]);
+  assert.deepEqual([overview.product_count, overview.reserved_quantity, overview.reserved_product_count], [4, 3 + 1, 2]);
   for (const [name, count, filters] of cards) {
     const list = await queries.listProducts(filters as never, 1);
     assert.equal(list.total, count, name);

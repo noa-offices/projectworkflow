@@ -7,11 +7,11 @@ import { InventoryActions } from './inventory-actions';
 const cardLink = "group relative block min-h-11 min-w-0 rounded-lg transition hover:border-emerald-400 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700";
 const chipLink = "inline-flex min-h-11 items-center rounded-full bg-zinc-100 px-4 font-medium hover:bg-emerald-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700";
 const viewHint = <span aria-hidden="true" className="absolute right-3 top-3 inline-flex items-center gap-1 text-sm font-medium text-emerald-800 opacity-70 group-hover:opacity-100"><span className="hidden sm:inline">View</span><ArrowRight size={14} /></span>;
-type CardProps = { href: string; label: string; value: number; note?: string; hint?: string; hero?: boolean };
+type CardProps = { className?: string; href: string; label: string; value: number; note?: string; hint?: string; hero?: boolean };
 /** The one card used for every Overview figure, so cards cannot drift apart. */
-function OverviewCard({ href, label, value, note, hint, hero }: CardProps) {
+function OverviewCard({ className = "", href, label, value, note, hint, hero }: CardProps) {
   return (
-    <Link href={href} data-overview-card className={`${cardLink} ${hero ? "border border-transparent" : "border border-zinc-200 bg-white shadow-sm"}`}>
+    <Link href={href} data-overview-card className={`${cardLink} ${hero ? "border border-transparent" : "border border-zinc-200 bg-white shadow-sm"} ${className}`}>
       <div className={hero ? "h-full rounded-lg border border-emerald-100 bg-emerald-50/40 p-4 pr-8" : "p-4 pr-8"}>
         <dt className="break-words text-sm font-medium text-zinc-600">{label}</dt>
         <dd className={`mt-2 break-words font-semibold tabular-nums ${hero ? "text-4xl tracking-tight text-emerald-950" : "text-2xl text-zinc-950"}`}>{formatInventoryNumber(value)}</dd>
@@ -27,8 +27,7 @@ const plural = (count: number) => `${formatInventoryNumber(count)} ${count === 1
 export function InventoryOverviewView({ overview, productsHref = "/inventory/products", role, moveHref, categoriesHref }: { overview: InventoryOverview; productsHref?: string; role?: string | null; moveHref?: string; categoriesHref?: string }) {
   const href = (filter: Parameters<typeof inventoryOverviewHref>[0]) => inventoryOverviewHref(filter, productsHref);
   const stats = [
-    { label: "Reserved", value: overview.reserved_quantity, note: plural(overview.reserved_product_count), href: href({ stock: "reserved" }) },
-    { label: "Low stock products", value: overview.low_stock_count, href: href({ stock: "low_stock" }) },
+    { className: "col-span-2 lg:col-span-1", label: "Reserved", value: overview.reserved_quantity, note: plural(overview.reserved_product_count), href: href({ stock: "reserved" }) },
   ];
   const requests = [
     { label: "Pending product requests", value: overview.pending_product_requests, href: '/inventory/requests?tab=products&status=pending_review' },
@@ -55,7 +54,7 @@ export function InventoryOverviewView({ overview, productsHref = "/inventory/pro
         </div>
       </section>
 
-      <dl className="grid min-w-0 grid-cols-2 gap-3 lg:grid-cols-4">
+      <dl className="grid min-w-0 grid-cols-2 gap-3 lg:grid-cols-3">
         {[...stats, ...requests].map(card => <OverviewCard key={card.label} {...card} />)}
       </dl>
 

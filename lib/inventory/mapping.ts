@@ -18,11 +18,11 @@ export function pick<T, K extends keyof T>(row: T, keys: readonly K[]): Pick<T, 
 export function pageResult<T>(items: T[], total: number, page: number, pageSize: number): InventoryPage<T> {
   return { items, total, page, page_size: pageSize, page_count: Math.ceil(total / pageSize) };
 }
-export type StockRow = Pick<InventoryProductRow, "quantity" | "low_stock_at" | typeof LOCATION_QUANTITY_COLUMNS[keyof typeof LOCATION_QUANTITY_COLUMNS]> & Partial<Pick<InventoryProductRow, "item_type">>;
-export const STOCK_COLUMNS = ["quantity", "low_stock_at", "item_type", ...Object.values(LOCATION_QUANTITY_COLUMNS)] as const;
+export type StockRow = Pick<InventoryProductRow, "quantity" | typeof LOCATION_QUANTITY_COLUMNS[keyof typeof LOCATION_QUANTITY_COLUMNS]> & Partial<Pick<InventoryProductRow, "item_type">>;
+export const STOCK_COLUMNS = ["quantity", "item_type", ...Object.values(LOCATION_QUANTITY_COLUMNS)] as const;
 export function summarizeStock(rows: readonly StockRow[]): InventoryStockSummary {
   const result: InventoryStockSummary = {
-    product_count: 0, total_live_quantity: 0, low_stock_count: 0,
+    product_count: 0, total_live_quantity: 0,
     location_quantities: { warehouse: 0, dubai_showroom: 0, abudhabi_showroom: 0, mockup: 0, temporary_out: 0, sold: 0 },
     location_product_counts: { warehouse: 0, dubai_showroom: 0, abudhabi_showroom: 0, mockup: 0, temporary_out: 0, sold: 0 },
     item_type_counts: { product: 0, accessory: 0, temporary: 0 },
@@ -33,7 +33,6 @@ export function summarizeStock(rows: readonly StockRow[]): InventoryStockSummary
       result.product_count++;
       if (row.item_type) result.item_type_counts[row.item_type]++;
     }
-    if (row.quantity <= row.low_stock_at) result.low_stock_count++;
     for (const location of Object.keys(LOCATION_QUANTITY_COLUMNS) as (keyof typeof LOCATION_QUANTITY_COLUMNS)[]) {
       const units = row[LOCATION_QUANTITY_COLUMNS[location]];
       result.location_quantities[location] += units;

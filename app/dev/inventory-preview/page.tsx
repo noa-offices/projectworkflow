@@ -30,7 +30,7 @@ import { parseRequestParams } from "@/lib/inventory/request-presentation";
 import { canManageInventory, canViewInventory } from "@/lib/inventory/access";
 import { previewMovementRequests, previewProductRequests, previewRequestUserId } from "@/lib/inventory/request-preview-data";
 
-const stockMatches = (product: typeof previewProducts[number], stock?: string) => !stock || (stock === "live" ? product.quantity > 0 : stock === "reserved" ? product.reserved_quantity > 0 : product.quantity <= product.low_stock_at);
+const stockMatches = (product: typeof previewProducts[number], stock?: string) => !stock || (stock === "live" ? product.quantity > 0 : product.reserved_quantity > 0);
 export const dynamic = "force-dynamic";
 export default async function InventoryPreviewPage({ searchParams }: { searchParams: Promise<InventorySearchParams> }) {
   await redirectWarehouseStaff();

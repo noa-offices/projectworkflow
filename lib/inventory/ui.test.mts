@@ -211,13 +211,13 @@ test('every Overview card is the same whole-card link with a View hint',async()=
   const overview = (await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
   const markup = html(overview,{overview:previewOverview,role:'system_owner'});
   const cards = [...markup.matchAll(/<a [^>]*data-overview-card[^>]*>[\s\S]*?<\/a>/g)].map(match => match[0]);
-  // Units, Products, Reserved, Low stock, 2 pending request cards, 6 locations.
-  assert.equal(cards.length,12);
+  // Units, Products, Reserved, 2 pending request cards, 6 locations.
+  assert.equal(cards.length,11);
   const hrefs = cards.map(card => card.match(/href="([^"]+)"/)![1].replaceAll('&amp;','&'));
   assert.ok(hrefs.includes('/inventory/requests?tab=products&status=pending_review'));
   assert.ok(hrefs.includes('/inventory/requests?tab=movements&status=pending_review'));
   const classOf = (card:string) => card.match(/class="([^"]+)"/)![1];
-  const base = (card:string) => classOf(card).split(' ').filter(name => !/^(border|bg|shadow)/.test(name)).join(' ');
+  const base = (card:string) => classOf(card).split(' ').filter(Boolean).filter(name => !/^(border|bg|shadow|col-span|lg:col-span)/.test(name)).join(' ');
   for(const card of cards) {
     assert.equal(base(card),base(cards[0]));
     assert.match(classOf(card),/min-h-11/); assert.match(classOf(card),/hover:/); assert.match(classOf(card),/focus-visible:outline/);
@@ -226,7 +226,7 @@ test('every Overview card is the same whole-card link with a View hint',async()=
     assert.doesNotMatch(card,/underline/);
   }
   const standard = cards.filter(card => !card.includes('text-4xl'));
-  assert.equal(standard.length,10);
+  assert.equal(standard.length,9);
   for(const card of standard) assert.match(card,/<dd class="[^"]*text-2xl/);
   assert.equal(markup.match(/<a [^>]*underline/g)?.length ?? 0,0);
 });
@@ -251,7 +251,7 @@ test('edit form shows stock ref and quantity read-only, and costs only to manage
     assert.match(markup,/<input[^>]*readOnly=""[^>]*name="quantity_display"/);
     assert.ok(markup.includes('Change stock with Take / Move stock.'));
     assert.doesNotMatch(markup,/name="stock_ref"|name="quantity"/);
-    for(const name of ['price','freight_cost','c_and_f','transport','custom_duty','labour','vat','item_name','item_code','model_name','low_stock_at','dimension_length']) assert.ok(markup.includes(`name="${name}"`),name);
+    for(const name of ['price','freight_cost','c_and_f','transport','custom_duty','labour','vat','item_name','item_code','model_name','dimension_length']) assert.ok(markup.includes(`name="${name}"`),name);
   }
   for(const role of ['warehouse_staff','viewer','designer',null]) {
     const markup=html(form,{...props,role});

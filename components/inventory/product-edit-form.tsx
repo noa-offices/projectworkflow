@@ -59,7 +59,6 @@ export function ProductEditForm({ product, brands, categories, role, productHref
           <label className={labelStyle}>Custom category<input name="custom_category_name" maxLength={200} defaultValue={product.custom_category_name ?? ""} className={fieldStyle} /></label>
           <label className={labelStyle}>Status *<select name="status" defaultValue={product.status} className={fieldStyle}>{PRODUCT_STATUSES.map(value => <option key={value} value={value}>{inventoryLabel(value)}</option>)}</select></label>
           <label className={labelStyle}>Condition *<select name="condition" defaultValue={product.condition} className={fieldStyle}>{["new", "used", "showroom", "damaged"].map(value => <option key={value} value={value}>{inventoryLabel(value)}</option>)}</select></label>
-          <label className={labelStyle}>Low-stock level<NumberInput name="low_stock_at" maxLength={10} defaultValue={product.low_stock_at} className={fieldStyle} /></label>
           {hasLocation && <label className={labelStyle}>Location<input name="location" maxLength={200} defaultValue={product.location ?? ""} className={fieldStyle} /></label>}
         </div>
         <label className="block text-sm font-medium text-zinc-700">Description<textarea name="description" defaultValue={product.description ?? ""} maxLength={5000} rows={3} className={fieldStyle} /></label>
