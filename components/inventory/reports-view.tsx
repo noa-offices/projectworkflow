@@ -6,7 +6,7 @@ import { searchMovementProducts } from "@/lib/inventory/actions";
 import { ACTION_FORM_LABELS, actionHistoryLabel, canUseManagerMovements } from "@/lib/inventory/movement-form";
 import { inventoryLabel } from "@/lib/inventory/presentation";
 import type { CurrentInventoryFilters, MovementReportFilters } from "@/lib/inventory/reports/params";
-import { currentReportUrl, downloadName, movementsReportUrl } from "@/lib/inventory/reports/urls";
+import { currentReportUrl, downloadName, movementsReportUrl, photoNote } from "@/lib/inventory/reports/urls";
 import { saveFailureMessage } from "@/lib/inventory/save-errors";
 import { ITEM_TYPES, LOCATION_LABELS, MOVEMENT_ACTIONS, PRODUCT_STATUSES, type InventoryBrand, type InventoryCategoryNode, type MovementPickerProduct } from "@/lib/inventory/types";
 import { Banner, PageHeader, buttonClass, cardClass, fieldClass, focusRing } from "./inventory-ui";
@@ -15,16 +15,16 @@ type Busy = "current-xlsx" | "current-pdf" | "movements" | null;
 const checkClass = `flex min-h-11 items-center gap-3 rounded-lg border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-800 ${focusRing}`;
 
 export function ReportsView({ brands, categories, role, defaultRange, preview = false, previewCatalog = [], previewState = "idle" }: { brands: InventoryBrand[]; categories: InventoryCategoryNode[]; role: string | null; defaultRange: { from: string; to: string }; preview?: boolean; previewCatalog?: MovementPickerProduct[]; previewState?: "idle" | "busy" | "error" }) {
-  const [current, setCurrent] = useState<CurrentInventoryFilters>({ brand: "", category: "", itemType: "", location: "", status: "", includeSoldOut: false, photos: false });
-  const [moves, setMoves] = useState<MovementReportFilters>({ from: defaultRange.from, to: defaultRange.to, product: "", action: "", location: "", person: "" });
+  const [current, setCurrent] = useState<CurrentInventoryFilters>({ brand: "", category: "", itemType: "", location: "", status: "", includeSoldOut: false, photos: false, excelPhotos: true });
+  const [moves, setMoves] = useState<MovementReportFilters>({ from: defaultRange.from, to: defaultRange.to, product: "", action: "", location: "", person: "", photos: true });
   const [product, setProduct] = useState<{ id: string; name: string } | null>(null), [term, setTerm] = useState(""), [results, setResults] = useState<MovementPickerProduct[]>([]), [searching, setSearching] = useState(false);
-  const [busy, setBusy] = useState<Busy>(previewState === "busy" ? "current-pdf" : null), [error, setError] = useState<{ id: string; text: string } | null>(previewState === "error" ? { id: "movements", text: "Too many movements for one file. Narrow the date range." } : null), [done, setDone] = useState("");
+  const [busy, setBusy] = useState<Busy>(previewState === "busy" ? "current-pdf" : null), [error, setError] = useState<{ id: string; text: string } | null>(previewState === "error" ? { id: "movements", text: "Too many movements for one file. Narrow the date range." } : null), [done, setDone] = useState(""), [note, setNote] = useState<string | null>(null);
   const lock = useRef(false), timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   if (!canUseManagerMovements(role)) return <p role="alert" className="rounded-lg border border-zinc-200 bg-white p-4 text-sm text-zinc-700">You do not have permission to see reports.</p>;
 
   async function download(kind: Exclude<Busy, null>, url: string, fallbackName: string) {
     if (lock.current) return;
-    lock.current = true; setBusy(kind); setError(null); setDone("");
+    lock.current = true; setBusy(kind); setError(null); setDone(""); setNote(null);
     try {
       if (preview) { await new Promise(resolve => setTimeout(resolve, 600)); setDone("Preview only. No file was made."); return; }
       const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
@@ -36,7 +36,7 @@ export function ReportsView({ brands, categories, role, defaultRange, preview = 
       const blob = await response.blob(), name = downloadName(response.headers.get("Content-Disposition"), fallbackName), link = document.createElement("a");
       link.href = URL.createObjectURL(blob); link.download = name; document.body.append(link); link.click(); link.remove();
       setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
-      setDone(`${name} is ready. Check your downloads.`);
+      setDone(`${name} is ready. Check your downloads.`); setNote(photoNote(response.headers));
     } catch (failure) { setError({ id: kind, text: saveFailureMessage(failure, "The file could not be made. Please try again.") }); }
     finally { lock.current = false; setBusy(null); }
   }
@@ -63,9 +63,10 @@ export function ReportsView({ brands, categories, role, defaultRange, preview = 
     <PageHeader title="Reports" text="Download stock reports. Prices and costs are never included." />
     <p role="status" aria-live="polite" className="sr-only">{busy ? "Making your file…" : done}</p>
     {done && <Banner tone="success">{done}</Banner>}
+    {done && note && <Banner tone="info">{note}</Banner>}
 
     <section aria-labelledby="report-current" className={`${cardClass} space-y-4`}>
-      <div><h2 id="report-current" className="text-lg font-semibold text-zinc-950">Current inventory</h2><p className="mt-1 text-sm text-zinc-600">Stock by location for every item, with totals.</p></div>
+      <div><h2 id="report-current" className="text-lg font-semibold text-zinc-950">Current inventory</h2><p className="mt-1 text-sm text-zinc-600">Stock by location for every item, with totals. Photos are added when there are 500 items or fewer.</p></div>
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         {select("rc-brand", "Brand", current.brand, value => setC("brand", value), brands.map(row => [row.id, row.name] as const), "All brands")}
         {select("rc-category", "Category", current.category, value => setC("category", value), categories.map(row => [row.id, row.name] as const), "All categories")}
@@ -75,7 +76,8 @@ export function ReportsView({ brands, categories, role, defaultRange, preview = 
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         <label className={checkClass}><input type="checkbox" checked={current.includeSoldOut} onChange={event => setC("includeSoldOut", event.target.checked)} className="h-5 w-5 accent-emerald-800" />Include sold-out items</label>
-        <label className={checkClass}><input type="checkbox" checked={current.photos} onChange={event => setC("photos", event.target.checked)} className="h-5 w-5 accent-emerald-800" />Include photos (PDF only)</label>
+        <label className={checkClass}><input type="checkbox" checked={current.excelPhotos} onChange={event => setC("excelPhotos", event.target.checked)} className="h-5 w-5 accent-emerald-800" />Include photos in Excel</label>
+        <label className={checkClass}><input type="checkbox" checked={current.photos} onChange={event => setC("photos", event.target.checked)} className="h-5 w-5 accent-emerald-800" />Include photos in PDF</label>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         <button type="button" disabled={busy !== null} onClick={() => download("current-xlsx", currentReportUrl(current, "xlsx"), "inventory-current.xlsx")} className={`${buttonClass.primary} w-full`}>{busy === "current-xlsx" ? <>{spinner}Making Excel file…</> : <><FileSpreadsheet size={18} aria-hidden="true" />Download Excel</>}</button>
@@ -102,6 +104,8 @@ export function ReportsView({ brands, categories, role, defaultRange, preview = 
             {results.slice(0, 6).map(row => <button key={row.id} type="button" onClick={() => { setProduct({ id: row.id, name: `${row.item_name}${row.stock_ref ? ` (${row.stock_ref})` : ""}` }); setM("product", row.id); setTerm(""); setResults([]); }} className={`block min-h-11 w-full break-words rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-sm hover:bg-zinc-50 ${focusRing}`}>{row.item_name}<span className="block text-emerald-800">{row.stock_ref}</span></button>)}</div>}
         </>}
       </div>
+      <label className={checkClass}><input type="checkbox" checked={moves.photos} onChange={event => setM("photos", event.target.checked)} className="h-5 w-5 accent-emerald-800" />Include photos in Excel</label>
+      <p className="-mt-2 text-sm text-zinc-600">Photos are added when there are 2,000 movements or fewer.</p>
       {rangeProblem && <p role="status" className="text-sm text-zinc-700">{rangeProblem}</p>}
       <button type="button" disabled={busy !== null || !!rangeProblem} onClick={() => download("movements", movementsReportUrl(moves), "inventory-movements.xlsx")} className={`${buttonClass.primary} w-full`}>{busy === "movements" ? <>{spinner}Making Excel file…</> : <><FileSpreadsheet size={18} aria-hidden="true" />Download Excel</>}</button>
       {error && error.id === "movements" && <Banner tone="error">{error.text}</Banner>}

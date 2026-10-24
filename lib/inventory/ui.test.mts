@@ -476,7 +476,10 @@ test('Reports screen: one card per report, big download buttons, states, and not
     const markup=html(view,{...props,role});
     assert.equal((markup.match(/<section /g) ?? []).length,2);
     assert.equal((markup.match(/Download Excel/g) ?? []).length,2); assert.equal((markup.match(/Download PDF/g) ?? []).length,1);
-    assert.ok(markup.includes('Include sold-out items')); assert.ok(markup.includes('Include photos (PDF only)'));
+    assert.ok(markup.includes('Include sold-out items')); assert.ok(markup.includes('Include photos in PDF')); assert.equal((markup.match(/Include photos in Excel/g) ?? []).length,2);
+    assert.match(markup,/<input[^>]*checked=""[^>]*\/>Include photos in Excel/); // photos in Excel start switched on
+    assert.doesNotMatch(markup,/<input[^>]*checked=""[^>]*\/>Include photos in PDF/);
+    assert.ok(markup.includes('500 items or fewer')); assert.ok(markup.includes('2,000 movements or fewer'));
     assert.match(markup,/type="date"[^>]*value="2026-09-26"/); assert.match(markup,/type="date"[^>]*value="2026-10-25"/);
     assert.ok(markup.includes('Prices and costs are never included.')); assert.doesNotMatch(markup,/>\s*(Price|Cost)/);
     assert.match(markup,/class="[^"]*min-h-11[^"]*"[^>]*>(?:(?!<\/button>).)*Download Excel/);

@@ -3,6 +3,8 @@ import { inventoryLabel } from "../presentation";
 import { LOCATION_LABELS } from "../types";
 import type { CurrentInventoryFilters } from "./params";
 import { escapeHtml, formatDubaiDateTime, safeCell } from "./format";
+import { AMBER, AMBER_FILL, DATA_ROW_HEIGHT_PLAIN, DATA_ROW_HEIGHT_WITH_PHOTO, FIRST_DATA_ROW, GREEN, HEADER_ROW, applyFreeze, applyPrintSetup, columnLetter, placePhoto, styleDataRow, styleTotalsRow, writeHeader, writeSkippedNote, writeTitleBlock, type SheetColumn } from "./excel-style";
+import { photoKey, type PhotoSet } from "./photos";
 
 /** One line of the Current inventory report. Stock numbers only: never prices or costs. */
 export interface CurrentInventoryRow {
@@ -46,26 +48,60 @@ export function currentFilterLines(filters: CurrentInventoryFilters, names: { br
   return lines.filter((line): line is string => !!line);
 }
 
-export async function buildCurrentInventoryWorkbook(rows: readonly CurrentInventoryRow[], meta: ReportMeta): Promise<Buffer> {
+/** Excel columns, in order. Category and subcategory share one column. */
+export const CURRENT_EXCEL_COLUMNS: SheetColumn[] = [
+  { key: "photo", header: "Photo", width: 17, center: true }, { key: "stock_ref", header: "Stock ref", width: 11 }, { key: "item_name", header: "Item name", width: 30 },
+  { key: "brand", header: "Brand", width: 16 }, { key: "category", header: "Category / Subcategory", width: 15 }, { key: "item_type", header: "Type", width: 12 },
+  { key: "status", header: "Status", width: 12 }, { key: "item_code", header: "Item code", width: 11 }, { key: "model_name", header: "Model", width: 11 }, { key: "condition", header: "Condition", width: 11 },
+  ...CURRENT_NUMBER_COLUMNS.map((column, index) => ({ key: column.key, header: column.header, width: [11, 11, 11, 9, 11, 10, 10, 10, 15][index], number: true })),
+];
+export const CURRENT_EXCEL_HEADERS = CURRENT_EXCEL_COLUMNS.map(column => column.header);
+/** Medium divider lines: item details | locations | totals | sold. */
+export const CURRENT_DIVIDERS = ["warehouse", "total_live", "sold"];
+const categoryText = (row: CurrentInventoryRow) => [row.category, row.subcategory].filter(Boolean).join(" / ");
+
+export async function buildCurrentInventoryWorkbook(rows: readonly CurrentInventoryRow[], meta: ReportMeta, photos?: PhotoSet | null): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "ProjectWorkflow"; workbook.created = meta.generatedAt;
-  const sheet = workbook.addWorksheet("Current inventory", { views: [{ state: "frozen", ySplit: 1 }] });
-  sheet.columns = [...CURRENT_TEXT_COLUMNS, ...CURRENT_NUMBER_COLUMNS].map(column => ({ header: column.header, key: column.key, width: column.width }));
-  const header = sheet.getRow(1);
-  header.font = { bold: true }; header.alignment = { vertical: "middle", wrapText: true }; header.height = 32;
-  header.eachCell(cell => { cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE4F1EA" } }; cell.border = { bottom: { style: "thin", color: { argb: "FF166534" } } }; });
-  for (const row of rows) {
-    const values: Record<string, string | number> = {};
-    for (const column of CURRENT_TEXT_COLUMNS) values[column.key] = safeCell(text(row, column.key));
-    for (const column of CURRENT_NUMBER_COLUMNS) values[column.key] = row[column.key]; // real numbers
-    sheet.addRow(values);
+  workbook.calcProperties = { fullCalcOnLoad: true }; // Excel recalculates the SUM formulas when the file opens
+  const sheet = workbook.addWorksheet("Current inventory");
+  const showPhotos = !!photos && photos.buffers.size > 0, height = showPhotos ? DATA_ROW_HEIGHT_WITH_PHOTO : DATA_ROW_HEIGHT_PLAIN;
+  sheet.columns = CURRENT_EXCEL_COLUMNS.map(column => ({ key: column.key, width: column.width }));
+  sheet.getColumn("photo").hidden = !showPhotos;
+  writeTitleBlock(sheet, "Current inventory", meta);
+  writeHeader(sheet, CURRENT_EXCEL_COLUMNS, CURRENT_DIVIDERS);
+  const imageIds = new Map<string, number>(); // each distinct image is added to the workbook once
+  const numberIndex = new Map(CURRENT_EXCEL_COLUMNS.map((column, index) => [column.key, index + 1]));
+  rows.forEach((row, index) => {
+    const rowNumber = FIRST_DATA_ROW + index, excel = sheet.getRow(rowNumber);
+    const text: Record<string, string> = { stock_ref: safeCell(row.stock_ref), item_name: safeCell(row.item_name), brand: safeCell(row.brand), category: safeCell(categoryText(row)), item_type: inventoryLabel(row.item_type), status: inventoryLabel(row.status), item_code: safeCell(row.item_code), model_name: safeCell(row.model_name), condition: inventoryLabel(row.condition) };
+    for (const [key, value] of Object.entries(text)) if (value !== "") excel.getCell(numberIndex.get(key)!).value = value; // empty stays an empty cell
+    for (const column of CURRENT_NUMBER_COLUMNS) excel.getCell(numberIndex.get(column.key)!).value = row[column.key];
+    styleDataRow(sheet, rowNumber, CURRENT_EXCEL_COLUMNS, CURRENT_DIVIDERS, height);
+    excel.getCell(numberIndex.get("stock_ref")!).font = { name: "Calibri", size: 11, bold: true, color: { argb: GREEN } };
+    excel.getCell(numberIndex.get("item_name")!).font = { name: "Calibri", size: 11, bold: true };
+    excel.getCell(numberIndex.get("total_live")!).font = { name: "Calibri", size: 11, bold: true };
+    if (row.reserved > 0) { const cell = excel.getCell(numberIndex.get("reserved")!); cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: AMBER } }; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: AMBER_FILL } }; }
+    const key = photoKey(row.photo_url), buffer = key ? photos?.buffers.get(key) : undefined;
+    if (key && buffer) {
+      let id = imageIds.get(key);
+      if (id === undefined) { id = workbook.addImage({ buffer: buffer as unknown as ExcelJS.Buffer, extension: "jpeg" }); imageIds.set(key, id); }
+      placePhoto(workbook, sheet, id, 1, rowNumber, CURRENT_EXCEL_COLUMNS[0].width, height);
+    }
+  });
+  const last = FIRST_DATA_ROW + rows.length - 1, totalRow = rows.length ? last + 1 : FIRST_DATA_ROW;
+  sheet.getCell(totalRow, numberIndex.get("item_name")!).value = `Total (${rows.length} ${rows.length === 1 ? "item" : "items"})`;
+  const totals = currentTotals(rows);
+  for (const column of CURRENT_NUMBER_COLUMNS) {
+    const index = numberIndex.get(column.key)!, letter = columnLetter(index);
+    // Formulas of numbers only: never of user text.
+    sheet.getCell(totalRow, index).value = rows.length ? { formula: `SUM(${letter}${FIRST_DATA_ROW}:${letter}${last})`, result: totals[column.key] } : 0;
   }
-  const totals = currentTotals(rows), totalRow = sheet.addRow({ item_name: `Total (${rows.length} ${rows.length === 1 ? "item" : "items"})`, ...totals });
-  totalRow.font = { bold: true }; totalRow.eachCell(cell => { cell.border = { top: { style: "thin" } }; });
-  const first = CURRENT_TEXT_COLUMNS.length + 1;
-  for (let index = first; index < first + CURRENT_NUMBER_COLUMNS.length; index++) sheet.getColumn(index).numFmt = "#,##0";
-  sheet.getColumn("item_name").alignment = { wrapText: true, vertical: "top" };
-  if (rows.length) sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: rows.length + 1, column: first + CURRENT_NUMBER_COLUMNS.length - 1 } };
+  styleTotalsRow(sheet, totalRow, CURRENT_EXCEL_COLUMNS, CURRENT_DIVIDERS);
+  writeSkippedNote(sheet, totalRow + 2, photos?.skipped ?? 0);
+  if (rows.length) sheet.autoFilter = { from: { row: HEADER_ROW, column: 1 }, to: { row: last, column: CURRENT_EXCEL_COLUMNS.length } };
+  applyFreeze(sheet, 2);
+  applyPrintSetup(sheet);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
