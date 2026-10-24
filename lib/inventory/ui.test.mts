@@ -12,6 +12,7 @@ import * as requests from './request-presentation';
 import * as submission from './product-request-submission';
 import * as validation from './action-validation';
 import * as types from './types';
+import * as productEdit from './product-edit';
 import {previewBrands,previewCategories,previewOverview,previewProduct} from './preview-data';
 import {previewProductRequests} from './request-preview-data';
 
@@ -29,7 +30,7 @@ const shared = {
   '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
   '@/lib/inventory/request-presentation':requests, '@/lib/inventory/types':types,
   '@/lib/inventory/product-request-submission':submission, '@/lib/inventory/action-validation':validation,
-  '@/lib/inventory/actions':{}, '@/lib/inventory/photo-upload':{},
+  '@/lib/inventory/actions':{}, '@/lib/inventory/product-edit':productEdit, '@/lib/inventory/photo-upload':{},
 };
 const html = (component:Component,props:Record<string,unknown>) => renderToStaticMarkup(React.createElement(component,props));
 
@@ -88,7 +89,8 @@ test('add and review forms explain the submitted read-only total and put locatio
   }
 });
 test('product page booking controls distinguish direct actions from requests',async()=>{
-  const actions=(await load('../../components/inventory/movement-request-form.tsx',{...shared,'./request-dialog':{RequestDialog:stub}})).ProductRequestActions;
+  const tools=await load('../../components/inventory/product-manager-tools.tsx',{...shared,'./request-dialog':{RequestDialog:stub}});
+  const actions=(await load('../../components/inventory/movement-request-form.tsx',{...shared,'./request-dialog':{RequestDialog:stub},'./product-manager-tools':tools})).ProductRequestActions;
   for(const role of ['system_owner','admin_manager','procurement_manager','designer','sales_designer','sales_coordinator']) {
     const markup=html(actions,{product:previewProduct,role});
     for(const kind of ['book','hold'] as const) assert.ok(markup.includes(`>${requests.movementSubmitLabel(role,kind)}</button>`));
@@ -184,4 +186,44 @@ test('every Overview card is the same whole-card link with a View hint',async()=
   assert.equal(standard.length,10);
   for(const card of standard) assert.match(card,/<dd class="[^"]*text-2xl/);
   assert.equal(markup.match(/<a [^>]*underline/g)?.length ?? 0,0);
+});
+
+test('Edit item, Manage photos and Remove item show only for System Owner and Admin Manager',async()=>{
+  const tools=await load('../../components/inventory/product-manager-tools.tsx',{...shared,'./request-dialog':{RequestDialog:stub}});
+  const actions=(await load('../../components/inventory/movement-request-form.tsx',{...shared,'./request-dialog':{RequestDialog:stub},'./product-manager-tools':tools})).ProductRequestActions;
+  for(const role of ['system_owner','admin_manager','procurement_manager','designer','sales_designer','sales_coordinator','warehouse_staff','viewer','unknown',null]) {
+    const markup=html(actions,{product:previewProduct,role});
+    const manager=['system_owner','admin_manager'].includes(role ?? '');
+    for(const label of ['Edit item','Manage photos','Remove item']) assert.equal(markup.includes(label),manager,`${role} ${label}`);
+    assert.equal(markup.includes(`/inventory/products/${previewProduct.id}/edit`),manager);
+    assert.equal(markup.includes(`/inventory/products/${previewProduct.id}/photos`),manager);
+  }
+});
+test('edit form shows stock ref and quantity read-only, and costs only to managers',async()=>{
+  const form=(await load('../../components/inventory/product-edit-form.tsx',shared)).ProductEditForm;
+  const props={product:previewProduct,brands:previewBrands,categories:previewCategories,productHref:'/p'};
+  for(const role of ['system_owner','admin_manager']) {
+    const markup=html(form,{...props,role});
+    assert.match(markup,/<input[^>]*readOnly=""[^>]*name="stock_ref_display"/);
+    assert.match(markup,/<input[^>]*readOnly=""[^>]*name="quantity_display"/);
+    assert.ok(markup.includes('Change stock with Take / Move stock.'));
+    assert.doesNotMatch(markup,/name="stock_ref"|name="quantity"/);
+    for(const name of ['price','freight_cost','c_and_f','transport','custom_duty','labour','vat','item_name','item_code','model_name','low_stock_at','dimension_length']) assert.ok(markup.includes(`name="${name}"`),name);
+  }
+  for(const role of ['warehouse_staff','viewer','designer',null]) {
+    const markup=html(form,{...props,role});
+    assert.doesNotMatch(markup,/name="price"|name="item_name"|<form/);
+  }
+});
+test('photo manager shows add controls until three photos, and nothing to other roles',async()=>{
+  const manager=(await load('../../components/inventory/product-photo-manager.tsx',{...shared,'./request-dialog':{RequestDialog:stub},'next/image':{__esModule:true,default:(props:Record<string,unknown>)=>React.createElement('img',{alt:String(props.alt)})}})).ProductPhotoManager;
+  const images=previewProduct.images;
+  const props={productId:previewProduct.id,productName:'Chair',productHref:'/p'};
+  const full=html(manager,{...props,images:images.slice(0,3),role:'admin_manager'});
+  assert.ok(full.includes('(3/3)')); assert.match(full,/maximum of three photos/);
+  assert.equal((full.match(/<input[^>]*type="file"[^>]*disabled=""/g) ?? []).length,2);
+  const two=html(manager,{...props,images:images.slice(0,2),role:'admin_manager'});
+  assert.ok(two.includes('(2/3)')); assert.doesNotMatch(two,/<input[^>]*type="file"[^>]*disabled=""/);
+  assert.match(two,/accept="image\/jpeg,image\/png,image\/webp"/); assert.ok(two.includes('Set as main')); assert.ok(two.includes('Remove photo 1'));
+  assert.doesNotMatch(html(manager,{...props,images,role:'warehouse_staff'}),/Set as main|type="file"/);
 });

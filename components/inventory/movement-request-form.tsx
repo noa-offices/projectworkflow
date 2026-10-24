@@ -7,6 +7,7 @@ import { availableLocations, movementRequestPayload, movementSubmitLabel, reques
 import { canManageInventory } from '@/lib/inventory/access';
 import type { InventoryProduct, InventoryProjectOption, RequestType } from '@/lib/inventory/types';
 import { RequestDialog } from './request-dialog';
+import { ProductManagerTools } from './product-manager-tools';
 
 const input = 'mt-1 min-h-11 w-full min-w-0 rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-950';
 const button = 'inline-flex min-h-11 items-center justify-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-50';
@@ -14,13 +15,14 @@ const sampleProjects: InventoryProjectOption[] = [
   { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', label: 'PR-2026-042 — Marina office — Acme Interiors' },
   { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab', label: 'PR-2026-043 — Downtown studio — North Design' },
 ];
-export function ProductRequestActions({ product, role, preview = false, initialKind }: { product: InventoryProduct; role: string | null; preview?: boolean; initialKind?: RequestType }) {
+export function ProductRequestActions({ product, role, preview = false, initialKind, initialRemove = false }: { product: InventoryProduct; role: string | null; preview?: boolean; initialKind?: RequestType; initialRemove?: boolean }) {
   const [kind, setKind] = useState<RequestType | null>(initialKind ?? null), [success, setSuccess] = useState(false);
   const buttons = requestButtons(role);
   if (!product.is_active) return null;
   return <section className="my-4 min-w-0 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm" aria-label="Product requests">
     {buttons.takeMove || buttons.holdBook ? <><h2 className="mb-3 text-base font-semibold">{canManageInventory(role) ? "Stock actions" : "Request stock"}</h2><div className="flex flex-wrap gap-2">
       {buttons.takeMove && <button className={button} onClick={() => { setKind('take'); setSuccess(false); }}>Take / Move stock</button>}
+      <ProductManagerTools product={product} role={role} preview={preview} initialRemove={initialRemove} />
       {buttons.holdBook && <>{(['hold','book'] as const).map(value => <button className={button} key={value} onClick={() => { setKind(value); setSuccess(false); }}>{movementSubmitLabel(role, value)}</button>)}</>}
     </div></> : <p className="text-sm text-zinc-600">Inventory requests are view only for your role.</p>}
     {success && <p role="status" className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{canManageInventory(role) ? 'Done' : 'Your request was sent for review.'}</p>}
