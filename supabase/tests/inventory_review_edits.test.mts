@@ -31,6 +31,7 @@ test("inventory_review_edits: offline SQL assertions", async () => {
     await db.exec(await sql("../migrations/20261023100100_inventory_rls_and_storage.sql"));
  await db.exec(`create table public.clients(id uuid primary key, company_name text, is_active boolean default true); create table public.projects(id uuid primary key, client_id uuid references public.clients, project_number text, project_name text, is_active boolean); create function public.current_user_is_active() returns boolean language sql stable as $$ select public.current_account_status()='active' $$; create function public.current_user_can_manage_settings() returns boolean language sql stable as $$ select public.current_user_role() in ('system_owner','admin_manager') and public.current_user_is_active() $$;`);
  await db.exec(await sql("../migrations/20261023110000_inventory_functions.sql"));
+ await db.exec(await sql("../migrations/20261023120000_inventory_photo_functions.sql"));
  await db.exec(await sql("../migrations/20261023130000_inventory_review_edits.sql"));
  await db.exec(await sql("./inventory_review_edits.sql"));
  } finally { await db.close(); }

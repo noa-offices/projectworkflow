@@ -91,4 +91,16 @@ do $$ declare f record; r uuid; p uuid; begin
  perform pg_temp.inventory_function_assert(not inventory.valid_initial_stock('[]',0),'Array');
  perform pg_temp.inventory_function_assert(not has_function_privilege('authenticated','inventory.apply_stock_change(uuid,text,text,text,integer,text,text,uuid,uuid)','execute'),'Stock writer remains internal');
 end $$;
+do $$ declare f record; r uuid; p uuid; photo uuid; begin
+ select * into f from inventory_function_fixture;
+ perform set_config('request.jwt.claim.sub',(select id::text from inventory_function_actors where label='admin_manager'),true);
+ r:=inventory.submit_product_request(jsonb_build_object('brand_id',f.brand_id,'category_id',f.category_id,'stock_ref',f.marker||'multi','item_code',f.marker||'multi','item_name','Chair','model_name','M','quantity',3,'initial_stock','{"warehouse":1,"temporary_out":2}'::jsonb,'costs','{"price":10,"freight_cost":2}'::jsonb));
+ insert into inventory.product_images(product_request_id,storage_path,is_main,uploaded_by) values(r,'requests/'||r::text||'/photo.jpg',true,auth.uid()) returning id into photo;
+ p:=inventory.review_product_request_with_edits(r,'approved','Checked','{"quantity":4,"initial_stock":{"warehouse":2,"temporary_out":2},"costs":{"price":12}}');
+ perform pg_temp.inventory_function_assert((select quantity=4 and warehouse_quantity=2 and temporary_out_quantity=2 from inventory.products where id=p),'Edited multi-location stock');
+ perform pg_temp.inventory_function_assert((select count(*)=2 from inventory.movements where product_id=p and action_type='receive_stock'),'One movement per nonzero location');
+ perform pg_temp.inventory_function_assert((select price=12 and freight_cost=2 from inventory.product_costs where product_id=p),'Partial costs preserve other components');
+ perform pg_temp.inventory_function_assert((select product_id=p and product_request_id is null and storage_path='requests/'||r::text||'/photo.jpg' from inventory.product_images where id=photo),'Request photo relink preserves stored path');
+ perform pg_temp.inventory_function_assert((select approved_product_id=p and reviewed_by=auth.uid() and reviewed_at is not null and review_note='Checked' from inventory.product_requests where id=r),'Review audit links product');
+end $$;
 reset role; rollback;

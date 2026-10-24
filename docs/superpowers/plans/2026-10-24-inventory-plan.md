@@ -15,10 +15,10 @@
 
 ## Tasks
 
-- [ ] Part 1: Add initial stock validation, review edits SQL and offline assertions; reuse add-item form for complete editable review with read-only photos; validate changed fields and rejection note; verify and commit.
-- [ ] Part 2: Apply manager submissions immediately and return linked IDs; upload manager photos against product; update labels; verify and commit.
-- [ ] Part 3: Add locked reservations, project visibility and lifecycle SQL, role/availability tests; extend read layer, actions, forms, cards, overview, detail and preview; verify and commit.
-- [ ] Review the whole branch, run lint, TypeScript and all offline tests, capture four phone screenshots and open one PR.
+- [x] Part 1: Add initial stock validation, review edits SQL and offline assertions; reuse add-item form for complete editable review with read-only photos; validate changed fields and rejection note; verify and commit.
+- [x] Part 2: Apply manager submissions immediately and return linked IDs; upload manager photos against product; update labels; verify and commit.
+- [x] Part 3: Add locked reservations, project visibility and lifecycle SQL, role/availability tests; extend read layer, actions, forms, cards, overview, detail and preview; verify and commit.
+- [x] Review the whole branch, run lint, TypeScript and all offline tests, capture four phone screenshots and open one PR.
 
 ## Review focus
 
@@ -31,3 +31,5 @@
 ## Progress
 
 Initial repository clean on main. Created requested branch from freshly fetched origin/main. Read AGENTS.md and installed Next.js forms documentation. Existing SQL tests use PGlite, allowing verification without a live database.
+
+Part 1 committed as 80d0cef; Part 2 as b86b310. Part 3 and review fixes verified with 82 passing inventory/SQL tests, clean TypeScript and scoped lint, independent review and offline phone browser checks. Full-suite baseline failures reproduced; see artifacts/inventory-7c/verification.md. PR creation follows final commits.
