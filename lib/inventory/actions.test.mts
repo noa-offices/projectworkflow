@@ -16,6 +16,8 @@ const client=sdkClient("https://inventory.test","publishable-fixture",{auth:{per
     assert.equal(new Headers(init?.headers).get("Content-Profile"),"inventory");
     if(failure)return Response.json(failure,{status:400});
     if(name==="remove_product_photo")return Response.json(`products/${id}/image.jpg`);
+    if(name==="submit_product_request")return Response.json({request_id:id,product_id:role && ["system_owner","admin_manager"].includes(role)?other:null});
+    if(name==="submit_movement_request")return Response.json({request_id:id,movement_id:role && ["system_owner","admin_manager"].includes(role)?other:null,reservation_id:null});
     return Response.json(["review_movement_request","update_product","remove_product","set_main_product_photo"].includes(name)?null:id);
   }
   if(url.pathname.includes("/storage/")){
@@ -79,6 +81,13 @@ test("auth redirects propagate before client access; invalid input never reaches
   reset();
   for(const run of [()=>actions.recordDirectMovement({productId:id,actionType:"sale",quantity:0}),()=>actions.removeProduct({productId:id,reason:"  "}),()=>actions.updateProduct({productId:"bad",patch:{item_name:"New"}})])assert.equal((await run()).ok,false);
   assert.equal(calls.length,0);
+});
+test('manager submission returns linked product and movement ids; requesters get pending ids',async()=>{
+  reset();
+  assert.deepEqual(await actions.submitProductRequest(product),{ok:true,requestId:id,productId:other});
+  assert.deepEqual(await actions.submitMovementRequest({productId:id,requestType:'take',actionType:'sale',fromLocation:'warehouse',quantity:1}),{ok:true,requestId:id,movementId:other,reservationId:null});
+  reset('warehouse_staff');
+  assert.deepEqual(await actions.submitProductRequest(product),{ok:true,requestId:id,productId:null});
 });
 test("RPC payloads are whitelisted, costs are stripped for warehouse, hold/book normalized",async()=>{
   reset("warehouse_staff");

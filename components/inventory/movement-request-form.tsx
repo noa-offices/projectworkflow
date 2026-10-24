@@ -3,7 +3,8 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { submitMovementRequest, type InventoryActionResult } from '@/lib/inventory/actions';
-import { availableLocations, movementRequestPayload, requestButtons } from '@/lib/inventory/request-presentation';
+import { availableLocations, movementRequestPayload, movementSubmitLabel, requestButtons } from '@/lib/inventory/request-presentation';
+import { canManageInventory } from '@/lib/inventory/access';
 import type { InventoryProduct, RequestType } from '@/lib/inventory/types';
 import { RequestDialog } from './request-dialog';
 
@@ -18,11 +19,11 @@ export function ProductRequestActions({ product, role, preview = false, initialK
       {buttons.takeMove && <button className={button} onClick={() => { setKind('take'); setSuccess(false); }}>Take / Move stock</button>}
       {buttons.holdBook && <>{(['hold','book'] as const).map(value => <button className={button} key={value} onClick={() => { setKind(value); setSuccess(false); }}>{value === 'hold' ? 'Hold' : 'Book'}</button>)}</>}
     </div></> : <p className="text-sm text-zinc-600">Inventory requests are view only for your role.</p>}
-    {success && <p role="status" className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">Your request was sent for review.</p>}
-    {kind && ((buttons.takeMove && (kind === 'take' || kind === 'move')) || (buttons.holdBook && (kind === 'hold' || kind === 'book'))) && <MovementRequestForm key={kind === 'take' || kind === 'move' ? 'stock' : kind} product={product} initialKind={kind} preview={preview} onClose={() => setKind(null)} onSuccess={() => { setKind(null); setSuccess(true); }} />}
+    {success && <p role="status" className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{canManageInventory(role) ? 'Done' : 'Your request was sent for review.'}</p>}
+    {kind && ((buttons.takeMove && (kind === 'take' || kind === 'move')) || (buttons.holdBook && (kind === 'hold' || kind === 'book'))) && <MovementRequestForm key={kind === 'take' || kind === 'move' ? 'stock' : kind} product={product} role={role} initialKind={kind} preview={preview} onClose={() => setKind(null)} onSuccess={() => { setKind(null); setSuccess(true); }} />}
   </section>;
 }
-export function MovementRequestForm({ product, initialKind, preview = false, onClose, onSuccess }: { product: InventoryProduct; initialKind: RequestType; preview?: boolean; onClose: () => void; onSuccess: () => void }) {
+export function MovementRequestForm({ product, role = null, initialKind, preview = false, onClose, onSuccess }: { product: InventoryProduct; role?: string | null; initialKind: RequestType; preview?: boolean; onClose: () => void; onSuccess: () => void }) {
   const [kind, setKind] = useState(initialKind), [from, setFrom] = useState('warehouse'), [to, setTo] = useState('dubai_showroom');
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const lock = useRef(false), router = useRouter(), locations = availableLocations(product);
@@ -52,7 +53,7 @@ export function MovementRequestForm({ product, initialKind, preview = false, onC
         <label className="block text-sm font-medium">Note (optional)<textarea name="note" maxLength={2000} rows={3} className={input} /></label>
       </fieldset>
       {error && <p id="movement-error" role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
-      <button disabled={busy} className="min-h-11 w-full rounded-md bg-emerald-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{busy ? 'Sending…' : preview ? 'Send sample request' : 'Send request'}</button>
+      <button disabled={busy} className="min-h-11 w-full rounded-md bg-emerald-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{busy ? 'Sending…' : movementSubmitLabel(role, kind, preview)}</button>
     </form>
   </RequestDialog>;
 }

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { CheckCircle2, Send } from "lucide-react";
 import { registerInventoryPhotos, reviewProductRequestWithEdits, submitProductRequest } from "@/lib/inventory/actions";
-import { canSeeCosts } from "@/lib/inventory/access";
+import { canManageInventory, canSeeCosts } from "@/lib/inventory/access";
 import { InventoryInputError } from "@/lib/inventory/action-validation";
 import { uploadInventoryPhotos } from "@/lib/inventory/photo-upload";
 import { PRODUCT_COST_FIELDS, changedProductRequestFields, productRequestFormInput, sendProductRequest, type ProductRequestSubmissionResult } from "@/lib/inventory/product-request-submission";
@@ -25,13 +25,13 @@ export function ProductRequestForm({ brands, categories, role, preview = false, 
   const totalStock = Object.values(stock).reduce((sum, value) => sum + value, 0);
   const [error, setError] = useState(""), [result, setResult] = useState<ProductRequestSubmissionResult | null>(null);
   const held = useRef(false), errorRef = useRef<HTMLParagraphElement>(null);
-  const costsAllowed = canSeeCosts(role);
+  const costsAllowed = canSeeCosts(role), manager = canManageInventory(role);
   const activeCategories = categories.filter(row => row.is_active || row.id === request?.category_id);
   const subcategories = activeCategories.find(row => row.id === category)?.children.filter(row => row.is_active || row.id === request?.subcategory_id) ?? [];
-  const heading = request ? null : <header className="mb-5 space-y-1"><h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Add-item request</h1><p className="text-sm text-zinc-600">Send an item for review before it enters inventory.</p></header>;
+  const heading = request ? null : <header className="mb-5 space-y-1"><h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Add-item request</h1><p className="text-sm text-zinc-600">{manager ? "Save an item directly to inventory." : "Send an item for review before it enters inventory."}</p></header>;
   if (result?.ok) return <>{heading}<section role="status" className={sectionStyle + " border-emerald-200 bg-emerald-50"}>
-    <CheckCircle2 className="text-emerald-800" size={32} aria-hidden="true" /><h2 className="text-xl font-semibold text-zinc-900">Request sent</h2>
-    <p className="text-sm text-zinc-700">Your add-item request is waiting for review.{preview ? " This is a preview; nothing was submitted." : ""}</p>
+    <CheckCircle2 className="text-emerald-800" size={32} aria-hidden="true" /><h2 className="text-xl font-semibold text-zinc-900">{manager ? "Done" : "Request sent"}</h2>
+    <p className="text-sm text-zinc-700">{manager ? "Your item is saved in inventory." : "Your add-item request is waiting for review."}{preview ? " This is a preview; nothing was submitted." : ""}</p>
     {result.failedCount > 0 && <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><p className="font-semibold">{result.failedCount} {result.failedCount === 1 ? "photo could" : "photos could"} not be attached. Your request was still sent.</p>{result.photoError && <p className="mt-1">{result.photoError}</p>}</div>}
     <Link href={preview ? `/dev/inventory-preview?view=requests&frame=1&mine=1&status=all&role=${encodeURIComponent(role ?? '')}` : "/inventory/requests?tab=products&mine=1&status=all"} className="inline-flex min-h-11 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white">My requests</Link>
   </section></>;
@@ -81,8 +81,8 @@ export function ProductRequestForm({ brands, categories, role, preview = false, 
       <div className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4">
         {error && <p id="product-request-error" ref={errorRef} tabIndex={-1} role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error} Your entries are retained.</p>}
         {request && <button type="button" disabled={pending} onClick={onCancel} className="min-h-11 w-full rounded-md border border-zinc-300 px-4 text-sm font-semibold">Cancel</button>}
-        <button type="submit" disabled={pending} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-emerald-900 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait"><Send size={18} aria-hidden="true" />{pending ? "Saving…" : request ? 'Approve' : "Send add-item request"}</button>
-        <p role="status" aria-live="polite" className="text-sm text-zinc-600">{pending ? "Please wait while your request and photos are sent." : preview ? "Preview only. Nothing will be submitted or uploaded." : "Your request will be reviewed before any stock is added."}</p>
+        <button type="submit" disabled={pending} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-emerald-900 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait"><Send size={18} aria-hidden="true" />{pending ? "Saving…" : request ? 'Approve' : manager ? 'Save' : "Send add-item request"}</button>
+        <p role="status" aria-live="polite" className="text-sm text-zinc-600">{pending ? "Please wait while your request and photos are sent." : preview ? "Preview only. Nothing will be submitted or uploaded." : request ? "Approval saves these details and adds the stock." : manager ? "Saving adds this item and its stock immediately." : "Your request will be reviewed before any stock is added."}</p>
       </div>
     </fieldset>
   </form></>;

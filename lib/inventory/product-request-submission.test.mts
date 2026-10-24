@@ -43,6 +43,16 @@ test("registration failure retains the request and counts all unregistered photo
   });
   assert.equal(result.ok,true); if(result.ok) {assert.equal(result.requestId,id);assert.equal(result.failedCount,1);assert.equal(result.photoError,"Already reviewed");}
 });
+test('manager uploads and registers against the created product',async()=>{
+  const productId='22222222-2222-4222-8222-222222222222';
+  const result=await sendProductRequest({},[new File(['a'],'a.jpg')],{
+    submit:async()=>({ok:true,requestId:id,productId}),
+    upload:async owner=>{assert.equal(owner.ownerType,'product');assert.equal(owner.ownerId,productId);return {files:[{path:`products/${productId}/a.jpg`,contentType:'image/jpeg',sizeBytes:1}],failedCount:0,errors:[]};},
+    register:async owner=>{assert.equal(owner.ownerType,'product');assert.equal(owner.ownerId,productId);return {ok:true,registeredCount:1,failedCount:0};},
+  });
+  assert.equal(result.ok,true);
+  if(result.ok) assert.equal(result.productId,productId);
+});
 test("request failure never starts photos; an unexpected upload failure keeps the successful request",async()=>{
   const deps={submit:async()=>({ok:false,error:"Unavailable"} as const),upload:async()=>{throw new Error("must not upload");},register:async()=>{throw new Error("must not register");}};
   assert.deepEqual(await sendProductRequest({},[],deps),{ok:false,error:"Unavailable"});

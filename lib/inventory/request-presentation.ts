@@ -8,6 +8,10 @@ export function requestButtons(role: string | null | undefined) {
   const manager = canManageInventory(role);
   return { add: manager || canSubmitAddTake(role), takeMove: manager || canSubmitAddTake(role), holdBook: manager || canSubmitHoldBook(role), review: manager };
 }
+export function movementSubmitLabel(role: string | null | undefined, kind: RequestType, preview = false) {
+  if (canManageInventory(role)) return { take: 'Take now', move: 'Move now', hold: 'Hold now', book: 'Book now' }[kind];
+  return preview ? 'Send sample request' : 'Send request';
+}
 export function parseRequestParams(params: InventorySearchParams, manager: boolean) {
   const first = (key: string) => { const value = params[key]; return Array.isArray(value) ? value[0] : value; };
   const status = first('status'), page = first('page') ?? '';

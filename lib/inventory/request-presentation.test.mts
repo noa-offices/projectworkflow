@@ -1,7 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { availableLocations, movementRequestPayload, parseRequestParams, requestButtons, reviewRequestPayload } from './request-presentation';
+import { availableLocations, movementRequestPayload, movementSubmitLabel, parseRequestParams, requestButtons, reviewRequestPayload } from './request-presentation';
 import { previewProduct } from './preview-data';
+
+test('manager movement buttons apply immediately while requester labels stay unchanged', () => {
+  for (const role of ['system_owner', 'admin_manager']) {
+    assert.equal(movementSubmitLabel(role, 'take'), 'Take now');
+    assert.equal(movementSubmitLabel(role, 'move'), 'Move now');
+    assert.equal(movementSubmitLabel(role, 'hold'), 'Hold now');
+    assert.equal(movementSubmitLabel(role, 'book', true), 'Book now');
+  }
+  for (const role of ['warehouse_staff', 'designer', null]) {
+    assert.equal(movementSubmitLabel(role, 'take'), 'Send request');
+    assert.equal(movementSubmitLabel(role, 'hold', true), 'Send sample request');
+  }
+});
 
 test('request buttons match all eight roles and unknown roles', () => {
   for (const role of ['system_owner', 'admin_manager']) assert.deepEqual(requestButtons(role), { add: true, takeMove: true, holdBook: true, review: true });

@@ -1,6 +1,6 @@
 import { productInput } from "./action-validation";
 import type { InventoryPhotoUploadResult } from "./photo-upload";
-import type { PhotoFileInput } from "./action-validation";
+import type { PhotoFileInput, PhotoOwner } from "./action-validation";
 
 export const PRODUCT_COST_FIELDS = ["price", "freight_cost", "c_and_f", "transport", "custom_duty", "labour", "vat"] as const;
 export function changedProductRequestFields(before: object, after: Record<string, unknown>): Record<string, unknown> {
@@ -40,26 +40,27 @@ export function productRequestFormInput(data: FormData, costsAllowed: boolean): 
 }
 type Failure = { ok: false; error: string };
 type Dependencies = {
-  submit: (input: unknown) => Promise<{ ok: true; requestId: string } | Failure>;
-  upload: (input: { ownerType: "request"; ownerId: string; files: File[] }) => Promise<InventoryPhotoUploadResult>;
-  register: (input: { ownerType: "request"; ownerId: string; files: PhotoFileInput[] }) => Promise<({ok:true; registeredCount:number}|Failure) & { failedCount:number }>;
+  submit: (input: unknown) => Promise<{ ok: true; requestId: string; productId?: string | null } | Failure>;
+  upload: (input: PhotoOwner & { files: File[] }) => Promise<InventoryPhotoUploadResult>;
+  register: (input: PhotoOwner & { files: PhotoFileInput[] }) => Promise<({ok:true; registeredCount:number}|Failure) & { failedCount:number }>;
 };
-export type ProductRequestSubmissionResult = Failure | { ok: true; requestId: string; failedCount: number; photoError: string | null };
+export type ProductRequestSubmissionResult = Failure | { ok: true; requestId: string; productId?: string | null; failedCount: number; photoError: string | null };
 /** A created request is retained even when a later photo step fails. */
 export async function sendProductRequest(input: unknown, files: File[], deps: Dependencies): Promise<ProductRequestSubmissionResult> {
   const request = await deps.submit(input);
   if (!request.ok) return request;
+  const owner: PhotoOwner = request.productId ? {ownerType:'product',ownerId:request.productId} : {ownerType:'request',ownerId:request.requestId};
   let failedCount = 0, photoError: string | null = null;
   try {
     if (files.length) {
-      const uploaded = await deps.upload({ ownerType: "request", ownerId: request.requestId, files });
+      const uploaded = await deps.upload({ ...owner, files });
       failedCount = uploaded.failedCount;
       photoError = uploaded.errors.join(" ") || null;
       if (uploaded.files.length) {
-        const registered = await deps.register({ ownerType: "request", ownerId: request.requestId, files: uploaded.files.map((file, index) => ({ ...file, sortOrder: index, isMain: index === 0 })) });
+        const registered = await deps.register({ ...owner, files: uploaded.files.map((file, index) => ({ ...file, sortOrder: index, isMain: index === 0 })) });
         if (!registered.ok) { failedCount += uploaded.files.length; photoError = [photoError, registered.error].filter(Boolean).join(" "); }
       }
     }
   } catch { failedCount = files.length; photoError = "Photos could not be attached. Your request was still sent."; }
-  return { ok: true, requestId: request.requestId, failedCount, photoError };
+  return { ok: true, requestId: request.requestId, ...(request.productId ? {productId:request.productId} : {}), failedCount, photoError };
 }

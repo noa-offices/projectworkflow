@@ -50,8 +50,9 @@ export async function submitMovementRequest(input: unknown) {
     && !(canSubmitAddTake(role) && (kind === "take" || kind === "move"))) return denied();
   return perform("submit movement request", async () => {
     const args = movementInput(input, true), client = await createClient();
-    const requestId = returnedId(await rpc(client, "submit_movement_request", args));
-    refresh(); return { requestId };
+    const data = object(await rpc(client, "submit_movement_request", args));
+    const requestId = returnedId(data.request_id), movementId = data.movement_id == null ? null : returnedId(data.movement_id), reservationId = data.reservation_id == null ? null : returnedId(data.reservation_id);
+    refresh(); return { requestId, movementId, reservationId };
   });
 }
 export async function reviewMovementRequest(input: unknown) {
@@ -68,8 +69,9 @@ export async function submitProductRequest(input: unknown) {
   if (!canManageInventory(profile?.role) && !canSubmitAddTake(profile?.role)) return denied();
   return perform("submit product request", async () => {
     const payload = productInput(input, canSeeCosts(profile?.role), false);
-    const requestId = returnedId(await rpc(await createClient(), "submit_product_request", { payload }));
-    refresh(); return { requestId };
+    const data = object(await rpc(await createClient(), "submit_product_request", { payload }));
+    const requestId = returnedId(data.request_id), productId = data.product_id == null ? null : returnedId(data.product_id);
+    refresh(); return { requestId, productId };
   });
 }
 export async function reviewProductRequest(input: unknown) {
