@@ -9,6 +9,7 @@ import { canUseManagerMovements } from "@/lib/inventory/movement-form";
 import { formatInventoryNumber } from "@/lib/inventory/presentation";
 import type { InventoryCategoryOverview } from "@/lib/inventory/types";
 import { RequestDialog } from "./request-dialog";
+import { saveFailureMessage } from "@/lib/inventory/save-errors";
 
 const button = "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:opacity-50";
 type Dialog = { kind: "add" } | { kind: "sub"; parent: InventoryCategoryOverview } | { kind: "rename"; node: InventoryCategoryOverview; parentId: string | null };
@@ -28,7 +29,7 @@ export function CategoryManager({ categories, role, preview = false, initialDial
       setMessage(preview ? `${done} (preview only, nothing was saved)` : done);
       if (!preview) router.refresh();
       return true;
-    } catch { setError("Something went wrong. Please try again."); return false; }
+    } catch (failure) { setError(saveFailureMessage(failure)); return false; }
     finally { lock.current = false; setBusy(false); }
   }
   function open(next: Dialog) { setDialog(next); setName(next.kind === "rename" ? next.node.name : ""); setError(""); setMessage(""); }

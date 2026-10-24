@@ -8,6 +8,8 @@ import { canManageInventory } from '@/lib/inventory/access';
 import type { InventoryProduct, InventoryProjectOption, RequestType } from '@/lib/inventory/types';
 import { RequestDialog } from './request-dialog';
 import { ProductManagerTools } from './product-manager-tools';
+import { StickyActionBar, buttonClass } from './inventory-ui';
+import { saveFailureMessage } from "@/lib/inventory/save-errors";
 
 const input = 'mt-1 min-h-11 w-full min-w-0 rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-950';
 const button = 'inline-flex min-h-11 items-center justify-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-50';
@@ -67,7 +69,7 @@ export function MovementRequestForm({ product, role = null, initialKind, preview
       const result: InventoryActionResult = preview ? {ok:true} : await submitMovementRequest(payload);
       if (!result.ok) { setError(result.error); return; }
       onSuccess(); if (!preview) router.refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to send your request. Please try again.'); }
+    } catch (cause) { setError(saveFailureMessage(cause, cause instanceof Error ? cause.message : 'Unable to send your request. Please try again.')); }
     finally { lock.current = false; setBusy(false); }
   }
   return <RequestDialog title={stock ? 'Take / Move stock' : kind === 'hold' ? 'Hold stock' : 'Book stock'} onClose={onClose} busy={busy}>
@@ -96,7 +98,7 @@ export function MovementRequestForm({ product, role = null, initialKind, preview
         <label className="block text-sm font-medium">Note (optional)<textarea name="note" maxLength={2000} rows={3} className={input} /></label>
       </fieldset>
       {error && <p id="movement-error" role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
-      <button disabled={busy} className="min-h-11 w-full rounded-md bg-emerald-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{busy ? 'Sending…' : movementSubmitLabel(role, kind, preview)}</button>
+      <StickyActionBar><button disabled={busy} className={buttonClass.primary + ' w-full'}>{busy ? 'Sending…' : movementSubmitLabel(role, kind, preview)}</button></StickyActionBar>
     </form>
   </RequestDialog>;
 }

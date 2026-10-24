@@ -11,8 +11,10 @@ import { uploadInventoryPhotos } from "@/lib/inventory/photo-upload";
 import { PRODUCT_COST_FIELDS, changedProductRequestFields, productRequestFormInput, productRequestSuccessHref, sendProductRequest, type ProductRequestSubmissionResult } from "@/lib/inventory/product-request-submission";
 import { ITEM_TYPES, LOCATION_LABELS, PRODUCT_STATUSES, type InventoryBrand, type InventoryCategoryNode, type InventoryProductRequest, type InventoryImage } from "@/lib/inventory/types";
 import { inventoryLabel } from "@/lib/inventory/presentation";
+import { StickyActionBar } from "./inventory-ui";
 import { RequestPhotoPicker } from "./request-photo-picker";
 import { ProductImageGallery } from './product-image-gallery';
+import { saveFailureMessage } from "@/lib/inventory/save-errors";
 
 const fieldStyle = "mt-1 min-h-11 w-full min-w-0 rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
 const totalFieldStyle = "mt-1 min-h-11 w-full min-w-0 cursor-default rounded-md border border-zinc-200 bg-zinc-100 px-3 py-2 text-base text-zinc-500";
@@ -58,7 +60,7 @@ export function ProductRequestForm({ brands, categories, role, preview = false, 
         const href = preview ? null : productRequestSuccessHref(response, role);
         if (href) router.push(href);
       } else setError(response.error);
-    } catch (failure) { setError(failure instanceof InventoryInputError ? failure.message : "Could not send your request. Please try again."); }
+    } catch (failure) { setError(failure instanceof InventoryInputError ? failure.message : saveFailureMessage(failure, "Could not send your request. Please try again.")); }
     finally { held.current = false; setPending(false); onBusyChange?.(false); requestAnimationFrame(() => errorRef.current?.focus()); }
   }} className="min-w-0 space-y-4">
     <fieldset disabled={pending} className="min-w-0 space-y-4 disabled:opacity-60">
@@ -87,12 +89,12 @@ export function ProductRequestForm({ brands, categories, role, preview = false, 
       <div className={sectionStyle}>{request ? <><h2 className="mb-3 font-semibold">Photos</h2><ProductImageGallery images={images} productName={request.item_name} /><p className="mt-2 text-sm text-zinc-500">Photos are read only during review.</p></> : <RequestPhotoPicker ownerType={manager ? "product" : "request"} onChange={setFiles} disabled={pending} />}</div>
       <section className={sectionStyle}><label className="block text-sm font-medium text-zinc-700">Note<textarea name="note" defaultValue={request?.note ?? ''} maxLength={2000} rows={3} className={fieldStyle} placeholder="Anything the reviewer should know" /></label></section>
       {request && <section className={sectionStyle}><label className="block text-sm font-medium text-zinc-700">Review note<textarea name="review_note" maxLength={2000} rows={3} className={fieldStyle} /></label></section>}
-      <div className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4">
+      <StickyActionBar>
         {error && <p id="product-request-error" ref={errorRef} tabIndex={-1} role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error} Your entries are retained.</p>}
         {request && <button type="button" disabled={pending} onClick={onCancel} className="min-h-11 w-full rounded-md border border-zinc-300 px-4 text-sm font-semibold">Cancel</button>}
         <button type="submit" disabled={pending} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-emerald-900 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait"><Send size={18} aria-hidden="true" />{pending ? "Saving…" : request ? 'Approve' : manager ? 'Add item' : "Send request"}</button>
         <p role="status" aria-live="polite" className="text-sm text-zinc-600">{pending ? "Please wait while your request and photos are sent." : preview ? "Preview only. Nothing will be submitted or uploaded." : request ? "Approval saves these details and adds the stock." : manager ? "Saving adds this item and its stock immediately." : "Your request will be reviewed before any stock is added."}</p>
-      </div>
+      </StickyActionBar>
     </fieldset>
   </form></>;
 }

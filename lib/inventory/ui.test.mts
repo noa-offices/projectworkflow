@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {readFile} from 'node:fs/promises';
+import {existsSync,readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 import ts from 'typescript';
@@ -13,6 +13,7 @@ import * as submission from './product-request-submission';
 import * as validation from './action-validation';
 import * as types from './types';
 import * as productEdit from './product-edit';
+import * as saveErrors from './save-errors';
 import * as movementForm from './movement-form';
 import * as movementHistory from './movement-history';
 import * as categoryForm from './category-form';
@@ -22,25 +23,30 @@ import {previewProductRequests} from './request-preview-data';
 type Component = React.ComponentType<Record<string, unknown>>;
 const Link = ({children,...props}: React.ComponentProps<'a'>) => React.createElement('a',props,children);
 const stub = () => React.createElement('div');
-async function load(path: string, dependencies: Record<string,unknown> = {}) {
-  const url = new URL(path,import.meta.url), require = createRequire(url), compiledModule = {exports:{} as Record<string,Component>};
-  const {outputText} = ts.transpileModule(await readFile(url,'utf8'),{fileName:fileURLToPath(url),compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}});
-  new Function('require','module','exports',outputText)((name:string) => dependencies[name] ?? require(name),compiledModule,compiledModule.exports);
+function loadSync(url: URL, dependencies: Record<string,unknown> = {}) {
+  const require = createRequire(url), compiledModule = {exports:{} as Record<string,Component>};
+  const {outputText} = ts.transpileModule(readFileSync(url,'utf8'),{fileName:fileURLToPath(url),compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}});
+  const resolve = (name:string): unknown => {
+    if(name in dependencies) return dependencies[name];
+    // Sibling components load from source with the same stand-ins.
+    if(name.startsWith('./') && existsSync(fileURLToPath(new URL(`${name}.tsx`,url)))) return loadSync(new URL(`${name}.tsx`,url),dependencies);
+    return require(name);
+  };
+  new Function('require','module','exports',outputText)(resolve,compiledModule,compiledModule.exports);
   return compiledModule.exports;
 }
+async function load(path: string, dependencies: Record<string,unknown> = {}) { return loadSync(new URL(path,import.meta.url),dependencies); }
 const shared = {
   'next/link':{__esModule:true,default:Link}, 'next/navigation':{useRouter:()=>({push(){},refresh(){}}),usePathname:()=>'/inventory'}, '@/lib/inventory/movement-form':movementForm, '@/lib/inventory/movement-history':movementHistory, '@/lib/inventory/category-form':categoryForm,
   '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
-  '@/lib/inventory/request-presentation':requests, '@/lib/inventory/types':types,
+  '@/lib/inventory/types':types,
   '@/lib/inventory/product-request-submission':submission, '@/lib/inventory/action-validation':validation,
-  '@/lib/inventory/actions':{}, '@/lib/inventory/product-edit':productEdit, '@/lib/inventory/photo-upload':{},
+  '@/lib/inventory/actions':{}, '@/lib/inventory/product-edit':productEdit, '@/lib/inventory/save-errors':saveErrors, '@/lib/inventory/request-presentation':requests, '@/lib/inventory/photo-upload':{},
 };
 const html = (component:Component,props:Record<string,unknown>) => renderToStaticMarkup(React.createElement(component,props));
 
 test('overview and products show a full-width Add item link for only managers and warehouse staff',async()=>{
-  const add = await load('../../components/inventory/add-item-button.tsx',shared);
-  const shortcuts = await load('../../components/inventory/manager-shortcuts.tsx',shared);
-  const dependencies = {...shared,'./add-item-button':add,'./manager-shortcuts':shortcuts,'./product-type-tabs':{ProductTypeTabs:stub},'./product-filters':{ProductFilters:stub},'./product-list-view':{ProductListView:stub}};
+  const dependencies = {...shared,'./product-type-tabs':{ProductTypeTabs:stub},'./product-filters':{ProductFilters:stub},'./product-list-view':{ProductListView:stub}};
   const overview = (await load('../../components/inventory/overview-view.tsx',dependencies)).InventoryOverviewView;
   const browser = (await load('../../components/inventory/products-browser.tsx',dependencies)).ProductsBrowser;
   const state = presentation.parseInventoryProductParams({}).state;
@@ -50,9 +56,8 @@ test('overview and products show a full-width Add item link for only managers an
       const allowed=['system_owner','admin_manager','warehouse_staff'].includes(role ?? '');
       assert.equal(markup.includes('href="/inventory/requests/new-product"'),allowed,String(role));
       if(allowed) {
-        const addLink=markup.match(/<a[^>]*href="\/inventory\/requests\/new-product"[^>]*>Add item<\/a>/)?.[0];
-        assert.ok(addLink);assert.match(addLink,/class="[^"]*min-h-11[^\"]*w-full/);
-        assert.doesNotMatch(addLink, /(?:sm|md|lg):w-auto/);
+        const addLink=markup.match(/<a[^>]*href="\/inventory\/requests\/new-product"[^>]*>(?:(?!<\/a>).)*Add item<\/a>/)?.[0];
+        assert.ok(addLink);assert.match(addLink,/class="[^"]*min-h-11[^"]*"/);assert.match(addLink,/bg-emerald-900/);
       }
     }
   }
@@ -168,8 +173,7 @@ test('missing photos use a distinct item-type icon and product lists fit two col
 });
 
 test('every Overview card is the same whole-card link with a View hint',async()=>{
-  const add = await load('../../components/inventory/add-item-button.tsx',shared);
-  const overview = (await load('../../components/inventory/overview-view.tsx',{...shared,'./add-item-button':add})).InventoryOverviewView;
+  const overview = (await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
   const markup = html(overview,{overview:previewOverview,role:'system_owner'});
   const cards = [...markup.matchAll(/<a [^>]*data-overview-card[^>]*>[\s\S]*?<\/a>/g)].map(match => match[0]);
   // Units, Products, Reserved, Low stock, 2 pending request cards, 6 locations.
@@ -233,10 +237,8 @@ test('photo manager shows add controls until three photos, and nothing to other 
 });
 
 test('Move stock and Manage categories shortcuts, and the Movements tab, show only to managers',async()=>{
-  const add = await load('../../components/inventory/add-item-button.tsx',shared);
-  const shortcuts = await load('../../components/inventory/manager-shortcuts.tsx',shared);
-  const overview = (await load('../../components/inventory/overview-view.tsx',{...shared,'./add-item-button':add,'./manager-shortcuts':shortcuts})).InventoryOverviewView;
-  const browser = (await load('../../components/inventory/products-browser.tsx',{...shared,'./add-item-button':add,'./manager-shortcuts':shortcuts,'./product-type-tabs':{ProductTypeTabs:stub},'./product-filters':{ProductFilters:stub},'./product-list-view':{ProductListView:stub}})).ProductsBrowser;
+  const overview = (await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
+  const browser = (await load('../../components/inventory/products-browser.tsx',{...shared,'./product-type-tabs':{ProductTypeTabs:stub},'./product-filters':{ProductFilters:stub},'./product-list-view':{ProductListView:stub}})).ProductsBrowser;
   const nav = (await load('../../components/inventory/inventory-nav.tsx',shared)).InventoryNav;
   const state = presentation.parseInventoryProductParams({}).state;
   for(const role of ['system_owner','admin_manager','warehouse_staff','viewer','designer','sales_designer','sales_coordinator','procurement_manager','unknown',null]) {
@@ -284,10 +286,10 @@ test('Requests tab has a search box that keeps the URL state and explains who ca
   const view=(await load('../../components/inventory/requests-view.tsx',{...shared,'./product-image-gallery':{ProductImageGallery:stub},'./request-dialog':{RequestDialog:stub},'./product-request-form':{ProductRequestForm:stub},'@/lib/inventory/request-reads':{loadProductRequestImages:async()=>[]}})).RequestsView;
   const props={products:[],movements:[],tab:'movements',status:'all',mine:false,userId:'u',page:1,pageCount:1,total:0};
   const manager=html(view,{...props,role:'admin_manager',q:'chair'});
-  assert.match(manager,/<input[^>]*name="q"[^>]*value="chair"/); assert.match(manager,/Product, stock ref, code, model or person/);
+  assert.match(manager,/<input[^>]*name="q"[^>]*value="chair"/); assert.ok(manager.includes('Search by product, stock ref, item code, model or person.')); assert.match(manager,/placeholder="Search requests"/);
   assert.match(manager,/name="tab" value="movements"/); assert.match(manager,/name="status" value="all"/); assert.ok(manager.includes('Clear search'));
   const staff=html(view,{...props,role:'warehouse_staff',q:''});
-  assert.match(staff,/Product, stock ref, code or model/); assert.doesNotMatch(staff,/or person/); assert.doesNotMatch(staff,/Clear search/);
+  assert.ok(staff.includes('Search by product, stock ref, item code or model.')); assert.doesNotMatch(staff,/or person/); assert.doesNotMatch(staff,/Clear search/);
 });
 test('the new pages send non-managers away before reading anything',async()=>{
   const redirects:string[]=[]; let reads=0;
@@ -299,4 +301,85 @@ test('the new pages send non-managers away before reading anything',async()=>{
     await assert.rejects(()=>(pageModule.default as unknown as (props:object)=>Promise<unknown>)({searchParams:Promise.resolve({})}),/redirect/);
   }
   assert.equal(redirects.length,5); assert.ok(redirects.every(path=>path==='/inventory')); assert.equal(reads,0);
+});
+
+test('shared Inventory components: badge, empty state, pager, banner and sticky bar',async()=>{
+  const ui=await load('../../components/inventory/inventory-ui.tsx',shared);
+  const badge=html(ui.Badge as Component,{tone:'warn',children:'Pending'});
+  assert.match(badge,/data-badge="warn"/); assert.ok(badge.includes('Pending'));
+  const empty=html(ui.EmptyState as Component,{title:'No products found',text:'Nothing matches your search.',action:{href:'/inventory/products',label:'Clear filters'}});
+  assert.equal((empty.match(/<h2/g) ?? []).length,1); assert.equal((empty.match(/<a /g) ?? []).length,1); assert.ok(empty.includes('Clear filters'));
+  assert.equal((html(ui.EmptyState as Component,{title:'No products yet',text:'Added products show here.'}).match(/<a /g) ?? []).length,0);
+  const pager=html(ui.Pager as Component,{label:'Pages',page:1,pageCount:3,previousHref:null,nextHref:'/next'});
+  assert.match(pager,/1 \/ 3/); assert.match(pager,/aria-disabled="true"[^>]*>Previous/); assert.match(pager,/href="\/next"[^>]*>Next/);
+  assert.match(html(ui.Banner as Component,{tone:'error',children:'No connection.'}),/role="alert"/);
+  assert.match(html(ui.Banner as Component,{tone:'success',children:'Saved.'}),/role="status"/);
+  const bar=html(ui.StickyActionBar as Component,{reason:'Enter a quantity to continue.',children:React.createElement('button',null,'Save')});
+  assert.match(bar,/data-sticky-bar/); assert.match(bar,/sticky bottom-0/); assert.match(bar,/pr-24/); assert.match(bar,/env\(safe-area-inset-bottom\)/); assert.ok(bar.includes('Enter a quantity to continue.'));
+  assert.equal(html(ui.StickyActionBar as Component,{children:'x'}).includes('data-disabled-reason'),false);
+  for(const name of ['primary','secondary','danger','quiet'] as const) assert.match((ui.buttonClass as unknown as Record<string,string>)[name],/min-h-11/);
+});
+test('every Inventory page keeps clear of the floating assistant',async()=>{
+  const frame=(await load('../../components/inventory/inventory-frame.tsx',shared)).InventoryFrame;
+  const markup=html(frame,{children:'x'});
+  assert.match(markup,/data-inventory-frame/); assert.ok(markup.includes('pb-[calc(6rem+env(safe-area-inset-bottom))]'));
+});
+test('compact toolbar: one primary Add item, Move stock beside it, categories in the More menu',async()=>{
+  const actions=(await load('../../components/inventory/inventory-actions.tsx',shared)).InventoryActions;
+  for(const role of ['system_owner','admin_manager']) {
+    const markup=html(actions,{role});
+    assert.equal((markup.match(/bg-emerald-900/g) ?? []).length,1);
+    assert.match(markup,/href="\/inventory\/requests\/new-product"[^>]*>(?:(?!<\/a>).)*Add item/);
+    assert.match(markup,/href="\/inventory\/move"[^>]*>(?:(?!<\/a>).)*Move stock/);
+    const menu=markup.match(/<div role="menu"[^>]*>.*?<\/div>/)?.[0] ?? '';
+    assert.match(menu,/hidden=""/); assert.ok(menu.includes('Manage categories')); assert.ok(menu.includes('href="/inventory/categories"'));
+    assert.equal(markup.replace(menu,'').includes('Manage categories'),false);
+    assert.match(markup,/aria-label="More"/);
+  }
+  const staff=html(actions,{role:'warehouse_staff'});
+  assert.ok(staff.includes('Add item')); assert.equal(staff.includes('Move stock'),false); assert.equal(staff.includes('role="menu"'),false);
+  for(const role of ['viewer','designer','sales_designer','procurement_manager',null]) assert.equal(html(actions,{role}),'');
+});
+test('More menu opens on demand and labels its button',async()=>{
+  const {MoreMenu}=await load('../../components/inventory/inventory-ui-client.tsx',shared);
+  const items=[{href:'/a',label:'Alpha'}];
+  const closed=html(MoreMenu as Component,{items}), open=html(MoreMenu as Component,{items,defaultOpen:true});
+  assert.match(closed,/aria-expanded="false"/); assert.match(closed,/<div role="menu"[^>]*hidden=""/);
+  assert.match(open,/aria-expanded="true"/); assert.doesNotMatch(open,/<div role="menu"[^>]*hidden=""/);
+  assert.match(open,/role="menuitem"[^>]*class="[^"]*min-h-11/);
+  assert.equal(html(MoreMenu as Component,{items:[]}),'');
+});
+test('type tabs and the top tabs scroll with fade hints and mark the current tab',async()=>{
+  const tabs=(await load('../../components/inventory/product-type-tabs.tsx',shared)).ProductTypeTabs;
+  const state=presentation.parseInventoryProductParams({itemType:'accessory'}).state;
+  const markup=html(tabs,{state,counts:{all:5,product:2,accessory:2,temporary:1}});
+  assert.match(markup,/data-fade="left"/); assert.match(markup,/data-fade="right"/); assert.match(markup,/overflow-x-auto/);
+  assert.match(markup,/aria-current="page"[^>]*>(?:(?!<\/a>).)*Accessories/);
+  assert.equal((markup.match(/min-h-11/g) ?? []).length,4);
+  const nav=html((await load('../../components/inventory/inventory-nav.tsx',shared)).InventoryNav,{showMovements:true});
+  assert.match(nav,/data-fade="right"/); assert.equal((nav.match(/min-h-11/g) ?? []).length,4);
+});
+test('product search is short and clear, with filters and sort in a sheet',async()=>{
+  const filters=(await load('../../components/inventory/product-filters.tsx',{...shared,'./request-dialog':{RequestDialog:stub}})).ProductFilters;
+  const state=presentation.parseInventoryProductParams({q:'chair',location:'warehouse'}).state;
+  const markup=html(filters,{state,brands:previewBrands,categories:previewCategories});
+  assert.match(markup,/placeholder="Search products"/); assert.match(markup,/type="search"/); assert.match(markup,/inputMode="search"/);
+  assert.match(markup,/aria-haspopup="dialog"[^>]*>(?:(?!<\/button>).)*Filters/);
+  assert.doesNotMatch(markup,/Sort by/);
+  assert.ok(markup.includes('Search: chair')); assert.ok(markup.includes('Location: Warehouse')); assert.ok(markup.includes('Clear filters'));
+});
+test('long forms keep their save button in a sticky bar with the reason it is disabled',async()=>{
+  const move=(await load('../../components/inventory/move-stock-form.tsx',{...shared,'next/image':{__esModule:true,default:stub}})).MoveStockForm;
+  const empty=html(move,{role:'admin_manager',initialProduct:previewPickerProducts[0]});
+  assert.match(empty,/data-sticky-bar/); assert.ok(empty.includes('Enter a quantity to continue.')); assert.match(empty,/<button[^>]*disabled=""[^>]*>Save movement/);
+  const edit=(await load('../../components/inventory/product-edit-form.tsx',shared)).ProductEditForm;
+  assert.match(html(edit,{product:previewProduct,brands:previewBrands,categories:previewCategories,role:'admin_manager',productHref:'/p'}),/data-sticky-bar/);
+  const add=(await load('../../components/inventory/product-request-form.tsx',{...shared,'next/image':{__esModule:true,default:stub}})).ProductRequestForm;
+  assert.match(html(add,{brands:previewBrands,categories:previewCategories,role:'admin_manager',preview:true}),/data-sticky-bar/);
+});
+test('requests use a 44px My requests chip, a short placeholder and a slim pager',async()=>{
+  const view=(await load('../../components/inventory/requests-view.tsx',{...shared,'./product-image-gallery':{ProductImageGallery:stub},'./request-dialog':{RequestDialog:stub},'./product-request-form':{ProductRequestForm:stub},'@/lib/inventory/request-reads':{loadProductRequestImages:async()=>[]}})).RequestsView;
+  const markup=html(view,{products:[],movements:[],tab:'products',status:'all',mine:true,userId:'u',page:2,pageCount:3,total:0,role:'admin_manager',q:''});
+  assert.match(markup,/placeholder="Search requests"/); assert.match(markup,/min-h-11[^"]*"[^>]*>(?:(?!<\/a>).)*My requests/);
+  assert.doesNotMatch(markup,/type="checkbox"/); assert.match(markup,/2 \/ 3/); assert.ok(markup.includes('No requests found'));
 });

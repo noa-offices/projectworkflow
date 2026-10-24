@@ -8,6 +8,7 @@ import { removeProduct } from "@/lib/inventory/actions";
 import { canUseProductTools, removalNotice, removeReasonError } from "@/lib/inventory/product-edit";
 import type { InventoryProduct } from "@/lib/inventory/types";
 import { RequestDialog } from "./request-dialog";
+import { saveFailureMessage } from "@/lib/inventory/save-errors";
 
 const toolStyle = "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700";
 
@@ -43,7 +44,7 @@ function RemoveItemDialog({ product, preview, onClose }: { product: InventoryPro
       const result = await removeProduct({ productId: product.id, reason: reason.trim() });
       if (!result.ok) { setError(result.error); return; }
       router.push("/inventory/products");
-    } catch { setError("Something went wrong. Please try again."); }
+    } catch (failure) { setError(saveFailureMessage(failure)); }
     finally { lock.current = false; setBusy(false); }
   }
   return <RequestDialog title="Remove item" onClose={onClose} busy={busy}>

@@ -52,7 +52,7 @@ export function ProductImageGallery({ images, productName }: { images: Inventory
             {slides.map((image, index) => (
               <div key={image.id} id={`${galleryId}-photo-${index + 1}`} className="relative aspect-[4/3] w-full min-w-0 shrink-0 snap-center">
                 <GalleryImage image={image} productName={productName} />
-                <span className="absolute right-3 bottom-3 rounded-full border border-zinc-200 bg-white/95 px-2.5 py-1 text-xs font-medium text-zinc-600">
+                <span className="absolute right-3 bottom-3 rounded-full border border-zinc-200 bg-white/95 px-2.5 py-1 text-sm font-medium text-zinc-600">
                   {index + 1} / {slides.length}
                 </span>
               </div>
