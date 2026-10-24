@@ -63,6 +63,34 @@ mock.module("@/lib/auth", { namedExports: { requireInventoryUser: async () => {
 mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => { clientCalls++; return client; } } });
 const queries = await import("./queries");
 
+test('type counts use three full-dataset HEAD reads and ignore the selected type', async () => {
+  reset(); cap = 1;
+  fixtures.products = ['product','product','accessory','temporary'].map((item_type,i) => ({...product,id:`p${i}`,item_type}));
+  assert.deepEqual(await queries.getProductTypeCounts({item_type:'accessory'}), {all:4,product:2,accessory:1,temporary:1});
+  assert.equal(calls.length,3);
+  for (const call of calls) {
+    assert.equal(call.method,'HEAD'); assert.equal(call.table,'products');
+    assert.equal(call.url.searchParams.get('select'),'id');
+    assert.equal(call.url.searchParams.has('limit'),false);
+    assert.equal(call.url.searchParams.has('offset'),false);
+    assert.equal(call.url.searchParams.get('is_active'),'eq.true');
+  }
+});
+
+test('type counts share every list filter except selected item type and sort', async () => {
+  reset();
+  await queries.getProductTypeCounts({search:'Chair',brand_id:'b1',category_id:'c1',subcategory_id:'s1',status:'hold',location:'warehouse',active:false,item_type:'temporary',sort:'quantity_desc'});
+  for (const {url} of calls) {
+    for (const [key,value] of Object.entries({brand_id:'eq.b1',category_id:'eq.c1',subcategory_id:'eq.s1',status:'eq.hold',warehouse_quantity:'gt.0',is_active:'eq.false'})) assert.equal(url.searchParams.get(key),value);
+    assert.match(url.searchParams.get('or')!,/stock_ref.ilike/);
+    assert.equal(url.searchParams.has('order'),false);
+  }
+  reset(); await queries.getProductTypeCounts({active:'all'});
+  assert.ok(calls.every(call=>!call.url.searchParams.has('is_active')));
+  reset(); failTable='products';
+  await assert.rejects(()=>queries.getProductTypeCounts(),/Unable to count inventory/);
+});
+
 test('request images use the signed-in client, are batched and never query costs', async () => {
   reset('warehouse_staff');
   fixtures.product_images = fixtures.product_images.map(image => ({...image, product_id:null,product_request_id:'r1'}));
@@ -151,7 +179,7 @@ test("both managers receive explicitly selected costs and batched signed images"
   }
 });
 test("each public query authenticates before creating its client and refuses unknown roles", async () => {
-  const readers = [() => queries.getInventoryOverview(), () => queries.listProducts(), () => queries.getProduct("p1"), () => queries.listCategories(), () => queries.listActiveBrands(), () => queries.listProductRequests(), () => queries.listMovementRequests(), () => queries.listMovements()];
+  const readers = [() => queries.getInventoryOverview(), () => queries.listProducts(), () => queries.getProductTypeCounts(), () => queries.getProduct("p1"), () => queries.listCategories(), () => queries.listActiveBrands(), () => queries.listProductRequests(), () => queries.listMovementRequests(), () => queries.listMovements()];
   for (const reader of readers) {
     reset(); authError = true;
     await assert.rejects(reader, /authentication required/);

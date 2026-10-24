@@ -33,20 +33,21 @@ const shared = {
 };
 const html = (component:Component,props:Record<string,unknown>) => renderToStaticMarkup(React.createElement(component,props));
 
-test('overview and products put a full-width Add item link first for only managers and warehouse staff',async()=>{
+test('overview and products show a full-width Add item link for only managers and warehouse staff',async()=>{
   const add = await load('../../components/inventory/add-item-button.tsx',shared);
-  const dependencies = {...shared,'./add-item-button':add,'./product-filters':{ProductFilters:stub},'./product-list-view':{ProductListView:stub}};
+  const dependencies = {...shared,'./add-item-button':add,'./product-type-tabs':{ProductTypeTabs:stub},'./product-filters':{ProductFilters:stub},'./product-list-view':{ProductListView:stub}};
   const overview = (await load('../../components/inventory/overview-view.tsx',dependencies)).InventoryOverviewView;
   const browser = (await load('../../components/inventory/products-browser.tsx',dependencies)).ProductsBrowser;
   const state = presentation.parseInventoryProductParams({}).state;
   for(const role of ['system_owner','admin_manager','warehouse_staff','viewer','designer','sales_designer','sales_coordinator','procurement_manager','unknown',null]) {
-    for(const [component,props] of [[overview,{overview:previewOverview}],[browser,{result:{items:[],total:0,page:1,page_count:0},state,brands:[],categories:[]}]] as const) {
+    for(const [component,props] of [[overview,{overview:previewOverview}],[browser,{result:{items:[],total:0,page:1,page_count:0},counts:{product:0,accessory:0,temporary:0},state,brands:[],categories:[]}]] as const) {
       const markup=html(component,{...props,role});
       const allowed=['system_owner','admin_manager','warehouse_staff'].includes(role ?? '');
       assert.equal(markup.includes('href="/inventory/requests/new-product"'),allowed,String(role));
       if(allowed) {
-        assert.match(markup,/^<div[^>]*><a[^>]*class="[^"]*min-h-11[^"]*w-full[^>]*>Add item<\/a>/);
-        assert.doesNotMatch(markup.split('</a>')[0], /(?:sm|md|lg):w-auto/);
+        const addLink=markup.match(/<a[^>]*href="\/inventory\/requests\/new-product"[^>]*>Add item<\/a>/)?.[0];
+        assert.ok(addLink);assert.match(addLink,/class="[^"]*min-h-11[^\"]*w-full/);
+        assert.doesNotMatch(addLink, /(?:sm|md|lg):w-auto/);
       }
     }
   }
@@ -109,17 +110,53 @@ test('manager destination preserves a photo-upload warning without hiding the ad
     assert.equal(markup.includes('some photos could not be attached'),photoFailures==='2');
   }
 });
-test('saved product detail displays its generated reference and optional identifiers render as em dashes',async()=>{
+test('cards and detail put the stock reference directly below the name and omit missing item codes',async()=>{
   const product={...previewProduct,stock_ref:'02-0001',item_code:null,model_name:null,main_image_url:null};
   const card=(await load('../../components/inventory/product-card.tsx',shared)).ProductCard;
   const cardMarkup=html(card,{product});
-  assert.match(cardMarkup,/>—<\/p>/);assert.doesNotMatch(cardMarkup,/>null<|>undefined</);
+  assert.match(cardMarkup,/<\/h2><p[^>]*>02-0001<\/p>/);
+  assert.doesNotMatch(cardMarkup,/Code:|>—<|>null<|>undefined</);
   const detail=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-reservations':{ProductReservations:stub},'./product-image-gallery':{ProductImageGallery:stub},'./stock-by-location':{StockByLocation:stub}})).ProductDetailView;
   const detailMarkup=html(detail,{product});
   assert.match(detailMarkup,/Stock reference<\/dt><dd[^>]*>02-0001<\/dd>/);
-  assert.match(detailMarkup,/Item code<\/dt><dd[^>]*>—<\/dd>/);
+  assert.match(detailMarkup,/<\/h2><p[^>]*>02-0001<\/p>/);
+  assert.doesNotMatch(detailMarkup,/Item code|Code:/);
   assert.doesNotMatch(detailMarkup,/>null<|>undefined</);
+  for(const item_code of ['', '   ', '1234']) {
+    for(const [component,props] of [[card,{product:{...product,item_code}}],[detail,{product:{...product,item_code}}]] as const) {
+      const markup=html(component,props);
+      assert.equal(markup.includes('Code: 1234'),item_code==='1234');
+      if(item_code!=='1234') assert.doesNotMatch(markup,/Code:|Item code/);
+    }
+  }
   const requestsView=(await load('../../components/inventory/requests-view.tsx',{...shared,'@/lib/inventory/request-reads':{},'./product-image-gallery':{ProductImageGallery:stub},'./request-dialog':{RequestDialog:stub},'./product-request-form':{ProductRequestForm:stub}})).RequestsView;
   const requestMarkup=html(requestsView,{products:[{...previewProductRequests[0],stock_ref:null,item_code:null,model_name:null}],movements:[],tab:'products',status:'pending_review',mine:false,userId:'viewer',role:'viewer',page:1,pageCount:1,total:1});
   assert.match(requestMarkup,/— · —/);assert.doesNotMatch(requestMarkup,/>null<|>undefined</);
+});
+
+test('photo cards lead with a cover image and show only nonzero stock locations as compact labelled chips',async()=>{
+  const card=(await load('../../components/inventory/product-card.tsx',shared)).ProductCard;
+  const markup=html(card,{product:{...previewProduct,mockup_quantity:0,temporary_out_quantity:0}});
+  assert.match(markup,/aspect-\[4\/3\]/);
+  assert.match(markup,/<img[^>]*class="object-cover"/);
+  assert.ok(markup.indexOf('<img')<markup.indexOf('<h2'));
+  assert.match(markup,/focus-visible:outline/);
+  for(const label of ['Warehouse: 12','Dubai Showroom: 3','Abu Dhabi Showroom: 2','Sold (cumulative): 8']) {
+    assert.ok(markup.includes(`aria-label="${label}"`),label);
+    assert.ok(markup.includes(`title="${label}"`),label);
+  }
+  assert.doesNotMatch(markup,/Mockup|Temporary Out|grid-cols-3/);
+  for(const badge of ['17 live','Reserved 3','Available 14']) assert.ok(markup.includes(badge));
+});
+
+test('missing photos use a distinct item-type icon and product lists fit two columns on phones',async()=>{
+  const cardModule=await load('../../components/inventory/product-card.tsx',shared);
+  for(const [item_type,icon] of [['product','package'],['accessory','puzzle'],['temporary','clock']] as const) {
+    const markup=html(cardModule.ProductCard,{product:{...previewProduct,item_type,main_image_url:null}});
+    assert.match(markup,new RegExp(`lucide-${icon}`));
+    assert.match(markup,/No image/);assert.doesNotMatch(markup,/<img/);
+  }
+  const list=(await load('../../components/inventory/product-list-view.tsx',{...shared,'@/components/inventory/product-card':cardModule})).ProductListView;
+  const markup=html(list,{products:[previewProduct],filtered:false});
+  assert.match(markup,/grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4/);
 });

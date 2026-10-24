@@ -14,7 +14,7 @@ export function ProductListView({ products, filtered, detailHrefPrefix = "/inven
   }
 
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <div className="grid min-w-0 grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
       {products.map((product) => <ProductCard key={product.id} product={product} href={`${detailHrefPrefix}${encodeURIComponent(product.id)}`} />)}
     </div>
   );
