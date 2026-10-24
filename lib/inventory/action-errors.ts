@@ -6,6 +6,9 @@ export function inventoryErrorMessage(error: unknown): string | null {
   if (/^Only \d+ units are available; \d+ are reserved$/.test(message)) return `${message}.`;
   if (['Release reservations first','Reservation is no longer active','Book requires a project or reference','Hold until must be in the future','Hold until must be in the future and is only allowed for holds'].includes(message)) return `${message}.`;
   if (message.includes("pending product request")) return "Photos can only be added while the request is pending review.";
+  if (message === "Reason is required") return "Enter a reason for removing this item.";
+  if (message === "Invalid product patch field value") return "One of the values is not valid. Check the numbers and try again.";
+  if (message === "Active product not found") return "This item has already been removed or is no longer available.";
   if (value.code === "42501") return "You do not have permission to do that.";
   if (message.includes("item code already in use")) return "That item code is already in use.";
   if (message.includes("stock ref already in use")) return "That stock reference is already in use.";
