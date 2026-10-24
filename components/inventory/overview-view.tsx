@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { formatInventoryNumber } from "@/lib/inventory/presentation";
 import { LOCATION_LABELS, type InventoryLocation, type InventoryOverview } from "@/lib/inventory/types";
+import { AddItemButton } from './add-item-button';
 
-export function InventoryOverviewView({ overview, productsHref = "/inventory/products" }: { overview: InventoryOverview; productsHref?: string }) {
+export function InventoryOverviewView({ overview, productsHref = "/inventory/products", role }: { overview: InventoryOverview; productsHref?: string; role?: string | null }) {
   const stats = [
+    { label: "Reserved", value: overview.reserved_quantity },
     { label: "Products", value: overview.product_count },
     { label: "Low stock products", value: overview.low_stock_count },
     { label: "Pending product requests", value: overview.pending_product_requests, href: '/inventory/requests?tab=products&status=pending_review' },
@@ -12,6 +14,7 @@ export function InventoryOverviewView({ overview, productsHref = "/inventory/pro
 
   return (
     <div className="min-w-0 space-y-5">
+      <AddItemButton role={role} />
       <section className="min-w-0 rounded-lg border border-emerald-200 bg-white p-5 shadow-sm sm:p-6">
         <div className="flex min-w-0 flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
