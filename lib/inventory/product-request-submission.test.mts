@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { photoSelectionError, productRequestFormInput, sendProductRequest } from "./product-request-submission";
+import { photoSelectionError, productRequestFormInput, productRequestSuccessHref, sendProductRequest } from "./product-request-submission";
 const id = "11111111-1111-4111-8111-111111111111";
+test('managers continue to the created product; warehouse and unsuccessful submissions stay on the request form',()=>{
+  const success={ok:true as const,requestId:id,productId:id,failedCount:0,photoError:null};
+  for(const role of ['system_owner','admin_manager']) {
+    assert.equal(productRequestSuccessHref(success,role),`/inventory/products/${id}`);
+    assert.equal(productRequestSuccessHref({...success,failedCount:2},role),`/inventory/products/${id}?photoFailures=2`);
+    assert.equal(productRequestSuccessHref({...success,productId:null},role),null);
+    assert.equal(productRequestSuccessHref({ok:false,error:'Failed'},role),null);
+  }
+  for(const role of ['warehouse_staff','viewer','designer','sales_designer','sales_coordinator','procurement_manager',null]) assert.equal(productRequestSuccessHref(success,role),null);
+});
 function form() {
   const data = new FormData();
   for (const [key,value] of Object.entries({brand_id:id, category_id:id, stock_ref:"S",item_code:"I",item_name:"Chair",model_name:"M",quantity:"2",price:"12.50"})) data.set(key,value);

@@ -10,6 +10,7 @@ export function requestButtons(role: string | null | undefined) {
 }
 export function movementSubmitLabel(role: string | null | undefined, kind: RequestType, preview = false) {
   if (canManageInventory(role)) return { take: 'Take now', move: 'Move now', hold: 'Hold now', book: 'Book now' }[kind];
+  if (kind === 'hold' || kind === 'book') return `Request ${kind}`;
   return preview ? 'Send sample request' : 'Send request';
 }
 export function parseRequestParams(params: InventorySearchParams, manager: boolean) {

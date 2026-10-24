@@ -19,9 +19,9 @@ export function ProductRequestActions({ product, role, preview = false, initialK
   const buttons = requestButtons(role);
   if (!product.is_active) return null;
   return <section className="my-4 min-w-0 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm" aria-label="Product requests">
-    {buttons.takeMove || buttons.holdBook ? <><h2 className="mb-3 text-base font-semibold">Request stock</h2><div className="flex flex-wrap gap-2">
+    {buttons.takeMove || buttons.holdBook ? <><h2 className="mb-3 text-base font-semibold">{canManageInventory(role) ? "Stock actions" : "Request stock"}</h2><div className="flex flex-wrap gap-2">
       {buttons.takeMove && <button className={button} onClick={() => { setKind('take'); setSuccess(false); }}>Take / Move stock</button>}
-      {buttons.holdBook && <>{(['hold','book'] as const).map(value => <button className={button} key={value} onClick={() => { setKind(value); setSuccess(false); }}>{value === 'hold' ? 'Hold' : 'Book'}</button>)}</>}
+      {buttons.holdBook && <>{(['hold','book'] as const).map(value => <button className={button} key={value} onClick={() => { setKind(value); setSuccess(false); }}>{movementSubmitLabel(role, value)}</button>)}</>}
     </div></> : <p className="text-sm text-zinc-600">Inventory requests are view only for your role.</p>}
     {success && <p role="status" className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{canManageInventory(role) ? 'Done' : 'Your request was sent for review.'}</p>}
     {kind && ((buttons.takeMove && (kind === 'take' || kind === 'move')) || (buttons.holdBook && (kind === 'hold' || kind === 'book'))) && <MovementRequestForm key={kind === 'take' || kind === 'move' ? 'stock' : kind} product={product} role={role} initialKind={kind} preview={preview} onClose={() => setKind(null)} onSuccess={() => { setKind(null); setSuccess(true); }} />}

@@ -12,7 +12,8 @@ test('manager movement buttons apply immediately while requester labels stay unc
   }
   for (const role of ['warehouse_staff', 'designer', null]) {
     assert.equal(movementSubmitLabel(role, 'take'), 'Send request');
-    assert.equal(movementSubmitLabel(role, 'hold', true), 'Send sample request');
+    assert.equal(movementSubmitLabel(role, 'hold', true), 'Request hold');
+    assert.equal(movementSubmitLabel(role, 'book'), 'Request book');
   }
 });
 

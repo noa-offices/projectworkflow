@@ -1,6 +1,7 @@
 import { productInput } from "./action-validation";
 import type { InventoryPhotoUploadResult } from "./photo-upload";
 import type { PhotoFileInput, PhotoOwner } from "./action-validation";
+import { canManageInventory } from './access';
 
 export const PRODUCT_COST_FIELDS = ["price", "freight_cost", "c_and_f", "transport", "custom_duty", "labour", "vat"] as const;
 export function changedProductRequestFields(before: object, after: Record<string, unknown>): Record<string, unknown> {
@@ -45,6 +46,10 @@ type Dependencies = {
   register: (input: PhotoOwner & { files: PhotoFileInput[] }) => Promise<({ok:true; registeredCount:number}|Failure) & { failedCount:number }>;
 };
 export type ProductRequestSubmissionResult = Failure | { ok: true; requestId: string; productId?: string | null; failedCount: number; photoError: string | null };
+export function productRequestSuccessHref(result: ProductRequestSubmissionResult, role: string | null): string | null {
+  if (!result.ok || !canManageInventory(role) || !result.productId) return null;
+  return `/inventory/products/${result.productId}${result.failedCount ? `?photoFailures=${result.failedCount}` : ''}`;
+}
 /** A created request is retained even when a later photo step fails. */
 export async function sendProductRequest(input: unknown, files: File[], deps: Dependencies): Promise<ProductRequestSubmissionResult> {
   const request = await deps.submit(input);
