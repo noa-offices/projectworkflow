@@ -40,11 +40,32 @@ test('take uses sale to sold, move uses live locations and checks source availab
   assert.throws(() => movementRequestPayload(previewProduct,{kind:'move',quantity:'1',from:'warehouse',to:'sold',note:''}));
   assert.throws(() => movementRequestPayload({...previewProduct,is_active:false},{kind:'take',quantity:'1',from:'warehouse',to:'',note:''}), /removed/);
 });
-test('hold and book normalize to the existing default without a stock limit', () => {
+test('hold and book preserve reservation details and respect available stock', () => {
   for (const kind of ['hold','book'] as const) {
-    const payload = movementRequestPayload(previewProduct,{kind,quantity:'99',from:'',to:'',note:''});
+    const payload = movementRequestPayload(previewProduct,{kind,quantity:'2',from:'',to:'',note:'',referenceNote:' Client delivery '});
     assert.equal(payload.actionType, 'internal_transfer'); assert.equal(payload.fromLocation, null); assert.equal(payload.toLocation, null);
+    assert.equal(payload.referenceNote, 'Client delivery');
+    assert.throws(() => movementRequestPayload(previewProduct,{kind,quantity:'15',from:'',to:'',note:'',referenceNote:'Delivery'}), /14.*available/);
   }
+  assert.throws(() => movementRequestPayload(previewProduct,{kind:'book',quantity:'1',from:'',to:'',note:''}), /project|reference/i);
+  const projectId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  assert.equal(movementRequestPayload(previewProduct,{kind:'book',quantity:'1',from:'',to:'',note:'',projectId}).projectId, projectId);
+  const optionalHold = movementRequestPayload(previewProduct,{kind:'hold',quantity:'1',from:'',to:'',note:''});
+  assert.equal(optionalHold.projectId, null); assert.equal(optionalHold.referenceNote, null); assert.equal(optionalHold.expiresAt, null);
+  const expiresAt = new Date(Date.now() + 86400000).toISOString();
+  const hold = movementRequestPayload(previewProduct,{kind:'hold',quantity:'1',from:'',to:'',note:'',projectId,expiresAt});
+  assert.equal(hold.projectId, projectId); assert.equal(hold.expiresAt, expiresAt); assert.equal(hold.referenceNote, null);
+  assert.throws(() => movementRequestPayload(previewProduct,{kind:'hold',quantity:'1',from:'',to:'',note:'',expiresAt:'2000-01-01T00:00:00.000Z'}), /future/i);
+  assert.throws(() => movementRequestPayload(previewProduct,{kind:'book',quantity:'1',from:'',to:'',note:'',projectId,expiresAt}), /hold/i);
+});
+
+test('stock availability uses the smaller of the source bucket and global available quantity', () => {
+  const product = {...previewProduct, reserved_quantity:15, available_quantity:2};
+  assert.equal(availableLocations(product)[0].available, 2);
+  assert.equal(availableLocations(product)[3].available, 0);
+  assert.throws(() => movementRequestPayload(product,{kind:'take',quantity:'3',from:'warehouse',to:'',note:''}), /2/);
+  assert.throws(() => movementRequestPayload(product,{kind:'move',quantity:'3',from:'warehouse',to:'dubai_showroom',note:''}), /2/);
+  assert.equal(movementRequestPayload(product,{kind:'take',quantity:'2',from:'warehouse',to:'',note:''}).quantity, 2);
 });
 test('review requires a rejection note and preserves the existing input contract', () => {
   assert.throws(() => reviewRequestPayload(previewProduct.id,'rejected','  '), /required/);

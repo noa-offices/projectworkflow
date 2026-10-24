@@ -9,6 +9,7 @@ import {
   orderedProductImages,
 } from "@/lib/inventory/presentation";
 import { LOCATION_LABELS, type InventoryProductDetail } from "@/lib/inventory/types";
+import { ProductReservations } from "./product-reservations";
 import { ProductImageGallery } from "./product-image-gallery";
 import { StockByLocation } from "./stock-by-location";
 
@@ -23,7 +24,7 @@ function DetailField({ label, children }: { label: string; children: ReactNode }
   );
 }
 
-export function ProductDetailView({ product, productsHref = "/inventory/products" }: { product: InventoryProductDetail; productsHref?: string }) {
+export function ProductDetailView({ product, productsHref = "/inventory/products", role, userId, preview = false }: { product: InventoryProductDetail; productsHref?: string; role?: string | null; userId?: string | null; preview?: boolean }) {
   const dimensions = dimensionLabel(product);
   const costs = product.costs;
   const costRows = costs ? [
@@ -104,6 +105,8 @@ export function ProductDetailView({ product, productsHref = "/inventory/products
         ) : null}
         <div className="mt-4 min-w-0"><StockByLocation product={product} /></div>
       </section>
+
+      <ProductReservations product={product} role={role} userId={userId} preview={preview} />
 
       {costs ? (
         <section aria-labelledby="cost-heading" className={cardClass}>

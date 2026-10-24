@@ -4,9 +4,9 @@ import { revalidatePath } from "next/cache";
 import { requireInventoryUser } from "@/lib/auth";
 import { logServerActionError } from "@/lib/action-errors";
 import { createClient } from "@/lib/supabase/server";
-import { canManageInventory, canSeeCosts, canSubmitAddTake, canSubmitHoldBook } from "./access";
+import { canManageInventory, canSeeCosts, canSubmitAddTake, canSubmitHoldBook, canViewInventory } from "./access";
 import { inventoryErrorMessage } from "./action-errors";
-import { InventoryInputError, boolean, categoryInput, code, invalid, movementInput, object, photoInput, productInput, text, uuid, validatePhotoSet } from "./action-validation";
+import { InventoryInputError, boolean, categoryInput, code, fulfilReservationInput, invalid, movementInput, object, photoInput, productInput, text, uuid, validatePhotoSet } from "./action-validation";
 
 export type InventoryActionResult<T extends object = Record<never, never>> = ({ ok: true } & T) | { ok: false; error: string };
 type Client = Awaited<ReturnType<typeof createClient>>;
@@ -92,6 +92,38 @@ export async function reviewProductRequestWithEdits(input: unknown) {
       edits: decision === 'rejected' ? {} : productInput(value.edits ?? {}, true, true, true) };
     const data = await rpc(await createClient(), 'review_product_request_with_edits', args);
     refresh(); return { productId: data === null ? null : returnedId(data) };
+  });
+}
+export async function releaseReservation(input: unknown) {
+  const { user, profile } = await requireInventoryUser();
+  if (!canViewInventory(profile?.role)) return denied();
+  return perform('release reservation', async () => {
+    const value = object(input), reservation_id = uuid(value.reservationId), note = text(value.note,'Note',2000), client = await createClient();
+    if (!canManageInventory(profile?.role)) {
+      const {data,error} = await client.schema('inventory').from('reservations').select('created_by').eq('id',reservation_id).limit(1).returns<{created_by:string}[]>();
+      if (error) throw error;
+      if (!data?.length || data[0].created_by !== user.id) invalid('You do not have permission to do that.');
+    }
+    await rpc(client,'release_reservation',{reservation_id,note});
+    refresh(); return {};
+  });
+}
+export async function fulfilReservation(input: unknown) {
+  const { profile } = await requireInventoryUser();
+  if (!canManageInventory(profile?.role)) return denied();
+  return perform('fulfil reservation',async () => {
+    const args = fulfilReservationInput(input);
+    const movementId = returnedId(await rpc(await createClient(),'fulfil_reservation',args));
+    refresh(); return {movementId};
+  });
+}
+export async function searchInventoryProjects(search: string) {
+  const { profile } = await requireInventoryUser();
+  if (!canManageInventory(profile?.role) && !canSubmitHoldBook(profile?.role)) return denied();
+  return perform('search inventory projects',async () => {
+    const term = text(search,'Search',100) ?? '';
+    const {listProjectsForInventory} = await import('./queries');
+    return {projects:await listProjectsForInventory(term)};
   });
 }
 export async function updateProduct(input: unknown) {

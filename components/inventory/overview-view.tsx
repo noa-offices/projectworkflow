@@ -4,6 +4,7 @@ import { LOCATION_LABELS, type InventoryLocation, type InventoryOverview } from 
 
 export function InventoryOverviewView({ overview, productsHref = "/inventory/products" }: { overview: InventoryOverview; productsHref?: string }) {
   const stats = [
+    { label: "Reserved", value: overview.reserved_quantity },
     { label: "Products", value: overview.product_count },
     { label: "Low stock products", value: overview.low_stock_count },
     { label: "Pending product requests", value: overview.pending_product_requests, href: '/inventory/requests?tab=products&status=pending_review' },

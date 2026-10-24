@@ -32,6 +32,18 @@ export function boolean(value: unknown): boolean {
 }
 const actions = ["receive_stock", "internal_transfer", "return_to_warehouse", "sale", "adjustment"] as const;
 const live = ["warehouse", "dubai_showroom", "abudhabi_showroom", "mockup", "temporary_out"] as const;
+export function reservationRequestInput(input: Record<string, unknown>, kind: string) {
+  const project_id = input.projectId == null || input.projectId === '' ? null : uuid(input.projectId);
+  const reference_note = text(input.referenceNote, 'Reference', 2000);
+  let expires_at: string | null = null;
+  if (input.expiresAt != null && input.expiresAt !== '') {
+    if (kind !== 'hold' || typeof input.expiresAt !== 'string' || !/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(input.expiresAt) || !Number.isFinite(Date.parse(input.expiresAt)) || Date.parse(input.expiresAt) <= Date.now()) invalid('Hold until must be in the future and is only allowed for holds.');
+    expires_at = new Date(input.expiresAt).toISOString();
+  }
+  if (kind === 'book' && !project_id && !reference_note) invalid('Book requires a project or reference.');
+  if (!['hold','book'].includes(kind) && (project_id || reference_note || expires_at)) invalid('Project, reference and hold until are only allowed for hold/book.');
+  return {project_id,reference_note,expires_at};
+}
 export function movementInput(value: unknown, request = false) {
   const input = object(value), kind = request ? code(input.requestType, REQUEST_TYPES, "request type") : undefined;
   const holdBook = kind === "hold" || kind === "book";
@@ -52,7 +64,13 @@ export function movementInput(value: unknown, request = false) {
     }
   }
   return { product_id: uuid(input.productId), ...(kind ? { request_type: kind } : {}), action_type: action,
-    from_location: from, to_location: to, quantity: integer(input.quantity, action === "adjustment" ? 0 : 1), note: text(input.note, "Note", 2000) };
+    from_location: from, to_location: to, quantity: integer(input.quantity, action === "adjustment" ? 0 : 1), note: text(input.note, "Note", 2000), ...(kind ? reservationRequestInput(input,kind) : {}) };
+}
+export function fulfilReservationInput(value: unknown) {
+  const input = object(value), reservation_id = uuid(input.reservationId);
+  const action_type = code(input.actionType, ['sale','internal_transfer'], 'fulfilment action');
+  const movement = movementInput({...input, productId:reservation_id,actionType:action_type,quantity:1});
+  return {reservation_id,action_type,from_location:movement.from_location,to_location:movement.to_location,note:movement.note};
 }
 function decimal(value: unknown, min = 0): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > 9999999999.99 || Math.abs(Math.round(value * 100) - value * 100) > 0.0001) invalid("Amounts and dimensions must be valid numbers with at most two decimal places.");

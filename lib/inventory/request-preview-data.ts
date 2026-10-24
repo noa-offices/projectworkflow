@@ -23,6 +23,7 @@ export const previewProductRequests: InventoryProductRequest[] = [
   { ...productRequest, id: "99999999-9999-4999-8999-999999999993", item_name: "Arlo visitor chair", item_code: "CHR-053", request_status: "rejected", reviewed_by: other, reviewed_at: created, review_note: "Please confirm the item code and submit a new request." },
 ];
 const movement: InventoryMovementRequest = {
+  project_id: null, project_label: null, reference_note: null, expires_at: null, approved_reservation_id: null,
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", product_id: previewProduct.id, request_type: "move", movement_type: "transfer", action_type: "internal_transfer",
   from_location: "warehouse", to_location: "dubai_showroom", quantity: 2, note: "For the new showroom display.", request_status: "pending_review",
   submitted_by: previewRequestUserId, submitted_at: created, reviewed_by: null, reviewed_at: null, review_note: null, approved_movement_id: null,

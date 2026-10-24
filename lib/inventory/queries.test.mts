@@ -40,7 +40,7 @@ const client = createSupabaseClient("https://inventory.test", "test-publishable-
       return Response.json((body.paths as string[]).toReversed().map(path => ({ path, signedURL: `/object/sign/inventory-images/${path}?token=fixture`, error: null })));
     }
     assert.ok(["GET", "HEAD"].includes(method), "database calls must only read");
-    assert.equal(headers.get("Accept-Profile"), ["brands", "profiles"].includes(table) ? "public" : "inventory");
+    assert.equal(headers.get("Accept-Profile"), ["brands", "profiles", "clients", "projects"].includes(table) ? "public" : "inventory");
     if (failPageRange && table === "products") return Response.json({ code: "PGRST103", message: "Requested range not satisfiable" }, { status: 416 });
     if (table === failTable) return Response.json({ message: "fixture failure" }, { status: 500 });
     let rows = fixtures[table] ?? [];
@@ -196,4 +196,43 @@ test("product filters and page boundaries reach PostgREST; database failures do 
   reset(); failTable = "products";
   await assert.rejects(() => queries.getInventoryOverview());
   await assert.rejects(() => queries.listProducts());
+});
+
+test('products and overview subtract only active unexpired reservations and preserve RLS-hidden creator names', async () => {
+ reset();
+ fixtures.reservations = [{id:'rs1',product_id:'p1',price:999,kind:'book',quantity:2,status:'active',expires_at:null,created_by:'hidden',project_label:'PR-1 · Office · Client',created_at:'2026-10-24T00:00:00Z'}, {id:'rs2',product_id:'p1',kind:'hold',quantity:1,status:'active',expires_at:'2020-01-01T00:00:00Z',created_by:'hidden'}];
+ const detail = await queries.getProduct('p1');
+ assert.equal(detail?.reserved_quantity,2);
+ assert.equal(detail?.available_quantity,1);
+ assert.equal(detail?.reservations.length,1);
+ assert.equal(detail?.reservations[0].creator_display_name,null);
+ assert.equal('price' in detail!.reservations[0],false);
+ assert.equal((await queries.listProducts()).items[0].available_quantity,1);
+ assert.equal((await queries.getInventoryOverview()).reserved_quantity,2);
+});
+test('project picker uses signed-in RLS reads, real search columns, safe filters, and at most twenty display labels', async () => {
+ reset('designer');
+ fixtures.clients = [{id:'client1',company_name:'Acme'}];
+ fixtures.projects = Array.from({length:25},(_,i)=>({id:`project${i}`,project_number:`2026-${i}`,project_code:`PR-${i}`,project_name:'Office',client_id:'client1',clients:{company_name:'Acme'}}));
+ const result = await queries.listProjectsForInventory('Office,(test)%');
+ assert.equal(result.length,20);
+ assert.deepEqual(Object.keys(result[0]).sort(),['id','label']);
+ assert.match(result[0].label,/2026-0.*Office.*Acme/);
+ const projectCall = calls.find(call => call.table === 'projects')!;
+ assert.equal(projectCall.schema,'public');
+ assert.match(projectCall.url.searchParams.get('or')!,/project_number.ilike/);
+ assert.match(projectCall.url.searchParams.get('or')!,/project_code.ilike/);
+ assert.match(projectCall.url.searchParams.get('or')!,/project_name.ilike/);
+ assert.equal(projectCall.url.searchParams.get('limit'),'20');
+ reset('warehouse_staff');
+ await assert.rejects(()=>queries.listProjectsForInventory('Office'),/access denied/);
+ assert.equal(clientCalls,0);
+});
+
+
+test('reservation read failures never turn into available stock', async () => {
+ reset(); failTable = 'reservations';
+ await assert.rejects(()=>queries.listProducts(),/Unable to read inventory/);
+ await assert.rejects(()=>queries.getProduct('p1'),/Unable to read inventory/);
+ await assert.rejects(()=>queries.getInventoryOverview(),/Unable to read inventory/);
 });

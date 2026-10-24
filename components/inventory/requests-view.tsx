@@ -38,6 +38,14 @@ function RequestLocations({ request }: { request: Request }) {
   if (isProduct(request)) return <p className="text-sm text-zinc-600">Initial stock: {Object.entries(request.initial_stock ?? {warehouse:request.quantity}).filter(([,count]) => count > 0).map(([key,count]) => `${LOCATION_LABELS[key as keyof typeof LOCATION_LABELS]} ${count}`).join(', ')}</p>;
   return <p className="text-sm text-zinc-600 [overflow-wrap:anywhere]">{request.from_location ? LOCATION_LABELS[request.from_location] : "No source specified"}{request.to_location ? ` → ${LOCATION_LABELS[request.to_location]}` : ""}</p>;
 }
+function ReservationRequestDetails({request}: {request:Request}) {
+  if (isProduct(request) || !['hold','book'].includes(request.request_type)) return null;
+  return <div className="mt-3 space-y-1 rounded-md bg-zinc-50 p-3 text-sm text-zinc-700 [overflow-wrap:anywhere]">
+    <p><span className="font-semibold">Project / reference:</span> {request.project_label || request.reference_note || 'Not specified'}</p>
+    {request.project_label && request.reference_note && <p>{request.reference_note}</p>}
+    {request.expires_at && <p><span className="font-semibold">Hold until:</span> {formatInventoryDate(request.expires_at)}</p>}
+  </div>;
+}
 
 function RequestDetails({ request, preview, previewImages, onClose }: { request: Request; preview: boolean; previewImages?: InventoryImage[]; onClose: () => void }) {
   const product = isProduct(request) ? request : null;
@@ -64,6 +72,7 @@ function RequestDetails({ request, preview, previewImages, onClose }: { request:
         {product ? <><Field label="Brand">{product.brand_name}</Field><Field label="Category">{product.custom_category_name || product.category_name}</Field><Field label="Subcategory">{product.subcategory_name}</Field><Field label="Stock reference">{product.stock_ref}</Field><Field label="Model">{product.model_name}</Field><Field label="Item type">{inventoryLabel(product.item_type)}</Field><Field label="Requested status">{inventoryLabel(product.requested_status)}</Field><Field label="Condition">{inventoryLabel(product.condition)}</Field><Field label="Source">{inventoryLabel(product.source)}</Field><Field label="Dimensions (L × W × H)">{dimensionLabel(product)}</Field></> : <><Field label="Item code">{movement?.product?.item_code}</Field><Field label="Stock reference">{movement?.product?.stock_ref}</Field><Field label="Model">{movement?.product?.model_name}</Field></>}
       </dl>
       <RequestLocations request={request} />
+      <ReservationRequestDetails request={request} />
       {product?.description ? <div><h4 className="text-sm font-semibold text-zinc-900">Description</h4><p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600 [overflow-wrap:anywhere]">{product.description}</p></div> : null}
       {request.note ? <div><h4 className="text-sm font-semibold text-zinc-900">Note</h4><p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600 [overflow-wrap:anywhere]">{request.note}</p></div> : null}
       {product?.costs ? <section className="rounded-lg border border-zinc-200 p-3"><h4 className="text-sm font-semibold text-zinc-900">Cost breakdown</h4><dl className="mt-3 grid grid-cols-2 gap-3">{Object.entries(product.costs).map(([key, value]) => <Field key={key} label={inventoryLabel(key)}>{value.toFixed(2)}</Field>)}</dl></section> : null}
@@ -112,7 +121,8 @@ function ReviewDialog({ request, decision, preview, onClose, onSuccess }: { requ
   return <RequestDialog title={approving ? "Approve request" : "Reject request"} busy={busy} onClose={onClose}>
     <form onSubmit={submit} className="space-y-4">
       <div><h3 className="font-semibold text-zinc-950 [overflow-wrap:anywhere]">{requestName(request)}</h3><p className="mt-1 text-sm text-zinc-600">{formatInventoryNumber(request.quantity)} units · {isProduct(request) ? "Add item" : inventoryLabel(request.request_type)}</p></div>
-      <p className="text-sm leading-6 text-zinc-600">{approving ? noStock ? "Approving this request records the decision only. It does not change stock quantities." : isProduct(request) ? "Approving adds this item to inventory." : "Approving applies this stock movement." : "Reject this request? The submitter can see your review note."}</p>
+      <ReservationRequestDetails request={request} />
+      <p className="text-sm leading-6 text-zinc-600">{approving ? noStock ? "Approving reserves these units. Availability is checked again before the reservation is created." : isProduct(request) ? "Approving adds this item to inventory." : "Approving applies this stock movement." : "Reject this request? The submitter can see your review note."}</p>
       <label className="block text-sm font-medium text-zinc-700" htmlFor="request-review-note">Review note {approving ? "(optional)" : "(required)"}<textarea id="request-review-note" value={note} onChange={event => setNote(event.target.value)} rows={4} maxLength={2000} required={!approving} disabled={busy} aria-invalid={!!error} aria-describedby={error ? "request-review-error" : undefined} className={field} /></label>
       {error ? <p id="request-review-error" role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900 [overflow-wrap:anywhere]">{error}</p> : null}
       <div className="grid grid-cols-2 gap-3"><button type="button" className={button} disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className={approving ? primary : `${buttonBase} border-red-700 bg-red-700 text-white hover:bg-red-800`} disabled={busy}>{busy ? "Saving…" : approving ? "Approve" : "Reject"}</button></div>
@@ -148,7 +158,7 @@ export function RequestsView(props: Props) {
         <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{isProduct(request) ? "Add item" : inventoryLabel(request.request_type)}</span><StatusBadge status={request.request_status} /></div>
         <h2 className="mt-3 text-base font-semibold text-zinc-950 [overflow-wrap:anywhere]">{requestName(request)}</h2>
         <p className="mt-1 text-sm text-zinc-500 [overflow-wrap:anywhere]">{isProduct(request) ? request.item_code : request.product?.item_code || "Item code unavailable"}{(isProduct(request) ? request.model_name : request.product?.model_name) ? ` · ${isProduct(request) ? request.model_name : request.product?.model_name}` : ""}</p>
-        <p className="mt-3 text-sm font-semibold text-zinc-900">{formatInventoryNumber(request.quantity)} units</p><div className="mt-1"><RequestLocations request={request} /></div>
+        <p className="mt-3 text-sm font-semibold text-zinc-900">{formatInventoryNumber(request.quantity)} units</p><div className="mt-1"><RequestLocations request={request} /></div><ReservationRequestDetails request={request} />
         {request.note ? <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-zinc-600 [overflow-wrap:anywhere]">{request.note}</p> : null}
         <div className="mt-4 border-t border-zinc-100 pt-3"><p className="text-sm text-zinc-700 [overflow-wrap:anywhere]">{request.submitter_display_name || "Unknown"}{own ? <span className="ml-2 rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-900">Your request</span> : null}</p><p className="mt-1 text-xs leading-5 text-zinc-500"><time dateTime={request.submitted_at}>{formatInventoryDate(request.submitted_at)}</time></p></div>
         {request.reviewed_at || request.request_status !== "pending_review" ? <div className="mt-3 rounded-lg bg-zinc-50 p-3"><p className="text-xs font-semibold text-zinc-700">Review note</p><p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600 [overflow-wrap:anywhere]">{request.review_note || "No review note recorded."}</p></div> : null}

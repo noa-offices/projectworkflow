@@ -2,12 +2,15 @@ import "server-only";
 
 import { requireInventoryUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { canSeeCosts, canViewInventory } from "./access";
+import { canSeeCosts, canViewInventory, canManageInventory, canSubmitHoldBook } from "./access";
 import { InventoryPageRangeError } from "./page-range-error";
 import { buildProductFilters, movementFilters, pagination, requestFilters } from "./filters";
 import { CATEGORY_COLUMNS, COST_COLUMNS, IMAGE_COLUMNS, MOVEMENT_COLUMNS, MOVEMENT_REQUEST_COLUMNS, PRODUCT_COLUMNS, PRODUCT_REQUEST_COLUMNS, STOCK_COLUMNS, SUMMARY_COLUMNS, categoryTree, pageResult, pick, summarizeStock } from "./mapping";
 import type { StockRow } from "./mapping";
 import type { InventoryBrand, InventoryCategory, InventoryCosts, InventoryImage, InventoryImageRow, InventoryMovement, InventoryMovementRequest, InventoryMovementRequestRow, InventoryMovementRow, InventoryOverview, InventoryPage, InventoryProduct, InventoryProductDetail, InventoryProductRequest, InventoryProductRequestRow, InventoryProductRow, InventoryProductSummary, MovementFilters, ProductFilters, ProductRequestFilters, RequestFilters } from "./types";
+
+import { isActiveReservation, reservationTotals } from "./reservations";
+import type { InventoryReservationRow, InventoryReservation, InventoryProjectOption } from "./types";
 
 type Client = Awaited<ReturnType<typeof createClient>>;
 type ReadResult<T> = { data: T[] | null; error: unknown; count?: number | null };
@@ -98,16 +101,26 @@ async function enrichMovements(client: Client, movements: InventoryMovementRow[]
   return movements.map(row => ({ ...pick(row, MOVEMENT_COLUMNS), product: products.get(row.product_id) ?? null, actor_display_name: people.get(row.created_by) ?? null }));
 }
 
+
+const RESERVATION_COLUMNS = ["id", "product_id", "kind", "quantity", "status", "project_id", "project_label", "reference_note", "expires_at", "note", "created_by", "created_at", "source_request_id", "released_by", "released_at", "release_note", "fulfilled_movement_id"] as const satisfies readonly (keyof InventoryReservationRow)[];
+async function activeReservations(client: Client, productIds: string[]): Promise<InventoryReservationRow[]> {
+  if (!productIds.length) return [];
+  const data = await allRows<InventoryReservationRow>((from,to) => client.schema("inventory").from("reservations").select(RESERVATION_COLUMNS.join(","), {count:"exact"}).in("product_id",productIds).eq("status","active").order("created_at",{ascending:false}).order("id").range(from,to).returns<InventoryReservationRow[]>());
+  const now = new Date();
+  return data.filter(row => isActiveReservation(row,now)).map(row => pick(row, RESERVATION_COLUMNS));
+}
+
 /** Active products only. Sold is a cumulative bucket, excluded from live quantity. */
 export async function getInventoryOverview(): Promise<InventoryOverview> {
   const { profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
   const [stock, productRequests, movementRequests] = await Promise.all([
-    allRows<StockRow>((from, to) => client.schema("inventory").from("products").select(STOCK_COLUMNS.join(","), { count: "exact" }).eq("is_active", true).order("id").range(from, to).returns<StockRow[]>()),
+    allRows<StockRow & { id: string }>((from, to) => client.schema("inventory").from("products").select(["id",...STOCK_COLUMNS].join(","), { count: "exact" }).eq("is_active", true).order("id").range(from, to).returns<(StockRow & { id: string })[]>()),
     client.schema("inventory").from("product_requests").select("id", { count: "exact", head: true }).eq("request_status", "pending_review"),
     client.schema("inventory").from("movement_requests").select("id", { count: "exact", head: true }).eq("request_status", "pending_review"),
   ]);
-  return { ...summarizeStock(stock), pending_product_requests: total(productRequests), pending_movement_requests: total(movementRequests) };
+  const reservations = await activeReservations(client, stock.map(row => row.id));
+  return { reserved_quantity: reservations.reduce((sum,row) => sum + row.quantity,0), ...summarizeStock(stock), pending_product_requests: total(productRequests), pending_movement_requests: total(movementRequests) };
 }
 
 export async function listProducts(filters: ProductFilters = {}, page = 1): Promise<InventoryPage<InventoryProduct>> {
@@ -122,13 +135,14 @@ export async function listProducts(filters: ProductFilters = {}, page = 1): Prom
   const response = await query.order(plan.order.column, { ascending: plan.order.ascending }).order("id").range(range.from, range.to).returns<InventoryProductRow[]>();
   if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
   const products = rows(response), productIds = products.map(row => row.id);
-  const [labels, costs, imageRows] = await Promise.all([
+  const [labels, costs, imageRows, reservations] = await Promise.all([
     names(client, products), costRows(client, canSeeCosts(profile?.role), "product_costs", productIds),
     productIds.length ? client.schema("inventory").from("product_images").select(IMAGE_COLUMNS.join(",")).in("product_id", productIds).eq("is_main", true).returns<InventoryImageRow[]>().then(rows) : [],
+    activeReservations(client, productIds),
   ]);
   const images = await signedImages(client, imageRows);
   const mainImages = new Map(images.map(row => [row.product_id, row.signed_url]));
-  return pageResult(products.map(row => ({ ...pick(row, PRODUCT_COLUMNS), ...labels(row), main_image_url: mainImages.get(row.id) ?? null, ...(costs.has(row.id) ? { costs: costs.get(row.id)! } : {}) })), total(response), range.page, range.page_size);
+  return pageResult(products.map(row => ({ ...pick(row, PRODUCT_COLUMNS), ...reservationTotals(row.quantity,reservations.filter(reservation => reservation.product_id === row.id)), ...labels(row), main_image_url: mainImages.get(row.id) ?? null, ...(costs.has(row.id) ? { costs: costs.get(row.id)! } : {}) })), total(response), range.page, range.page_size);
 }
 
 export async function getProduct(id: string): Promise<InventoryProductDetail | null> {
@@ -136,13 +150,16 @@ export async function getProduct(id: string): Promise<InventoryProductDetail | n
   const client = await inventoryClient(profile?.role);
   const product = rows(await client.schema("inventory").from("products").select(PRODUCT_COLUMNS.join(",")).eq("id", id).limit(1).returns<InventoryProductRow[]>())[0];
   if (!product) return null;
-  const [labels, costs, imageRows, movementRows] = await Promise.all([
+  const [labels, costs, imageRows, movementRows, reservationRows] = await Promise.all([
     names(client, [product]), costRows(client, canSeeCosts(profile?.role), "product_costs", [id]),
     client.schema("inventory").from("product_images").select(IMAGE_COLUMNS.join(",")).eq("product_id", id).order("sort_order").order("id").limit(3).returns<InventoryImageRow[]>().then(rows),
     client.schema("inventory").from("movements").select(MOVEMENT_COLUMNS.join(",")).eq("product_id", id).order("created_at", { ascending: false }).order("id").limit(20).returns<InventoryMovementRow[]>().then(rows),
+    activeReservations(client, [id]),
   ]);
+  const people = await displayNames(client,reservationRows.map(row => row.created_by));
+  const reservations: InventoryReservation[] = reservationRows.map(row => ({...row,creator_display_name:people.get(row.created_by) ?? null}));
   const [images, movements] = await Promise.all([signedImages(client, imageRows), enrichMovements(client, movementRows)]);
-  return { ...pick(product, PRODUCT_COLUMNS), ...labels(product), main_image_url: images.find(row => row.is_main)?.signed_url ?? null, images, recent_movements: movements, ...(costs.has(id) ? { costs: costs.get(id)! } : {}) };
+  return { ...pick(product, PRODUCT_COLUMNS), ...reservationTotals(product.quantity,reservations), reservations, ...labels(product), main_image_url: images.find(row => row.is_main)?.signed_url ?? null, images, recent_movements: movements, ...(costs.has(id) ? { costs: costs.get(id)! } : {}) };
 }
 
 export async function listCategories() {
@@ -221,4 +238,18 @@ export async function getPendingProductMovementRequests(productId: string): Prom
   const requests = await allRows<InventoryMovementRequestRow>((from, to) => client.schema("inventory").from("movement_requests").select(MOVEMENT_REQUEST_COLUMNS.join(","), { count: "exact" }).eq("product_id", productId).eq("request_status", "pending_review").order("submitted_at", { ascending: false }).order("id").range(from, to).returns<InventoryMovementRequestRow[]>());
   const people = await displayNames(client, requests.map(row => row.submitted_by));
   return requests.map(row => ({ ...pick(row, MOVEMENT_REQUEST_COLUMNS), product: null, submitter_display_name: people.get(row.submitted_by) ?? null }));
+}
+
+/** Uses the caller's public-table RLS; never exposes full project records. */
+export async function listProjectsForInventory(search = ""): Promise<InventoryProjectOption[]> {
+  const { profile } = await requireInventoryUser();
+  if (!canManageInventory(profile?.role) && !canSubmitHoldBook(profile?.role)) throw new Error("Inventory project access denied");
+  const client = await inventoryClient(profile?.role);
+  const term = search.trim().slice(0,100).replace(/[%,().*\\"]/g," ").trim();
+  let matchingClients: {id:string}[] = [];
+  if (term) matchingClients = await allRows<{id:string}>((from,to) => client.schema("public").from("clients").select("id",{count:"exact"}).ilike("company_name",`%${term}%`).order("id").range(from,to).returns<{id:string}[]>());
+  let query = client.schema("public").from("projects").select("id,project_number,project_code,project_name,clients(company_name)");
+  if (term) query = query.or([`project_number.ilike.%${term}%`,`project_code.ilike.%${term}%`,`project_name.ilike.%${term}%`,...(matchingClients.length ? [`client_id.in.(${matchingClients.map(row=>row.id).join(",")})`] : [])].join(","));
+  const data = rows(await query.order("project_code").order("id").limit(20).returns<{id:string;project_number:string|null;project_code:string|null;project_name:string|null;clients:{company_name:string|null}|null}[]>());
+  return data.map(row => ({id:row.id,label:[row.project_number || row.project_code,row.project_name,row.clients?.company_name].filter(Boolean).join(" \u00b7 ")}));
 }

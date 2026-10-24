@@ -81,6 +81,8 @@ export interface InventoryCosts {
   total_cost: number;
 }
 export interface InventoryProduct extends InventoryProductRow {
+  reserved_quantity: number;
+  available_quantity: number;
   brand_name: string | null;
   category_name: string | null;
   subcategory_name: string | null;
@@ -149,7 +151,18 @@ export interface InventoryMovement extends InventoryMovementRow {
   product: InventoryProductSummary | null;
   actor_display_name: string | null;
 }
+export interface InventoryProjectOption { id: string; label: string }
+export interface InventoryReservationRow {
+  id: string; product_id: string; kind: "hold" | "book"; quantity: number;
+  status: "active" | "released" | "fulfilled"; project_id: string | null; project_label: string | null;
+  reference_note: string | null; expires_at: string | null; note: string | null;
+  created_by: string; created_at: string; source_request_id: string | null;
+  released_by: string | null; released_at: string | null; release_note: string | null; fulfilled_movement_id: string | null;
+}
+export interface InventoryReservation extends InventoryReservationRow { creator_display_name: string | null }
 export interface InventoryMovementRequestRow {
+  project_id: string | null; project_label: string | null; reference_note: string | null;
+  expires_at: string | null; approved_reservation_id: string | null;
   id: string; product_id: string; request_type: RequestType;
   movement_type: MovementType; action_type: MovementAction;
   from_location: InventoryLocation | null; to_location: InventoryLocation | null;
@@ -163,6 +176,7 @@ export interface InventoryMovementRequest extends InventoryMovementRequestRow {
   submitter_display_name: string | null;
 }
 export interface InventoryProductDetail extends InventoryProduct {
+  reservations: InventoryReservation[];
   images: InventoryImage[];
   recent_movements: InventoryMovement[];
 }
@@ -175,6 +189,7 @@ export interface InventoryStockSummary {
   location_quantities: Record<InventoryLocation, number>;
 }
 export interface InventoryOverview extends InventoryStockSummary {
+  reserved_quantity: number;
   pending_product_requests: number;
   pending_movement_requests: number;
 }
