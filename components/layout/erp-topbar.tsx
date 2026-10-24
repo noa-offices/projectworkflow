@@ -5,6 +5,7 @@ import { NotificationBell } from "@/components/notifications/notification-bell";
 
 type ErpTopbarProps = {
   description: string;
+  compact?: boolean;
   eyebrow?: string;
   title: string;
   userDisplayName?: string;
@@ -13,17 +14,18 @@ type ErpTopbarProps = {
 
 export function ErpTopbar({
   description,
+  compact = false,
   eyebrow = "ProjectWorkflow",
   title,
   userDisplayName,
   userEmail,
 }: ErpTopbarProps) {
   return (
-    <header className="border-b border-zinc-200 bg-white px-4 py-3 lg:px-8 lg:py-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <header className={`border-b border-zinc-200 bg-white lg:px-8 lg:py-5 ${compact ? "px-3 py-1" : "px-4 py-3"}`}>
+      <div className={`flex items-start justify-between ${compact ? "flex-nowrap gap-2 lg:flex-wrap lg:gap-4" : "flex-wrap gap-4"}`}>
         <div>
           <p className="hidden text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500 lg:block">{eyebrow}</p>
-          <h1 className="text-lg font-semibold text-zinc-950 lg:mt-2 lg:text-3xl">{title}</h1>
+          <h1 className={`font-semibold text-zinc-950 lg:mt-2 lg:text-3xl ${compact ? "text-base leading-[2.75rem] lg:leading-normal" : "text-lg"}`}>{title}</h1>
           <p className="mt-2 hidden max-w-3xl text-sm leading-6 text-zinc-600 lg:block">{description}</p>
         </div>
         {userDisplayName ? (

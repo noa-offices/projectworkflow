@@ -5,6 +5,7 @@ import type { AppRole } from "@/lib/supabase/types";
 
 type ErpAppShellProps = {
   children: ReactNode;
+  compactHeader?: boolean;
   description: string;
   eyebrow?: string;
   isCompletedProject?: boolean;
@@ -18,6 +19,7 @@ type ErpAppShellProps = {
 
 export function ErpAppShell({
   children,
+  compactHeader = false,
   description,
   eyebrow,
   isCompletedProject,
@@ -39,6 +41,7 @@ export function ErpAppShell({
       />
       <div className="min-w-0">
         <ErpTopbar
+          compact={compactHeader}
           description={description}
           eyebrow={eyebrow}
           title={title}

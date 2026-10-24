@@ -10,7 +10,9 @@ import { InventoryInputError, productInput } from "@/lib/inventory/action-valida
 import { buildProductPatch, canUseProductTools, productEditFormInput } from "@/lib/inventory/product-edit";
 import { PRODUCT_COST_FIELDS } from "@/lib/inventory/product-request-submission";
 import { inventoryLabel, formatInventoryNumber } from "@/lib/inventory/presentation";
+import { StickyActionBar } from "./inventory-ui";
 import { ITEM_TYPES, PRODUCT_STATUSES, type InventoryBrand, type InventoryCategoryNode, type InventoryProductDetail } from "@/lib/inventory/types";
+import { saveFailureMessage } from "@/lib/inventory/save-errors";
 
 const fieldStyle = "mt-1 min-h-11 w-full min-w-0 rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
 const readOnlyStyle = "mt-1 min-h-11 w-full min-w-0 cursor-default rounded-md border border-zinc-200 bg-zinc-100 px-3 py-2 text-base text-zinc-600";
@@ -37,7 +39,7 @@ export function ProductEditForm({ product, brands, categories, role, productHref
       const response = await updateProduct({ productId: product.id, patch });
       if (!response.ok) { setError(response.error); return; }
       router.push(`${productHref}?saved=1`);
-    } catch (failure) { setError(failure instanceof InventoryInputError ? failure.message : "Could not save your changes. Please try again."); }
+    } catch (failure) { setError(failure instanceof InventoryInputError ? failure.message : saveFailureMessage(failure, "Could not save your changes. Please try again.")); }
     finally { held.current = false; setPending(false); requestAnimationFrame(() => errorRef.current?.focus()); }
   }}>
     <header className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Edit item</h1><p className="break-words text-sm text-zinc-600">{product.item_name}</p></header>
@@ -71,12 +73,12 @@ export function ProductEditForm({ product, brands, categories, role, productHref
       {costsAllowed && <section className={sectionStyle}><h2 className="font-semibold text-zinc-900">Costs</h2>
         <div className="grid min-w-0 grid-cols-2 gap-4">{PRODUCT_COST_FIELDS.map(key => <label key={key} className={labelStyle}>{costLabels[key]}<input name={key} type="number" inputMode="decimal" min={0} max="9999999999.99" step="0.01" defaultValue={product.costs?.[key] ?? 0} className={fieldStyle} /></label>)}</div>
       </section>}
-      <div className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4">
+      <StickyActionBar>
         {error && <p id="product-edit-error" ref={errorRef} tabIndex={-1} role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error} Your entries are retained.</p>}
         {saved && <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">Preview only. Nothing was saved.</p>}
         <button type="submit" disabled={pending} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-emerald-900 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait"><Save size={18} aria-hidden="true" />{pending ? "Saving…" : "Save changes"}</button>
         <Link href={productHref} className="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-zinc-300 px-4 text-sm font-semibold text-zinc-800 hover:bg-zinc-50">Cancel</Link>
-      </div>
+      </StickyActionBar>
     </fieldset>
   </form>;
 }

@@ -3,12 +3,14 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Package, Search } from "lucide-react";
+import { ArrowRight, Loader2, Package, Search } from "lucide-react";
+import { StickyActionBar, buttonClass } from "./inventory-ui";
 import { recordDirectMovement, searchMovementProducts } from "@/lib/inventory/actions";
 import { ACTION_FORM_LABELS, actionFields, canUseManagerMovements, fromChoices, movementPayload, previewMovement } from "@/lib/inventory/movement-form";
 import { LIVE_LOCATIONS } from "@/lib/inventory/movement-form";
 import { formatInventoryNumber } from "@/lib/inventory/presentation";
 import { LOCATION_LABELS, LOCATION_QUANTITY_COLUMNS, MOVEMENT_ACTIONS, type InventoryLocation, type MovementAction, type MovementPickerProduct } from "@/lib/inventory/types";
+import { saveFailureMessage } from "@/lib/inventory/save-errors";
 
 const field = "mt-1 min-h-11 w-full min-w-0 rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
 const card = "min-w-0 space-y-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-5";
@@ -70,7 +72,7 @@ export function MoveStockForm({ role, initialProduct = null, preview = false, pr
       next.quantity = result.totalAfter; next.available_quantity = result.totalAfter - next.reserved_quantity;
       setProduct(next); setQuantity(""); setNote("");
       setDone({ productId: product.id, text: preview ? "Preview only. Nothing was saved." : "Movement saved." });
-    } catch { setError("Something went wrong. Please try again."); }
+    } catch (failure) { setError(saveFailureMessage(failure)); }
     finally { lock.current = false; setBusy(false); }
   }
   const locationOption = (location: InventoryLocation, disabled = false) => <option key={location} value={location} disabled={disabled}>{LOCATION_LABELS[location]} ({product ? stockOf(product, location) : 0})</option>;
@@ -121,7 +123,9 @@ export function MoveStockForm({ role, initialProduct = null, preview = false, pr
         </div>)}
       {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
       {done && <p role="status" className="space-y-1 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950"><span className="block font-semibold">{done.text}</span><Link href={`${movementsHref}${movementsHref.includes("?") ? "&" : "?"}product=${done.productId}`} className="inline-flex min-h-11 items-center font-semibold text-emerald-900 underline underline-offset-4">View movement</Link></p>}
-      <button type="button" onClick={save} disabled={busy || !result || result.blocked} className="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-emerald-900 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Saving…" : "Save movement"}</button>
     </section>}
+    {product && <StickyActionBar reason={!showPreview ? "Enter a quantity to continue." : result?.blocked ? "Fix the problem above to save." : null}>
+      <button type="button" onClick={save} disabled={busy || !result || result.blocked} className={`${buttonClass.primary} w-full`}>{busy ? <><Loader2 size={18} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />Saving…</> : "Save movement"}</button>
+    </StickyActionBar>}
   </div>;
 }

@@ -12,6 +12,7 @@ import { uploadInventoryPhotos } from "@/lib/inventory/photo-upload";
 import { orderedProductImages } from "@/lib/inventory/presentation";
 import type { InventoryImage } from "@/lib/inventory/types";
 import { RequestDialog } from "./request-dialog";
+import { saveFailureMessage } from "@/lib/inventory/save-errors";
 
 const buttonStyle = "inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -27,7 +28,7 @@ export function ProductPhotoManager({ productId, productName, images, role, prod
     try {
       const result = await work();
       if (!result.ok) setError(result.error); else { setNotice(done); if (!preview) router.refresh(); }
-    } catch { setError("Something went wrong. Please try again."); }
+    } catch (failure) { setError(saveFailureMessage(failure)); }
     finally { lock.current = false; setBusy(false); }
   }
   function add(files: FileList | null) {
@@ -64,7 +65,7 @@ export function ProductPhotoManager({ productId, productName, images, role, prod
       {local.map((photo, index) => <li key={photo.id} className="min-w-0 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
         <div className="relative aspect-[4/3] bg-zinc-100">
           {photo.signed_url ? <Image src={photo.signed_url} alt={`${productName} photo ${index + 1}`} fill unoptimized className="object-cover" sizes="(max-width: 640px) 100vw, 300px" /> : <div className="flex h-full items-center justify-center text-zinc-400"><ImageOff aria-hidden="true" /></div>}
-          {photo.is_main && <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-emerald-900 px-2.5 py-1 text-xs font-semibold text-white"><Star size={12} aria-hidden="true" />Main</span>}
+          {photo.is_main && <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-emerald-900 px-2.5 py-1 text-sm font-semibold text-white"><Star size={12} aria-hidden="true" />Main</span>}
         </div>
         <div className="flex gap-2 p-2">
           <button type="button" disabled={busy || photo.is_main} className={buttonStyle} onClick={() => preview ? setNotice("Preview only. Nothing was changed.") : void run(() => setMainProductPhoto({ photoId: photo.id }), "Main photo updated.")}><Star size={16} aria-hidden="true" />{photo.is_main ? "Main photo" : "Set as main"}</button>
