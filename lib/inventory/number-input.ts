@@ -5,7 +5,7 @@
 export type NumberTextOptions = { decimals?: boolean; maxDecimals?: number };
 
 export function cleanNumberText(raw: string, { decimals = false, maxDecimals = 2 }: NumberTextOptions = {}): string {
-  let text = raw.replace(decimals ? /[^\d.]/g : /\D/g, "");
+  const text = raw.replace(decimals ? /[^\d.]/g : /\D/g, "");
   if (!decimals) return text.replace(/^0+(?=\d)/, "");
   const dot = text.indexOf(".");
   if (dot === -1) return text.replace(/^0+(?=\d)/, "");
