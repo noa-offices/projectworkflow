@@ -122,11 +122,20 @@ export async function getInventoryOverview(): Promise<InventoryOverview> {
     client.schema("inventory").from("movement_requests").select("id", { count: "exact", head: true }).eq("request_status", "pending_review"),
   ]);
   const reservations = await activeReservations(client, stock.map(row => row.id));
-  return { reserved_quantity: reservations.reduce((sum,row) => sum + row.quantity,0), ...summarizeStock(stock), pending_product_requests: total(productRequests), pending_movement_requests: total(movementRequests) };
+  return { reserved_quantity: reservations.reduce((sum,row) => sum + row.quantity,0), reserved_product_count: new Set(reservations.map(row => row.product_id)).size, ...summarizeStock(stock), pending_product_requests: total(productRequests), pending_movement_requests: total(movementRequests) };
 }
 
 type ProductReadQuery = ReturnType<ReturnType<ReturnType<Client['schema']>['from']>['select']>;
-function applyProductFilters(query: ProductReadQuery, plan: ReturnType<typeof buildProductFilters>) {
+/** Product ids for filters that cannot be expressed as a single column comparison. Same rules as the Overview counts. */
+async function stockFilterIds(client: Client, plan: ReturnType<typeof buildProductFilters>): Promise<string[] | null> {
+  if (plan.stock !== "reserved" && plan.stock !== "low_stock") return null;
+  const stock = await allRows<StockRow & { id: string }>((from, to) => client.schema("inventory").from("products").select(["id", ...STOCK_COLUMNS].join(","), { count: "exact" }).eq("is_active", true).order("id").range(from, to).returns<(StockRow & { id: string })[]>());
+  if (plan.stock === "low_stock") return stock.filter(row => row.quantity <= row.low_stock_at).map(row => row.id);
+  return ids((await activeReservations(client, stock.map(row => row.id))).map(row => row.product_id));
+}
+function applyProductFilters(query: ProductReadQuery, plan: ReturnType<typeof buildProductFilters>, stockIds: string[] | null = null) {
+  if (plan.stock === "live") query = query.gt("quantity", 0);
+  if (stockIds) query = query.in("id", stockIds);
   if (plan.active !== null) query = query.eq("is_active", plan.active);
   if (plan.search) query = query.or(plan.search);
   for (const key of ["brand_id", "category_id", "subcategory_id", "status", "item_type"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
@@ -138,10 +147,10 @@ function applyProductFilters(query: ProductReadQuery, plan: ReturnType<typeof bu
 export async function getProductTypeCounts(filters: ProductFilters = {}): Promise<ProductTypeCounts> {
   const { profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
-  const plan = buildProductFilters({ ...filters, item_type: undefined });
+  const plan = buildProductFilters({ ...filters, item_type: undefined }), stockIds = await stockFilterIds(client, plan);
   const counts = await Promise.all(ITEM_TYPES.map(async itemType => total(await applyProductFilters(
     client.schema("inventory").from("products").select("id", { count: "exact", head: true }),
-    { ...plan, item_type: itemType },
+    { ...plan, item_type: itemType }, stockIds,
   ))));
   const [product, accessory, temporary] = counts;
   return { all: product + accessory + temporary, product, accessory, temporary };
@@ -150,8 +159,8 @@ export async function getProductTypeCounts(filters: ProductFilters = {}): Promis
 export async function listProducts(filters: ProductFilters = {}, page = 1): Promise<InventoryPage<InventoryProduct>> {
   const { profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
-  const plan = buildProductFilters(filters), range = pagination(page);
-  const query = applyProductFilters(client.schema("inventory").from("products").select(PRODUCT_COLUMNS.join(","), { count: "exact" }), plan);
+  const plan = buildProductFilters(filters), range = pagination(page), stockIds = await stockFilterIds(client, plan);
+  const query = applyProductFilters(client.schema("inventory").from("products").select(PRODUCT_COLUMNS.join(","), { count: "exact" }), plan, stockIds);
   const response = await query.order(plan.order.column, { ascending: plan.order.ascending }).order("id").range(range.from, range.to).returns<InventoryProductRow[]>();
   if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
   const products = rows(response), productIds = products.map(row => row.id);

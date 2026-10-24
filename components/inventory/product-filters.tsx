@@ -6,7 +6,7 @@ import { useState, useTransition } from "react";
 import { ChevronDown, Search, X } from "lucide-react";
 import { inventoryLabel, inventoryProductsHref, PRODUCT_SORT_LABELS } from "@/lib/inventory/presentation";
 import type { ProductUrlState } from "@/lib/inventory/presentation";
-import { ITEM_TYPES, LOCATION_LABELS, PRODUCT_STATUSES } from "@/lib/inventory/types";
+import { ITEM_TYPES, LOCATION_LABELS, PRODUCT_STATUSES, STOCK_FILTER_LABELS } from "@/lib/inventory/types";
 import type { InventoryBrand, InventoryCategoryNode } from "@/lib/inventory/types";
 
 const selectClass = "mt-1 min-h-11 w-full min-w-0 rounded-md border border-zinc-200 bg-white px-3 text-base text-zinc-800 outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
@@ -35,7 +35,8 @@ export function ProductFilters({ state, brands, categories, baseHref = "/invento
   if (state.subcategory) chips.push({ key: "subcategory", label: `Subcategory: ${children.find(row => row.id === state.subcategory)?.name ?? "Selected subcategory"}`, patch: { subcategory: "" } });
   if (state.status) chips.push({ key: "status", label: `Status: ${inventoryLabel(state.status)}`, patch: { status: "" } });
   if (state.itemType) chips.push({ key: "itemType", label: `Type: ${inventoryLabel(state.itemType)}`, patch: { itemType: "" } });
-  if (state.location) chips.push({ key: "location", label: `Stock in: ${LOCATION_LABELS[state.location as keyof typeof LOCATION_LABELS]}`, patch: { location: "" } });
+  if (state.location) chips.push({ key: "location", label: `Location: ${LOCATION_LABELS[state.location as keyof typeof LOCATION_LABELS]}`, patch: { location: "" } });
+  if (state.stock) chips.push({ key: "stock", label: STOCK_FILTER_LABELS[state.stock as keyof typeof STOCK_FILTER_LABELS], patch: { stock: "" } });
   const choices = [
     { key: "brand", label: "Brand", options: brands.map(row => [row.id, row.name]) },
     { key: "category", label: "Category", options: categories.map(row => [row.id, row.name]) },
