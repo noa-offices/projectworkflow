@@ -65,6 +65,27 @@ test('add form shows manager Add item title and submit, while warehouse submits 
     else {assert.match(markup,/<h1[^>]*>Add item<\/h1>/);assert.match(markup,/>Add item<\/button>/);assert.doesNotMatch(markup,/Add-item request/);}
   }
 });
+test('add and review forms explain the submitted read-only total and put location inputs immediately below it',async()=>{
+  const form=(await load('../../components/inventory/product-request-form.tsx',{...shared,'./request-photo-picker':{RequestPhotoPicker:stub},'./product-image-gallery':{ProductImageGallery:stub}})).ProductRequestForm;
+  const review={...previewProductRequests[0],quantity:5,initial_stock:{warehouse:2,mockup:3}};
+  for(const [role,request] of [['warehouse_staff',undefined],['admin_manager',undefined],['system_owner',undefined],['admin_manager',review]] as const) {
+    const markup=html(form,{role,request,brands:previewBrands,categories:previewCategories});
+    assert.match(markup,/Total quantity \(from locations below\)/);
+    const quantity=markup.match(/<input[^>]*name="quantity"[^>]*>/)?.[0];
+    assert.ok(quantity);assert.match(quantity,/readOnly=""/);assert.doesNotMatch(quantity,/disabled/);
+    assert.match(quantity,/bg-zinc-100/);
+    assert.match(quantity,new RegExp(`value="${request ? 5 : 1}"`));
+    const helpId=quantity.match(/aria-describedby="([^"]+)"/)?.[1];
+    assert.ok(helpId);
+    assert.ok(markup.includes(`<p id="${helpId}"`));
+    assert.match(markup,/Change the numbers in Initial stock by location below\./);
+    assert.match(markup,/name="quantity"[^>]*><\/label><p[^>]*>Change the numbers in Initial stock by location below\.<\/p><\/div><section[^>]*><h2[^>]*>Initial stock by location<\/h2>/);
+    const stock=markup.indexOf('>Initial stock by location</h2>');
+    assert.ok(stock<markup.indexOf('name="requested_status"'));
+    assert.ok(stock<markup.indexOf('name="condition"'));
+    assert.equal((markup.match(/name="stock_/g)??[]).length,5);
+  }
+});
 test('product page booking controls distinguish direct actions from requests',async()=>{
   const actions=(await load('../../components/inventory/movement-request-form.tsx',{...shared,'./request-dialog':{RequestDialog:stub}})).ProductRequestActions;
   for(const role of ['system_owner','admin_manager','procurement_manager','designer','sales_designer','sales_coordinator']) {
