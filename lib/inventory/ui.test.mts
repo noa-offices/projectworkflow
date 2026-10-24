@@ -418,3 +418,52 @@ test('requests use a 44px My requests chip, a short placeholder and a slim pager
   assert.match(markup,/placeholder="Search requests"/); assert.match(markup,/min-h-11[^"]*"[^>]*>(?:(?!<\/a>).)*My requests/);
   assert.doesNotMatch(markup,/type="checkbox"/); assert.match(markup,/2 \/ 3/); assert.ok(markup.includes('No requests found'));
 });
+
+test('every Inventory number field uses the shared helper: text with a numeric keyboard, never type=number',async()=>{
+  const {readdirSync}=await import('node:fs');
+  const dir=fileURLToPath(new URL('../../components/inventory/',import.meta.url));
+  for(const file of readdirSync(dir).filter(name=>name.endsWith('.tsx'))) {
+    const source=readFileSync(`${dir}${file}`,'utf8');
+    assert.doesNotMatch(source,/type="number"/,file);
+    assert.doesNotMatch(source,/inputMode="(?:numeric|decimal)"/,`${file}: use NumberInput`);
+  }
+});
+test('NumberInput renders a clean text field and the stock boxes show no leading zero',async()=>{
+  const {NumberInput}=await load('../../components/inventory/number-input.tsx',shared);
+  const whole=html(NumberInput as Component,{name:'q',defaultValue:'010'}), price=html(NumberInput as Component,{name:'p',decimals:true,defaultValue:'012.5'});
+  assert.match(whole,/type="text"/); assert.match(whole,/inputMode="numeric"/); assert.match(whole,/value="10"/);
+  assert.match(price,/inputMode="decimal"/); assert.match(price,/value="12.5"/);
+  assert.match(html(NumberInput as Component,{name:'q',value:'007'}),/value="007"/); // controlled values are cleaned by the owner on change
+  const form=(await load('../../components/inventory/product-request-form.tsx',{...shared,'next/image':{__esModule:true,default:stub}})).ProductRequestForm;
+  const markup=html(form,{brands:previewBrands,categories:previewCategories,role:'admin_manager',preview:true});
+  const stock=[...markup.matchAll(/<input[^>]*name="stock_(\w+)"[^>]*>/g)].map(match=>match[0]);
+  assert.equal(stock.length,5);
+  for(const input of stock) { assert.match(input,/type="text"/); assert.match(input,/inputMode="numeric"/); assert.doesNotMatch(input,/value="0\d/); assert.doesNotMatch(input,/required/); }
+  assert.match(markup,/name="price"[^>]*/); assert.match(markup,/<input[^>]*inputMode="decimal"[^>]*name="price"|<input[^>]*name="price"[^>]*inputMode="decimal"/);
+  assert.match(markup,/Total: 1 units/);
+});
+test('the brand label is dark see-through glass that passes AA over pure white and pure black photos',async()=>{
+  const card=(await load('../../components/inventory/product-card.tsx',shared)).ProductCard;
+  const markup=html(card,{product:{...previewProduct,brand_name:'Nora Office',item_type:'accessory'}});
+  const labels=[...markup.matchAll(/<span data-card-(?:brand|type)[^>]*class="([^"]+)"/g)].map(match=>match[1]);
+  assert.equal(labels.length,2); // brand (top-left) and type icon (top-right) share one glass style
+  const shared_=(value:string)=>value.split(' ').filter(name=>!/^(left|right|max|px)-/.test(name)).join(' ');
+  assert.equal(shared_(labels[0]),shared_(labels[1]));
+  const luminance=(gray:number)=>{const c=gray/255;const v=c<=0.03928?c/12.92:((c+0.055)/1.055)**2.4;return v;};
+  const contrast=(a:number,b:number)=>(Math.max(a,b)+0.05)/(Math.min(a,b)+0.05);
+  for(const label of labels) {
+    assert.match(label,/(?:^| )text-white(?: |$)/); assert.match(label,/border-white\/30/); assert.match(label,/rounded-full/);
+    assert.match(label,/text-\[11px\]/); assert.match(label,/font-bold/); assert.match(label,/\[text-shadow:/);
+    assert.match(label,/supports-\[backdrop-filter\]:backdrop-blur-md/); assert.match(label,/supports-\[backdrop-filter\]:backdrop-saturate-150/);
+    const alpha=(prefix:string)=>Number(label.match(new RegExp(`(?:^| )${prefix.replace(/[[\]]/g,'\\$&')}bg-black/(\\d+)`))?.[1])/100;
+    const fallback=alpha(''), glass=alpha('supports-[backdrop-filter]:');
+    assert.equal(fallback,0.55); assert.ok(glass>=0.25&&glass<=0.35,`glass ${glass}`);
+    const brightness=Number(label.match(/backdrop-brightness-\[([\d.]+)\]/)?.[1]);
+    const text=luminance(255);
+    for(const [photo,supported] of [[255,true],[0,true],[255,false],[0,false]] as const) {
+      const behind=supported?photo*brightness:photo, a=supported?glass:fallback;
+      const composite=behind*(1-a); // black overlay at alpha a
+      assert.ok(contrast(text,luminance(composite))>=4.5,`photo ${photo} ${supported?'glass':'fallback'}: ${contrast(text,luminance(composite)).toFixed(2)}`);
+    }
+  }
+});
