@@ -160,3 +160,28 @@ test('missing photos use a distinct item-type icon and product lists fit two col
   const markup=html(list,{products:[previewProduct],filtered:false});
   assert.match(markup,/grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4/);
 });
+
+test('every Overview card is the same whole-card link with a View hint',async()=>{
+  const add = await load('../../components/inventory/add-item-button.tsx',shared);
+  const overview = (await load('../../components/inventory/overview-view.tsx',{...shared,'./add-item-button':add})).InventoryOverviewView;
+  const markup = html(overview,{overview:previewOverview,role:'system_owner'});
+  const cards = [...markup.matchAll(/<a [^>]*data-overview-card[^>]*>[\s\S]*?<\/a>/g)].map(match => match[0]);
+  // Units, Products, Reserved, Low stock, 2 pending request cards, 6 locations.
+  assert.equal(cards.length,12);
+  const hrefs = cards.map(card => card.match(/href="([^"]+)"/)![1].replaceAll('&amp;','&'));
+  assert.ok(hrefs.includes('/inventory/requests?tab=products&status=pending_review'));
+  assert.ok(hrefs.includes('/inventory/requests?tab=movements&status=pending_review'));
+  const classOf = (card:string) => card.match(/class="([^"]+)"/)![1];
+  const base = (card:string) => classOf(card).split(' ').filter(name => !/^(border|bg|shadow)/.test(name)).join(' ');
+  for(const card of cards) {
+    assert.equal(base(card),base(cards[0]));
+    assert.match(classOf(card),/min-h-11/); assert.match(classOf(card),/hover:/); assert.match(classOf(card),/focus-visible:outline/);
+    assert.match(card,/aria-hidden="true"[^>]*>(<span class="hidden sm:inline">View<\/span>)?<svg/);
+    assert.match(card,/<dt class="[^"]*text-sm[^"]*"/);
+    assert.doesNotMatch(card,/underline/);
+  }
+  const standard = cards.filter(card => !card.includes('text-4xl'));
+  assert.equal(standard.length,10);
+  for(const card of standard) assert.match(card,/<dd class="[^"]*text-2xl/);
+  assert.equal(markup.match(/<a [^>]*underline/g)?.length ?? 0,0);
+});
