@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Loader2, Package, Search } from "lucide-react";
 import { StickyActionBar, buttonClass } from "./inventory-ui";
+import { NumberInput } from "./number-input";
 import { recordDirectMovement, searchMovementProducts } from "@/lib/inventory/actions";
 import { ACTION_FORM_LABELS, actionFields, canUseManagerMovements, fromChoices, movementPayload, previewMovement } from "@/lib/inventory/movement-form";
 import { LIVE_LOCATIONS } from "@/lib/inventory/movement-form";
@@ -109,7 +110,7 @@ export function MoveStockForm({ role, initialProduct = null, preview = false, pr
       </label>}
       {!fields.to && fields.fixedTo && <p className="text-sm text-zinc-600">{action === "sale" ? "Sold units move to Sold." : `Stock goes to ${LOCATION_LABELS[fields.fixedTo]}.`}</p>}
       <label className="block text-sm font-medium text-zinc-700">{action === "adjustment" ? "New stock (whole number, 0 or more)" : "Quantity (whole number)"}
-        <input type="text" inputMode="numeric" pattern="[0-9]*" value={quantity} disabled={busy} onChange={event => { setQuantity(event.target.value); setDone(null); setError(""); }} className={field} />
+        <NumberInput maxLength={10} value={quantity} disabled={busy} onValueChange={text => { setQuantity(text); setDone(null); setError(""); }} className={field} />
       </label>
       <label className="block text-sm font-medium text-zinc-700">Note (optional)
         <textarea rows={3} maxLength={2000} value={note} disabled={busy} onChange={event => setNote(event.target.value)} className={field} />

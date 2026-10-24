@@ -9,6 +9,7 @@ import type { InventoryProduct, InventoryProjectOption, RequestType } from '@/li
 import { RequestDialog } from './request-dialog';
 import { ProductManagerTools } from './product-manager-tools';
 import { StickyActionBar, buttonClass } from './inventory-ui';
+import { NumberInput } from './number-input';
 import { saveFailureMessage } from "@/lib/inventory/save-errors";
 
 const input = 'mt-1 min-h-11 w-full min-w-0 rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-950';
@@ -80,7 +81,7 @@ export function MovementRequestForm({ product, role = null, initialKind, preview
         {stock && <label className="block text-sm font-medium">From location<select className={input} value={from} onChange={event => setFrom(event.target.value)}>{locations.map(row => <option key={row.location} value={row.location}>{row.label} — {row.available} available</option>)}</select><span className="mt-1 block text-sm text-zinc-500">{source?.available ?? 0} available in {source?.label}. {product.reserved_quantity} units are reserved across locations. Availability is checked again when applied.</span></label>}
         {kind === 'move' && <label className="block text-sm font-medium">To location<select className={input} value={to} onChange={event => setTo(event.target.value)}>{locations.map(row => <option disabled={row.location === from} key={row.location} value={row.location}>{row.label}</option>)}</select></label>}
         {kind === 'take' && <p className="rounded-md bg-zinc-50 p-3 text-sm text-zinc-600">Approved take requests move stock to Sold.</p>}
-        <label className="block text-sm font-medium">Quantity<input className={input} name="quantity" type="text" inputMode="numeric" pattern="[0-9]+" required defaultValue="1" aria-describedby="quantity-help" /><span id="quantity-help" className="mt-1 block text-sm text-zinc-500">Whole units, up to {stock ? `${source?.available ?? 0} available in this location` : `${product.available_quantity} available`}.{!stock && ' Approved holds and bookings reserve these units.'}</span></label>
+        <label className="block text-sm font-medium">Quantity<NumberInput className={input} name="quantity" maxLength={10} required defaultValue="1" aria-describedby="quantity-help" /><span id="quantity-help" className="mt-1 block text-sm text-zinc-500">Whole units, up to {stock ? `${source?.available ?? 0} available in this location` : `${product.available_quantity} available`}.{!stock && ' Approved holds and bookings reserve these units.'}</span></label>
         {!stock && <div className="min-w-0 space-y-3 rounded-md border border-zinc-200 p-3">
           <p className="text-sm text-zinc-600">{kind === 'book' ? 'Choose a project or enter a reference for this booking.' : 'Optionally link this hold to a project or reference.'}</p>
           {project ? <div className="min-w-0"><p className="break-words text-sm font-medium">{project.label}</p><button type="button" className={`${button} mt-2`} onClick={() => { setProject(null); setProjectSearch(''); }}>Change project</button></div> : <>

@@ -14,8 +14,11 @@ const locationShortLabels = {
 /** Up to three chips fit one row on a 2-up phone grid. With more, two chips and a "+N" chip fit. */
 export const MAX_LOCATION_CHIPS = 3;
 const statusDot: Record<string, string> = { available: "bg-emerald-600", showroom: "bg-sky-600", reserved: "bg-amber-500", hold: "bg-amber-500", missing: "bg-red-600", sold: "bg-zinc-500" };
-/** Frosted white label that stays readable on any photo; plain white where backdrop-filter is missing. */
-const glass = "absolute top-1.5 inline-flex items-center rounded-full border border-white/70 bg-white/90 px-2 py-0.5 text-[11px] font-bold leading-4 text-zinc-900 shadow-sm [text-shadow:0_0_6px_rgba(255,255,255,0.9)] supports-[backdrop-filter]:bg-white/60 supports-[backdrop-filter]:backdrop-blur-md lg:text-xs";
+/**
+ * Dark see-through glass with white text. The backdrop is darkened a little so the white text passes AA
+ * over a pure white photo (about 6:1) and a pure black one (21:1). Without backdrop-filter it falls back to bg-black/55.
+ */
+const glass = "absolute top-1.5 inline-flex items-center rounded-full border border-white/30 bg-black/55 px-2 py-0.5 text-[11px] font-bold leading-4 text-white shadow-sm [text-shadow:0_1px_2px_rgba(0,0,0,0.55)] supports-[backdrop-filter]:bg-black/30 supports-[backdrop-filter]:backdrop-blur-md supports-[backdrop-filter]:backdrop-saturate-150 supports-[backdrop-filter]:backdrop-brightness-[0.6] lg:text-xs";
 
 export function ProductCard({ product, href }: { product: InventoryProduct; href?: string }) {
   const [failedImage, setFailedImage] = useState<string | null>(null);

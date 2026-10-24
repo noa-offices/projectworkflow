@@ -11,6 +11,7 @@ import { buildProductPatch, canUseProductTools, productEditFormInput } from "@/l
 import { PRODUCT_COST_FIELDS } from "@/lib/inventory/product-request-submission";
 import { inventoryLabel, formatInventoryNumber } from "@/lib/inventory/presentation";
 import { StickyActionBar } from "./inventory-ui";
+import { NumberInput } from "./number-input";
 import { ITEM_TYPES, PRODUCT_STATUSES, type InventoryBrand, type InventoryCategoryNode, type InventoryProductDetail } from "@/lib/inventory/types";
 import { saveFailureMessage } from "@/lib/inventory/save-errors";
 
@@ -58,7 +59,7 @@ export function ProductEditForm({ product, brands, categories, role, productHref
           <label className={labelStyle}>Custom category<input name="custom_category_name" maxLength={200} defaultValue={product.custom_category_name ?? ""} className={fieldStyle} /></label>
           <label className={labelStyle}>Status *<select name="status" defaultValue={product.status} className={fieldStyle}>{PRODUCT_STATUSES.map(value => <option key={value} value={value}>{inventoryLabel(value)}</option>)}</select></label>
           <label className={labelStyle}>Condition *<select name="condition" defaultValue={product.condition} className={fieldStyle}>{["new", "used", "showroom", "damaged"].map(value => <option key={value} value={value}>{inventoryLabel(value)}</option>)}</select></label>
-          <label className={labelStyle}>Low-stock level<input name="low_stock_at" type="number" inputMode="numeric" min={0} max={2147483647} step={1} defaultValue={product.low_stock_at} className={fieldStyle} /></label>
+          <label className={labelStyle}>Low-stock level<NumberInput name="low_stock_at" maxLength={10} defaultValue={product.low_stock_at} className={fieldStyle} /></label>
           {hasLocation && <label className={labelStyle}>Location<input name="location" maxLength={200} defaultValue={product.location ?? ""} className={fieldStyle} /></label>}
         </div>
         <label className="block text-sm font-medium text-zinc-700">Description<textarea name="description" defaultValue={product.description ?? ""} maxLength={5000} rows={3} className={fieldStyle} /></label>
@@ -66,12 +67,12 @@ export function ProductEditForm({ product, brands, categories, role, productHref
       </section>
       <section className={sectionStyle}><h2 className="font-semibold text-zinc-900">Size <span className="text-sm font-normal text-zinc-500">(optional)</span></h2><p className="text-sm text-zinc-600">Fill all three measurements and choose a unit, or leave all measurements empty.</p>
         <div className="grid min-w-0 grid-cols-2 gap-4">
-          {(["length", "width", "height"] as const).map(value => <label key={value} className={labelStyle}>{inventoryLabel(value)}<input name={`dimension_${value}`} defaultValue={product[`dimension_${value}`] ?? ""} type="number" inputMode="decimal" min="0.01" max="9999999999.99" step="0.01" className={fieldStyle} /></label>)}
+          {(["length", "width", "height"] as const).map(value => <label key={value} className={labelStyle}>{inventoryLabel(value)}<NumberInput decimals name={`dimension_${value}`} maxLength={13} defaultValue={product[`dimension_${value}`] ?? ""} className={fieldStyle} /></label>)}
           <label className={labelStyle}>Unit<select name="dimension_unit" defaultValue={product.dimension_unit ?? "mm"} className={fieldStyle}><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option></select></label>
         </div>
       </section>
       {costsAllowed && <section className={sectionStyle}><h2 className="font-semibold text-zinc-900">Costs</h2>
-        <div className="grid min-w-0 grid-cols-2 gap-4">{PRODUCT_COST_FIELDS.map(key => <label key={key} className={labelStyle}>{costLabels[key]}<input name={key} type="number" inputMode="decimal" min={0} max="9999999999.99" step="0.01" defaultValue={product.costs?.[key] ?? 0} className={fieldStyle} /></label>)}</div>
+        <div className="grid min-w-0 grid-cols-2 gap-4">{PRODUCT_COST_FIELDS.map(key => <label key={key} className={labelStyle}>{costLabels[key]}<NumberInput decimals name={key} maxLength={13} defaultValue={product.costs?.[key] ?? 0} className={fieldStyle} /></label>)}</div>
       </section>}
       <StickyActionBar>
         {error && <p id="product-edit-error" ref={errorRef} tabIndex={-1} role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error} Your entries are retained.</p>}
