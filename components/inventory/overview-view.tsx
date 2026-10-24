@@ -24,7 +24,7 @@ function OverviewCard({ className = "", href, label, value, note, hint, hero }: 
 }
 const plural = (count: number) => `${formatInventoryNumber(count)} ${count === 1 ? "product" : "products"}`;
 
-export function InventoryOverviewView({ overview, productsHref = "/inventory/products", role, moveHref, categoriesHref }: { overview: InventoryOverview; productsHref?: string; role?: string | null; moveHref?: string; categoriesHref?: string }) {
+export function InventoryOverviewView({ overview, productsHref = "/inventory/products", role, moveHref, categoriesHref, reportsHref }: { overview: InventoryOverview; productsHref?: string; role?: string | null; moveHref?: string; categoriesHref?: string; reportsHref?: string }) {
   const href = (filter: Parameters<typeof inventoryOverviewHref>[0]) => inventoryOverviewHref(filter, productsHref);
   const stats = [
     { className: "col-span-2 lg:col-span-1", label: "Reserved", value: overview.reserved_quantity, note: plural(overview.reserved_product_count), href: href({ stock: "reserved" }) },
@@ -36,7 +36,7 @@ export function InventoryOverviewView({ overview, productsHref = "/inventory/pro
 
   return (
     <div className="min-w-0 space-y-5">
-      <InventoryActions role={role} moveHref={moveHref} categoriesHref={categoriesHref} />
+      <InventoryActions role={role} moveHref={moveHref} categoriesHref={categoriesHref} reportsHref={reportsHref} />
       <section className="min-w-0 rounded-lg border border-emerald-200 bg-white p-5 shadow-sm sm:p-6">
         <div className="flex min-w-0 flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1">

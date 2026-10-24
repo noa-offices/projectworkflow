@@ -8,10 +8,10 @@ import { Pager } from "./inventory-ui";
 import { ProductTypeTabs } from './product-type-tabs';
 import type { ProductTypeCounts } from '@/lib/inventory/types';
 
-export function ProductsBrowser({ result, counts, state, brands, categories, baseHref = "/inventory/products", detailHrefPrefix, role, moveHref, categoriesHref }: { moveHref?: string; categoriesHref?: string; result: InventoryPage<InventoryProduct>; counts: ProductTypeCounts; state: ProductUrlState; brands: InventoryBrand[]; categories: InventoryCategoryNode[]; baseHref?: string; detailHrefPrefix?: string; role?: string | null }) {
+export function ProductsBrowser({ result, counts, state, brands, categories, baseHref = "/inventory/products", detailHrefPrefix, role, moveHref, categoriesHref, reportsHref }: { moveHref?: string; categoriesHref?: string; reportsHref?: string; result: InventoryPage<InventoryProduct>; counts: ProductTypeCounts; state: ProductUrlState; brands: InventoryBrand[]; categories: InventoryCategoryNode[]; baseHref?: string; detailHrefPrefix?: string; role?: string | null }) {
   const pages = Math.max(1, result.page_count);
   return <div className="min-w-0 space-y-3">
-    <InventoryActions role={role} moveHref={moveHref} categoriesHref={categoriesHref} />
+    <InventoryActions role={role} moveHref={moveHref} categoriesHref={categoriesHref} reportsHref={reportsHref} />
     <ProductTypeTabs state={state} counts={counts} baseHref={baseHref} />
     <ProductFilters state={state} brands={brands} categories={categories} baseHref={baseHref} />
     <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-lg font-semibold text-zinc-950">Products</h2><p className="text-sm text-zinc-600">{formatInventoryNumber(result.total)} {result.total === 1 ? "product" : "products"}</p></div>

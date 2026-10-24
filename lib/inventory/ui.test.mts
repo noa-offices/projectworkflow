@@ -14,6 +14,7 @@ import * as validation from './action-validation';
 import * as types from './types';
 import * as productEdit from './product-edit';
 import * as saveErrors from './save-errors';
+import * as reportUrls from './reports/urls';
 import * as movementForm from './movement-form';
 import * as movementHistory from './movement-history';
 import * as categoryForm from './category-form';
@@ -466,4 +467,54 @@ test('the brand label is dark see-through glass that passes AA over pure white a
       assert.ok(contrast(text,luminance(composite))>=4.5,`photo ${photo} ${supported?'glass':'fallback'}: ${contrast(text,luminance(composite)).toFixed(2)}`);
     }
   }
+});
+
+test('Reports screen: one card per report, big download buttons, states, and nothing for other roles',async()=>{
+  const view=(await load('../../components/inventory/reports-view.tsx',{...shared,'@/lib/inventory/reports/urls':reportUrls})).ReportsView;
+  const props={brands:previewBrands,categories:previewCategories,defaultRange:{from:'2026-09-26',to:'2026-10-25'}};
+  for(const role of ['system_owner','admin_manager']) {
+    const markup=html(view,{...props,role});
+    assert.equal((markup.match(/<section /g) ?? []).length,2);
+    assert.equal((markup.match(/Download Excel/g) ?? []).length,2); assert.equal((markup.match(/Download PDF/g) ?? []).length,1);
+    assert.ok(markup.includes('Include sold-out items')); assert.ok(markup.includes('Include photos (PDF only)'));
+    assert.match(markup,/type="date"[^>]*value="2026-09-26"/); assert.match(markup,/type="date"[^>]*value="2026-10-25"/);
+    assert.ok(markup.includes('Prices and costs are never included.')); assert.doesNotMatch(markup,/>\s*(Price|Cost)/);
+    assert.match(markup,/class="[^"]*min-h-11[^"]*"[^>]*>(?:(?!<\/button>).)*Download Excel/);
+  }
+  const busy=html(view,{...props,role:'admin_manager',preview:true,previewState:'busy'});
+  assert.ok(busy.includes('Making PDF…')); assert.match(busy,/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Making PDF/); assert.match(busy,/animate-spin/);
+  const failed=html(view,{...props,role:'admin_manager',preview:true,previewState:'error'});
+  assert.match(failed,/role="alert"[^>]*>Too many movements for one file. Narrow the date range./);
+  for(const role of ['warehouse_staff','viewer','designer','sales_designer','sales_coordinator','procurement_manager','unknown',null]) {
+    const markup=html(view,{...props,role});
+    assert.match(markup,/do not have permission/); assert.doesNotMatch(markup,/Download|<form|<input/);
+  }
+});
+test('the Reports page sends other roles away before reading anything, and the More menu links to it for managers',async()=>{
+  const redirects:string[]=[]; let reads=0;
+  const navigation={notFound(){throw new Error('Not found');},redirect(path:string){redirects.push(path);throw new Error('redirect');}};
+  const queriesMock={listActiveBrands:async()=>{reads++;return [];},listCategories:async()=>{reads++;return [];}};
+  for(const role of ['viewer','warehouse_staff','designer','procurement_manager',null]) {
+    const page=await load('../../app/inventory/reports/page.tsx',{...shared,'next/navigation':navigation,'@/lib/auth':{requireInventoryUser:async()=>({profile:{role},user:{id:'u'}})},'@/lib/inventory/queries':queriesMock,'@/components/inventory/reports-view':{ReportsView:stub},'@/lib/inventory/reports/params':{defaultMovementRange:()=>({from:'a',to:'b'})}});
+    await assert.rejects(()=>(page.default as unknown as ()=>Promise<unknown>)(),/redirect/);
+  }
+  assert.equal(redirects.length,5); assert.ok(redirects.every(path=>path==='/inventory')); assert.equal(reads,0);
+  const actions=(await load('../../components/inventory/inventory-actions.tsx',shared)).InventoryActions;
+  for(const role of ['system_owner','admin_manager']) {
+    const menu=html(actions,{role}).match(/<div role="menu"[^>]*>.*?<\/div>/)?.[0] ?? '';
+    assert.ok(menu.includes('href="/inventory/reports"')); assert.ok(menu.includes('>Reports<')||menu.includes('Reports')); assert.ok(menu.includes('Manage categories'));
+  }
+  assert.equal(html(actions,{role:'warehouse_staff'}).includes('/inventory/reports'),false);
+});
+test('Overview has no low-stock card and the cards reflow cleanly',async()=>{
+  const overview=(await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
+  const markup=html(overview,{overview:previewOverview,role:'system_owner'});
+  assert.doesNotMatch(markup,/Low stock|low_stock/i);
+  assert.match(markup,/<dl class="grid min-w-0 grid-cols-2 gap-3 lg:grid-cols-3">/);
+  assert.match(markup,/col-span-2 lg:col-span-1/); // Reserved fills the first phone row
+  assert.equal((markup.match(/data-overview-card/g) ?? []).length,11);
+  const edit=(await load('../../components/inventory/product-edit-form.tsx',shared)).ProductEditForm;
+  assert.doesNotMatch(html(edit,{product:previewProduct,brands:previewBrands,categories:previewCategories,role:'admin_manager',productHref:'/p'}),/Low-stock|low_stock/i);
+  const detail=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-reservations':{ProductReservations:stub},'./product-image-gallery':{ProductImageGallery:stub},'./stock-by-location':{StockByLocation:stub}})).ProductDetailView;
+  assert.doesNotMatch(html(detail,{product:{...previewProduct,quantity:1}}),/Low stock/i);
 });
