@@ -200,3 +200,21 @@ export async function generatePdfBuffer({
     }
   }
 }
+
+/** Same Chromium setup as generatePdfBuffer, but prints HTML that is already in memory (no page request, no cookies). */
+export async function generatePdfFromHtml({ html, pdfOptions, timeoutMs = 60_000 }: { html: string; pdfOptions: PDFOptions; timeoutMs?: number }) {
+  const puppeteer = await import("puppeteer-core");
+  const { executablePath, headless, launchArgs } = await resolveExecutablePath();
+  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+  try {
+    browser = await puppeteer.launch({ args: puppeteer.defaultArgs({ args: launchArgs, headless }), executablePath, headless });
+    const page = await browser.newPage();
+    await page.setViewport({ ...defaultViewport, width: 1123, height: 794, isLandscape: true });
+    await page.emulateMediaType("print");
+    await page.setContent(html, { waitUntil: "networkidle0", timeout: timeoutMs });
+    await waitForFontsAndImages(page);
+    return await page.pdf({ printBackground: true, ...pdfOptions });
+  } finally {
+    if (browser) await browser.close();
+  }
+}

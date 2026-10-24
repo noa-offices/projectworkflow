@@ -10,15 +10,15 @@ test("product mapping discards unselected cost properties", () => {
 });
 test("stock summary counts the inclusive low threshold and excludes sold from live quantity", () => {
   const stock = { warehouse_quantity: 2, dubai_showroom_quantity: 1, abudhabi_showroom_quantity: 0, mockup_quantity: 0, temporary_out_quantity: 0, sold_quantity: 50 };
-  assert.deepEqual(summarizeStock([{ ...stock, quantity: 3, low_stock_at: 3 }, { ...stock, warehouse_quantity: 0, dubai_showroom_quantity: 0, quantity: 0, low_stock_at: 0 }]), {
-    product_count: 1, total_live_quantity: 3, low_stock_count: 2,
+  assert.deepEqual(summarizeStock([{ ...stock, quantity: 3 }, { ...stock, warehouse_quantity: 0, dubai_showroom_quantity: 0, quantity: 0 }]), {
+    product_count: 1, total_live_quantity: 3,
     location_quantities: { warehouse: 2, dubai_showroom: 1, abudhabi_showroom: 0, mockup: 0, temporary_out: 0, sold: 100 },
     location_product_counts: { warehouse: 1, dubai_showroom: 1, abudhabi_showroom: 0, mockup: 0, temporary_out: 0, sold: 2 },
     item_type_counts: { product: 0, accessory: 0, temporary: 0 },
   });
 });
 test("stock summary counts units and distinct live products per location and type", () => {
-  const zero = { warehouse_quantity: 0, dubai_showroom_quantity: 0, abudhabi_showroom_quantity: 0, mockup_quantity: 0, temporary_out_quantity: 0, sold_quantity: 0, low_stock_at: 0 };
+  const zero = { warehouse_quantity: 0, dubai_showroom_quantity: 0, abudhabi_showroom_quantity: 0, mockup_quantity: 0, temporary_out_quantity: 0, sold_quantity: 0 };
   const result = summarizeStock([
     { ...zero, item_type: "product", warehouse_quantity: 5, dubai_showroom_quantity: 2, quantity: 7, sold_quantity: 4 },
     { ...zero, item_type: "accessory", warehouse_quantity: 3, quantity: 3 },

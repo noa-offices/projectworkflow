@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, AlertTriangle, Package } from "lucide-react";
+import { ArrowLeft, Package } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   dimensionLabel,
@@ -101,12 +101,6 @@ export function ProductDetailView({ product, productsHref = "/inventory/products
             <span className="text-sm">Current stock <strong className="ml-1 tabular-nums">{formatInventoryNumber(product.quantity)}</strong></span>
           </div>
         </div>
-        {product.quantity <= product.low_stock_at ? (
-          <div role="note" className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            <p>Low stock: current quantity is at or below the threshold of {formatInventoryNumber(product.low_stock_at)}.</p>
-          </div>
-        ) : null}
         <div className="mt-4 min-w-0"><StockByLocation product={product} /></div>
       </section>
 

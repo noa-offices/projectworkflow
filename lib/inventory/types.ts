@@ -15,9 +15,9 @@ export const REQUEST_TYPES = ["take", "move", "hold", "book"] as const;
 export type RequestType = typeof REQUEST_TYPES[number];
 export const ITEM_TYPES = ["product", "accessory", "temporary"] as const;
 export type ItemType = typeof ITEM_TYPES[number];
-export const STOCK_FILTERS = ["live", "reserved", "low_stock"] as const;
+export const STOCK_FILTERS = ["live", "reserved"] as const;
 export type StockFilter = typeof STOCK_FILTERS[number];
-export const STOCK_FILTER_LABELS: Record<StockFilter, string> = { live: "In stock", reserved: "Reserved", low_stock: "Low stock" };
+export const STOCK_FILTER_LABELS: Record<StockFilter, string> = { live: "In stock", reserved: "Reserved" };
 export type ProductTypeCounts = Record<"all" | ItemType, number>;
 export const MOVEMENT_TYPES = ["stock_in", "stock_out", "transfer", "adjustment"] as const;
 export type MovementType = typeof MOVEMENT_TYPES[number];
@@ -201,7 +201,6 @@ export interface InventoryStockSummary {
   // Active products with at least 1 live unit (sold excluded).
   product_count: number;
   total_live_quantity: number;
-  low_stock_count: number;
   // Quantities per bucket; sold is cumulative and excluded from total_live_quantity.
   location_quantities: Record<InventoryLocation, number>;
   // Active products with more than 0 units in each bucket (sold: products sold).

@@ -37,13 +37,14 @@ test("optional inventory text uses an em dash for missing or blank values", () =
   assert.equal(presentation.inventoryOptionalText("  CHR-042  "), "CHR-042");
 });
 test("Overview card links round-trip through the Products URL and unknown values are dropped",()=>{
-  for(const filter of [{stock:"live"},{stock:"reserved"},{stock:"low_stock"},{location:"sold"},{location:"warehouse"},{itemType:"accessory",stock:"live"}]){
+  for(const filter of [{stock:"live"},{stock:"reserved"},{location:"sold"},{location:"warehouse"},{itemType:"accessory",stock:"live"}]){
     const url=new URL(presentation.inventoryOverviewHref(filter),"http://x"), params=Object.fromEntries(url.searchParams);
     const {state,filters}=parseInventoryProductParams(params);
     assert.equal(url.pathname,"/inventory/products");
     assert.equal(inventoryProductsHref(state),presentation.inventoryOverviewHref(filter));
     assert.equal(filters.stock,filter.stock);
   }
+  assert.equal(parseInventoryProductParams({stock:"low_stock"}).state.stock,"");
   const bad=parseInventoryProductParams({stock:"everything",location:"moon",itemType:"gadget"});
   assert.deepEqual([bad.state.stock,bad.state.location,bad.state.itemType],["","",""]);
   assert.equal(hasInventoryFilters(parseInventoryProductParams({stock:"reserved"}).state),true);

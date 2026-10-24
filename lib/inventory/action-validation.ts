@@ -105,7 +105,6 @@ export function productInput(value: unknown, costsAllowed: boolean, patch: boole
   })) if (key in input) result[key] = code(input[key], choices, key);
   if (!patch || (review && 'quantity' in input)) result.quantity = integer(input.quantity, 1);
   if ((!patch || review) && 'initial_stock' in input) result.initial_stock = initialStockInput(input.initial_stock, result.quantity as number | undefined);
-  if (patch && !review && "low_stock_at" in input) result.low_stock_at = integer(input.low_stock_at);
   const dimensionKeys = ["dimension_length", "dimension_width", "dimension_height", "dimension_unit"];
   if (dimensionKeys.some(key => key in input)) {
     if (!dimensionKeys.every(key => key in input)) invalid("Provide all dimensions and their unit, or clear all four.");

@@ -4,6 +4,9 @@ import { requireInventoryUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { canSeeCosts, canViewInventory, canManageInventory, canSubmitHoldBook } from "./access";
 import { InventoryPageRangeError } from "./page-range-error";
+import { ReportTooLargeError } from "./reports/movements-report";
+import type { CurrentInventoryRow } from "./reports/current-inventory";
+import type { CurrentInventoryFilters } from "./reports/params";
 import { buildProductFilters, lookupText, movementFilters, pagination, requestFilters, requestSearchFilter, searchFilter } from "./filters";
 import { CATEGORY_COLUMNS, COST_COLUMNS, IMAGE_COLUMNS, MOVEMENT_COLUMNS, MOVEMENT_REQUEST_COLUMNS, PRODUCT_COLUMNS, PRODUCT_REQUEST_COLUMNS, STOCK_COLUMNS, SUMMARY_COLUMNS, categoryTree, pageResult, pick, summarizeStock, withCategoryCounts } from "./mapping";
 import type { StockRow } from "./mapping";
@@ -11,7 +14,7 @@ import type { InventoryCategoryOverview, InventoryMovementLink, InventoryBrand, 
 
 import { isActiveReservation, reservationTotals } from "./reservations";
 import type { InventoryReservationRow, InventoryReservation, InventoryProjectOption } from "./types";
-import { ITEM_TYPES } from "./types";
+import { ITEM_TYPES, LOCATION_QUANTITY_COLUMNS } from "./types";
 import type { ProductTypeCounts } from "./types";
 
 type Client = Awaited<ReturnType<typeof createClient>>;
@@ -43,6 +46,13 @@ async function allRows<T>(read: (from: number, to: number) => PromiseLike<ReadRe
     if (batch.length === 0) throw new Error("Incomplete inventory data");
   }
 }
+const ID_CHUNK = 150;
+/** Long id lists are read in chunks so a request address never grows too long. */
+async function inChunks<T>(values: string[], read: (part: string[]) => PromiseLike<T[]>): Promise<T[]> {
+  const parts: string[][] = [];
+  for (let index = 0; index < values.length; index += ID_CHUNK) parts.push(values.slice(index, index + ID_CHUNK));
+  return (await Promise.all(parts.map(read))).flat();
+}
 const ids = (values: (string | null | undefined)[]) => [...new Set(values.filter((value): value is string => !!value))];
 
 async function names(client: Client, products: { brand_id: string; category_id: string; subcategory_id: string | null }[]) {
@@ -63,14 +73,14 @@ async function names(client: Client, products: { brand_id: string; category_id: 
 async function displayNames(client: Client, userIds: string[]) {
   const unique = ids(userIds);
   if (!unique.length) return new Map<string, string | null>();
-  const data = rows(await client.schema("public").from("profiles").select("id,full_name").in("id", unique).returns<{ id: string; full_name: string | null }[]>());
+  const data = await inChunks(unique, part => client.schema("public").from("profiles").select("id,full_name").in("id", part).returns<{ id: string; full_name: string | null }[]>().then(rows));
   // Profiles hidden by RLS keep their identifier and a null display name.
   return new Map(data.map(row => [row.id, row.full_name]));
 }
 async function productSummaries(client: Client, productIds: (string | null)[]) {
   const unique = ids(productIds);
   if (!unique.length) return new Map<string, InventoryProductSummary>();
-  const data = rows(await client.schema("inventory").from("products").select(SUMMARY_COLUMNS.join(",")).in("id", unique).returns<InventoryProductSummary[]>());
+  const data = await inChunks(unique, part => client.schema("inventory").from("products").select(SUMMARY_COLUMNS.join(",")).in("id", part).returns<InventoryProductSummary[]>().then(rows));
   return new Map(data.map(row => [row.id, pick(row, SUMMARY_COLUMNS)]));
 }
 async function costRows(client: Client, allowed: boolean, table: "product_costs" | "product_request_costs", ownerIds: string[]) {
@@ -142,9 +152,8 @@ export async function getInventoryOverview(): Promise<InventoryOverview> {
 type ProductReadQuery = ReturnType<ReturnType<ReturnType<Client['schema']>['from']>['select']>;
 /** Product ids for filters that cannot be expressed as a single column comparison. Same rules as the Overview counts. */
 async function stockFilterIds(client: Client, plan: ReturnType<typeof buildProductFilters>): Promise<string[] | null> {
-  if (plan.stock !== "reserved" && plan.stock !== "low_stock") return null;
+  if (plan.stock !== "reserved") return null;
   const stock = await allRows<StockRow & { id: string }>((from, to) => client.schema("inventory").from("products").select(["id", ...STOCK_COLUMNS].join(","), { count: "exact" }).eq("is_active", true).order("id").range(from, to).returns<(StockRow & { id: string })[]>());
-  if (plan.stock === "low_stock") return stock.filter(row => row.quantity <= row.low_stock_at).map(row => row.id);
   return ids((await activeReservations(client, stock.map(row => row.id))).map(row => row.product_id));
 }
 function applyProductFilters(query: ProductReadQuery, plan: ReturnType<typeof buildProductFilters>, stockIds: string[] | null = null) {
@@ -258,42 +267,102 @@ export async function listMovementRequests(filters: RequestFilters = {}): Promis
   return pageResult(requests.map(row => ({ ...pick(row, MOVEMENT_REQUEST_COLUMNS), product: products.get(row.product_id) ?? null, submitter_display_name: people.get(row.submitted_by) ?? null })), total(response), range.page, range.page_size);
 }
 
+type MovementQuery = ReturnType<ReturnType<ReturnType<Client["schema"]>["from"]>["select"]>;
+/** Applies the history filters. Returns null when a search or person matches nobody (so nothing can match). */
+async function applyMovementFilters(client: Client, role: string | null | undefined, plan: ReturnType<typeof movementFilters>, query: MovementQuery): Promise<{ query: MovementQuery } | null> {
+  for (const key of ["product_id", "created_by", "movement_type", "action_type"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
+  if (plan.search) {
+    const productIds = await matchingProductIds(client, plan.search);
+    if (!productIds?.length) return null;
+    query = query.in("product_id", productIds);
+  }
+  if (plan.person) {
+    const personIds = await matchingPersonIds(client, role, plan.person);
+    if (!personIds.length) return null;
+    query = query.in("created_by", personIds);
+  }
+  if (plan.location) query = query.or(`from_location.eq.${plan.location},to_location.eq.${plan.location}`);
+  if (plan.from) query = query.gte("created_at", plan.from);
+  if (plan.to) query = query.lte("created_at", plan.to);
+  // Wrapped: a bare query builder is awaitable and would run if returned from an async function.
+  return { query };
+}
+/** Adds the product photo and the linked request or reservation to each movement. */
+async function withMovementDetails(client: Client, movements: InventoryMovementRow[], photos = true): Promise<InventoryMovement[]> {
+  const movementIds = movements.map(row => row.id), productIds = ids(movements.map(row => row.product_id));
+  const [enriched, imageRows, requestLinks, reservationLinks] = await Promise.all([
+    enrichMovements(client, movements),
+    photos ? inChunks(productIds, part => client.schema("inventory").from("product_images").select(IMAGE_COLUMNS.join(",")).in("product_id", part).eq("is_main", true).returns<InventoryImageRow[]>().then(rows)) : [],
+    inChunks(movementIds, part => client.schema("inventory").from("movement_requests").select("id,approved_movement_id").in("approved_movement_id", part).returns<{ id: string; approved_movement_id: string }[]>().then(rows)),
+    inChunks(movementIds, part => client.schema("inventory").from("reservations").select("id,fulfilled_movement_id").in("fulfilled_movement_id", part).returns<{ id: string; fulfilled_movement_id: string }[]>().then(rows)),
+  ]);
+  const images = new Map((await signedImages(client, imageRows)).map(row => [row.product_id, row.signed_url]));
+  const links = new Map<string, InventoryMovementLink>();
+  for (const row of requestLinks) links.set(row.approved_movement_id, { kind: "request", id: row.id });
+  for (const row of reservationLinks) links.set(row.fulfilled_movement_id, { kind: "reservation", id: row.id });
+  return enriched.map(row => ({ ...row, main_image_url: images.get(row.product_id) ?? null, linked: links.get(row.id) ?? (row.reference_type === "product_request" && row.reference_id ? { kind: "product_request" as const, id: row.reference_id } : null) }));
+}
+
 /** Manager movement history. Newest first; filters combine. */
 export async function listMovements(filters: MovementFilters = {}, page = 1): Promise<InventoryPage<InventoryMovement>> {
   const { profile } = await requireInventoryUser();
   if (!canManageInventory(profile?.role)) throw new Error("Inventory access denied");
   const client = await inventoryClient(profile?.role);
   const plan = movementFilters(filters), range = pagination(page);
-  let query = client.schema("inventory").from("movements").select(MOVEMENT_COLUMNS.join(","), { count: "exact" });
-  for (const key of ["product_id", "created_by", "movement_type", "action_type"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
-  if (plan.search) {
-    const productIds = await matchingProductIds(client, plan.search);
-    if (!productIds?.length) return emptyPage(range.page);
-    query = query.in("product_id", productIds);
-  }
-  if (plan.person) {
-    const personIds = await matchingPersonIds(client, profile?.role, plan.person);
-    if (!personIds.length) return emptyPage(range.page);
-    query = query.in("created_by", personIds);
-  }
-  if (plan.location) query = query.or(`from_location.eq.${plan.location},to_location.eq.${plan.location}`);
-  if (plan.from) query = query.gte("created_at", plan.from);
-  if (plan.to) query = query.lte("created_at", plan.to);
-  const response = await query.order("created_at", { ascending: false }).order("id").range(range.from, range.to).returns<InventoryMovementRow[]>();
+  const filtered = await applyMovementFilters(client, profile?.role, plan, client.schema("inventory").from("movements").select(MOVEMENT_COLUMNS.join(","), { count: "exact" }));
+  if (!filtered) return emptyPage(range.page);
+  const response = await filtered.query.order("created_at", { ascending: false }).order("id").range(range.from, range.to).returns<InventoryMovementRow[]>();
   if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
-  const movements = rows(response), movementIds = movements.map(row => row.id), productIds = ids(movements.map(row => row.product_id));
-  const [enriched, imageRows, requestLinks, reservationLinks] = await Promise.all([
-    enrichMovements(client, movements),
-    productIds.length ? client.schema("inventory").from("product_images").select(IMAGE_COLUMNS.join(",")).in("product_id", productIds).eq("is_main", true).returns<InventoryImageRow[]>().then(rows) : [],
-    movementIds.length ? client.schema("inventory").from("movement_requests").select("id,approved_movement_id").in("approved_movement_id", movementIds).returns<{ id: string; approved_movement_id: string }[]>().then(rows) : [],
-    movementIds.length ? client.schema("inventory").from("reservations").select("id,fulfilled_movement_id").in("fulfilled_movement_id", movementIds).returns<{ id: string; fulfilled_movement_id: string }[]>().then(rows) : [],
+  return pageResult(await withMovementDetails(client, rows(response)), total(response), range.page, range.page_size);
+}
+
+/** Every movement for the Excel report, paged through completely. Refuses more than the row limit. */
+export async function listMovementsForReport(filters: MovementFilters, limit: number): Promise<InventoryMovement[]> {
+  const { profile } = await requireInventoryUser();
+  if (!canManageInventory(profile?.role)) throw new Error("Inventory access denied");
+  const client = await inventoryClient(profile?.role);
+  const plan = movementFilters(filters);
+  const counted = await applyMovementFilters(client, profile?.role, plan, client.schema("inventory").from("movements").select("id", { count: "exact", head: true }));
+  if (!counted) return [];
+  if (total(await counted.query) > limit) throw new ReportTooLargeError();
+  const movements = await allRows<InventoryMovementRow>(async (from, to) => {
+    const filtered = await applyMovementFilters(client, profile?.role, plan, client.schema("inventory").from("movements").select(MOVEMENT_COLUMNS.join(","), { count: "exact" }));
+    return filtered!.query.order("created_at", { ascending: false }).order("id").range(from, to).returns<InventoryMovementRow[]>();
+  });
+  return withMovementDetails(client, movements, false);
+}
+
+const REPORT_COLUMNS = ["id", "stock_ref", "item_code", "item_name", "model_name", "brand_id", "category_id", "subcategory_id", "item_type", "status", "condition", "quantity", ...Object.values(LOCATION_QUANTITY_COLUMNS)].join(",");
+type ReportProductRow = { id: string; stock_ref: string | null; item_code: string | null; item_name: string; model_name: string | null; brand_id: string; category_id: string; subcategory_id: string | null; item_type: string; status: string; condition: string; quantity: number } & Record<typeof LOCATION_QUANTITY_COLUMNS[keyof typeof LOCATION_QUANTITY_COLUMNS], number>;
+
+/** Current inventory for the Excel and PDF report. Stock numbers only: costs are never read. */
+export async function listCurrentInventoryReport(filters: CurrentInventoryFilters): Promise<{ rows: CurrentInventoryRow[]; brandName: string | null; categoryName: string | null }> {
+  const { profile } = await requireInventoryUser();
+  if (!canManageInventory(profile?.role)) throw new Error("Inventory access denied");
+  const client = await inventoryClient(profile?.role);
+  const plan = buildProductFilters({ brand_id: filters.brand || undefined, category_id: filters.category || undefined, item_type: filters.itemType || undefined, location: filters.location || undefined, status: filters.status || undefined, active: true, stock: filters.includeSoldOut ? undefined : "live" });
+  const products = await allRows<ReportProductRow>((from, to) => applyProductFilters(client.schema("inventory").from("products").select(REPORT_COLUMNS, { count: "exact" }), plan).order("item_name").order("id").range(from, to).returns<ReportProductRow[]>());
+  const [labels, reservations, photoRows] = await Promise.all([
+    names(client, products),
+    allRows<InventoryReservationRow>((from, to) => client.schema("inventory").from("reservations").select(RESERVATION_COLUMNS.join(","), { count: "exact" }).eq("status", "active").order("id").range(from, to).returns<InventoryReservationRow[]>()),
+    filters.photos ? inChunks(products.map(row => row.id), part => client.schema("inventory").from("product_images").select(IMAGE_COLUMNS.join(",")).in("product_id", part).eq("is_main", true).returns<InventoryImageRow[]>().then(rows)) : [],
   ]);
-  const images = new Map((await signedImages(client, imageRows)).map(row => [row.product_id, row.signed_url]));
-  const links = new Map<string, InventoryMovementLink>();
-  for (const row of requestLinks) links.set(row.approved_movement_id, { kind: "request", id: row.id });
-  for (const row of reservationLinks) links.set(row.fulfilled_movement_id, { kind: "reservation", id: row.id });
-  const items = enriched.map(row => ({ ...row, main_image_url: images.get(row.product_id) ?? null, linked: links.get(row.id) ?? (row.reference_type === "product_request" && row.reference_id ? { kind: "product_request" as const, id: row.reference_id } : null) }));
-  return pageResult(items, total(response), range.page, range.page_size);
+  const reserved = new Map<string, number>(), now = new Date();
+  for (const row of reservations) if (isActiveReservation(row, now)) reserved.set(row.product_id, (reserved.get(row.product_id) ?? 0) + row.quantity);
+  const photos = new Map((await signedImages(client, photoRows)).map(row => [row.product_id, row.signed_url]));
+  const items = products.map<CurrentInventoryRow>(row => {
+    const label = labels(row), held = reserved.get(row.id) ?? 0;
+    return {
+      stock_ref: row.stock_ref, item_code: row.item_code, item_name: row.item_name, model_name: row.model_name, brand: label.brand_name, category: label.category_name, subcategory: label.subcategory_name,
+      item_type: row.item_type, status: row.status, condition: row.condition, warehouse: row.warehouse_quantity, dubai_showroom: row.dubai_showroom_quantity, abudhabi_showroom: row.abudhabi_showroom_quantity,
+      mockup: row.mockup_quantity, temporary_out: row.temporary_out_quantity, total_live: row.quantity, reserved: held, available: row.quantity - held, sold: row.sold_quantity, photo_url: photos.get(row.id) ?? null,
+    };
+  });
+  const [brandRows, categoryRows] = await Promise.all([
+    filters.brand ? client.schema("public").from("brands").select("id,name").eq("id", filters.brand).limit(1).returns<InventoryBrand[]>().then(rows) : [],
+    filters.category ? client.schema("inventory").from("categories").select("id,name").eq("id", filters.category).limit(1).returns<InventoryBrand[]>().then(rows) : [],
+  ]);
+  return { rows: items, brandName: brandRows[0]?.name ?? null, categoryName: categoryRows[0]?.name ?? null };
 }
 
 /** Categories with subcategories and how many active products use each. Managers only. */

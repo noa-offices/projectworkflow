@@ -17,7 +17,7 @@ export function productEditFormInput(data: FormData, options: { costsAllowed: bo
     custom_category_name: blankToNull(data.get("custom_category_name")), item_type: data.get("item_type"),
     item_name: String(data.get("item_name") ?? "").trim(), item_code: blankToNull(data.get("item_code")), model_name: blankToNull(data.get("model_name")),
     description: blankToNull(data.get("description")), note: blankToNull(data.get("note")),
-    status: data.get("status"), condition: data.get("condition"), low_stock_at: Number(data.get("low_stock_at") || 0),
+    status: data.get("status"), condition: data.get("condition"),
   };
   if (options.hasLocation) input.location = blankToNull(data.get("location"));
   const dimensions = ["dimension_length", "dimension_width", "dimension_height"];

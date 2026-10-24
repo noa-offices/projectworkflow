@@ -10,7 +10,7 @@ function form(overrides: Record<string, string> = {}) {
   const values: Record<string, string> = {
     brand_id: product.brand_id, category_id: product.category_id, subcategory_id: product.subcategory_id ?? "", custom_category_name: product.custom_category_name ?? "",
     item_type: product.item_type, item_name: product.item_name, item_code: product.item_code ?? "", model_name: product.model_name ?? "", description: product.description ?? "", note: product.note ?? "",
-    status: product.status, condition: product.condition, low_stock_at: String(product.low_stock_at), location: product.location ?? "",
+    status: product.status, condition: product.condition, location: product.location ?? "",
     dimension_length: "60", dimension_width: "50", dimension_height: "90", dimension_unit: "cm",
     price: String(product.costs!.price), freight_cost: String(product.costs!.freight_cost), c_and_f: String(product.costs!.c_and_f), transport: String(product.costs!.transport),
     custom_duty: String(product.costs!.custom_duty), labour: String(product.costs!.labour), vat: String(product.costs!.vat),
@@ -28,7 +28,7 @@ test("only System Owner and Admin Manager can use the product tools", () => {
 });
 test("an untouched form produces an empty patch", () => assert.deepEqual(patchOf(form()), {}));
 test("the patch holds only changed fields", () => {
-  assert.deepEqual(patchOf(form({ item_name: "  Arlo chair XL  ", low_stock_at: "7", price: "900" })), { item_name: "Arlo chair XL", low_stock_at: 7, costs: { price: 900 } });
+  assert.deepEqual(patchOf(form({ item_name: "  Arlo chair XL  ", price: "900" })), { item_name: "Arlo chair XL", costs: { price: 900 } });
 });
 test("blank item code and model name become empty values", () => {
   assert.deepEqual(patchOf(form({ item_code: "  ", model_name: "" })), { item_code: null, model_name: null });
