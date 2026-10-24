@@ -125,7 +125,7 @@ test('cards and detail put the stock reference directly below the name and omit 
   const product={...previewProduct,stock_ref:'02-0001',item_code:null,model_name:null,main_image_url:null};
   const card=(await load('../../components/inventory/product-card.tsx',shared)).ProductCard;
   const cardMarkup=html(card,{product});
-  assert.match(cardMarkup,/<\/h2><p[^>]*>02-0001<\/p>/);
+  assert.match(cardMarkup,/<\/h2><p[^>]*><span[^>]*>02-0001<\/span>/);
   assert.doesNotMatch(cardMarkup,/Code:|>—<|>null<|>undefined</);
   const detail=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-reservations':{ProductReservations:stub},'./product-image-gallery':{ProductImageGallery:stub},'./stock-by-location':{StockByLocation:stub}})).ProductDetailView;
   const detailMarkup=html(detail,{product});
@@ -152,12 +152,47 @@ test('photo cards lead with a cover image and show only nonzero stock locations 
   assert.match(markup,/<img[^>]*class="object-cover"/);
   assert.ok(markup.indexOf('<img')<markup.indexOf('<h2'));
   assert.match(markup,/focus-visible:outline/);
-  for(const label of ['Warehouse: 12','Dubai Showroom: 3','Abu Dhabi Showroom: 2','Sold (cumulative): 8']) {
+  for(const label of ['Warehouse: 12','Dubai Showroom: 3']) {
     assert.ok(markup.includes(`aria-label="${label}"`),label);
     assert.ok(markup.includes(`title="${label}"`),label);
   }
+  // Four non-zero places: two chips plus "+2", whose label names the ones folded away.
+  assert.match(markup,/aria-label="2 more: Abu Dhabi Showroom: 2, Sold \(cumulative\): 8"/); assert.ok(markup.includes('>+2<'));
   assert.doesNotMatch(markup,/Mockup|Temporary Out|grid-cols-3/);
-  for(const badge of ['17 live','Reserved 3','Available 14']) assert.ok(markup.includes(badge));
+  for(const text of ['17 live','14 avail','3 res.']) assert.ok(markup.includes(text),text);
+});
+test('product cards: brand on the photo, one compact stats line, reserved 0 hidden, same photo ratio, zero locations hidden',async()=>{
+  const card=(await load('../../components/inventory/product-card.tsx',shared)).ProductCard;
+  const render=(patch:object)=>html(card,{product:{...previewProduct,...patch}});
+  const markup=render({brand_name:'Nora Office'});
+  const photo=markup.slice(markup.indexOf('data-card-photo'),markup.indexOf('</h2>')+5);
+  assert.match(markup,/data-card-brand[^>]*>.*Nora Office/);
+  assert.ok(markup.indexOf('data-card-brand')<markup.indexOf('<h2'));          // label sits on the photo, before the text area
+  assert.match(photo,/data-card-brand/); assert.match(photo,/backdrop-blur/); assert.match(photo,/rounded-full/); assert.match(photo,/border-white/);
+  assert.equal(markup.indexOf('Nora Office',markup.indexOf('</h2>')),-1);       // not repeated in the text area
+  assert.match(markup,/<h2[^>]*line-clamp-2[^>]*text-\[13px\]|<h2[^>]*text-\[13px\][^>]*line-clamp-2/);
+  const none=render({brand_name:null});
+  assert.doesNotMatch(none,/data-card-brand|Brand not specified/);
+  // reserved 0 never shows; reserved above 0 shows one amber "N res."
+  const zero=render({reserved_quantity:0,available_quantity:17});
+  assert.doesNotMatch(zero,/Reserved|res\./); assert.ok(zero.includes('17 live')); assert.ok(zero.includes('17 avail'));
+  assert.ok(render({reserved_quantity:2,available_quantity:15}).includes('2 res.'));
+  // one stats line carries live, available and the status word
+  assert.match(zero,/data-card-stats[^>]*>.*17 live.*17 avail.*Available/);
+  // same photo box on every card, with or without a photo
+  const ratio=(m:string)=>m.match(/data-card-photo[^>]*class="([^"]*)"|class="([^"]*)"[^>]*data-card-photo/)?.slice(1).find(Boolean);
+  assert.equal(ratio(markup),ratio(render({main_image_url:null,brand_name:'A very long brand name that should be cut off before it breaks the card'})));
+  assert.match(ratio(markup)!,/aspect-\[4\/3\]/);
+  // cards in a row share one height: the card fills its grid cell
+  assert.match(markup,/class="group flex h-full min-h-11/);
+  // location chips: zeros hidden, at most three plus +N
+  const chips=render({warehouse_quantity:4,dubai_showroom_quantity:0,abudhabi_showroom_quantity:0,mockup_quantity:0,temporary_out_quantity:0,sold_quantity:0});
+  assert.ok(chips.includes('aria-label="Warehouse: 4"')); assert.doesNotMatch(chips,/Dubai|Abu Dhabi|>\+\d/);
+  const many=render({warehouse_quantity:1,dubai_showroom_quantity:1,abudhabi_showroom_quantity:1,mockup_quantity:1,temporary_out_quantity:1,sold_quantity:1});
+  assert.equal((many.match(/<li /g) ?? []).length,3); assert.ok(many.includes('>+4<'));
+  const three=render({warehouse_quantity:1,dubai_showroom_quantity:1,abudhabi_showroom_quantity:1,mockup_quantity:0,temporary_out_quantity:0,sold_quantity:0});
+  assert.equal((three.match(/<li /g) ?? []).length,3); assert.doesNotMatch(three,/>\+\d/);
+  assert.match(many,/flex-nowrap/);
 });
 
 test('missing photos use a distinct item-type icon and product lists fit two columns on phones',async()=>{
