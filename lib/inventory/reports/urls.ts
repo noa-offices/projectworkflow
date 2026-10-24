@@ -8,14 +8,20 @@ const withQuery = (path: string, pairs: [string, string | undefined | false][]) 
 };
 export const currentReportUrl = (filters: CurrentInventoryFilters, format: "xlsx" | "pdf") => withQuery("/api/inventory/reports/current", [
   ["format", format], ["brand", filters.brand], ["category", filters.category], ["itemType", filters.itemType], ["location", filters.location], ["status", filters.status],
-  ["soldOut", filters.includeSoldOut && "1"], ["photos", format === "pdf" && filters.photos && "1"],
+  ["soldOut", filters.includeSoldOut && "1"], ["photos", format === "pdf" && filters.photos && "1"], ["excelPhotos", format === "xlsx" && !filters.excelPhotos && "0"],
 ]);
 export const movementsReportUrl = (filters: MovementReportFilters) => withQuery("/api/inventory/reports/movements", [
-  ["from", filters.from], ["to", filters.to], ["product", filters.product], ["action", filters.action], ["location", filters.location], ["person", filters.person.trim()],
+  ["from", filters.from], ["to", filters.to], ["product", filters.product], ["action", filters.action], ["location", filters.location], ["person", filters.person.trim()], ["photos", !filters.photos && "0"],
 ]);
 /** File name from a Content-Disposition header, or the fallback. */
 export function downloadName(header: string | null, fallback: string): string {
   const star = header?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
   if (star) { try { return decodeURIComponent(star); } catch { /* use the plain name */ } }
   return header?.match(/filename="([^"]+)"/i)?.[1] ?? fallback;
+}
+/** A short note about photos, from the headers the report routes send. */
+export function photoNote(headers: { get(name: string): string | null }): string | null {
+  if (headers.get("X-Photos-Omitted") === "too-many") return "Narrow the filters to include photos.";
+  const skipped = Number(headers.get("X-Photos-Skipped") ?? 0);
+  return skipped > 0 ? `${skipped} ${skipped === 1 ? "photo" : "photos"} could not be loaded.` : null;
 }

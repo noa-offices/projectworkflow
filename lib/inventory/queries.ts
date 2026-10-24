@@ -317,35 +317,39 @@ export async function listMovements(filters: MovementFilters = {}, page = 1): Pr
 }
 
 /** Every movement for the Excel report, paged through completely. Refuses more than the row limit. */
-export async function listMovementsForReport(filters: MovementFilters, limit: number): Promise<InventoryMovement[]> {
+export async function listMovementsForReport(filters: MovementFilters, limit: number, options: { photos?: boolean; photoLimit?: number } = {}): Promise<{ movements: InventoryMovement[]; photosOmitted: boolean }> {
   const { profile } = await requireInventoryUser();
   if (!canManageInventory(profile?.role)) throw new Error("Inventory access denied");
   const client = await inventoryClient(profile?.role);
   const plan = movementFilters(filters);
   const counted = await applyMovementFilters(client, profile?.role, plan, client.schema("inventory").from("movements").select("id", { count: "exact", head: true }));
-  if (!counted) return [];
+  if (!counted) return { movements: [], photosOmitted: false };
   if (total(await counted.query) > limit) throw new ReportTooLargeError();
   const movements = await allRows<InventoryMovementRow>(async (from, to) => {
     const filtered = await applyMovementFilters(client, profile?.role, plan, client.schema("inventory").from("movements").select(MOVEMENT_COLUMNS.join(","), { count: "exact" }));
     return filtered!.query.order("created_at", { ascending: false }).order("id").range(from, to).returns<InventoryMovementRow[]>();
   });
-  return withMovementDetails(client, movements, false);
+  const wantPhotos = !!options.photos && movements.length <= (options.photoLimit ?? 0);
+  return { movements: await withMovementDetails(client, movements, wantPhotos), photosOmitted: !!options.photos && !wantPhotos && movements.length > 0 };
 }
 
 const REPORT_COLUMNS = ["id", "stock_ref", "item_code", "item_name", "model_name", "brand_id", "category_id", "subcategory_id", "item_type", "status", "condition", "quantity", ...Object.values(LOCATION_QUANTITY_COLUMNS)].join(",");
 type ReportProductRow = { id: string; stock_ref: string | null; item_code: string | null; item_name: string; model_name: string | null; brand_id: string; category_id: string; subcategory_id: string | null; item_type: string; status: string; condition: string; quantity: number } & Record<typeof LOCATION_QUANTITY_COLUMNS[keyof typeof LOCATION_QUANTITY_COLUMNS], number>;
 
 /** Current inventory for the Excel and PDF report. Stock numbers only: costs are never read. */
-export async function listCurrentInventoryReport(filters: CurrentInventoryFilters): Promise<{ rows: CurrentInventoryRow[]; brandName: string | null; categoryName: string | null }> {
+export async function listCurrentInventoryReport(filters: CurrentInventoryFilters, options: { photos?: boolean; photoLimit?: number } = {}): Promise<{ rows: CurrentInventoryRow[]; brandName: string | null; categoryName: string | null; photosOmitted: boolean }> {
   const { profile } = await requireInventoryUser();
   if (!canManageInventory(profile?.role)) throw new Error("Inventory access denied");
   const client = await inventoryClient(profile?.role);
   const plan = buildProductFilters({ brand_id: filters.brand || undefined, category_id: filters.category || undefined, item_type: filters.itemType || undefined, location: filters.location || undefined, status: filters.status || undefined, active: true, stock: filters.includeSoldOut ? undefined : "live" });
   const products = await allRows<ReportProductRow>((from, to) => applyProductFilters(client.schema("inventory").from("products").select(REPORT_COLUMNS, { count: "exact" }), plan).order("item_name").order("id").range(from, to).returns<ReportProductRow[]>());
+  // Photos are read only for the products in this report, and only when there are few enough of them.
+  const wantPhotos = (options.photos ?? filters.photos) && products.length <= (options.photoLimit ?? Number.POSITIVE_INFINITY);
+  const photosOmitted = (options.photos ?? filters.photos) && !wantPhotos && products.length > 0;
   const [labels, reservations, photoRows] = await Promise.all([
     names(client, products),
     allRows<InventoryReservationRow>((from, to) => client.schema("inventory").from("reservations").select(RESERVATION_COLUMNS.join(","), { count: "exact" }).eq("status", "active").order("id").range(from, to).returns<InventoryReservationRow[]>()),
-    filters.photos ? inChunks(products.map(row => row.id), part => client.schema("inventory").from("product_images").select(IMAGE_COLUMNS.join(",")).in("product_id", part).eq("is_main", true).returns<InventoryImageRow[]>().then(rows)) : [],
+    wantPhotos ? inChunks(products.map(row => row.id), part => client.schema("inventory").from("product_images").select(IMAGE_COLUMNS.join(",")).in("product_id", part).eq("is_main", true).returns<InventoryImageRow[]>().then(rows)) : [],
   ]);
   const reserved = new Map<string, number>(), now = new Date();
   for (const row of reservations) if (isActiveReservation(row, now)) reserved.set(row.product_id, (reserved.get(row.product_id) ?? 0) + row.quantity);
@@ -362,7 +366,7 @@ export async function listCurrentInventoryReport(filters: CurrentInventoryFilter
     filters.brand ? client.schema("public").from("brands").select("id,name").eq("id", filters.brand).limit(1).returns<InventoryBrand[]>().then(rows) : [],
     filters.category ? client.schema("inventory").from("categories").select("id,name").eq("id", filters.category).limit(1).returns<InventoryBrand[]>().then(rows) : [],
   ]);
-  return { rows: items, brandName: brandRows[0]?.name ?? null, categoryName: categoryRows[0]?.name ?? null };
+  return { rows: items, brandName: brandRows[0]?.name ?? null, categoryName: categoryRows[0]?.name ?? null, photosOmitted };
 }
 
 /** Categories with subcategories and how many active products use each. Managers only. */

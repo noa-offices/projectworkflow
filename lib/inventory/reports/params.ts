@@ -13,8 +13,8 @@ const fail = (error: string): { ok: false; error: string } => ({ ok: false, erro
 const allowed = <T extends string>(value: string, choices: readonly T[]): T | "" | null => value === "" ? "" : (choices as readonly string[]).includes(value) ? value as T : null;
 
 export const MAX_REPORT_RANGE_DAYS = 366;
-export type CurrentInventoryFilters = { brand: string; category: string; itemType: ItemType | ""; location: InventoryLocation | ""; status: ProductStatus | ""; includeSoldOut: boolean; photos: boolean };
-export type MovementReportFilters = { from: string; to: string; product: string; action: MovementAction | ""; location: InventoryLocation | ""; person: string };
+export type CurrentInventoryFilters = { brand: string; category: string; itemType: ItemType | ""; location: InventoryLocation | ""; status: ProductStatus | ""; includeSoldOut: boolean; photos: boolean; excelPhotos: boolean };
+export type MovementReportFilters = { from: string; to: string; product: string; action: MovementAction | ""; location: InventoryLocation | ""; person: string; photos: boolean };
 
 /** Every query parameter is checked against an allow-list, a UUID shape or a real date. */
 export function parseCurrentInventoryParams(raw: Raw): ParseResult<CurrentInventoryFilters & { format: "xlsx" | "pdf" }> {
@@ -26,7 +26,7 @@ export function parseCurrentInventoryParams(raw: Raw): ParseResult<CurrentInvent
   if (itemType === null) return fail("Choose an item type from the list.");
   if (location === null) return fail("Choose a location from the list.");
   if (status === null) return fail("Choose a status from the list.");
-  return { ok: true, value: { format, brand: brand.toLowerCase(), category: category.toLowerCase(), itemType, location, status, includeSoldOut: get(raw, "soldOut") === "1", photos: get(raw, "photos") === "1" } };
+  return { ok: true, value: { format, brand: brand.toLowerCase(), category: category.toLowerCase(), itemType, location, status, includeSoldOut: get(raw, "soldOut") === "1", photos: get(raw, "photos") === "1", excelPhotos: get(raw, "excelPhotos") !== "0" } };
 }
 /** Date range is required. It defaults to the last 30 Dubai days and may not run backwards or past one year. */
 export function parseMovementReportParams(raw: Raw, now: Date = new Date()): ParseResult<MovementReportFilters & { bounds: { from: string; to: string } }> {
@@ -40,6 +40,6 @@ export function parseMovementReportParams(raw: Raw, now: Date = new Date()): Par
   const action = allowed(get(raw, "action"), MOVEMENT_ACTIONS), location = allowed(get(raw, "location"), Object.keys(LOCATION_LABELS) as InventoryLocation[]);
   if (action === null) return fail("Choose an action from the list.");
   if (location === null) return fail("Choose a location from the list.");
-  return { ok: true, value: { from, to, product: product.toLowerCase(), action, location, person: get(raw, "person").slice(0, 100), bounds: dubaiDayBounds(from, to) } };
+  return { ok: true, value: { from, to, product: product.toLowerCase(), action, location, person: get(raw, "person").slice(0, 100), photos: get(raw, "photos") !== "0", bounds: dubaiDayBounds(from, to) } };
 }
 export function defaultMovementRange(now: Date = new Date()) { const to = dubaiDateKey(now); return { from: shiftDateKey(to, -29), to }; }

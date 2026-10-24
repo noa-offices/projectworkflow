@@ -389,7 +389,7 @@ test("current inventory report pages through every row, applies filters, reads n
     { id: "r1", product_id: "a", quantity: 2, status: "active", expires_at: null }, { id: "r2", product_id: "a", quantity: 1, status: "active", expires_at: "2000-01-01T00:00:00Z" },
     { id: "r3", product_id: "b", quantity: 1, status: "active", expires_at: "2999-01-01T00:00:00Z" },
   ];
-  const report = await queries.listCurrentInventoryReport({ brand: "", category: "", itemType: "", location: "warehouse", status: "", includeSoldOut: false, photos: false });
+  const report = await queries.listCurrentInventoryReport({ brand: "", category: "", itemType: "", location: "warehouse", status: "", includeSoldOut: false, photos: false, excelPhotos: false });
   assert.equal(report.rows.length, 5);
   assert.deepEqual(report.rows.map(item => [item.item_name, item.total_live, item.reserved, item.available]), [["A", 5, 2, 3], ["B", 3, 1, 2], ["C", 4, 0, 4], ["D", 1, 0, 1], ["E", 2, 0, 2]]);
   const productCalls = callsTo("products");
@@ -400,17 +400,17 @@ test("current inventory report pages through every row, applies filters, reads n
   }
   assert.equal(calls.some(call => call.table.includes("cost")), false);
   reset("system_owner"); fixtures.products = [{ ...base, id: "z", item_name: "Z", quantity: 0 }];
-  const withSoldOut = await queries.listCurrentInventoryReport({ brand: "b1", category: "c1", itemType: "accessory", location: "", status: "hold", includeSoldOut: true, photos: false });
+  const withSoldOut = await queries.listCurrentInventoryReport({ brand: "b1", category: "c1", itemType: "accessory", location: "", status: "hold", includeSoldOut: true, photos: false, excelPhotos: false });
   const params = callsTo("products")[0].url.searchParams;
   assert.equal(params.get("brand_id"), "eq.b1"); assert.equal(params.get("category_id"), "eq.c1"); assert.equal(params.get("item_type"), "eq.accessory"); assert.equal(params.get("status"), "eq.hold"); assert.equal(params.has("quantity"), false);
   assert.equal(withSoldOut.brandName, "Brand");
-  for (const viewerRole of ["viewer", "warehouse_staff", "designer"]) { reset(viewerRole); await assert.rejects(() => queries.listCurrentInventoryReport({ brand: "", category: "", itemType: "", location: "", status: "", includeSoldOut: false, photos: false }), /Inventory access denied/); assert.equal(clientCalls, 0); }
+  for (const viewerRole of ["viewer", "warehouse_staff", "designer"]) { reset(viewerRole); await assert.rejects(() => queries.listCurrentInventoryReport({ brand: "", category: "", itemType: "", location: "", status: "", includeSoldOut: false, photos: false, excelPhotos: false }), /Inventory access denied/); assert.equal(clientCalls, 0); }
 });
 test("movements report pages through all rows and refuses more than the limit", async () => {
   reset("admin_manager"); cap = 1;
   fixtures.movements = [1, 2, 3].map(index => ({ id: `m${index}`, product_id: "p1", action_type: "sale", movement_type: "stock_out", from_location: "warehouse", to_location: "sold", quantity: 1, previous_quantity: 5, new_quantity: 4, created_by: "u1", created_at: `2026-10-2${index}T00:00:00Z`, reference_type: "manual", reference_id: null }));
   const all = await queries.listMovementsForReport({ from: "2026-10-01T00:00:00.000Z" }, 10);
-  assert.equal(all.length, 3);
+  assert.equal(all.movements.length, 3);
   assert.ok(callsTo("movements").filter(call => call.method === "GET").length >= 3);
   assert.equal(callsTo("movements")[0].method, "HEAD");
   await assert.rejects(() => queries.listMovementsForReport({}, 2), (error: Error) => error.name === "ReportTooLargeError" && /Narrow the date range/.test(error.message));
