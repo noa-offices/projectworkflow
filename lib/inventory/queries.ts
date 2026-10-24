@@ -11,6 +11,8 @@ import type { InventoryBrand, InventoryCategory, InventoryCosts, InventoryImage,
 
 import { isActiveReservation, reservationTotals } from "./reservations";
 import type { InventoryReservationRow, InventoryReservation, InventoryProjectOption } from "./types";
+import { ITEM_TYPES } from "./types";
+import type { ProductTypeCounts } from "./types";
 
 type Client = Awaited<ReturnType<typeof createClient>>;
 type ReadResult<T> = { data: T[] | null; error: unknown; count?: number | null };
@@ -123,15 +125,33 @@ export async function getInventoryOverview(): Promise<InventoryOverview> {
   return { reserved_quantity: reservations.reduce((sum,row) => sum + row.quantity,0), ...summarizeStock(stock), pending_product_requests: total(productRequests), pending_movement_requests: total(movementRequests) };
 }
 
-export async function listProducts(filters: ProductFilters = {}, page = 1): Promise<InventoryPage<InventoryProduct>> {
-  const { profile } = await requireInventoryUser();
-  const client = await inventoryClient(profile?.role);
-  const plan = buildProductFilters(filters), range = pagination(page);
-  let query = client.schema("inventory").from("products").select(PRODUCT_COLUMNS.join(","), { count: "exact" });
+type ProductReadQuery = ReturnType<ReturnType<ReturnType<Client['schema']>['from']>['select']>;
+function applyProductFilters(query: ProductReadQuery, plan: ReturnType<typeof buildProductFilters>) {
   if (plan.active !== null) query = query.eq("is_active", plan.active);
   if (plan.search) query = query.or(plan.search);
   for (const key of ["brand_id", "category_id", "subcategory_id", "status", "item_type"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
   if (plan.location_column) query = query.gt(plan.location_column, 0);
+  return query;
+}
+
+/** Counts every matching row using the caller's RLS, independent of the current type/page. */
+export async function getProductTypeCounts(filters: ProductFilters = {}): Promise<ProductTypeCounts> {
+  const { profile } = await requireInventoryUser();
+  const client = await inventoryClient(profile?.role);
+  const plan = buildProductFilters({ ...filters, item_type: undefined });
+  const counts = await Promise.all(ITEM_TYPES.map(async itemType => total(await applyProductFilters(
+    client.schema("inventory").from("products").select("id", { count: "exact", head: true }),
+    { ...plan, item_type: itemType },
+  ))));
+  const [product, accessory, temporary] = counts;
+  return { all: product + accessory + temporary, product, accessory, temporary };
+}
+
+export async function listProducts(filters: ProductFilters = {}, page = 1): Promise<InventoryPage<InventoryProduct>> {
+  const { profile } = await requireInventoryUser();
+  const client = await inventoryClient(profile?.role);
+  const plan = buildProductFilters(filters), range = pagination(page);
+  const query = applyProductFilters(client.schema("inventory").from("products").select(PRODUCT_COLUMNS.join(","), { count: "exact" }), plan);
   const response = await query.order(plan.order.column, { ascending: plan.order.ascending }).order("id").range(range.from, range.to).returns<InventoryProductRow[]>();
   if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
   const products = rows(response), productIds = products.map(row => row.id);

@@ -15,6 +15,7 @@ export const REQUEST_TYPES = ["take", "move", "hold", "book"] as const;
 export type RequestType = typeof REQUEST_TYPES[number];
 export const ITEM_TYPES = ["product", "accessory", "temporary"] as const;
 export type ItemType = typeof ITEM_TYPES[number];
+export type ProductTypeCounts = Record<"all" | ItemType, number>;
 export const MOVEMENT_TYPES = ["stock_in", "stock_out", "transfer", "adjustment"] as const;
 export type MovementType = typeof MOVEMENT_TYPES[number];
 export type MovementAction = "receive_stock" | "internal_transfer" | "return_to_warehouse" | "sale" | "adjustment";
