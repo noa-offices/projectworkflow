@@ -6,7 +6,6 @@ import { AddItemButton } from './add-item-button';
 export function InventoryOverviewView({ overview, productsHref = "/inventory/products", role }: { overview: InventoryOverview; productsHref?: string; role?: string | null }) {
   const stats = [
     { label: "Reserved", value: overview.reserved_quantity },
-    { label: "Products", value: overview.product_count },
     { label: "Low stock products", value: overview.low_stock_count },
     { label: "Pending product requests", value: overview.pending_product_requests, href: '/inventory/requests?tab=products&status=pending_review' },
     { label: "Pending movement requests", value: overview.pending_movement_requests, href: '/inventory/requests?tab=movements&status=pending_review' },
@@ -18,9 +17,21 @@ export function InventoryOverviewView({ overview, productsHref = "/inventory/pro
       <section className="min-w-0 rounded-lg border border-emerald-200 bg-white p-5 shadow-sm sm:p-6">
         <div className="flex min-w-0 flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h2 className="text-sm font-medium text-zinc-600">Total live quantity</h2>
-            <p className="mt-2 break-words text-4xl font-semibold tabular-nums tracking-tight text-emerald-950">{formatInventoryNumber(overview.total_live_quantity)}</p>
-            <p className="mt-2 text-sm text-zinc-500">Across all live locations. Cumulative sold stock is excluded.</p>
+            <div className="grid grid-cols-2 gap-4 sm:gap-8">
+              <div className="min-w-0">
+                <h2 className="text-sm font-medium text-zinc-600">Units</h2>
+                <p className="mt-2 break-words text-4xl font-semibold tabular-nums tracking-tight text-emerald-950">{formatInventoryNumber(overview.total_live_quantity)}</p>
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-sm font-medium text-zinc-600">Products</h2>
+                <p className="mt-2 break-words text-4xl font-semibold tabular-nums tracking-tight text-emerald-950">{formatInventoryNumber(overview.product_count)}</p>
+                <p className="mt-2 flex flex-wrap gap-2 text-xs text-zinc-600">
+                  <span className="rounded-full bg-zinc-100 px-2 py-1">Accessories {formatInventoryNumber(overview.item_type_counts.accessory)}</span>
+                  <span className="rounded-full bg-zinc-100 px-2 py-1">Temporary {formatInventoryNumber(overview.item_type_counts.temporary)}</span>
+                </p>
+              </div>
+            </div>
+            <p className="mt-3 text-sm text-zinc-500">Across all live locations. Cumulative sold stock is excluded.</p>
           </div>
           <Link href={productsHref} className="inline-flex min-h-11 max-w-full shrink-0 items-center justify-center rounded-lg bg-emerald-900 px-5 py-3 text-center text-sm font-semibold text-white transition hover:bg-emerald-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Browse products</Link>
         </div>
@@ -37,7 +48,7 @@ export function InventoryOverviewView({ overview, productsHref = "/inventory/pro
 
       <section className="min-w-0 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
         <h2 className="text-base font-semibold text-zinc-950">Quantity by location</h2>
-        <p className="mt-1 text-sm text-zinc-500">Live stock and cumulative sold quantities.</p>
+        <p className="mt-1 text-sm text-zinc-500">Units and number of products in each location.</p>
         <dl className="mt-4 grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-3">
           {(Object.keys(LOCATION_LABELS) as InventoryLocation[]).map((location) => (
             <div key={location} className="min-w-0 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
@@ -46,6 +57,7 @@ export function InventoryOverviewView({ overview, productsHref = "/inventory/pro
                 {location === "sold" ? <span className="mt-1 block text-sm text-zinc-500">Cumulative</span> : null}
               </dt>
               <dd className="mt-2 break-words text-xl font-semibold tabular-nums text-zinc-950">{formatInventoryNumber(overview.location_quantities[location])}</dd>
+              <dd className="mt-1 text-sm text-zinc-500">{formatInventoryNumber(overview.location_product_counts[location])} {overview.location_product_counts[location] === 1 ? "product" : "products"}{location === "sold" ? " sold" : ""}</dd>
             </div>
           ))}
         </dl>

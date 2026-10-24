@@ -11,9 +11,25 @@ test("product mapping discards unselected cost properties", () => {
 test("stock summary counts the inclusive low threshold and excludes sold from live quantity", () => {
   const stock = { warehouse_quantity: 2, dubai_showroom_quantity: 1, abudhabi_showroom_quantity: 0, mockup_quantity: 0, temporary_out_quantity: 0, sold_quantity: 50 };
   assert.deepEqual(summarizeStock([{ ...stock, quantity: 3, low_stock_at: 3 }, { ...stock, warehouse_quantity: 0, dubai_showroom_quantity: 0, quantity: 0, low_stock_at: 0 }]), {
-    product_count: 2, total_live_quantity: 3, low_stock_count: 2,
+    product_count: 1, total_live_quantity: 3, low_stock_count: 2,
     location_quantities: { warehouse: 2, dubai_showroom: 1, abudhabi_showroom: 0, mockup: 0, temporary_out: 0, sold: 100 },
+    location_product_counts: { warehouse: 1, dubai_showroom: 1, abudhabi_showroom: 0, mockup: 0, temporary_out: 0, sold: 2 },
+    item_type_counts: { product: 0, accessory: 0, temporary: 0 },
   });
+});
+test("stock summary counts units and distinct live products per location and type", () => {
+  const zero = { warehouse_quantity: 0, dubai_showroom_quantity: 0, abudhabi_showroom_quantity: 0, mockup_quantity: 0, temporary_out_quantity: 0, sold_quantity: 0, low_stock_at: 0 };
+  const result = summarizeStock([
+    { ...zero, item_type: "product", warehouse_quantity: 5, dubai_showroom_quantity: 2, quantity: 7, sold_quantity: 4 },
+    { ...zero, item_type: "accessory", warehouse_quantity: 3, quantity: 3 },
+    { ...zero, item_type: "temporary", mockup_quantity: 1, quantity: 1 },
+    { ...zero, item_type: "product", quantity: 0, sold_quantity: 9 },
+  ]);
+  assert.equal(result.total_live_quantity, 11);
+  assert.equal(result.product_count, 3);
+  assert.deepEqual(result.item_type_counts, { product: 1, accessory: 1, temporary: 1 });
+  assert.deepEqual(result.location_quantities, { warehouse: 8, dubai_showroom: 2, abudhabi_showroom: 0, mockup: 1, temporary_out: 0, sold: 13 });
+  assert.deepEqual(result.location_product_counts, { warehouse: 2, dubai_showroom: 1, abudhabi_showroom: 0, mockup: 1, temporary_out: 0, sold: 2 });
 });
 test("category tree sorts without mutating rows, preserves orphans, and rejects cycles", () => {
   const row = (id: string, parent_id: string | null, sort_order = 0) => ({ id, parent_id, name: id, sort_order } as InventoryCategory);

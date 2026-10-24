@@ -184,11 +184,16 @@ export interface InventoryProductDetail extends InventoryProduct {
 }
 export interface InventoryPage<T> { items: T[]; total: number; page: number; page_size: number; page_count: number }
 export interface InventoryStockSummary {
+  // Active products with at least 1 live unit (sold excluded).
   product_count: number;
   total_live_quantity: number;
   low_stock_count: number;
   // Quantities per bucket; sold is cumulative and excluded from total_live_quantity.
   location_quantities: Record<InventoryLocation, number>;
+  // Active products with more than 0 units in each bucket (sold: products sold).
+  location_product_counts: Record<InventoryLocation, number>;
+  // Live products (as product_count) split by item type.
+  item_type_counts: Record<ItemType, number>;
 }
 export interface InventoryOverview extends InventoryStockSummary {
   reserved_quantity: number;
