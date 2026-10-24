@@ -97,6 +97,7 @@ export interface InventoryProductSummary {
   model_name: string;
 }
 export interface InventoryProductRequestRow extends ProductIdentity {
+  initial_stock: Partial<Record<Exclude<InventoryLocation, 'sold'>, number>> | null;
   requested_status: ProductStatus;
   request_status: RequestStatus;
   submitted_by: string;

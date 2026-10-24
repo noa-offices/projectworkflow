@@ -11,6 +11,7 @@ const productRequest: InventoryProductRequest = {
   item_name: "Arlo ergonomic task chair", model_name: "Arlo Mid Back", description: previewProduct.description,
   condition: "new", source: "purchase", note: "New delivery received. Please check the item details before adding to stock.",
   dimension_length: 65, dimension_width: 62, dimension_height: 110, dimension_unit: "cm", item_type: "product",
+  initial_stock: null,
   quantity: 6, created_at: created, updated_at: created, requested_status: "available", request_status: "pending_review",
   submitted_by: previewRequestUserId, submitted_at: created, reviewed_by: null, reviewed_at: null, review_note: null,
   approved_product_id: null, brand_name: "Nora Office", category_name: "Chairs", subcategory_name: "Task chairs",

@@ -9,14 +9,15 @@ import { reviewMovementRequest, reviewProductRequest } from "@/lib/inventory/act
 import { dimensionLabel, formatInventoryDate, formatInventoryNumber, inventoryLabel, orderedProductImages } from "@/lib/inventory/presentation";
 import { reviewRequestPayload } from "@/lib/inventory/request-presentation";
 import { loadProductRequestImages } from "@/lib/inventory/request-reads";
-import { LOCATION_LABELS, type InventoryImage, type InventoryMovementRequest, type InventoryProductRequest } from "@/lib/inventory/types";
+import { LOCATION_LABELS, type InventoryImage, type InventoryMovementRequest, type InventoryProductRequest, type InventoryBrand, type InventoryCategoryNode } from "@/lib/inventory/types";
 import { ProductImageGallery } from "./product-image-gallery";
 import { RequestDialog } from "./request-dialog";
+import { ProductRequestForm } from './product-request-form';
 
 type Request = InventoryProductRequest | InventoryMovementRequest;
 type Tab = "products" | "movements";
 type Status = "pending_review" | "approved" | "rejected" | "all";
-type Props = { products: InventoryProductRequest[]; movements: InventoryMovementRequest[]; tab: Tab; status: Status; mine: boolean; userId: string; role: string | null; page: number; pageCount: number; total: number; preview?: boolean; previewImages?: InventoryImage[] };
+type Props = { products: InventoryProductRequest[]; movements: InventoryMovementRequest[]; tab: Tab; status: Status; mine: boolean; userId: string; role: string | null; page: number; pageCount: number; total: number; preview?: boolean; previewImages?: InventoryImage[]; brands?: InventoryBrand[]; categories?: InventoryCategoryNode[] };
 const controlBase = "inline-flex min-h-11 items-center justify-center rounded-lg border font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:opacity-50";
 const buttonBase = `${controlBase} px-4 py-2.5 text-sm`;
 const button = `${buttonBase} border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50`;
@@ -34,7 +35,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   return <div className="min-w-0"><dt className="text-sm text-zinc-500">{label}</dt><dd className="mt-1 text-sm font-medium text-zinc-900 [overflow-wrap:anywhere]">{children || "Not specified"}</dd></div>;
 }
 function RequestLocations({ request }: { request: Request }) {
-  if (isProduct(request)) return <p className="text-sm text-zinc-600">Initial location: Warehouse</p>;
+  if (isProduct(request)) return <p className="text-sm text-zinc-600">Initial stock: {Object.entries(request.initial_stock ?? {warehouse:request.quantity}).filter(([,count]) => count > 0).map(([key,count]) => `${LOCATION_LABELS[key as keyof typeof LOCATION_LABELS]} ${count}`).join(', ')}</p>;
   return <p className="text-sm text-zinc-600 [overflow-wrap:anywhere]">{request.from_location ? LOCATION_LABELS[request.from_location] : "No source specified"}{request.to_location ? ` → ${LOCATION_LABELS[request.to_location]}` : ""}</p>;
 }
 
@@ -70,6 +71,18 @@ function RequestDetails({ request, preview, previewImages, onClose }: { request:
       <button type="button" className={`${button} w-full`} onClick={onClose}>Close details</button>
     </div>
   </RequestDialog>;
+}
+
+function ProductReviewDialog({request, props, onClose, onSuccess}: {request:InventoryProductRequest;props:Props;onClose:()=>void;onSuccess:(message:string)=>void}) {
+  const [images,setImages] = useState<InventoryImage[] | null>(props.preview ? props.previewImages ?? [] : null);
+  const [error,setError] = useState(''), [attempt,setAttempt] = useState(0), [busy,setBusy] = useState(false);
+  useEffect(() => {
+    if (props.preview) return;
+    let active = true;
+    void loadProductRequestImages(request.id).then(result => {if (!active) return; if (result.ok) setImages(result.images); else setError(result.error);}).catch(() => {if (active) setError('Photos could not be loaded.');});
+    return () => {active = false;};
+  },[request.id,props.preview,attempt]);
+  return <RequestDialog title="Review and approve" onClose={onClose} busy={busy} fullScreen>{images ? <ProductRequestForm brands={props.brands ?? []} categories={props.categories ?? []} role={props.role} preview={props.preview} request={request} images={images} onCancel={onClose} onBusyChange={setBusy} onApproved={() => onSuccess(props.preview ? 'Preview: request approved. No changes were saved.' : 'Request approved.')} /> : error ? <div role="alert"><p>{error}</p><button type="button" className={button} onClick={() => {setError('');setAttempt(value => value + 1);}}>Retry photos</button></div> : <p role="status">Loading photos…</p>}</RequestDialog>;
 }
 
 function ReviewDialog({ request, decision, preview, onClose, onSuccess }: { request: Request; decision: "approved" | "rejected"; preview: boolean; onClose: () => void; onSuccess: (message: string) => void }) {
@@ -140,11 +153,11 @@ export function RequestsView(props: Props) {
         <div className="mt-4 border-t border-zinc-100 pt-3"><p className="text-sm text-zinc-700 [overflow-wrap:anywhere]">{request.submitter_display_name || "Unknown"}{own ? <span className="ml-2 rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-900">Your request</span> : null}</p><p className="mt-1 text-xs leading-5 text-zinc-500"><time dateTime={request.submitted_at}>{formatInventoryDate(request.submitted_at)}</time></p></div>
         {request.reviewed_at || request.request_status !== "pending_review" ? <div className="mt-3 rounded-lg bg-zinc-50 p-3"><p className="text-xs font-semibold text-zinc-700">Review note</p><p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600 [overflow-wrap:anywhere]">{request.review_note || "No review note recorded."}</p></div> : null}
         <button type="button" className={`${button} mt-4 w-full`} onClick={() => setDetails(request)}>View details</button>
-        {manager && request.request_status === "pending_review" ? <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" className={primary} onClick={() => { setMessage(""); setReview({ request, decision: "approved" }); }}>Approve</button><button type="button" className={`${button} text-red-700`} onClick={() => { setMessage(""); setReview({ request, decision: "rejected" }); }}>Reject</button></div> : null}
+        {manager && request.request_status === "pending_review" ? <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" className={primary} onClick={() => { setMessage(""); setReview({ request, decision: "approved" }); }}>{isProduct(request) ? 'Review and approve' : 'Approve'}</button><button type="button" className={`${button} text-red-700`} onClick={() => { setMessage(""); setReview({ request, decision: "rejected" }); }}>Reject</button></div> : null}
       </article>;
     })}</div> : <section className="rounded-lg border border-dashed border-zinc-300 bg-white px-5 py-12 text-center"><ClipboardList className="mx-auto h-8 w-8 text-zinc-400" aria-hidden="true" /><h2 className="mt-3 text-lg font-semibold text-zinc-950">No requests to show</h2><p className="mt-2 text-sm text-zinc-500">Try another status or show all submitters.</p><Link href={href({ status: "all", mine: false })} className={`${button} mt-4`}>Show all requests</Link></section>}
     {pageCount > 1 ? <nav aria-label="Request pages" className="flex flex-wrap items-center justify-between gap-3"><div>{page > 1 ? <Link href={href({ page: page - 1 })} className={button}>Previous</Link> : null}</div><p className="text-sm text-zinc-600">Page {page} of {pageCount}</p><div>{page < pageCount ? <Link href={href({ page: page + 1 })} className={button}>Next</Link> : null}</div></nav> : null}
     {details ? <RequestDetails request={details} preview={preview} previewImages={props.previewImages} onClose={() => setDetails(null)} /> : null}
-    {review ? <ReviewDialog request={review.request} decision={review.decision} preview={preview} onClose={() => setReview(null)} onSuccess={text => { setReview(null); setMessage(text); if (!preview) router.refresh(); }} /> : null}
+    {review ? isProduct(review.request) && review.decision === 'approved' ? <ProductReviewDialog request={review.request} props={props} onClose={() => setReview(null)} onSuccess={text => {setReview(null);setMessage(text);if (!preview) router.refresh();}} /> : <ReviewDialog request={review.request} decision={review.decision} preview={preview} onClose={() => setReview(null)} onSuccess={text => { setReview(null); setMessage(text); if (!preview) router.refresh(); }} /> : null}
   </div>;
 }

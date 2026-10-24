@@ -58,7 +58,7 @@ export async function reviewMovementRequest(input: unknown) {
   const { profile } = await requireInventoryUser();
   if (!canManageInventory(profile?.role)) return denied();
   return perform("review movement request", async () => {
-    const value = object(input), args = { request_id: uuid(value.requestId), decision: code(value.decision, ["approved", "rejected"], "decision"), review_note: text(value.reviewNote, "Review note", 2000) };
+    const value = object(input), args = { request_id: uuid(value.requestId), decision: code(value.decision, ["approved", "rejected"], "decision"), review_note: text(value.reviewNote, "Review note", 2000, value.decision === "rejected") };
     await rpc(await createClient(), "review_movement_request", args);
     refresh(); return {};
   });
@@ -76,8 +76,19 @@ export async function reviewProductRequest(input: unknown) {
   const { profile } = await requireInventoryUser();
   if (!canManageInventory(profile?.role)) return denied();
   return perform("review product request", async () => {
-    const value = object(input), args = { request_id: uuid(value.requestId), decision: code(value.decision, ["approved", "rejected"], "decision"), review_note: text(value.reviewNote, "Review note", 2000) };
+    const value = object(input), args = { request_id: uuid(value.requestId), decision: code(value.decision, ["approved", "rejected"], "decision"), review_note: text(value.reviewNote, "Review note", 2000, value.decision === "rejected") };
     const data = await rpc(await createClient(), "review_product_request", args);
+    refresh(); return { productId: data === null ? null : returnedId(data) };
+  });
+}
+export async function reviewProductRequestWithEdits(input: unknown) {
+  const { profile } = await requireInventoryUser();
+  if (!canManageInventory(profile?.role)) return denied();
+  return perform('review product request with edits', async () => {
+    const value = object(input), decision = code(value.decision, ['approved','rejected'], 'decision');
+    const args = { request_id: uuid(value.requestId), decision, review_note: text(value.reviewNote, 'Review note', 2000, decision === 'rejected'),
+      edits: decision === 'rejected' ? {} : productInput(value.edits ?? {}, true, true, true) };
+    const data = await rpc(await createClient(), 'review_product_request_with_edits', args);
     refresh(); return { productId: data === null ? null : returnedId(data) };
   });
 }
