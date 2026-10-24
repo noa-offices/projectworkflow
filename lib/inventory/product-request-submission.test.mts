@@ -17,6 +17,12 @@ function form() {
   for (const [key,value] of Object.entries({brand_id:id, category_id:id, stock_ref:"S",item_code:"I",item_name:"Chair",model_name:"M",quantity:"2",price:"12.50"})) data.set(key,value);
   return data;
 }
+test('add-item form ignores supplied stock reference and normalizes optional fields to null',()=>{
+  const data=form();data.set('stock_ref','browser-ref');data.set('item_code','  ');data.delete('model_name');
+  const input=productRequestFormInput(data,false);
+  assert.equal('stock_ref' in input,false);
+  assert.equal(input.item_code,null);assert.equal(input.model_name,null);
+});
 test("product form converts numbers, omits empty dimensions and excludes non-manager costs",()=>{
   assert.equal(productRequestFormInput(form(),false).quantity,2);
   assert.equal("costs" in productRequestFormInput(form(),false),false);

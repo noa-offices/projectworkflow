@@ -23,7 +23,7 @@ export function photoSelectionError(existingCount: number, incoming: readonly Pi
 }
 export function productRequestFormInput(data: FormData, costsAllowed: boolean): Record<string, unknown> {
   const input: Record<string, unknown> = {};
-  for (const key of ["brand_id", "category_id", "custom_category_name", "stock_ref", "item_code", "item_name", "model_name", "description", "note", "item_type", "requested_status", "condition", "source"])
+  for (const key of ["brand_id", "category_id", "custom_category_name", "item_code", "item_name", "model_name", "description", "note", "item_type", "requested_status", "condition", "source"])
     if (data.has(key)) input[key] = data.get(key);
   input.subcategory_id = data.get("subcategory_id") || null;
   input.quantity = Number(data.get("quantity"));

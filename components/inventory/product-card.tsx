@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
-import { formatInventoryNumber, inventoryLabel, productStockLocations } from "@/lib/inventory/presentation";
+import { formatInventoryNumber, inventoryLabel, inventoryOptionalText, productStockLocations } from "@/lib/inventory/presentation";
 import type { InventoryProduct } from "@/lib/inventory/types";
 
 export function ProductCard({ product, href }: { product: InventoryProduct; href?: string }) {
@@ -26,7 +26,7 @@ export function ProductCard({ product, href }: { product: InventoryProduct; href
         </div>
         <div className="min-w-0 flex-1">
           <h2 className="break-words text-base font-semibold text-zinc-950 group-hover:text-emerald-900">{product.item_name}</h2>
-          <p className="mt-1 break-words text-sm text-zinc-600">{product.item_code}</p>
+          <p className="mt-1 break-words text-sm text-zinc-600">{inventoryOptionalText(product.item_code)}</p>
           <p className="mt-1 break-words text-sm text-zinc-500">{product.brand_name || "Brand not specified"}</p>
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
             <span className="max-w-full break-words rounded-full border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-medium text-zinc-700">{inventoryLabel(product.status)}</span>

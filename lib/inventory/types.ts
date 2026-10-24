@@ -42,10 +42,10 @@ interface ProductIdentity {
   category_id: string;
   subcategory_id: string | null;
   custom_category_name: string | null;
-  stock_ref: string;
-  item_code: string;
+  stock_ref: string | null;
+  item_code: string | null;
   item_name: string;
-  model_name: string;
+  model_name: string | null;
   description: string | null;
   condition: ProductCondition;
   source: ProductSource;
@@ -60,6 +60,7 @@ interface ProductIdentity {
   updated_at: string;
 }
 export interface InventoryProductRow extends ProductIdentity, StockBuckets {
+  stock_ref: string;
   low_stock_at: number;
   status: ProductStatus;
   location: string | null;
@@ -94,9 +95,9 @@ export interface InventoryProductSummary {
   id: string;
   brand_id: string;
   stock_ref: string;
-  item_code: string;
+  item_code: string | null;
   item_name: string;
-  model_name: string;
+  model_name: string | null;
 }
 export interface InventoryProductRequestRow extends ProductIdentity {
   initial_stock: Partial<Record<Exclude<InventoryLocation, 'sold'>, number>> | null;

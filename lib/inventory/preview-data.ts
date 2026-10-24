@@ -24,7 +24,7 @@ export const previewProduct: InventoryProductDetail = {
   costs: { price: 850, freight_cost: 35, c_and_f: 20, transport: 15, custom_duty: 10, labour: 5, vat: 46.75, total_cost: 981.75 },
 };
 export const previewProducts: InventoryProduct[] = [previewProduct,
-  { ...previewProduct, id: "55555555-5555-4555-8555-555555555555", item_name: "Arlo meeting chair", item_code: "CHR-043", stock_ref: "WH-2026-0043", quantity: 4, reserved_quantity: 1, available_quantity: 3, warehouse_quantity: 3, dubai_showroom_quantity: 1, abudhabi_showroom_quantity: 0, sold_quantity: 3, low_stock_at: 5, status: "hold", main_image_url: null },
+  { ...previewProduct, id: "55555555-5555-4555-8555-555555555555", item_name: "Arlo meeting chair", item_code: null, model_name: null, stock_ref: "WH-2026-0043", quantity: 4, reserved_quantity: 1, available_quantity: 3, warehouse_quantity: 3, dubai_showroom_quantity: 1, abudhabi_showroom_quantity: 0, sold_quantity: 3, low_stock_at: 5, status: "hold", main_image_url: null },
   { ...previewProduct, id: "66666666-6666-4666-8666-666666666666", item_name: "Arlo visitor chair with upholstered arm pads", item_code: "CHR-044", stock_ref: "WH-2026-0044", quantity: 22, reserved_quantity: 0, available_quantity: 22, warehouse_quantity: 20, dubai_showroom_quantity: 0, abudhabi_showroom_quantity: 2, sold_quantity: 1, status: "showroom" },
 ];
 export const previewOverview: InventoryOverview = { reserved_quantity: 4, ...summarizeStock(previewProducts), pending_product_requests: 3, pending_movement_requests: 5 };

@@ -236,3 +236,17 @@ test('reservation read failures never turn into available stock', async () => {
  await assert.rejects(()=>queries.getProduct('p1'),/Unable to read inventory/);
  await assert.rejects(()=>queries.getInventoryOverview(),/Unable to read inventory/);
 });
+test('generated stock refs remain searchable and nullable request and product identifiers survive reads',async()=>{
+  reset();
+  fixtures.products=[{...product,item_code:null,model_name:null,stock_ref:'02-0001'}];
+  fixtures.product_requests=[{...fixtures.product_requests[0],stock_ref:null,item_code:null,model_name:null}];
+  const result=await queries.listProducts({search:'02-0001'});
+  assert.equal(result.items[0].stock_ref,'02-0001');assert.equal(result.items[0].item_code,null);assert.equal(result.items[0].model_name,null);
+  const query=calls.find(call=>call.table==='products')!;
+  assert.match(query.url.searchParams.get('or')!,/stock_ref\.ilike/);
+  assert.match(query.url.searchParams.get('or')!,/02-0001/);
+  const detail=await queries.getProduct('p1');
+  assert.equal(detail?.stock_ref,'02-0001');assert.equal(detail?.item_code,null);assert.equal(detail?.model_name,null);
+  const requests=await queries.listProductRequests();
+  assert.equal(requests.items[0].stock_ref,null);assert.equal(requests.items[0].item_code,null);assert.equal(requests.items[0].model_name,null);
+});

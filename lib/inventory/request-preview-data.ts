@@ -7,8 +7,8 @@ const created = "2026-10-23T06:30:00.000Z";
 const productRequest: InventoryProductRequest = {
   id: "99999999-9999-4999-8999-999999999991", brand_id: previewProduct.brand_id,
   category_id: previewProduct.category_id, subcategory_id: previewProduct.subcategory_id,
-  custom_category_name: null, stock_ref: "WH-2026-0051", item_code: "CHR-051",
-  item_name: "Arlo ergonomic task chair", model_name: "Arlo Mid Back", description: previewProduct.description,
+  custom_category_name: null, stock_ref: null, item_code: null,
+  item_name: "Arlo ergonomic task chair", model_name: null, description: previewProduct.description,
   condition: "new", source: "purchase", note: "New delivery received. Please check the item details before adding to stock.",
   dimension_length: 65, dimension_width: 62, dimension_height: 110, dimension_unit: "cm", item_type: "product",
   initial_stock: null,
@@ -19,7 +19,7 @@ const productRequest: InventoryProductRequest = {
 };
 export const previewProductRequests: InventoryProductRequest[] = [
   productRequest,
-  { ...productRequest, id: "99999999-9999-4999-8999-999999999992", item_name: "Arlo meeting chair", item_code: "CHR-052", submitted_by: other, submitter_display_name: null, quantity: 3, note: "Meeting room delivery.", request_status: "approved", reviewed_by: other, reviewed_at: created, review_note: "Checked and added to inventory.", approved_product_id: previewProduct.id },
+  { ...productRequest, id: "99999999-9999-4999-8999-999999999992", item_name: "Arlo meeting chair", stock_ref: "02-0001", item_code: "CHR-052", approved_product: { id: previewProduct.id, brand_id: previewProduct.brand_id, item_name: "Arlo meeting chair", stock_ref: "02-0001", item_code: "CHR-052", model_name: null }, submitted_by: other, submitter_display_name: null, quantity: 3, note: "Meeting room delivery.", request_status: "approved", reviewed_by: other, reviewed_at: created, review_note: "Checked and added to inventory.", approved_product_id: previewProduct.id },
   { ...productRequest, id: "99999999-9999-4999-8999-999999999993", item_name: "Arlo visitor chair", item_code: "CHR-053", request_status: "rejected", reviewed_by: other, reviewed_at: created, review_note: "Please confirm the item code and submit a new request." },
 ];
 const movement: InventoryMovementRequest = {

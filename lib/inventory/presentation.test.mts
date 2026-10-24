@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseInventoryProductParams, inventoryProductsHref, hasInventoryFilters, inventoryLabel, productStockLocations, orderedProductImages, dimensionLabel } from "./presentation";
+import * as presentation from "./presentation";
 import type { InventoryImage } from "./types";
 const id="11111111-1111-4111-8111-111111111111";
 test("URL parsing validates repeated values, identifiers, codes and page boundaries",()=>{
@@ -28,4 +29,10 @@ test("labels and stock data keep cumulative sold separate",()=>{
 test("gallery ordering puts main first, caps three, and never mutates query data",()=>{
   const images=[{id:"a",sort_order:0,is_main:false},{id:"b",sort_order:2,is_main:true},{id:"c",sort_order:1,is_main:false},{id:"d",sort_order:3,is_main:false}] as InventoryImage[];
   assert.deepEqual(orderedProductImages(images).map(i=>i.id),["b","a","c"]);assert.equal(images[0].id,"a");
+});
+
+test("optional inventory text uses an em dash for missing or blank values", () => {
+  assert.equal(typeof presentation.inventoryOptionalText, "function");
+  for (const value of [null, undefined, "", "   "]) assert.equal(presentation.inventoryOptionalText(value), "—");
+  assert.equal(presentation.inventoryOptionalText("  CHR-042  "), "CHR-042");
 });

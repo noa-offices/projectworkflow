@@ -102,6 +102,17 @@ test("RPC payloads are whitelisted, costs are stripped for warehouse, hold/book 
   reset("designer");await actions.submitMovementRequest({productId:id,requestType:"book",referenceNote:" Project reference ",quantity:1});
   assert.deepEqual(calls[0].body,{product_id:id,request_type:"book",action_type:"internal_transfer",from_location:null,to_location:null,quantity:1,note:null,project_id:null,reference_note:"Project reference",expires_at:null});
 });
+test('submit and review strip stock references while accepting empty optional identifiers',async()=>{
+  reset();
+  assert.equal((await actions.submitProductRequest({brand_id:id,category_id:id,item_name:'Chair',quantity:2,stock_ref:{spoof:true},item_code:' ',model_name:''})).ok,true);
+  const payload=(calls[0].body as {payload:Record<string,unknown>}).payload;
+  assert.equal('stock_ref' in payload,false);assert.equal(payload.item_code,null);assert.equal(payload.model_name,null);
+  reset();
+  assert.equal((await actions.reviewProductRequestWithEdits({requestId:id,decision:'approved',edits:{stock_ref:'Spoof',item_code:null,model_name:''}})).ok,true);
+  assert.deepEqual((calls[0].body as {edits:object}).edits,{item_code:null,model_name:null});
+  reset();failure={code:'P0001',message:'Brand needs a code'};
+  assert.deepEqual(await actions.submitProductRequest({brand_id:id,category_id:id,item_name:'Chair',quantity:1}),{ok:false,error:'Brand needs a code.'});
+});
 test("known RPC errors are friendly; unexpected errors are logged without returning details",async()=>{
   reset();failure={code:"P0001",message:"Only 2 units are in warehouse"};
   assert.deepEqual(await actions.recordDirectMovement({productId:id,actionType:"receive_stock",quantity:1}),{ok:false,error:"Only 2 units are in Warehouse."});
