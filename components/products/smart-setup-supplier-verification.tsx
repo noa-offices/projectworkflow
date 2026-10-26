@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { checkSmartSetupSupplierPrices, listSmartSetupSupplierSourcesAction } from "@/app/products/smart-setup-supplier-check-actions";
+import { listSupplierPriceDecisions } from "@/app/products/supplier-review-decision-actions";
 import type { ProductTemplateDraft } from "@/lib/products/product-template-draft";
 import type { SmartSetupSupplierCheckOutput } from "@/lib/products/smart-setup-supplier-check";
 import type { SmartSetupSupplierSourceOption } from "@/lib/products/smart-setup-supplier-sources";
@@ -68,14 +69,21 @@ export function SupplierVerificationPanel({ brandId, sources, definitionId, onSe
     const saved = mapDecisions(records), rows = buildReviewRows(fresh.output.results, fresh.cells), conflicts = conflictingDecisionKeys(rows);
     setDecisionSummary({ fingerprint: fresh.fingerprint, count: rows.filter((r) => !conflicts.has(decisionKey(r)) && decisionForRow(r, saved[decisionKey(r)])).length });
   }, [fresh]);
-  const decidedCount = decisionSummary?.fingerprint === fresh?.fingerprint ? decisionSummary?.count ?? 0 : 0;
+  // Managers see "N decided" as soon as a check finishes, without opening the review window.
+  useEffect(() => {
+    if (!canManageDecisions || !fresh) return;
+    let current = true;
+    listSupplierPriceDecisions(fresh.output.source.versionId).then((records) => { if (current) onDecisionsSaved(records); }).catch(() => {});
+    return () => { current = false; };
+  }, [canManageDecisions, fresh, onDecisionsSaved]);
+  const decidedCount = fresh && decisionSummary?.fingerprint === fresh.fingerprint ? decisionSummary.count : null;
   const reviewButton = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
   // Closing the review window hands focus back to the button that opened it.
   useEffect(() => { if (wasOpen.current && !reviewOpen) reviewButton.current?.focus(); wasOpen.current = reviewOpen; }, [reviewOpen]);
   const summary = fresh ? summarizeCheckResults(fresh.output.results) : null;
   const headline = summary
-    ? `${summary.counts.MATCHED} matched · ${summary.counts.MISMATCH} mismatch · ${summary.counts.NOT_FOUND} not found · ${summary.counts.NEEDS_REVIEW} needs review${canManageDecisions ? ` · ${decidedCount} decided` : ""}`
+    ? `${summary.counts.MATCHED} matched · ${summary.counts.MISMATCH} mismatch · ${summary.counts.NOT_FOUND} not found · ${summary.counts.NEEDS_REVIEW} needs review${canManageDecisions && decidedCount !== null ? ` · ${decidedCount} decided` : ""}`
     : stale ? "Result is out of date" : "Not checked";
 
   return <>

@@ -36,3 +36,13 @@ test("custom price, note, changed-price tag and unsaved count render plainly", (
   const button = renderToStaticMarkup(createElement(ReviewSaveButton, { count: 5, disabled: false, saving: false, onSave() {} }));
   assert.match(button, /5 unsaved changes/); assert.doesNotMatch(button, /disabled=""/);
 });
+test("manager view shows every row without paging; footer count appears only once decisions are known", async () => {
+  const many = Array.from({ length: 120 }, (_, i) => ({ ...r, locator: `l${i}`, code: `C${i}` }));
+  const html = renderToStaticMarkup(createElement(SupplierReviewDialog, { fresh: { ...fresh, output: { source: r.source, results: many } }, stale: false, selected: null, onClose() {}, canManageDecisions: true }));
+  assert.equal(html.match(/<tr style="height:60px"/g)?.length, 120); assert.doesNotMatch(html, />Next</); assert.doesNotMatch(html, />Previous</);
+  mock.module("@/app/products/smart-setup-supplier-check-actions", { namedExports: { checkSmartSetupSupplierPrices: async () => { throw Error("no check"); }, listSmartSetupSupplierSourcesAction: async () => ({ status: "unauthorized" }) } });
+  const { SupplierVerificationPanel } = await import("./smart-setup-supplier-verification");
+  const option = { definitionId: "d", name: "F", versionId: r.source.versionId, versionTitle: "List", effectiveFrom: null, receivedAt: null, currency: "EUR", basis: "list" };
+  const footer = renderToStaticMarkup(createElement(SupplierVerificationPanel, { brandId: "b", sources: { state: "ready", options: [option], canManageDecisions: true }, definitionId: "d", onSelect() {}, selected: option, running: false, error: null, stale: false, fresh, reviewOpen: false, onReviewOpen() {}, onReviewClose() {}, onRun() {} }));
+  assert.match(footer, /1 mismatch/); assert.doesNotMatch(footer, /0 decided/, "no made-up count before the saved decisions load");
+});

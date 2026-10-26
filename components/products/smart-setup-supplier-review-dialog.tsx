@@ -45,7 +45,6 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [bulkAction, setBulkAction] = useState<ReviewDecision | "">("");
   const [decisionFilter, setDecisionFilter] = useState<"" | "undecided" | "decided" | "check_later">("");
-  const [page, setPage] = useState(0);
   const [confirmClose, setConfirmClose] = useState(false);
   const requestClose = () => { if (decisions.saving) return; if (decisions.unsavedCount) setConfirmClose(true); else onClose(); };
 
@@ -66,11 +65,11 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
   const counts = countReviewStatuses(allRows);
   const effectiveDecision = (row: ReviewRow) => decisions.conflicts.has(decisionKey(row)) ? "" : decisionWithDraft(row, decisions.saved[decisionKey(row)], decisions.edits[decisionKey(row)]);
   const shown = sortReviewRows(filterReviewRows(allRows, statuses, query).filter((row) => !canManageDecisions || !decisionFilter || (decisionFilter === "undecided" ? !effectiveDecision(row) : decisionFilter === "decided" ? !!effectiveDecision(row) : effectiveDecision(row) === "check_later")), sort);
+  // Manager rows hold action controls and vary in height, so they are all rendered (a check has at most 500 rows); read-only rows are windowed.
   const windowed = !canManageDecisions && shown.length > WINDOW_ABOVE;
-  const currentPage = Math.min(page, Math.max(0, Math.ceil(shown.length / 50) - 1));
-  const first = canManageDecisions ? currentPage * 50 : windowed ? Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN) : 0;
-  const last = canManageDecisions ? Math.min(shown.length, first + 50) : windowed ? Math.min(shown.length, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN) : shown.length;
-  const backToTop = () => { if (scrollRef.current) scrollRef.current.scrollTop = 0; setScrollTop(0); setPage(0); };
+  const first = windowed ? Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN) : 0;
+  const last = windowed ? Math.min(shown.length, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN) : shown.length;
+  const backToTop = () => { if (scrollRef.current) scrollRef.current.scrollTop = 0; setScrollTop(0); };
   const eligibleKeys = [...new Set(shown.filter((r) => !decisions.conflicts.has(decisionKey(r))).map(decisionKey))];
   const toggleSelected = (key: string) => setSelectedKeys((current) => { const next = new Set(current); if (!next.delete(key)) next.add(key); return next; });
   const actionControls = (row: ReviewRow) => {
@@ -192,7 +191,6 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
       </div>}
       {canManageDecisions && fresh ? <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-200 bg-zinc-50 px-3 py-2 text-sm">
         <span>{allRows.filter((r) => effectiveDecision(r)).length} decided · {counts.MATCHED} matched · {counts.MISMATCH} mismatch · {counts.NOT_FOUND} not found · {counts.NEEDS_REVIEW} needs review</span>
-        {shown.length > 50 ? <div className="flex items-center gap-2"><button type="button" disabled={currentPage === 0} onClick={() => { setPage(currentPage - 1); scrollRef.current?.scrollTo({ top: 0 }); }} className="min-h-9 px-2 underline disabled:opacity-50">Previous</button><span>{first + 1}–{last} of {shown.length}</span><button type="button" disabled={last === shown.length} onClick={() => { setPage(currentPage + 1); scrollRef.current?.scrollTo({ top: 0 }); }} className="min-h-9 px-2 underline disabled:opacity-50">Next</button></div> : null}
       </footer> : null}
     </div>
   </div>;

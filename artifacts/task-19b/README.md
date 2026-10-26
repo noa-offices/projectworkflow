@@ -16,7 +16,7 @@ Reused `inventory.can_manage()` / `canSeeCosts`, the checked source version ID, 
 
 Verification: 33 focused tests passed; typecheck and touched-file lint passed. Six browser scenario groups passed with zero browser errors. Screenshots: [1440](supplier-review-1440.png), [1024](supplier-review-1024.png), [390](supplier-review-390.png). The browser fixture mounts the real components with in-memory actions; the SQL contract runs in disposable PGlite and rolls back schema and test data. Live Supabase/PostgREST and signed-in end-to-end persistence were not tested.
 
-Decisions made: Not decided cancels a saved record; conflicting duplicate code/price-field rows are blocked; custom/kept amounts retain the imported currency; CSV exports saved decisions; manager rows use 50-row pages and responsive cards; saves use batches of 200 with partial-failure recovery; concurrent saves use the latest successful write.
+Decisions made: Not decided cancels a saved record; conflicting duplicate code/price-field rows are blocked; custom/kept amounts retain the imported currency; CSV exports saved decisions; manager rows are all rendered without paging (max 500, controls vary row height) with responsive cards below 1280 px; saves use batches of 200 with partial-failure recovery; concurrent saves use the latest successful write.
 
 Run SQL in this order:
 1. **TEST first:** [`supplier_price_review_decisions_TEST.sql`](../../supabase/tests/supplier_price_review_decisions_TEST.sql). Contains the migration and assertions inside one transaction, ending in ROLLBACK.
@@ -24,4 +24,6 @@ Run SQL in this order:
 
 The standalone [`supplier_price_review_decisions.sql`](../../supabase/tests/supplier_price_review_decisions.sql) can be rerun after APPLY; it also rolls back its fixtures. All SQL tests use reserved fake rows only.
 
-Products-suite result and compare link are added after the final run and push.
+Products suite: 1919 pass, 50 fail; the 50 failures are identical to main.
+
+Finished by Claude: removed the 50-row manager paging, footer "N decided" now loads right after a check (hidden until known), CSV BOM written as `﻿`.
