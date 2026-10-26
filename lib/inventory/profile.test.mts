@@ -72,3 +72,11 @@ test("access lock: warehouse staff reach /inventory/** pages only; everything el
   assert.ok(menu.includes("INVENTORY_PROFILE_PATH") && menu.includes("INVENTORY_NOTIFICATIONS_PATH"));
   assert.doesNotMatch(menu, /"\/(?!inventory)[a-z]/, "warehouse menu must not link outside Inventory");
 });
+
+test("the '@' name rule exists only on the Inventory page; /settings/profile saving is untouched", () => {
+  assert.ok(!validateProfileInput({ fullName: "a@b.com", phone: "" }).ok);
+  const settings = source("app/settings/actions.ts");
+  assert.doesNotMatch(settings, /inventory\/profile|validateProfileInput/);
+  assert.match(settings, /const fullName = optionalTextValue\(formData, "full_name"\);/);
+  assert.doesNotMatch(source("app/settings/profile/page.tsx"), /inventory\/profile/);
+});

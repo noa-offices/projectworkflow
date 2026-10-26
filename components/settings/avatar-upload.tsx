@@ -96,7 +96,7 @@ export function AvatarUpload({ currentAvatarUrl, userId, displayName, inventory 
           onClick={() => inputRef.current?.click()}
           className={inventory ? "inline-flex min-h-11 items-center rounded-lg border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-50" : "text-xs font-semibold text-emerald-900 transition hover:text-emerald-700 disabled:opacity-50"}
         >
-          {isUploading ? "Uploading…" : "Change avatar"}
+          {isUploading ? (inventory ? "Saving photo…" : "Uploading…") : inventory ? "Change photo" : "Change avatar"}
         </button>
         {savedToast ? (
           <span role="status" className={inventory ? "text-sm text-emerald-700" : "text-xs text-emerald-700"}>{inventory ? "Photo updated." : "Avatar updated."}</span>

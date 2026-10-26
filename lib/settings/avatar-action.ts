@@ -9,7 +9,7 @@ type ActionResult = { ok: true } | { ok: false; error: string };
 export async function saveAvatarUrl(avatarUrl: string): Promise<ActionResult> {
   const { user } = await requireInventoryUser();
   // Storage RLS only lets people write inside their own folder; refuse anything else early.
-  if (typeof avatarUrl !== "string" || !avatarUrl.startsWith(`${user.id}/`)) return { ok: false, error: "Invalid avatar path." };
+  if (typeof avatarUrl !== "string" || !avatarUrl.startsWith(`${user.id}/`) || avatarUrl.includes("..") || avatarUrl.includes("\\")) return { ok: false, error: "Invalid avatar path." };
   const supabase = await createClient();
 
   const { error } = await supabase

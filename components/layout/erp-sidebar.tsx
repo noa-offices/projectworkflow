@@ -405,7 +405,7 @@ export function ErpSidebar({
           aria-expanded={mobileOpen}
           aria-label="Open navigation"
           onClick={() => setMobileOpen(true)}
-          className="rounded-md border border-zinc-200 bg-white p-1.5 text-zinc-700"
+          className="rounded-md border border-zinc-200 bg-white inline-flex h-11 w-11 items-center justify-center text-zinc-700"
         >
           <Menu className="h-5 w-5" aria-hidden="true" />
         </button>
@@ -418,7 +418,7 @@ export function ErpSidebar({
           </span>
         </Link>
         <div className="ml-auto flex items-center gap-1.5">
-          <Link href={profileHref(pathname)} aria-label="My profile" className="rounded-full">
+          <Link href={profileHref(pathname)} aria-label="My profile" className="inline-flex h-11 w-11 items-center justify-center rounded-full">
             <ResolvedAvatar
               path={userAvatarUrl ?? null}
               alt={userDisplayName ?? "Profile"}
