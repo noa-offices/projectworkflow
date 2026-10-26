@@ -99,4 +99,5 @@ select pg_temp.check_true(has_function_privilege('authenticated','inventory.pers
 select pg_temp.check_true(not has_function_privilege('anon','inventory.person_names(uuid[])','execute') and not has_function_privilege('service_role','inventory.person_names(uuid[])','execute')
  and not has_function_privilege('anon','inventory.search_people(text)','execute') and not has_function_privilege('service_role','inventory.search_people(text)','execute'),'anon and service_role cannot execute');
 select pg_temp.check_true(not has_function_privilege('authenticated','inventory.is_record_actor(uuid)','execute'),'helper is internal');
+select 'ALL PR16 TESTS PASSED' as result;
 rollback;
