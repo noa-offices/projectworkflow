@@ -18,6 +18,7 @@ import type { InventoryReservationRow, InventoryReservation, InventoryProjectOpt
 import { ITEM_TYPES, LOCATION_QUANTITY_COLUMNS } from "./types";
 import type { ProductTypeCounts } from "./types";
 import type { InventoryOverviewActivity } from './types';
+import { buildAttribution, type InventoryOrigin } from './attribution';
 
 type Client = Awaited<ReturnType<typeof createClient>>;
 type ReadResult<T> = { data: T[] | null; error: unknown; count?: number | null };
@@ -79,7 +80,7 @@ async function names(client: Client, products: { brand_id: string | null; local_
     subcategory_name: row.subcategory_id ? categoryMap.get(row.subcategory_id) ?? null : null,
   });
 }
-async function displayNames(client: Client, userIds: string[]) {
+async function displayNames(client: Client, userIds: (string | null)[]) {
   const unique = ids(userIds);
   if (!unique.length) return new Map<string, string | null>();
   const data = await inChunks(unique, part => client.schema("public").from("profiles").select("id,full_name").in("id", part).returns<{ id: string; full_name: string | null }[]>().then(rows));
@@ -115,12 +116,40 @@ async function signedImages(client: Client, images: InventoryImageRow[]): Promis
   }
   return images.map(row => ({ ...pick(row, IMAGE_COLUMNS), signed_url: row.storage_bucket === IMAGE_BUCKET ? urls.get(row.storage_path) ?? null : null }));
 }
-async function enrichMovements(client: Client, movements: InventoryMovementRow[]): Promise<InventoryMovement[]> {
-  const [products, people] = await Promise.all([
-    productSummaries(client, movements.map(row => row.product_id)),
-    displayNames(client, movements.map(row => row.created_by)),
+type OriginRow = { id: string; approved_product_id?: string | null; approved_movement_id?: string | null; submitted_by: string; reviewed_by: string | null };
+/** Item -> the approved request that created it (earliest if several). Same read access as the Requests screens. */
+async function productOrigins(client: Client, productIds: (string | null)[]) {
+  const origins = new Map<string, InventoryOrigin>();
+  const unique = ids(productIds);
+  if (!unique.length) return origins;
+  const data = await inChunks(unique, part => client.schema("inventory").from("product_requests").select("id,approved_product_id,submitted_by,reviewed_by").in("approved_product_id", part).order("submitted_at").order("id").returns<OriginRow[]>().then(rows));
+  for (const row of data) if (row.approved_product_id && !origins.has(row.approved_product_id)) origins.set(row.approved_product_id, { requester_id: row.submitted_by, approver_id: row.reviewed_by });
+  return origins;
+}
+/** Movement -> the request behind it: a movement request (approved_movement_id) or the product request that added the item. */
+async function movementOrigins(client: Client, movements: InventoryMovementRow[]) {
+  const origins = new Map<string, InventoryOrigin>();
+  if (!movements.length) return origins;
+  const productRequestIds = ids(movements.filter(row => row.reference_type === "product_request").map(row => row.reference_id));
+  const [byMovement, byProductRequest] = await Promise.all([
+    inChunks(movements.map(row => row.id), part => client.schema("inventory").from("movement_requests").select("id,approved_movement_id,submitted_by,reviewed_by").in("approved_movement_id", part).returns<OriginRow[]>().then(rows)),
+    inChunks(productRequestIds, part => client.schema("inventory").from("product_requests").select("id,submitted_by,reviewed_by").in("id", part).returns<OriginRow[]>().then(rows)),
   ]);
-  return movements.map(row => ({ ...pick(row, MOVEMENT_COLUMNS), product: products.get(row.product_id) ?? null, actor_display_name: people.get(row.created_by) ?? null }));
+  const requests = new Map(byProductRequest.map(row => [row.id, row]));
+  for (const row of byMovement) if (row.approved_movement_id) origins.set(row.approved_movement_id, { requester_id: row.submitted_by, approver_id: row.reviewed_by });
+  for (const row of movements) {
+    const request = row.reference_type === "product_request" && row.reference_id ? requests.get(row.reference_id) : null;
+    if (request && !origins.has(row.id)) origins.set(row.id, { requester_id: request.submitted_by, approver_id: request.reviewed_by });
+  }
+  return origins;
+}
+async function enrichMovements(client: Client, movements: InventoryMovementRow[]): Promise<InventoryMovement[]> {
+  const [products, origins] = await Promise.all([
+    productSummaries(client, movements.map(row => row.product_id)),
+    movementOrigins(client, movements),
+  ]);
+  const people = await displayNames(client, [...movements.map(row => row.created_by), ...[...origins.values()].flatMap(origin => [origin.requester_id, origin.approver_id])].filter((id): id is string => !!id));
+  return movements.map(row => ({ ...pick(row, MOVEMENT_COLUMNS), product: products.get(row.product_id) ?? null, actor_display_name: people.get(row.created_by) ?? null, attribution: buildAttribution(row.created_by, origins.get(row.id), people) }));
 }
 
 
@@ -175,23 +204,21 @@ export async function getInventoryOverviewActivity(): Promise<InventoryOverviewA
   const client = await inventoryClient(profile?.role);
   type ProductEntry = { id: string; item_name: string; created_by: string | null; created_at: string };
   type RequestEntry = { id: string; item_name: string; submitted_by: string; submitted_at: string };
-  type MovementEntry = { id: string; product_id: string; created_by: string; created_at: string };
   type MovementRequestEntry = { id: string; product_id: string; submitted_by: string; submitted_at: string };
-  const [products, productRequests, movements, movementRequests] = await Promise.all([
+  const [products, productRequests, movementRequests] = await Promise.all([
     client.schema('inventory').from('products').select('id,item_name,created_by,created_at').eq('is_active',true).order('created_at',{ascending:false}).order('id').limit(5).returns<ProductEntry[]>().then(rows),
     client.schema('inventory').from('product_requests').select('id,item_name,submitted_by,submitted_at').eq('request_status','pending_review').order('submitted_at',{ascending:false}).order('id').limit(5).returns<RequestEntry[]>().then(rows),
-    client.schema('inventory').from('movements').select('id,product_id,created_by,created_at').order('created_at',{ascending:false}).order('id').limit(5).returns<MovementEntry[]>().then(rows),
     client.schema('inventory').from('movement_requests').select('id,product_id,submitted_by,submitted_at').eq('request_status','pending_review').order('submitted_at',{ascending:false}).order('id').limit(5).returns<MovementRequestEntry[]>().then(rows),
   ]);
-  const [people, items] = await Promise.all([
-    displayNames(client, ids([...products.map(row=>row.created_by), ...productRequests.map(row=>row.submitted_by), ...movements.map(row=>row.created_by), ...movementRequests.map(row=>row.submitted_by)])),
-    productSummaries(client, [...movements,...movementRequests].map(row=>row.product_id)),
+  const [origins, items] = await Promise.all([
+    productOrigins(client, products.map(row=>row.id)),
+    productSummaries(client, movementRequests.map(row=>row.product_id)),
   ]);
+  const people = await displayNames(client, ids([...products.map(row=>row.created_by), ...productRequests.map(row=>row.submitted_by), ...movementRequests.map(row=>row.submitted_by), ...[...origins.values()].flatMap(origin=>[origin.requester_id,origin.approver_id])]));
   return {
     pending_products: productRequests.map(row=>({id:row.id,product_id:null,item_name:row.item_name,display_name:people.get(row.submitted_by) ?? null,created_at:row.submitted_at})),
     pending_movements: movementRequests.map(row=>({id:row.id,product_id:row.product_id,item_name:items.get(row.product_id)?.item_name ?? 'Inventory item',display_name:people.get(row.submitted_by) ?? null,created_at:row.submitted_at})),
-    recent_products: products.map(row=>({id:row.id,product_id:row.id,item_name:row.item_name,display_name:row.created_by ? people.get(row.created_by) ?? null : null,created_at:row.created_at})),
-    recent_movements: movements.map(row=>({id:row.id,product_id:row.product_id,item_name:items.get(row.product_id)?.item_name ?? 'Inventory item',display_name:people.get(row.created_by) ?? null,created_at:row.created_at})),
+    recent_products: products.map(row=>({id:row.id,product_id:row.id,item_name:row.item_name,display_name:row.created_by ? people.get(row.created_by) ?? null : null,created_at:row.created_at,attribution:buildAttribution(row.created_by,origins.get(row.id),people)})),
   };
 }
 
@@ -297,11 +324,11 @@ export async function listProductRequests(filters: ProductRequestFilters = {}): 
   if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
   const requests = rows(response);
   const [labels, people, costs, products] = await Promise.all([
-    names(client, requests), displayNames(client, requests.map(row => row.submitted_by)),
+    names(client, requests), displayNames(client, requests.flatMap(row => [row.submitted_by, row.reviewed_by])),
     costRows(client, canSeeCosts(profile?.role), "product_request_costs", requests.map(row => row.id)),
     productSummaries(client, requests.map(row => row.approved_product_id)),
   ]);
-  return pageResult(requests.map(row => ({ ...pick(row, PRODUCT_REQUEST_COLUMNS), ...labels(row), submitter_display_name: people.get(row.submitted_by) ?? null, approved_product: row.approved_product_id ? products.get(row.approved_product_id) ?? null : null, ...(costs.has(row.id) ? { costs: costs.get(row.id)! } : {}) })), total(response), range.page, range.page_size);
+  return pageResult(requests.map(row => ({ ...pick(row, PRODUCT_REQUEST_COLUMNS), ...labels(row), submitter_display_name: people.get(row.submitted_by) ?? null, reviewer_display_name: row.reviewed_by ? people.get(row.reviewed_by) ?? null : null, approved_product: row.approved_product_id ? products.get(row.approved_product_id) ?? null : null, ...(costs.has(row.id) ? { costs: costs.get(row.id)! } : {}) })), total(response), range.page, range.page_size);
 }
 
 export async function listMovementRequests(filters: RequestFilters = {}): Promise<InventoryPage<InventoryMovementRequest>> {
@@ -319,8 +346,8 @@ export async function listMovementRequests(filters: RequestFilters = {}): Promis
   const response = await query.order("submitted_at", { ascending: false }).order("id").range(range.from, range.to).returns<InventoryMovementRequestRow[]>();
   if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
   const requests = rows(response);
-  const [products, people] = await Promise.all([productSummaries(client, requests.map(row => row.product_id)), displayNames(client, requests.map(row => row.submitted_by))]);
-  return pageResult(requests.map(row => ({ ...pick(row, MOVEMENT_REQUEST_COLUMNS), product: products.get(row.product_id) ?? null, submitter_display_name: people.get(row.submitted_by) ?? null })), total(response), range.page, range.page_size);
+  const [products, people] = await Promise.all([productSummaries(client, requests.map(row => row.product_id)), displayNames(client, requests.flatMap(row => [row.submitted_by, row.reviewed_by]))]);
+  return pageResult(requests.map(row => ({ ...pick(row, MOVEMENT_REQUEST_COLUMNS), product: products.get(row.product_id) ?? null, submitter_display_name: people.get(row.submitted_by) ?? null, reviewer_display_name: row.reviewed_by ? people.get(row.reviewed_by) ?? null : null })), total(response), range.page, range.page_size);
 }
 
 type MovementQuery = ReturnType<ReturnType<ReturnType<Client["schema"]>["from"]>["select"]>;
@@ -452,8 +479,8 @@ export async function getPendingProductMovementRequests(productId: string): Prom
   const { profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
   const requests = await allRows<InventoryMovementRequestRow>((from, to) => client.schema("inventory").from("movement_requests").select(MOVEMENT_REQUEST_COLUMNS.join(","), { count: "exact" }).eq("product_id", productId).eq("request_status", "pending_review").order("submitted_at", { ascending: false }).order("id").range(from, to).returns<InventoryMovementRequestRow[]>());
-  const people = await displayNames(client, requests.map(row => row.submitted_by));
-  return requests.map(row => ({ ...pick(row, MOVEMENT_REQUEST_COLUMNS), product: null, submitter_display_name: people.get(row.submitted_by) ?? null }));
+  const people = await displayNames(client, requests.flatMap(row => [row.submitted_by, row.reviewed_by]));
+  return requests.map(row => ({ ...pick(row, MOVEMENT_REQUEST_COLUMNS), product: null, submitter_display_name: people.get(row.submitted_by) ?? null, reviewer_display_name: row.reviewed_by ? people.get(row.reviewed_by) ?? null : null }));
 }
 
 /** Uses the caller's public-table RLS; never exposes full project records. */

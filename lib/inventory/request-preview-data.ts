@@ -15,7 +15,7 @@ const productRequest: InventoryProductRequest = {
   quantity: 6, created_at: created, updated_at: created, requested_status: "available", request_status: "pending_review",
   submitted_by: previewRequestUserId, submitted_at: created, reviewed_by: null, reviewed_at: null, review_note: null,
   approved_product_id: null, brand_name: "Nora Office", category_name: "Chairs", subcategory_name: "Task chairs",
-  submitter_display_name: "Alex Morgan", approved_product: null,
+  submitter_display_name: "Alex Morgan", reviewer_display_name: null, approved_product: null,
 };
 export const previewProductRequests: InventoryProductRequest[] = [
   productRequest,
@@ -28,7 +28,7 @@ const movement: InventoryMovementRequest = {
   from_location: "warehouse", to_location: "dubai_showroom", quantity: 2, note: "For the new showroom display.", request_status: "pending_review",
   submitted_by: previewRequestUserId, submitted_at: created, reviewed_by: null, reviewed_at: null, review_note: null, approved_movement_id: null,
   created_at: created, updated_at: created, product: { id: previewProduct.id, item_name: previewProduct.item_name, item_code: previewProduct.item_code, stock_ref: previewProduct.stock_ref, model_name: previewProduct.model_name, brand_id: previewProduct.brand_id },
-  submitter_display_name: "Alex Morgan",
+  submitter_display_name: "Alex Morgan", reviewer_display_name: null,
 };
 export const previewMovementRequests: InventoryMovementRequest[] = [
   movement,

@@ -1,3 +1,4 @@
+import type { InventoryAttribution } from "./attribution";
 export const LOCATION_LABELS = {
   warehouse: "Warehouse",
   dubai_showroom: "Dubai Showroom",
@@ -123,6 +124,7 @@ export interface InventoryProductRequest extends InventoryProductRequestRow {
   category_name: string | null;
   subcategory_name: string | null;
   submitter_display_name: string | null;
+  reviewer_display_name: string | null;
   approved_product: InventoryProductSummary | null;
   costs?: InventoryCosts;
 }
@@ -160,6 +162,8 @@ export interface InventoryMovementLink { kind: "request" | "reservation" | "prod
 export interface InventoryMovement extends InventoryMovementRow {
   product: InventoryProductSummary | null;
   actor_display_name: string | null;
+  /** Requested by / Approved by, or who recorded it directly. */
+  attribution?: InventoryAttribution;
   // Set by the manager movement history only.
   main_image_url?: string | null;
   linked?: InventoryMovementLink | null;
@@ -193,6 +197,7 @@ export interface InventoryMovementRequestRow {
 export interface InventoryMovementRequest extends InventoryMovementRequestRow {
   product: InventoryProductSummary | null;
   submitter_display_name: string | null;
+  reviewer_display_name: string | null;
 }
 export interface InventoryProductDetail extends InventoryProduct {
   reservations: InventoryReservation[];
@@ -224,12 +229,12 @@ export interface InventoryActivityEntry {
   item_name: string;
   display_name: string | null;
   created_at: string;
+  attribution?: InventoryAttribution;
 }
 export interface InventoryOverviewActivity {
   pending_products: InventoryActivityEntry[];
   pending_movements: InventoryActivityEntry[];
   recent_products: InventoryActivityEntry[];
-  recent_movements: InventoryActivityEntry[];
 }
 
 export type ProductSort = "name_asc" | "name_desc" | "newest" | "oldest" | "quantity_asc" | "quantity_desc";
