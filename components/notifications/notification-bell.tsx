@@ -3,6 +3,8 @@ import { inventoryNotificationTime, inventoryNotificationSender } from "@/lib/in
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { notificationsHref } from "@/lib/inventory/profile";
 import { Bell } from "lucide-react";
 import {
   getUnreadCount,
@@ -36,6 +38,7 @@ function notificationHref(item: EnrichedNotification) {
 }
 
 export function NotificationBell() {
+  const pathname = usePathname();
   const [count, setCount] = useState(0);
   const [items, setItems] = useState<EnrichedNotification[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -240,7 +243,7 @@ export function NotificationBell() {
 
           <div className="border-t border-zinc-100 px-4 py-2.5">
             <Link
-              href="/notifications"
+              href={notificationsHref(pathname)}
               onClick={() => setIsOpen(false)}
               className="text-xs font-medium text-emerald-800 transition hover:text-emerald-900"
             >
