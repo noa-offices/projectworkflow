@@ -74,5 +74,5 @@ export function reviewRowsToCsv(rows: ReviewRow[], decisions: DecisionMap = {}, 
     csvText(decision ? decisionLabels[decision] : "Not decided"), csvNumber(decision === "set_custom" ? saved.custom_price : null),
     csvText(saved?.note ?? ""), csvText(saved?.decided_by_name || (saved ? "Team member" : "")), csvText(saved ? formatDubaiDateTime(saved.decided_at) : ""),
   ].join(","); });
-  return `FEFF${[CSV_HEADER.map(csvText).join(","), ...lines].join("\r\n")}\r\n`;
+  return `\uFEFF${[CSV_HEADER.map(csvText).join(","), ...lines].join("\r\n")}\r\n`;
 }
