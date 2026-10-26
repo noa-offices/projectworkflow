@@ -9,7 +9,7 @@ import { NumberInput } from "./number-input";
 import { recordDirectMovement, searchMovementProducts } from "@/lib/inventory/actions";
 import { ACTION_FORM_LABELS, actionFields, canUseManagerMovements, fromChoices, movementPayload, previewMovement } from "@/lib/inventory/movement-form";
 import { LIVE_LOCATIONS } from "@/lib/inventory/movement-form";
-import { formatInventoryNumber } from "@/lib/inventory/presentation";
+import { inventoryIdentifier, formatInventoryNumber } from "@/lib/inventory/presentation";
 import { LOCATION_LABELS, LOCATION_QUANTITY_COLUMNS, MOVEMENT_ACTIONS, type InventoryLocation, type MovementAction, type MovementPickerProduct } from "@/lib/inventory/types";
 import { saveFailureMessage } from "@/lib/inventory/save-errors";
 
@@ -24,7 +24,7 @@ function ProductSummary({ product }: { product: MovementPickerProduct }) {
     </div>
     <div className="min-w-0 flex-1">
       <p className="break-words font-semibold text-zinc-950">{product.item_name}</p>
-      <p className="text-sm text-emerald-800 [overflow-wrap:anywhere]">{product.stock_ref}{product.item_code ? ` · ${product.item_code}` : ""}{product.model_name ? ` · ${product.model_name}` : ""}</p>
+      <p className="text-sm text-emerald-800 [overflow-wrap:anywhere]">{inventoryIdentifier(product)}</p>
       <p className="mt-1 text-sm text-zinc-600">{LIVE_LOCATIONS.filter(location => stockOf(product, location) > 0).map(location => `${LOCATION_LABELS[location]} ${stockOf(product, location)}`).join(" · ") || "No live stock"}</p>
       <p className="mt-1 text-sm text-zinc-600">Total {formatInventoryNumber(product.quantity)} · Reserved {formatInventoryNumber(product.reserved_quantity)} · Available {formatInventoryNumber(product.available_quantity)}</p>
     </div>

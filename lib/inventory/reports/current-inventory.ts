@@ -1,9 +1,9 @@
 import ExcelJS from "exceljs";
-import { inventoryLabel } from "../presentation";
+import { inventoryIdentifier, inventoryLabel } from "../presentation";
 import { LOCATION_LABELS } from "../types";
 import type { CurrentInventoryFilters } from "./params";
 import { escapeHtml, formatDubaiDateTime, safeCell } from "./format";
-import { AMBER, AMBER_FILL, DATA_ROW_HEIGHT_PLAIN, DATA_ROW_HEIGHT_WITH_PHOTO, FIRST_DATA_ROW, GREEN, HEADER_ROW, applyFreeze, applyPrintSetup, columnLetter, placePhoto, styleDataRow, styleTotalsRow, writeHeader, writeSkippedNote, writeTitleBlock, type SheetColumn } from "./excel-style";
+import { AMBER, AMBER_FILL, DATA_ROW_HEIGHT_PLAIN, DATA_ROW_HEIGHT_WITH_PHOTO, FIRST_DATA_ROW, GREEN, HEADER_ROW, applyFreeze, inventoryReportRowHeight, applyPrintSetup, columnLetter, placePhoto, styleDataRow, styleTotalsRow, writeHeader, writeSkippedNote, writeTitleBlock, type SheetColumn } from "./excel-style";
 import { photoKey, type PhotoSet } from "./photos";
 
 /** One line of the Current inventory report. Stock numbers only: never prices or costs. */
@@ -74,10 +74,10 @@ export async function buildCurrentInventoryWorkbook(rows: readonly CurrentInvent
   const numberIndex = new Map(CURRENT_EXCEL_COLUMNS.map((column, index) => [column.key, index + 1]));
   rows.forEach((row, index) => {
     const rowNumber = FIRST_DATA_ROW + index, excel = sheet.getRow(rowNumber);
-    const text: Record<string, string> = { stock_ref: safeCell(row.stock_ref), item_name: safeCell(row.item_name), brand: safeCell(row.brand), category: safeCell(categoryText(row)), item_type: inventoryLabel(row.item_type), status: inventoryLabel(row.status), item_code: safeCell(row.item_code), model_name: safeCell(row.model_name), condition: inventoryLabel(row.condition) };
+    const text: Record<string, string> = { stock_ref: safeCell(row.stock_ref), item_name: safeCell([row.item_name,inventoryIdentifier(row)].filter(Boolean).join('\n')), brand: safeCell(row.brand), category: safeCell(categoryText(row)), item_type: inventoryLabel(row.item_type), status: inventoryLabel(row.status), item_code: safeCell(row.item_code), model_name: safeCell(row.model_name), condition: inventoryLabel(row.condition) };
     for (const [key, value] of Object.entries(text)) if (value !== "") excel.getCell(numberIndex.get(key)!).value = value; // empty stays an empty cell
     for (const column of CURRENT_NUMBER_COLUMNS) excel.getCell(numberIndex.get(column.key)!).value = row[column.key];
-    styleDataRow(sheet, rowNumber, CURRENT_EXCEL_COLUMNS, CURRENT_DIVIDERS, height);
+    styleDataRow(sheet, rowNumber, CURRENT_EXCEL_COLUMNS, CURRENT_DIVIDERS, inventoryReportRowHeight(row,height));
     excel.getCell(numberIndex.get("stock_ref")!).font = { name: "Calibri", size: 11, bold: true, color: { argb: GREEN } };
     excel.getCell(numberIndex.get("item_name")!).font = { name: "Calibri", size: 11, bold: true };
     excel.getCell(numberIndex.get("total_live")!).font = { name: "Calibri", size: 11, bold: true };
@@ -86,7 +86,7 @@ export async function buildCurrentInventoryWorkbook(rows: readonly CurrentInvent
     if (key && buffer) {
       let id = imageIds.get(key);
       if (id === undefined) { id = workbook.addImage({ buffer: buffer as unknown as ExcelJS.Buffer, extension: "jpeg" }); imageIds.set(key, id); }
-      placePhoto(workbook, sheet, id, 1, rowNumber, CURRENT_EXCEL_COLUMNS[0].width, height);
+      placePhoto(workbook, sheet, id, 1, rowNumber, CURRENT_EXCEL_COLUMNS[0].width, excel.height ?? height);
     }
   });
   const last = FIRST_DATA_ROW + rows.length - 1, totalRow = rows.length ? last + 1 : FIRST_DATA_ROW;
@@ -114,7 +114,7 @@ export const PDF_LEGEND = "WH Warehouse · DXB Dubai Showroom · AUH Abu Dhabi S
 export function buildCurrentInventoryPdfHtml(rows: readonly CurrentInventoryRow[], meta: ReportMeta, options: { photos: boolean }): string {
   const isNumber = (key: string) => CURRENT_NUMBER_COLUMNS.some(column => column.key === key);
   const head = (options.photos ? '<th style="width:11mm">Photo</th>' : "") + [...CURRENT_TEXT_COLUMNS, ...CURRENT_NUMBER_COLUMNS].map(column => `<th class="${isNumber(column.key) ? "n" : ""}" style="width:${PDF_WIDTHS[column.key]}%">${escapeHtml(PDF_SHORT_HEADERS[column.key] ?? column.header)}</th>`).join("");
-  const body = rows.map(row => `<tr>${options.photos ? `<td>${row.photo_url ? `<img src="${escapeHtml(row.photo_url)}" alt="">` : ""}</td>` : ""}${CURRENT_TEXT_COLUMNS.map(column => `<td>${escapeHtml(text(row, column.key))}</td>`).join("")}${CURRENT_NUMBER_COLUMNS.map(column => `<td class="n">${row[column.key]}</td>`).join("")}</tr>`).join("");
+  const body = rows.map(row => `<tr>${options.photos ? `<td>${row.photo_url ? `<img src="${escapeHtml(row.photo_url)}" alt="">` : ""}</td>` : ""}${CURRENT_TEXT_COLUMNS.map(column => `<td>${escapeHtml(text(row, column.key))}${column.key === "item_name" && inventoryIdentifier(row) ? `<br><span style="color:#065f46">${escapeHtml(inventoryIdentifier(row))}</span>` : ""}</td>`).join("")}${CURRENT_NUMBER_COLUMNS.map(column => `<td class="n">${row[column.key]}</td>`).join("")}</tr>`).join("");
   const totals = currentTotals(rows), span = CURRENT_TEXT_COLUMNS.length + (options.photos ? 1 : 0);
   const foot = `<tr><td colspan="${span}">Total (${rows.length} ${rows.length === 1 ? "item" : "items"})</td>${CURRENT_NUMBER_COLUMNS.map(column => `<td class="n">${totals[column.key]}</td>`).join("")}</tr>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Current inventory</title><style>${PDF_CSS}</style></head><body><h1>Current inventory</h1><p class="meta">Created ${escapeHtml(formatDubaiDateTime(meta.generatedAt))} (Dubai time)</p><p class="meta">${meta.filterLines.map(escapeHtml).join(" · ") || "No filters"}</p><p class="meta">${escapeHtml(PDF_LEGEND)}</p><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table></body></html>`;

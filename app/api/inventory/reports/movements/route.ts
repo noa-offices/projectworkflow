@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { inventoryIdentifier } from '@/lib/inventory/presentation';
 import { listMovementsForReport } from "@/lib/inventory/queries";
 import { reportFileName } from "@/lib/inventory/reports/format";
 import { MOVEMENT_PHOTO_LIMIT, loadReportPhotos } from "@/lib/inventory/reports/photos";
@@ -20,7 +21,8 @@ export async function GET(request: NextRequest) {
     const generatedAt = new Date();
     const { movements, photosOmitted } = await listMovementsForReport({ product_id: filters.product || undefined, action_type: filters.action || undefined, location: filters.location || undefined, person: filters.person || undefined, from: bounds.from, to: bounds.to }, MOVEMENT_REPORT_LIMIT, { photos: filters.photos, photoLimit: MOVEMENT_PHOTO_LIMIT });
     const photos = filters.photos && !photosOmitted ? await loadReportPhotos(movements.map(movement => ({ url: movement.main_image_url }))) : null;
-    const buffer = await buildMovementsWorkbook(movements, { generatedAt, filterLines: movementFilterLines(filters, { product: movements[0]?.product?.item_name ?? null }) }, photos);
+    const product = movements[0]?.product;
+    const buffer = await buildMovementsWorkbook(movements, { generatedAt, filterLines: movementFilterLines(filters, { product: product ? `${product.item_name} · ${inventoryIdentifier(product)}` : null }) }, photos);
     return reportFile(buffer, reportFileName("inventory-movements", "xlsx", generatedAt), XLSX_TYPE, photoHeaders({ skipped: photos?.skipped ?? 0, omitted: photosOmitted }));
   } catch (error) {
     if (error instanceof ReportTooLargeError) return reportError(413, NARROW_RANGE_MESSAGE);

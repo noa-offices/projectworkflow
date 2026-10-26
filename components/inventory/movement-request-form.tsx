@@ -1,4 +1,5 @@
 'use client';
+import { inventoryIdentifier } from "@/lib/inventory/presentation";
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
@@ -75,7 +76,7 @@ export function MovementRequestForm({ product, role = null, initialKind, preview
     finally { lock.current = false; setBusy(false); }
   }
   return <RequestDialog title={stock ? 'Take / Move stock' : kind === 'hold' ? 'Hold stock' : 'Book stock'} onClose={onClose} busy={busy}>
-    <p className="mb-4 break-words font-semibold">{product.item_name}</p>
+    <div className="mb-4 [overflow-wrap:anywhere]"><p className="font-semibold">{product.item_name}</p><p className="mt-1 text-sm text-emerald-800">{inventoryIdentifier(product)}</p></div>
     <form onSubmit={submit} onChange={() => { if (error) setError(''); }} className="min-w-0 space-y-4" aria-describedby={error ? 'movement-error' : undefined}>
       <fieldset disabled={busy} className="min-w-0 space-y-4">
         {stock && <label className="block text-sm font-medium">Request type<select className={input} value={kind} onChange={event => setKind(event.target.value as RequestType)}><option value="take">Take stock out (Sold)</option><option value="move">Move between locations</option></select></label>}

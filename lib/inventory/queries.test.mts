@@ -43,6 +43,18 @@ const client = createSupabaseClient("https://inventory.test", "test-publishable-
     assert.equal(headers.get("Accept-Profile"), ["brands", "profiles", "clients", "projects"].includes(table) ? "public" : "inventory");
     if (failPageRange && table === "products") return Response.json({ code: "PGRST103", message: "Requested range not satisfiable" }, { status: 416 });
     if (table === failTable) return Response.json({ message: "fixture failure" }, { status: 500 });
+    // The two SECURITY DEFINER name functions: id + full_name only, and only people with Inventory activity (no_activity marks the others).
+    if (table === "person_names" || table === "search_people") {
+      assert.equal(method, "GET");
+      const people = (fixtures.profiles ?? []).filter(row => !row.no_activity);
+      if (table === "person_names") {
+        const wanted = (url.searchParams.get("p_ids") ?? "{}").slice(1, -1).split(",").filter(Boolean);
+        assert.ok(wanted.length <= 200);
+        return Response.json(people.filter(row => wanted.includes(String(row.id))).map(row => ({ id: row.id, full_name: row.full_name ?? null })));
+      }
+      const term = (url.searchParams.get("term") ?? "").trim().toLowerCase();
+      return Response.json(term.length < 2 ? [] : people.filter(row => String(row.full_name ?? "").toLowerCase().includes(term)).map(row => ({ id: row.id })));
+    }
     let rows = fixtures[table] ?? [];
     for (const [key, value] of url.searchParams) {
       if (value === "is.null") rows = rows.filter(row => row[key] == null);
@@ -73,7 +85,8 @@ test('product movement actors use the same safe name source as Movements', async
   const history = await queries.listMovements({product_id:'p1'});
   assert.equal(detail?.recent_movements[0].actor_display_name, 'Junais KP');
   assert.equal(detail?.recent_movements[0].actor_display_name, history.items[0].actor_display_name);
-  assert.ok(calls.filter(call => call.table === 'profiles').every(call => call.url.searchParams.get('select') === 'id,full_name'));
+  assert.equal(calls.filter(call => call.table === 'profiles').length, 0, 'public.profiles is never read directly');
+  assert.ok(callsTo('person_names').length > 0);
   assert.ok(!JSON.stringify(detail).includes('never@example.com'));
   fixtures.profiles = [];
   assert.equal((await queries.getProduct('p1'))?.recent_movements[0].actor_display_name, null);
@@ -89,9 +102,11 @@ test('Overview activity maps full names without costs, emails or extra profile a
   assert.equal('recent_movements' in (activity ?? {}),false);
   assert.equal(calls.some(call=>call.table==='movements'),false,'the Overview no longer reads movements');
   assert.equal(activity?.recent_products[0].display_name,'Junais KP');
+  assert.equal(activity?.recent_products[0].stock_ref,product.stock_ref);
+  assert.equal(activity?.pending_movements[0].stock_ref,product.stock_ref);
   assert.ok(!JSON.stringify(activity).includes('never@example.com'));
   assert.equal(calls.some(call=>call.table.includes('cost')),false);
-  assert.ok(calls.filter(call=>call.table==='profiles').every(call=>call.url.searchParams.get('select')==='id,full_name'));
+  assert.equal(calls.filter(call=>call.table==='profiles').length,0);
   fixtures.profiles=[];
   assert.equal((await queries.getInventoryOverviewActivity())?.pending_products[0].display_name,null);
   for (const value of ['warehouse_staff','designer','viewer','sales_designer']) {
@@ -99,6 +114,14 @@ test('Overview activity maps full names without costs, emails or extra profile a
     assert.equal(await queries.getInventoryOverviewActivity(),null);
     assert.equal(clientCalls,0);
   }
+});
+
+test('pending product movement requests and reservations retain their product Stock ref',async()=>{
+  reset('admin_manager');
+  const pending=await queries.getPendingProductMovementRequests('p1');
+  assert.equal(pending[0].product?.stock_ref,product.stock_ref);
+  fixtures.reservations=[{id:'r1',product_id:'p1',status:'active',quantity:1,kind:'book',created_by:'hidden',expires_at:null}];
+  assert.equal((await queries.getProduct('p1'))?.reservations[0].product?.stock_ref,product.stock_ref);
 });
 
 test('type counts use three full-dataset HEAD reads and ignore the selected type', async () => {
@@ -386,19 +409,19 @@ test("movement history returns nothing, without reading movements, when search o
   assert.equal((await queries.listMovements({ search: "ghost" })).total, 0); assert.equal(callsTo("movements").length, 0);
 });
 test("request search covers product fields for everyone and submitter names for managers only", async () => {
-  reset("system_owner"); fixtures.profiles = [{ id: "u1", full_name: "Alex" }];
+  reset("system_owner"); fixtures.profiles = [{ id: "u1", full_name: "Chair Person" }];
   await queries.listMovementRequests({ search: "chair" });
   let or = callsTo("movement_requests")[0].url.searchParams.get("or")!;
   assert.match(or, /product_id\.in\.\(p1\)/); assert.match(or, /submitted_by\.in\.\(u1\)/);
-  reset("system_owner"); fixtures.profiles = [{ id: "u1", full_name: "Alex" }];
+  reset("system_owner"); fixtures.profiles = [{ id: "u1", full_name: "Chair Person" }];
   await queries.listProductRequests({ search: "chair" });
   or = callsTo("product_requests")[0].url.searchParams.get("or")!;
   assert.match(or, /item_name\.ilike\./); assert.match(or, /submitted_by\.in\.\(u1\)/);
-  reset("warehouse_staff"); fixtures.profiles = [{ id: "u1", full_name: "Alex" }];
+  reset("warehouse_staff"); fixtures.profiles = [{ id: "u1", full_name: "Chair Person" }];
   await queries.listMovementRequests({ search: "chair" });
   or = callsTo("movement_requests")[0].url.searchParams.get("or")!;
   assert.match(or, /product_id\.in\.\(p1\)/); assert.doesNotMatch(or, /submitted_by/);
-  assert.equal(callsTo("profiles").filter(call => call.url.searchParams.has("full_name")).length, 0);
+  assert.equal(callsTo("search_people").length, 0);
   reset("warehouse_staff");
   await queries.listProductRequests({ search: "chair" });
   assert.doesNotMatch(callsTo("product_requests")[0].url.searchParams.get("or")!, /submitted_by/);
@@ -516,7 +539,7 @@ test('approved requests supply the requester for items and movements through the
   assert.equal(byId.m2?.request?.requester_name,'Subair');   // item added by a product request
   assert.equal(byId.m3?.request?.requester_id,'boss');       // requester is the approver
   assert.ok(!JSON.stringify([activity,detail]).includes('never@example.com'));
-  assert.ok(calls.filter(call=>call.table==='profiles').every(call=>call.url.searchParams.get('select')==='id,full_name'));
+  assert.equal(calls.filter(call=>call.table==='profiles').length,0);
 });
 
 test('a manager adding directly has no request, so the creator is shown alone', async () => {
@@ -530,4 +553,42 @@ test('a manager adding directly has no request, so the creator is shown alone', 
   const detail = await queries.getProduct('p1');
   assert.equal(detail?.recent_movements[0].attribution?.request,null);
   assert.equal(detail?.recent_movements[0].attribution?.creator_name,'Junais KP');
+});
+
+test('every Inventory role gets names through person_names, never from public.profiles', async () => {
+  for (const nextRole of ["system_owner", "admin_manager", "procurement_manager", "sales_designer", "sales_coordinator", "designer", "viewer", "warehouse_staff"]) {
+    reset(nextRole);
+    fixtures.profiles = [{ id: "hidden", full_name: "Junais KP", email: "never@example.com" }];
+    const detail = await queries.getProduct("p1");
+    assert.equal(detail?.recent_movements[0].actor_display_name, "Junais KP", nextRole);
+    assert.equal(calls.filter(call => call.table === "profiles").length, 0, nextRole);
+    assert.ok(!JSON.stringify(detail).includes("never@example.com"), nextRole);
+  }
+});
+
+test('names fall back to null only for people the function does not return or who have no name', async () => {
+  reset("viewer");
+  fixtures.profiles = [{ id: "hidden", full_name: null }];
+  assert.equal((await queries.getProduct("p1"))?.recent_movements[0].actor_display_name, null);
+  fixtures.profiles = [{ id: "hidden", full_name: "Junais KP", no_activity: true }];
+  assert.equal((await queries.getProduct("p1"))?.recent_movements[0].actor_display_name, null);
+});
+
+test('person search works for a non-owner manager through search_people with the raw term', async () => {
+  reset("admin_manager");
+  fixtures.profiles = [{ id: "u1", full_name: "Subair Worker" }, { id: "u2", full_name: "Hidden Nobody", no_activity: true }];
+  fixtures.movements = [{ id: "m1", product_id: "p1", created_by: "u1", created_at: "2026-10-23T00:00:00Z" }];
+  const page = await queries.listMovements({ person: "subair" });
+  assert.equal(callsTo("search_people")[0].url.searchParams.get("term"), "subair");
+  assert.equal(callsTo("movements")[0].url.searchParams.get("created_by"), "in.(u1)");
+  assert.equal(page.items.length, 1);
+  assert.equal(calls.filter(call => call.table === "profiles").length, 0);
+  reset("admin_manager");
+  fixtures.profiles = [{ id: "u2", full_name: "Hidden Nobody", no_activity: true }];
+  assert.equal((await queries.listMovements({ person: "hidden" })).total, 0);
+});
+
+test('a name lookup failure is an error, not a silent Team member', async () => {
+  reset("viewer"); fixtures.profiles = [{ id: "hidden", full_name: "Junais KP" }]; failTable = "person_names";
+  await assert.rejects(() => queries.getProduct("p1"), /Unable to read inventory data/);
 });

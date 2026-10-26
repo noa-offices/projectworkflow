@@ -27,6 +27,19 @@ const jpeg = (color: string) => sharp({ create: { width: 240, height: 180, chann
 const url = (name: string) => `https://files.example.test/inventory-images/products/${name}.jpg?token=${Math.random()}`;
 const argb = (cell: ExcelJS.Cell) => (cell.fill as ExcelJS.FillPattern | undefined)?.fgColor?.argb;
 
+test('report item names carry the Stock ref identifier beneath them without empty separators',async()=>{
+  const item=row({stock_ref:'GEN-0001',item_code:null,model_name:null});
+  const sheet=(await read(await buildCurrentInventoryWorkbook([item],meta))).worksheets[0];
+  assert.equal(sheet.getRow(6).getCell(3).value,'Arlo chair\nGEN-0001');
+  assert.match(buildCurrentInventoryPdfHtml([item],meta,{photos:false}),/Arlo chair<br><span[^>]*>GEN-0001<\/span>/);
+  const m=movement({product:{...movement().product!,stock_ref:'IK1-0001',item_code:null,model_name:null}});
+  const ms=(await read(await buildMovementsWorkbook([m],meta))).worksheets[0];
+  assert.equal(ms.getRow(6).getCell(4).value,'Arlo chair\nIK1-0001');
+  const long=row({item_name:'Long item name '.repeat(14),model_name:'Long model '.repeat(18)});
+  const ls=(await read(await buildCurrentInventoryWorkbook([long],meta))).worksheets[0];
+  assert.ok((ls.getRow(6).height ?? 0)>100,'long names must not hide the identifying Stock ref below them');
+});
+
 test("times are shown and filtered in Dubai time", () => {
   assert.equal(formatDubaiDateTime("2026-10-24T22:30:00Z"), "25 Oct 2026, 02:30");
   assert.equal(dubaiDateKey(new Date("2026-10-24T21:00:00Z")), "2026-10-25");
@@ -152,7 +165,7 @@ test("Current inventory: totals, empty result, filter lines and no photo column 
   const lines = currentFilterLines({ brand: "b", category: "", itemType: "accessory", location: "warehouse", status: "", includeSoldOut: false, photos: false, excelPhotos: true }, { brand: "Nora Office" });
   assert.deepEqual(lines, ["Brand: Nora Office", "Type: Accessory", "Location: Warehouse (more than 0 units)", "Sold-out items left out"]);
   const plain = (await read(await buildCurrentInventoryWorkbook([row()], meta))).getWorksheet("Current inventory")!;
-  assert.equal(plain.getRow(6).height, 36); assert.equal(plain.getColumn(1).hidden, true);
+  assert.equal(plain.getRow(6).height, 48); assert.equal(plain.getColumn(1).hidden, true);
 });
 test("Photos in Excel: each distinct image is added once, placed in the Photo cell, and a skipped-photos note is written", async () => {
   const shared = url("shared"), other = url("other");

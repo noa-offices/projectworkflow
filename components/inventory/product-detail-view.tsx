@@ -1,4 +1,5 @@
 import { inventoryAttributionLine } from "@/lib/inventory/attribution";
+import { inventoryIdentifier } from "@/lib/inventory/presentation";
 import Link from "next/link";
 import { ArrowLeft, Package } from "lucide-react";
 import type { ReactNode } from "react";
@@ -7,7 +8,6 @@ import {
   formatInventoryDate,
   formatInventoryNumber,
   inventoryLabel,
-  inventoryOptionalText,
   orderedProductImages,
 } from "@/lib/inventory/presentation";
 import { LOCATION_LABELS, type InventoryProductDetail } from "@/lib/inventory/types";
@@ -29,7 +29,6 @@ function DetailField({ label, children }: { label: string; children: ReactNode }
 
 export function ProductDetailView({ product, productsHref = "/inventory/products", role, userId, preview = false }: { product: InventoryProductDetail; productsHref?: string; role?: string | null; userId?: string | null; preview?: boolean }) {
   const dimensions = dimensionLabel(product);
-  const itemCode = product.item_code?.trim();
   const costs = product.costs;
   const costRows = costs ? [
     ["Price", costs.price],
@@ -60,9 +59,7 @@ export function ProductDetailView({ product, productsHref = "/inventory/products
         <section aria-labelledby="product-heading" className={cardClass}>
           <p className="text-sm font-semibold uppercase tracking-wide text-emerald-800">Product details</p>
           <h2 id="product-heading" className="mt-2 text-2xl font-semibold tracking-tight text-zinc-950 [overflow-wrap:anywhere]">{product.item_name}</h2>
-          <p className="mt-1 text-base font-semibold text-emerald-800 [overflow-wrap:anywhere]">{product.stock_ref}</p>
-          {itemCode ? <p className="mt-1 text-sm text-zinc-500 [overflow-wrap:anywhere]">Code: {itemCode}</p> : null}
-          <p className="mt-1 text-sm text-zinc-500 [overflow-wrap:anywhere]">{inventoryOptionalText(product.model_name)}</p>
+          <p className="mt-1 text-sm font-semibold text-emerald-800 [overflow-wrap:anywhere]">{inventoryIdentifier(product)}</p>
           <div className="mt-4 flex flex-wrap gap-2">
             <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-sm font-semibold text-emerald-900">{inventoryLabel(product.status)}</span>
             <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-sm font-medium text-zinc-700">{inventoryLabel(product.condition)}</span>

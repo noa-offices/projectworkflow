@@ -1,0 +1,384 @@
+[
+  {
+    "width": 360,
+    "screen": "movement-requests",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "movement-request-details",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "product-requests",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "product-request-details",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "review-item",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "overview",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "products",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "product-detail",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "delete-confirmation",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "product-detail-ref-only",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "movements-filtered",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "move-picker-results",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "move-selected-item",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "book-form",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "hold-form",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "edit-form",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "photo-manager",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "remove-confirmation",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "new-item-form",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "reports-picker",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 360,
+    "screen": "reports-selected-item",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "movement-requests",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "movement-request-details",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "product-requests",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "product-request-details",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "review-item",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "overview",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "products",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "product-detail",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "delete-confirmation",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "product-detail-ref-only",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "movements-filtered",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "move-picker-results",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "move-selected-item",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "book-form",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "hold-form",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "edit-form",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "photo-manager",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "remove-confirmation",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "new-item-form",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "reports-picker",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 390,
+    "screen": "reports-selected-item",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "movement-requests",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "movement-request-details",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "product-requests",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "product-request-details",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "review-item",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "overview",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "products",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "product-detail",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "delete-confirmation",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "product-detail-ref-only",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "movements-filtered",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "move-picker-results",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "move-selected-item",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "book-form",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "hold-form",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "edit-form",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "photo-manager",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "remove-confirmation",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "new-item-form",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "reports-picker",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "width": 430,
+    "screen": "reports-selected-item",
+    "identifierVisible": true,
+    "noOverflow": true
+  },
+  {
+    "screen": "PDF HTML print layout",
+    "identifierVisible": true
+  }
+]
