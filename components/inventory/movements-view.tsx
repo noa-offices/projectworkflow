@@ -2,7 +2,7 @@ import { inventoryAttributionLine } from "@/lib/inventory/attribution";
 import Image from "next/image";
 import Link from "next/link";
 import { ChevronDown, History, Package } from "lucide-react";
-import { EmptyState, Pager, buttonClass } from "./inventory-ui";
+import { EmptyState, Pager, buttonClass, chipClass } from "./inventory-ui";
 import { ACTION_FORM_LABELS, actionHistoryLabel, canUseManagerMovements, movementLinkLabel, movementRoute } from "@/lib/inventory/movement-form";
 import { hasMovementFilters, movementsHref, type MovementUrlState } from "@/lib/inventory/movement-history";
 import { inventoryIdentifier, formatInventoryDate, formatInventoryNumber } from "@/lib/inventory/presentation";
@@ -35,7 +35,9 @@ export function MovementsView({ result, state, role, baseHref = "/inventory/move
     <form method="get" action={path} aria-label="Filter movements" className="min-w-0 space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
       {fixedParams.map(([key, value]) => <input key={key} type="hidden" name={key} value={value} />)}
       {state.product && <input type="hidden" name="product" value={state.product} />}
+      {state.newItems && <input type="hidden" name="new" value="1" />}
       <label className="block text-sm font-medium text-zinc-700">Search product<input type="search" name="q" defaultValue={state.q} maxLength={100} placeholder="Name, stock ref or item code" className={control} /></label>
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Quick filters"><Link href={movementsHref(state, { newItems: !state.newItems, page: 1 }, baseHref)} aria-pressed={state.newItems} className={chipClass(state.newItems)}>New items</Link></div>
       <details className="rounded-lg border border-zinc-200" open={!!(state.action||state.location||state.from||state.to||state.person)}>
         <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 text-sm font-semibold text-zinc-800">More filters<ChevronDown size={18} aria-hidden="true" /></summary>
         <div className="border-t border-zinc-200 p-3">

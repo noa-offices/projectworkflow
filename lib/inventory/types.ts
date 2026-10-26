@@ -232,12 +232,10 @@ export interface InventoryActivityEntry {
   item_name: string;
   display_name: string | null;
   created_at: string;
-  attribution?: InventoryAttribution;
 }
 export interface InventoryOverviewActivity {
   pending_products: InventoryActivityEntry[];
   pending_movements: InventoryActivityEntry[];
-  recent_products: InventoryActivityEntry[];
 }
 
 export type ProductSort = "name_asc" | "name_desc" | "newest" | "oldest" | "quantity_asc" | "quantity_desc";
@@ -258,4 +256,6 @@ export interface MovementFilters {
   product_id?: string; created_by?: string; movement_type?: MovementType; action_type?: MovementAction;
   search?: string; person?: string;
   location?: InventoryLocation; from?: string; to?: string;
+  /** Only the stock-in movements that added a new item. */
+  new_items?: boolean;
 }

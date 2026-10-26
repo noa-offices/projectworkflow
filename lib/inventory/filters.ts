@@ -71,6 +71,6 @@ export function movementFilters(filters: MovementFilters = {}) {
     movement_type: allowed(filters.movement_type, MOVEMENT_TYPES), action_type: allowed(filters.action_type, MOVEMENT_ACTIONS),
     search: filters.search?.trim().slice(0,100) || null, person: lookupText(filters.person),
     location: allowed(filters.location, Object.keys(LOCATION_QUANTITY_COLUMNS) as (keyof typeof LOCATION_QUANTITY_COLUMNS)[]),
-    from, to,
+    from, to, new_items: filters.new_items === true,
   };
 }

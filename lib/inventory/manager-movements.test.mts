@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { actionFields, actionHistoryLabel, canUseManagerMovements, fromChoices, movementPayload, movementRoute, previewMovement, previewText, toPickerProduct } from "./movement-form";
 import { hasMovementFilters, movementsHref, parseMovementParams } from "./movement-history";
+import { movementFilters } from "./filters";
 import { categoryNameError, categorySiblings } from "./category-form";
 import { lookupText, requestSearchFilter } from "./filters";
 import { withCategoryCounts } from "./mapping";
@@ -77,7 +78,7 @@ test("history labels and routes are plain words", () => {
 });
 test("movement history filters come from the URL and unknown values are dropped", () => {
   const { state, filters, page } = parseMovementParams({ q: " chair ", action: "sale", location: "warehouse", from: "2026-10-01", to: "2026-10-31", person: "Alex", product: id.toUpperCase(), page: "3" });
-  assert.deepEqual(state, { q: "chair", action: "sale", location: "warehouse", from: "2026-10-01", to: "2026-10-31", person: "Alex", product: id, page: 3 });
+  assert.deepEqual(state, { q: "chair", action: "sale", location: "warehouse", from: "2026-10-01", to: "2026-10-31", person: "Alex", product: id, newItems: false, page: 3 });
   assert.deepEqual(filters, { search: "chair", person: "Alex", action_type: "sale", location: "warehouse", product_id: id, from: "2026-09-30T20:00:00.000Z", to: "2026-10-31T19:59:59.999Z" });
   assert.equal(page, 3);
   const bad = parseMovementParams({ action: "steal", location: "moon", from: "2026-02-31", to: "nonsense", product: "x", page: "0" });
@@ -86,6 +87,19 @@ test("movement history filters come from the URL and unknown values are dropped"
   assert.equal(parseMovementParams({ from: "2026-10-10", to: "2026-10-01" }).state.to, "");
   assert.equal(movementsHref(state), `/inventory/movements?q=chair&action=sale&location=warehouse&from=2026-10-01&to=2026-10-31&person=Alex&product=${id}&page=3`);
   assert.equal(movementsHref(state, { page: 1, product: "" }).includes("product"), false);
+});
+test("the New items filter is a URL parameter that survives paging, refresh and other filters", () => {
+  const on = parseMovementParams({ new: "1", q: "chair", page: "2" });
+  assert.equal(on.state.newItems, true);
+  assert.equal(on.filters.new_items, true);
+  assert.equal(on.page, 2);
+  assert.equal(hasMovementFilters(on.state), true);
+  assert.equal(movementsHref(on.state, { page: 3 }), "/inventory/movements?q=chair&new=1&page=3");
+  assert.equal(movementsHref(on.state, { newItems: false, page: 1 }), "/inventory/movements?q=chair");
+  for (const value of ["0", "2", "true", ""]) assert.equal(parseMovementParams({ new: value }).state.newItems, false, value);
+  assert.equal("new_items" in parseMovementParams({}).filters, false);
+  assert.equal(movementFilters({ new_items: true }).new_items, true);
+  assert.equal(movementFilters({}).new_items, false);
 });
 test("category names are validated and duplicates are caught per level", () => {
   const tree = withCategoryCounts(previewCategories, [{ category_id: previewCategories[0].id, subcategory_id: previewCategories[0].children[0].id }, { category_id: previewCategories[0].id, subcategory_id: null }]);
