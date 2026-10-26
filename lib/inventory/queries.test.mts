@@ -101,8 +101,8 @@ test('Overview activity maps full names without costs, emails or extra profile a
   assert.equal(activity?.pending_movements[0].display_name,'Junais KP');
   assert.equal('recent_movements' in (activity ?? {}),false);
   assert.equal(calls.some(call=>call.table==='movements'),false,'the Overview no longer reads movements');
-  assert.equal(activity?.recent_products[0].display_name,'Junais KP');
-  assert.equal(activity?.recent_products[0].stock_ref,product.stock_ref);
+  assert.equal('recent_products' in (activity ?? {}),false);
+  assert.equal(calls.some(call=>call.table==='products'&&call.url.searchParams.get('order')==='created_at.desc,id.asc'),false,'no recent-items query');
   assert.equal(activity?.pending_movements[0].stock_ref,product.stock_ref);
   assert.ok(!JSON.stringify(activity).includes('never@example.com'));
   assert.equal(calls.some(call=>call.table.includes('cost')),false);
@@ -531,7 +531,6 @@ test('approved requests supply the requester for items and movements through the
   fixtures.movements = [{id:'m1',product_id:'p1',created_by:'boss',created_at:'2026-10-23T00:00:00Z',reference_type:'manual',reference_id:null},{id:'m2',product_id:'p1',created_by:'boss',created_at:'2026-10-22T00:00:00Z',reference_type:'product_request',reference_id:'r1'},{id:'m3',product_id:'p1',created_by:'boss',created_at:'2026-10-21T00:00:00Z',reference_type:'manual',reference_id:null}];
   fixtures.movement_requests = [{id:'mr1',product_id:'p1',submitted_by:'worker',reviewed_by:'boss',approved_movement_id:'m1',request_status:'approved'},{id:'mr2',product_id:'p1',submitted_by:'boss',reviewed_by:'boss',approved_movement_id:'m3',request_status:'approved'}];
   const activity = await queries.getInventoryOverviewActivity();
-  assert.deepEqual(activity?.recent_products[0].attribution, {creator_name:'Junais KP',request:{requester_id:'worker',requester_name:'Subair',approver_id:'boss',approver_name:'Junais KP'}});
   assert.equal(calls.some(call=>call.table.includes('cost')),false,'Overview reads no costs');
   const detail = await queries.getProduct('p1');
   const byId = Object.fromEntries(detail!.recent_movements.map(row => [row.id,row.attribution]));
@@ -549,7 +548,6 @@ test('a manager adding directly has no request, so the creator is shown alone', 
   fixtures.product_requests = [];
   fixtures.movements = [{id:'m1',product_id:'p1',created_by:'boss',created_at:'2026-10-23T00:00:00Z',reference_type:'manual',reference_id:null}];
   fixtures.movement_requests = [];
-  assert.equal((await queries.getInventoryOverviewActivity())?.recent_products[0].attribution?.request,null);
   const detail = await queries.getProduct('p1');
   assert.equal(detail?.recent_movements[0].attribution?.request,null);
   assert.equal(detail?.recent_movements[0].attribution?.creator_name,'Junais KP');
@@ -591,4 +589,32 @@ test('person search works for a non-owner manager through search_people with the
 test('a name lookup failure is an error, not a silent Team member', async () => {
   reset("viewer"); fixtures.profiles = [{ id: "hidden", full_name: "Junais KP" }]; failTable = "person_names";
   await assert.rejects(() => queries.getProduct("p1"), /Unable to read inventory data/);
+});
+
+test('the New items filter returns only the stock-in movements made when an item was created', async () => {
+  reset('admin_manager');
+  fixtures.movements = [
+    { id: 'm1', product_id: 'p1', action_type: 'receive_stock', reference_type: 'product_request', reference_id: 'r1', created_by: 'u1', created_at: '2026-10-25T00:00:00Z' },
+    { id: 'm2', product_id: 'p1', action_type: 'receive_stock', reference_type: 'manual', reference_id: null, created_by: 'u1', created_at: '2026-10-24T00:00:00Z' },
+    { id: 'm3', product_id: 'p1', action_type: 'sale', reference_type: 'manual', reference_id: null, created_by: 'u1', created_at: '2026-10-23T00:00:00Z' },
+    { id: 'm5', product_id: 'p1', action_type: 'receive_stock', reference_type: 'product_request', reference_id: 'r2', created_by: 'u1', created_at: '2026-10-21T00:00:00Z' },
+  ];
+  const news = await queries.listMovements({ new_items: true });
+  assert.deepEqual(news.items.map(row => row.id), ['m1', 'm5']);
+  const params = callsTo('movements')[0].url.searchParams;
+  assert.equal(params.get('reference_type'), 'eq.product_request');
+  assert.deepEqual(params.getAll('action_type'), ['eq.receive_stock']);
+  // Works together with search, location, dates and the page offset.
+  reset('admin_manager');
+  fixtures.movements = [{ id: 'm1', product_id: 'p1', action_type: 'receive_stock', reference_type: 'product_request', reference_id: 'r1', created_by: 'u1', created_at: '2026-10-25T00:00:00Z' }];
+  const combined = await queries.listMovements({ new_items: true, search: 'chair', location: 'warehouse', from: '2026-10-01T00:00:00.000Z' }, 2);
+  const combinedParams = callsTo('movements')[0].url.searchParams;
+  assert.equal(combinedParams.get('reference_type'), 'eq.product_request');
+  assert.equal(combinedParams.get('product_id'), 'in.(p1)');
+  assert.equal(combinedParams.get('or'), '(from_location.eq.warehouse,to_location.eq.warehouse)');
+  assert.ok(Number(combinedParams.get('offset')) > 0 && combined.page === 2);
+  // Another action filter cannot widen it: a sale is never a new-item movement.
+  reset('admin_manager');
+  fixtures.movements = [{ id: 'm3', product_id: 'p1', action_type: 'sale', reference_type: 'manual', reference_id: null, created_by: 'u1', created_at: '2026-10-23T00:00:00Z' }];
+  assert.equal((await queries.listMovements({ new_items: true, action_type: 'sale' })).total, 0);
 });

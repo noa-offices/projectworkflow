@@ -126,15 +126,6 @@ async function signedImages(client: Client, images: InventoryImageRow[]): Promis
   return images.map(row => ({ ...pick(row, IMAGE_COLUMNS), signed_url: row.storage_bucket === IMAGE_BUCKET ? urls.get(row.storage_path) ?? null : null }));
 }
 type OriginRow = { id: string; approved_product_id?: string | null; approved_movement_id?: string | null; submitted_by: string; reviewed_by: string | null };
-/** Item -> the approved request that created it (earliest if several). Same read access as the Requests screens. */
-async function productOrigins(client: Client, productIds: (string | null)[]) {
-  const origins = new Map<string, InventoryOrigin>();
-  const unique = ids(productIds);
-  if (!unique.length) return origins;
-  const data = await inChunks(unique, part => client.schema("inventory").from("product_requests").select("id,approved_product_id,submitted_by,reviewed_by").in("approved_product_id", part).order("submitted_at").order("id").returns<OriginRow[]>().then(rows));
-  for (const row of data) if (row.approved_product_id && !origins.has(row.approved_product_id)) origins.set(row.approved_product_id, { requester_id: row.submitted_by, approver_id: row.reviewed_by });
-  return origins;
-}
 /** Movement -> the request behind it: a movement request (approved_movement_id) or the product request that added the item. */
 async function movementOrigins(client: Client, movements: InventoryMovementRow[]) {
   const origins = new Map<string, InventoryOrigin>();
@@ -211,23 +202,17 @@ export async function getInventoryOverviewActivity(): Promise<InventoryOverviewA
   if (!canViewInventory(profile?.role)) throw new Error('Inventory access denied');
   if (!canManageInventory(profile?.role)) return null;
   const client = await inventoryClient(profile?.role);
-  type ProductEntry = Pick<InventoryProductSummary,"stock_ref" | "item_code" | "model_name"> & { id: string; item_name: string; created_by: string | null; created_at: string };
   type RequestEntry = Pick<InventoryProductRequestRow,"stock_ref" | "item_code" | "model_name"> & { id: string; item_name: string; submitted_by: string; submitted_at: string };
   type MovementRequestEntry = { id: string; product_id: string; submitted_by: string; submitted_at: string };
-  const [products, productRequests, movementRequests] = await Promise.all([
-    client.schema('inventory').from('products').select('id,item_name,stock_ref,item_code,model_name,created_by,created_at').eq('is_active',true).order('created_at',{ascending:false}).order('id').limit(5).returns<ProductEntry[]>().then(rows),
+  const [productRequests, movementRequests] = await Promise.all([
     client.schema('inventory').from('product_requests').select('id,item_name,stock_ref,item_code,model_name,submitted_by,submitted_at').eq('request_status','pending_review').order('submitted_at',{ascending:false}).order('id').limit(5).returns<RequestEntry[]>().then(rows),
     client.schema('inventory').from('movement_requests').select('id,product_id,submitted_by,submitted_at').eq('request_status','pending_review').order('submitted_at',{ascending:false}).order('id').limit(5).returns<MovementRequestEntry[]>().then(rows),
   ]);
-  const [origins, items] = await Promise.all([
-    productOrigins(client, products.map(row=>row.id)),
-    productSummaries(client, movementRequests.map(row=>row.product_id)),
-  ]);
-  const people = await displayNames(client, ids([...products.map(row=>row.created_by), ...productRequests.map(row=>row.submitted_by), ...movementRequests.map(row=>row.submitted_by), ...[...origins.values()].flatMap(origin=>[origin.requester_id,origin.approver_id])]));
+  const items = await productSummaries(client, movementRequests.map(row=>row.product_id));
+  const people = await displayNames(client, ids([...productRequests.map(row=>row.submitted_by), ...movementRequests.map(row=>row.submitted_by)]));
   return {
     pending_products: productRequests.map(row=>({stock_ref:row.stock_ref,item_code:row.item_code,model_name:row.model_name,id:row.id,product_id:null,item_name:row.item_name,display_name:people.get(row.submitted_by) ?? null,created_at:row.submitted_at})),
     pending_movements: movementRequests.map(row=>({stock_ref:items.get(row.product_id)?.stock_ref ?? null,item_code:items.get(row.product_id)?.item_code ?? null,model_name:items.get(row.product_id)?.model_name ?? null,id:row.id,product_id:row.product_id,item_name:items.get(row.product_id)?.item_name ?? 'Inventory item',display_name:people.get(row.submitted_by) ?? null,created_at:row.submitted_at})),
-    recent_products: products.map(row=>({stock_ref:row.stock_ref,item_code:row.item_code,model_name:row.model_name,id:row.id,product_id:row.id,item_name:row.item_name,display_name:row.created_by ? people.get(row.created_by) ?? null : null,created_at:row.created_at,attribution:buildAttribution(row.created_by,origins.get(row.id),people)})),
   };
 }
 
@@ -373,6 +358,8 @@ async function applyMovementFilters(client: Client, role: string | null | undefi
     if (!personIds.length) return null;
     query = query.in("created_by", personIds);
   }
+  // New items: the stock-in made when an item is created (approved add-item request or manager add) always carries reference_type product_request.
+  if (plan.new_items) query = query.eq("reference_type", "product_request").eq("action_type", "receive_stock");
   if (plan.location) query = query.or(`from_location.eq.${plan.location},to_location.eq.${plan.location}`);
   if (plan.from) query = query.gte("created_at", plan.from);
   if (plan.to) query = query.lte("created_at", plan.to);
