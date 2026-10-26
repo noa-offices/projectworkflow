@@ -56,7 +56,7 @@ begin
     raise exception 'Inventory access denied' using errcode = '42501';
   end if;
   if char_length(needle) < 2 then return; end if;
-  needle := replace(replace(replace(needle, '\', '\'), '%', '\%'), '_', '\_');
+  needle := replace(replace(replace(needle, '\', '\\'), '%', '\%'), '_', '\_');
   return query
     select p.id
     from public.profiles p
