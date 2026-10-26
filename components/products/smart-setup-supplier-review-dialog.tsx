@@ -63,29 +63,14 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") { event.stopPropagation(); onClose(); return; }
     if (event.key !== "Tab" || !panelRef.current) return;
-    const items = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)); // keeps focus inside the dialog
+    const items = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.getClientRects().length > 0); // keeps focus inside the dialog
     if (!items.length) { event.preventDefault(); return; }
     const firstItem = items[0], lastItem = items[items.length - 1], active = document.activeElement;
     if (event.shiftKey && (active === firstItem || active === panelRef.current)) { event.preventDefault(); lastItem.focus(); }
     else if (!event.shiftKey && active === lastItem) { event.preventDefault(); firstItem.focus(); }
   };
 
-  return <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-950/55 p-[2.5vw]">
-    <div ref={panelRef} tabIndex={-1} onKeyDown={onKeyDown} className="flex h-[95dvh] w-[95vw] min-w-0 flex-col overflow-hidden rounded-xl bg-white text-zinc-900 shadow-2xl outline-none">
-      <header className="shrink-0 space-y-3 border-b border-zinc-200 bg-zinc-50 p-3 sm:p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 id={titleId} className="text-lg font-semibold">Supplier price review</h2>
-            {fresh ? <dl className="mt-1 flex flex-wrap gap-x-5 gap-y-0.5 text-sm text-zinc-700">
-              <div className="flex gap-1"><dt className="text-zinc-500">Price list</dt><dd className="font-semibold">{fresh.output.source.title}</dd></div>
-              <div className="flex gap-1"><dt className="text-zinc-500">Currency</dt><dd className="font-semibold">{fresh.output.source.currency}</dd></div>
-              <div className="flex gap-1"><dt className="text-zinc-500">Price basis</dt><dd className="font-semibold">{fresh.output.source.basis}</dd></div>
-              {selected?.effectiveFrom ? <div className="flex gap-1"><dt className="text-zinc-500">Effective</dt><dd className="font-semibold">{selected.effectiveFrom}</dd></div> : null}
-            </dl> : null}
-          </div>
-          <button type="button" onClick={onClose} className="h-9 shrink-0 rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-900 hover:bg-zinc-100">Close</button>
-        </div>
-        {fresh ? <>
+  const controls = fresh ? <>
           <div className="flex flex-wrap items-center gap-2">
             <div role="group" aria-label="Show rows with these statuses" className="flex flex-wrap gap-2">
               {REVIEW_STATUS_CHIPS.map((s) => {
@@ -106,11 +91,30 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
             <button type="button" disabled={!shown.length} onClick={() => downloadCsv(shown, fresh.output.source.title)} className="h-9 rounded-md border border-emerald-700 bg-white px-3 text-sm font-semibold text-emerald-900 disabled:cursor-not-allowed disabled:opacity-50">Export CSV</button>
           </div>
           <p className="text-sm text-zinc-600" aria-live="polite">Showing {shown.length} of {allRows.length} rows</p>
-        </> : null}
+  </> : null;
+
+  return <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-950/55 p-[2.5vw]">
+    <div ref={panelRef} tabIndex={-1} onKeyDown={onKeyDown} className="flex h-[95dvh] w-[95vw] min-w-0 flex-col overflow-hidden rounded-xl bg-white text-zinc-900 shadow-2xl outline-none">
+      <header className="shrink-0 space-y-3 border-b border-zinc-200 bg-zinc-50 p-3 sm:p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id={titleId} className="text-lg font-semibold">Supplier price review</h2>
+            {fresh ? <dl className="mt-1 flex flex-wrap gap-x-5 gap-y-0.5 text-sm text-zinc-700">
+              <div className="flex gap-1"><dt className="text-zinc-500">Price list</dt><dd className="font-semibold">{fresh.output.source.title}</dd></div>
+              <div className="flex gap-1"><dt className="text-zinc-500">Currency</dt><dd className="font-semibold">{fresh.output.source.currency}</dd></div>
+              <div className="flex gap-1"><dt className="text-zinc-500">Price basis</dt><dd className="font-semibold">{fresh.output.source.basis}</dd></div>
+              {selected?.effectiveFrom ? <div className="flex gap-1"><dt className="text-zinc-500">Effective</dt><dd className="font-semibold">{selected.effectiveFrom}</dd></div> : null}
+            </dl> : null}
+          </div>
+          <button type="button" onClick={onClose} className="h-9 shrink-0 rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-900 hover:bg-zinc-100">Close</button>
+        </div>
+        {controls ? <div className="hidden space-y-3 sm:block">{controls}</div> : null}
       </header>
       {!fresh ? <div className="p-4 text-sm">
         <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">{stale ? "The draft or selection changed after the last check, so this result is out of date and is no longer shown. Close this window and run Check Supplier Prices again." : "There is no supplier price check to show. Close this window and run Check Supplier Prices first."}</p>
       </div> : <div ref={scrollRef} tabIndex={0} role="region" aria-label="Supplier price rows" onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)} className="min-h-0 flex-1 overflow-auto">
+        {/* On narrow screens the filters live in the scroll area so they scroll away; the table header stays sticky. */}
+        <div className="space-y-3 border-b border-zinc-200 bg-zinc-50 p-3 sm:hidden">{controls}</div>
         <table className="w-full min-w-[960px] border-collapse text-left text-sm">
           <thead className="sticky top-0 z-10 bg-zinc-100 text-xs uppercase tracking-wide text-zinc-600 shadow-[0_1px_0_#d4d4d8]">
             <tr><th scope="col" className="px-3 py-2">Model / code</th><th scope="col" className="px-3 py-2">Price field / category</th><th scope="col" className="px-3 py-2 text-right">Imported price</th><th scope="col" className="px-3 py-2 text-right">Supplier price</th><th scope="col" className="px-3 py-2 text-right">Difference</th><th scope="col" className="px-3 py-2">Status</th><th scope="col" className="px-3 py-2">Reason / evidence</th></tr>
