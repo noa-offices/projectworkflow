@@ -12,6 +12,7 @@ import { buildSmartSetupCheckRequest, checkFingerprint } from "@/lib/products/sm
 
 // The panel imports server actions (auth, cookies). Panel rendering is presentation-only, so the actions are stubbed.
 mock.module("@/app/products/smart-setup-supplier-check-actions", { namedExports: { checkSmartSetupSupplierPrices: async () => { throw Error("not called in static render"); }, listSmartSetupSupplierSourcesAction: async () => ({ status: "unauthorized" }) } });
+mock.module("@/app/products/supplier-review-decision-actions", { namedExports: { listSupplierPriceDecisions: async () => [], saveSupplierPriceDecisions: async () => { throw Error("not called in static render"); } } });
 const { SupplierVerificationPanel } = await import("./smart-setup-supplier-verification");
 const { SupplierReviewDialog } = await import("./smart-setup-supplier-review-dialog");
 

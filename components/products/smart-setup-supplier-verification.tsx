@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { checkSmartSetupSupplierPrices, listSmartSetupSupplierSourcesAction } from "@/app/products/smart-setup-supplier-check-actions";
 import type { ProductTemplateDraft } from "@/lib/products/product-template-draft";
 import type { SmartSetupSupplierCheckOutput } from "@/lib/products/smart-setup-supplier-check";
@@ -8,9 +8,11 @@ import type { SmartSetupSupplierSourceOption } from "@/lib/products/smart-setup-
 import type { SmartSetupPriceCell, SmartSetupUnsupportedCell } from "@/lib/products/smart-setup-supplier-targets";
 import { buildSmartSetupCheckRequest, checkFingerprint, sourceOptionLabel, statusLabels, summarizeCheckResults } from "@/lib/products/smart-setup-supplier-verification";
 import { SupplierReviewDialog } from "@/components/products/smart-setup-supplier-review-dialog";
+import { buildReviewRows } from "@/lib/products/smart-setup-supplier-review";
+import { conflictingDecisionKeys, decisionForRow, decisionKey, mapDecisions, type SavedReviewDecision } from "@/lib/products/supplier-review-decisions";
 
 const tone = { MATCHED: "border-emerald-300 bg-emerald-50 text-emerald-900", MISMATCH: "border-red-300 bg-red-50 text-red-900", NOT_FOUND: "border-zinc-300 bg-zinc-100 text-zinc-700", NEEDS_REVIEW: "border-amber-300 bg-amber-50 text-amber-900" } as const;
-type Sources = { state: "loading" } | { state: "unauthorized" } | { state: "error" } | { state: "ready"; options: SmartSetupSupplierSourceOption[] };
+type Sources = { state: "loading" } | { state: "unauthorized" } | { state: "error" } | { state: "ready"; options: SmartSetupSupplierSourceOption[]; canManageDecisions?: boolean };
 export type SupplierCheckedResult = { fingerprint: string; output: SmartSetupSupplierCheckOutput; cells: SmartSetupPriceCell[]; unsupported: SmartSetupUnsupportedCell[] };
 
 /** Read-only supplier price verification for the current Smart Setup draft. Never edits the draft, applies a price, or blocks Apply. Mount with key={brandId}. */
@@ -28,7 +30,7 @@ export function SmartSetupSupplierVerification({ draft, routingPlan, brandId }: 
     let current = true;
     if (!brandId) return;
     listSmartSetupSupplierSourcesAction(brandId)
-      .then((list) => { if (current) setSources(list.status === "ok" ? { state: "ready", options: list.sources } : { state: "unauthorized" }); })
+      .then((list) => { if (current) setSources(list.status === "ok" ? { state: "ready", options: list.sources, canManageDecisions: list.canManageDecisions } : { state: "unauthorized" }); })
       .catch(() => { if (current) setSources({ state: "error" }); });
     return () => { current = false; };
   }, [brandId]);
@@ -59,13 +61,21 @@ export function SmartSetupSupplierVerification({ draft, routingPlan, brandId }: 
 export type SupplierVerificationPanelProps = { brandId: string; sources: Sources; definitionId: string; onSelect: (definitionId: string) => void; selected: SmartSetupSupplierSourceOption | null; running: boolean; error: string | null; stale: boolean; fresh: SupplierCheckedResult | null; reviewOpen: boolean; onReviewOpen: () => void; onReviewClose: () => void; onRun: () => void };
 /** Presentation only: renders exactly what the service returned; no matching or comparison happens here. */
 export function SupplierVerificationPanel({ brandId, sources, definitionId, onSelect, selected, running, error, stale, fresh, reviewOpen, onReviewOpen, onReviewClose, onRun }: SupplierVerificationPanelProps) {
+  const canManageDecisions = sources.state === "ready" && sources.canManageDecisions === true;
+  const [decisionSummary, setDecisionSummary] = useState<{ fingerprint: string; count: number } | null>(null);
+  const onDecisionsSaved = useCallback((records: SavedReviewDecision[]) => {
+    if (!fresh) return;
+    const saved = mapDecisions(records), rows = buildReviewRows(fresh.output.results, fresh.cells), conflicts = conflictingDecisionKeys(rows);
+    setDecisionSummary({ fingerprint: fresh.fingerprint, count: rows.filter((r) => !conflicts.has(decisionKey(r)) && decisionForRow(r, saved[decisionKey(r)])).length });
+  }, [fresh]);
+  const decidedCount = decisionSummary?.fingerprint === fresh?.fingerprint ? decisionSummary?.count ?? 0 : 0;
   const reviewButton = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
   // Closing the review window hands focus back to the button that opened it.
   useEffect(() => { if (wasOpen.current && !reviewOpen) reviewButton.current?.focus(); wasOpen.current = reviewOpen; }, [reviewOpen]);
   const summary = fresh ? summarizeCheckResults(fresh.output.results) : null;
   const headline = summary
-    ? `${summary.counts.MATCHED} matched · ${summary.counts.MISMATCH} mismatch · ${summary.counts.NOT_FOUND} not found · ${summary.counts.NEEDS_REVIEW} needs review`
+    ? `${summary.counts.MATCHED} matched · ${summary.counts.MISMATCH} mismatch · ${summary.counts.NOT_FOUND} not found · ${summary.counts.NEEDS_REVIEW} needs review${canManageDecisions ? ` · ${decidedCount} decided` : ""}`
     : stale ? "Result is out of date" : "Not checked";
 
   return <>
@@ -99,6 +109,6 @@ export function SupplierVerificationPanel({ brandId, sources, definitionId, onSe
         </>}
     </div>
   </details>
-  {reviewOpen ? <SupplierReviewDialog fresh={fresh} stale={stale} selected={selected} onClose={onReviewClose} /> : null}
+  {reviewOpen ? <SupplierReviewDialog fresh={fresh} stale={stale} selected={selected} onClose={onReviewClose} canManageDecisions={canManageDecisions} onDecisionsSaved={onDecisionsSaved} /> : null}
   </>;
 }
