@@ -43,6 +43,11 @@ export function inventoryOverviewHref(filter: { itemType?: string; location?: st
 }
 export function hasInventoryFilters(state: ProductUrlState): boolean { return !!(state.q || state.brand || state.category || state.subcategory || state.status || state.itemType || state.location || state.stock); }
 export function inventoryOptionalText(value: string | null | undefined): string { return value?.trim() || "—"; }
+/** Stock ref identifies an item; code/model are optional descriptive details. */
+export function inventoryIdentifier(item: {stock_ref?: string | null;item_code?: string | null;model_name?: string | null} | null | undefined, unassignedNewItem = false): string {
+  const ref = item?.stock_ref?.trim(), code = item?.item_code?.trim(), model = item?.model_name?.trim();
+  return [ref || (unassignedNewItem ? 'Ref assigned on approval' : ''),code ? `Code ${code}` : '',model ? `Model ${model}` : ''].filter(Boolean).join(' · ');
+}
 export function inventoryLabel(value: string): string {
   const special: Record<string, string> = { receive_stock: "Stock received", stock_in: "Stock in", stock_out: "Stock out", return_to_warehouse: "Return to warehouse", internal_transfer: "Internal transfer", project_balance: "Project balance", manual_entry: "Manual entry", temporary_out: "Temporary out", pending_review: "Pending review" };
   const label = special[value] ?? value.replaceAll("_", " ");

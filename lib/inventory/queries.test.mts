@@ -88,6 +88,8 @@ test('Overview activity maps full names without costs, emails or extra profile a
   assert.equal(activity?.pending_movements[0].display_name,'Junais KP');
   assert.equal(activity?.recent_movements[0].display_name,'Junais KP');
   assert.equal(activity?.recent_products[0].display_name,'Junais KP');
+  assert.equal(activity?.recent_products[0].stock_ref,product.stock_ref);
+  assert.equal(activity?.pending_movements[0].stock_ref,product.stock_ref);
   assert.ok(!JSON.stringify(activity).includes('never@example.com'));
   assert.equal(calls.some(call=>call.table.includes('cost')),false);
   assert.ok(calls.filter(call=>call.table==='profiles').every(call=>call.url.searchParams.get('select')==='id,full_name'));
@@ -98,6 +100,14 @@ test('Overview activity maps full names without costs, emails or extra profile a
     assert.equal(await queries.getInventoryOverviewActivity(),null);
     assert.equal(clientCalls,0);
   }
+});
+
+test('pending product movement requests and reservations retain their product Stock ref',async()=>{
+  reset('admin_manager');
+  const pending=await queries.getPendingProductMovementRequests('p1');
+  assert.equal(pending[0].product?.stock_ref,product.stock_ref);
+  fixtures.reservations=[{id:'r1',product_id:'p1',status:'active',quantity:1,kind:'book',created_by:'hidden',expires_at:null}];
+  assert.equal((await queries.getProduct('p1'))?.reservations[0].product?.stock_ref,product.stock_ref);
 });
 
 test('type counts use three full-dataset HEAD reads and ignore the selected type', async () => {

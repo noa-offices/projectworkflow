@@ -14,5 +14,5 @@ export default async function InventoryProductPhotosPage({ params }: { params: P
   const product = await getProduct(id.toLowerCase());
   if (!product) notFound();
   if (!product.is_active) redirect(productHref);
-  return <ProductPhotoManager productId={product.id} productName={product.item_name} images={product.images} role={profile?.role ?? null} productHref={productHref} />;
+  return <ProductPhotoManager productId={product.id} productName={product.item_name} identifiers={{stock_ref:product.stock_ref,item_code:product.item_code,model_name:product.model_name}} images={product.images} role={profile?.role ?? null} productHref={productHref} />;
 }

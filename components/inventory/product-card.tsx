@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 import { Clock, Package, Puzzle } from "lucide-react";
-import { formatInventoryNumber, inventoryLabel, productStockLocations } from "@/lib/inventory/presentation";
+import { inventoryIdentifier, formatInventoryNumber, inventoryLabel, productStockLocations } from "@/lib/inventory/presentation";
 import type { InventoryProduct } from "@/lib/inventory/types";
 
 const locationShortLabels = {
@@ -25,7 +25,7 @@ export function ProductCard({ product, href }: { product: InventoryProduct; href
   const imageUrl = product.main_image_url;
   const showImage = Boolean(imageUrl && imageUrl !== failedImage);
   const TypeIcon = product.item_type === "accessory" ? Puzzle : product.item_type === "temporary" ? Clock : Package;
-  const itemCode = product.item_code?.trim(), brand = product.brand_name?.trim();
+  const brand = product.brand_name?.trim();
   const locations = productStockLocations(product).filter(({ quantity }) => quantity > 0);
   const keep = locations.length <= MAX_LOCATION_CHIPS ? locations.length : MAX_LOCATION_CHIPS - 1;
   const shown = locations.slice(0, keep), hidden = locations.slice(keep);
@@ -47,10 +47,7 @@ export function ProductCard({ product, href }: { product: InventoryProduct; href
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-1 p-2 lg:gap-1.5 lg:p-3">
         <h2 className="line-clamp-2 min-h-8 text-[13px] font-semibold leading-4 text-zinc-950 [overflow-wrap:anywhere] group-hover:text-emerald-900 lg:min-h-0 lg:text-sm lg:leading-5">{product.item_name}</h2>
-        <p className="flex min-w-0 items-baseline gap-1.5 leading-4">
-          <span className="shrink-0 text-xs font-semibold text-emerald-800 lg:text-sm">{product.stock_ref}</span>
-          {itemCode ? <span className="min-w-0 truncate text-[11px] text-zinc-600 lg:text-xs">Code: {itemCode}</span> : null}
-        </p>
+        <p data-card-identifier className="text-xs font-semibold leading-4 text-emerald-800 [overflow-wrap:anywhere] lg:text-sm">{inventoryIdentifier(product)}</p>
         <p data-card-stats className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs leading-4 text-zinc-700 lg:text-sm">
           <span className="font-semibold text-emerald-900">{formatInventoryNumber(product.quantity)} live</span><span aria-hidden="true">·</span><span>{formatInventoryNumber(product.available_quantity)} avail</span>
           {product.reserved_quantity > 0 ? <span aria-label={`${formatInventoryNumber(product.reserved_quantity)} reserved`} className="rounded bg-amber-100 px-1 font-semibold text-amber-950">{formatInventoryNumber(product.reserved_quantity)} res.</span> : null}

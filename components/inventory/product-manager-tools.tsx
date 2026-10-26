@@ -1,4 +1,5 @@
 "use client";
+import { inventoryIdentifier } from "@/lib/inventory/presentation";
 
 import Link from "next/link";
 import { DeleteItemButton } from "./delete-item-button";
@@ -52,7 +53,7 @@ function RemoveItemDialog({ product, preview, onClose }: { product: InventoryPro
   }
   return <RequestDialog title="Remove item" onClose={onClose} busy={busy}>
     <form onSubmit={submit} className="min-w-0 space-y-4" aria-describedby={error ? "remove-error" : undefined}>
-      <p className="break-words font-semibold">{product.item_name}</p>
+      <p className="break-words font-semibold">{product.item_name}</p><p className="text-sm text-emerald-800 [overflow-wrap:anywhere]">{inventoryIdentifier(product)}</p>
       {notice.warnings.length > 0 && <div role="note" className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{notice.warnings.map(line => <p key={line}>{line}</p>)}</div>}
       <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-700">{notice.effects.map(line => <li key={line}>{line}</li>)}</ul>
       <label className="block text-sm font-medium text-zinc-800">Reason for removing *

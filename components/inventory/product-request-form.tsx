@@ -1,4 +1,5 @@
 "use client";
+import { inventoryIdentifier } from "@/lib/inventory/presentation";
 import { BrandPicker } from "./brand-picker";
 
 import Link from "next/link";
@@ -68,7 +69,7 @@ export function ProductRequestForm({ brands, categories, role, preview = false, 
     finally { held.current = false; setPending(false); onBusyChange?.(false); requestAnimationFrame(() => errorRef.current?.focus()); }
   }} className="min-w-0 space-y-4">
     <fieldset disabled={pending} className="min-w-0 space-y-4 disabled:opacity-60">
-      <section className={sectionStyle}><h2 className="font-semibold text-zinc-900">Item details</h2><p className="text-sm text-zinc-600">Required fields are marked *.</p>
+      <section className={sectionStyle}><h2 className="font-semibold text-zinc-900">Item details</h2><p className="text-sm text-zinc-600">Required fields are marked *.</p><p className="text-sm text-emerald-800 [overflow-wrap:anywhere]">{inventoryIdentifier(request ? {...request,stock_ref:request.approved_product?.stock_ref || request.stock_ref} : null,true)}</p>
         <div className="grid min-w-0 gap-4 sm:grid-cols-2">
           <BrandPicker brands={brands} role={role} current={request} preview={preview} />
           <label className="min-w-0 text-sm font-medium text-zinc-700">Category *<select required name="category_id" value={category} onChange={event => setCategory(event.target.value)} className={fieldStyle}><option value="" disabled>Choose category</option>{activeCategories.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>

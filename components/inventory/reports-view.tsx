@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 import { FileSpreadsheet, FileText, Loader2, Search, X } from "lucide-react";
 import { searchMovementProducts } from "@/lib/inventory/actions";
 import { ACTION_FORM_LABELS, actionHistoryLabel, canUseManagerMovements } from "@/lib/inventory/movement-form";
-import { inventoryLabel } from "@/lib/inventory/presentation";
+import { inventoryIdentifier, inventoryLabel } from "@/lib/inventory/presentation";
 import type { CurrentInventoryFilters, MovementReportFilters } from "@/lib/inventory/reports/params";
 import { currentReportUrl, downloadName, movementsReportUrl, photoNote } from "@/lib/inventory/reports/urls";
 import { saveFailureMessage } from "@/lib/inventory/save-errors";
@@ -48,7 +48,7 @@ export function ReportsView({ brands, categories, role, defaultRange, preview = 
     timer.current = setTimeout(async () => {
       setSearching(true);
       try {
-        if (preview) setResults(previewCatalog.filter(row => [row.item_name, row.stock_ref, row.item_code].some(text => text?.toLowerCase().includes(value.trim().toLowerCase()))));
+        if (preview) setResults(previewCatalog.filter(row => [row.item_name, row.stock_ref, row.item_code, row.model_name].some(text => text?.toLowerCase().includes(value.trim().toLowerCase()))));
         else { const response = await searchMovementProducts(value); setResults(response.ok ? response.products : []); }
       } finally { setSearching(false); }
     }, preview ? 0 : 250);
@@ -102,7 +102,7 @@ export function ReportsView({ brands, categories, role, defaultRange, preview = 
           <div className="flex min-w-0 items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 focus-within:border-emerald-800"><Search size={18} aria-hidden="true" className="shrink-0 text-zinc-500" /><input id="rm-product" type="search" inputMode="search" enterKeyHint="search" value={term} maxLength={100} onChange={event => search(event.target.value)} placeholder="All products. Search to pick one." className="min-h-11 w-full min-w-0 bg-transparent text-base outline-none" /></div>
           {term.trim() && <div aria-live="polite" className="space-y-2">{searching && <p className="text-sm text-zinc-600">Searching…</p>}
             {!searching && results.length === 0 && <p className="text-sm text-zinc-600">No products found.</p>}
-            {results.slice(0, 6).map(row => <button key={row.id} type="button" onClick={() => { setProduct({ id: row.id, name: `${row.item_name}${row.stock_ref ? ` (${row.stock_ref})` : ""}` }); setM("product", row.id); setTerm(""); setResults([]); }} className={`block min-h-11 w-full break-words rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-sm hover:bg-zinc-50 ${focusRing}`}>{row.item_name}<span className="block text-emerald-800">{row.stock_ref}</span></button>)}</div>}
+            {results.slice(0, 6).map(row => <button key={row.id} type="button" onClick={() => { setProduct({ id: row.id, name: `${row.item_name} · ${inventoryIdentifier(row)}` }); setM("product", row.id); setTerm(""); setResults([]); }} className={`block min-h-11 w-full break-words rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-sm hover:bg-zinc-50 ${focusRing}`}>{row.item_name}<span className="block text-emerald-800">{inventoryIdentifier(row)}</span></button>)}</div>}
         </>}
       </div>
       <label className={checkClass}><input type="checkbox" checked={moves.photos} onChange={event => setM("photos", event.target.checked)} className="h-5 w-5 accent-emerald-800" />Include photos in Excel</label>

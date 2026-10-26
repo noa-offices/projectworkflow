@@ -4,7 +4,7 @@ import { ChevronDown, History, Package } from "lucide-react";
 import { EmptyState, Pager, buttonClass } from "./inventory-ui";
 import { ACTION_FORM_LABELS, actionHistoryLabel, canUseManagerMovements, movementLinkLabel, movementRoute } from "@/lib/inventory/movement-form";
 import { hasMovementFilters, movementsHref, type MovementUrlState } from "@/lib/inventory/movement-history";
-import { inventoryPersonName, formatInventoryDate, formatInventoryNumber } from "@/lib/inventory/presentation";
+import { inventoryIdentifier, inventoryPersonName, formatInventoryDate, formatInventoryNumber } from "@/lib/inventory/presentation";
 import { LOCATION_LABELS, MOVEMENT_ACTIONS, type InventoryMovement, type InventoryPage } from "@/lib/inventory/types";
 
 const control = "mt-1 min-h-11 w-full min-w-0 rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
@@ -20,12 +20,12 @@ function ProductCell({ movement, detailHrefPrefix }: { movement: InventoryMoveme
     <div className="min-w-0">
       {product ? <Link href={`${detailHrefPrefix}${product.id}`} className="inline-flex min-h-11 items-center break-words font-semibold text-zinc-950 hover:text-emerald-800">{product.item_name}</Link> : <span className="font-semibold text-zinc-950">Unknown product</span>}
       {product?.brand_name && <p className="text-sm text-zinc-600 [overflow-wrap:anywhere]">{product.brand_name}</p>}
-      <p className="text-sm text-emerald-800 [overflow-wrap:anywhere]">{product?.stock_ref ?? "—"}</p>
+      <p className="text-sm text-emerald-800 [overflow-wrap:anywhere]">{inventoryIdentifier(product)}</p>
     </div></div>;
 }
 const when = (movement: InventoryMovement) => <time dateTime={movement.created_at}>{formatInventoryDate(movement.created_at)}</time>;
 
-export function MovementsView({ result, state, role, baseHref = "/inventory/movements", detailHrefPrefix = "/inventory/products/", productName }: { result: InventoryPage<InventoryMovement>; state: MovementUrlState; role: string | null; baseHref?: string; detailHrefPrefix?: string; productName?: string | null }) {
+export function MovementsView({ result, state, role, baseHref = "/inventory/movements", detailHrefPrefix = "/inventory/products/", productName, productIdentifier }: { result: InventoryPage<InventoryMovement>; state: MovementUrlState; role: string | null; baseHref?: string; detailHrefPrefix?: string; productName?: string | null; productIdentifier?: string | null }) {
   if (!canUseManagerMovements(role)) return <p role="alert" className="rounded-lg border border-zinc-200 bg-white p-4 text-sm text-zinc-700">You do not have permission to view movements.</p>;
   const [path, fixed] = baseHref.split("?", 2), fixedParams = [...new URLSearchParams(fixed)];
   const pages = Math.max(1, result.page_count), filtered = hasMovementFilters(state);
@@ -48,7 +48,7 @@ export function MovementsView({ result, state, role, baseHref = "/inventory/move
         </div>
       </details>
       <div className="grid grid-cols-2 gap-2"><button type="submit" className="inline-flex min-h-11 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white hover:bg-emerald-800">Apply filters</button>{filtered ? <Link href={baseHref} className={buttonClass.secondary}>Clear filters</Link> : <span />}</div>
-      {state.product && <p className="flex flex-wrap items-center gap-2 text-sm text-zinc-700"><span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 font-medium text-emerald-900">Product: {productName || "Selected product"}</span><Link href={movementsHref(state, { product: "", page: 1 }, baseHref)} className="inline-flex min-h-11 items-center font-semibold underline underline-offset-4">Show all products</Link></p>}
+      {state.product && <p className="flex flex-wrap items-center gap-2 text-sm text-zinc-700"><span className="max-w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1 font-medium text-emerald-900 [overflow-wrap:anywhere]">Product: {productName || "Selected product"}{productIdentifier ? <span className="mt-1 block font-normal">{productIdentifier}</span> : null}</span><Link href={movementsHref(state, { product: "", page: 1 }, baseHref)} className="inline-flex min-h-11 items-center font-semibold underline underline-offset-4">Show all products</Link></p>}
     </form>
     <p className="text-sm text-zinc-600">{formatInventoryNumber(result.total)} {result.total === 1 ? "movement" : "movements"}</p>
     {result.items.length === 0 ? <EmptyState icon={<History size={32} aria-hidden="true" />} title={filtered ? "No movements found" : "No movements yet"} text={filtered ? "Nothing matches these filters." : "Stock changes show here after the first movement."} action={filtered ? { href: baseHref, label: "Clear filters" } : { href: "/inventory/move", label: "Move stock" }} /> : <>

@@ -9,6 +9,7 @@ import type { InventoryProduct, InventoryProductDetail } from "@/lib/inventory/t
 import { RequestDialog } from "./request-dialog";
 import { buttonClass, fieldClass } from "./inventory-ui";
 import { saveFailureMessage } from "@/lib/inventory/save-errors";
+import { inventoryIdentifier } from '@/lib/inventory/presentation';
 
 export function DeleteItemButton({product,role,preview=false}: {product:InventoryProduct;role:string|null;preview?:boolean}) {
  const [open,setOpen]=useState(false);
@@ -45,6 +46,7 @@ export function DeleteItemDialog({product,preview=false,onClose}: {product:Inven
   finally {lock.current=false;setBusy(false);}
  }}>
   <p className="break-words font-semibold text-zinc-950">{product.item_name}</p>
+  <p className="text-sm text-emerald-800 [overflow-wrap:anywhere]">{inventoryIdentifier(product)}</p>
   <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-950">This permanently deletes the item, its photos and its stock history. This cannot be undone.</p>
   {loading && <p role="status" className="text-sm text-zinc-600">Loading deletion details...</p>}
   {summary && <><dl className="grid grid-cols-3 gap-2 rounded-lg bg-zinc-50 p-3 text-sm"><div><dt className="text-zinc-600">Photos</dt><dd className="font-semibold">{summary.photos}</dd></div><div><dt className="text-zinc-600">Movements</dt><dd className="font-semibold">{summary.movements}</dd></div><div><dt className="text-zinc-600">Holds/bookings</dt><dd className="font-semibold">{summary.reservations}</dd></div></dl>

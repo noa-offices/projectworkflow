@@ -178,7 +178,7 @@ export interface InventoryReservationRow {
   created_by: string; created_at: string; source_request_id: string | null;
   released_by: string | null; released_at: string | null; release_note: string | null; fulfilled_movement_id: string | null;
 }
-export interface InventoryReservation extends InventoryReservationRow { creator_display_name: string | null }
+export interface InventoryReservation extends InventoryReservationRow { creator_display_name: string | null; product?: InventoryProductSummary }
 export interface InventoryMovementRequestRow {
   project_id: string | null; project_label: string | null; reference_note: string | null;
   expires_at: string | null; approved_reservation_id: string | null;
@@ -219,6 +219,9 @@ export interface InventoryOverview extends InventoryStockSummary {
 }
 
 export interface InventoryActivityEntry {
+  stock_ref?: string | null;
+  item_code?: string | null;
+  model_name?: string | null;
   id: string;
   product_id: string | null;
   item_name: string;

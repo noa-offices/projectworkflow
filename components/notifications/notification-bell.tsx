@@ -1,5 +1,5 @@
 "use client";
-import { inventoryNotificationTime, inventoryNotificationSender } from "@/lib/inventory/notification-presentation";
+import { isInventoryNotification, inventoryNotificationTime, inventoryNotificationSender } from "@/lib/inventory/notification-presentation";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -162,9 +162,9 @@ export function NotificationBell() {
                       )}
                       <div className={`min-w-0 flex-1 ${item.read_at ? "pl-3.5" : ""}`}>
                         <p
-                          className={`break-words text-sm leading-snug text-zinc-800 ${item.read_at ? "" : "font-semibold"}`}
+                          className={`break-words text-sm leading-snug text-zinc-800 ${isInventoryNotification(item) ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : ''} ${item.read_at ? "" : "font-semibold"}`}
                         >
-                          {item.body.length > 90
+                          {!isInventoryNotification(item) && item.body.length > 90
                             ? `${item.body.slice(0, 90)}…`
                             : item.body}
                         </p>

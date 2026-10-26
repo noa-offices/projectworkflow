@@ -32,7 +32,7 @@ const movement: InventoryMovementRequest = {
 };
 export const previewMovementRequests: InventoryMovementRequest[] = [
   movement,
-  { ...movement, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2", request_type: "hold", action_type: "internal_transfer", submitted_by: other, submitter_display_name: "Sam Taylor", from_location: null, to_location: null, quantity: 1, note: "Hold for the client presentation." },
+  { ...movement, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2", product: {id:previewProduct.id,brand_id:null,item_name:"Temporary meeting chair",stock_ref:"GEN-0001",item_code:null,model_name:null}, request_type: "hold", action_type: "internal_transfer", submitted_by: other, submitter_display_name: "Sam Taylor", from_location: null, to_location: null, quantity: 1, note: "Hold for the client presentation." },
   { ...movement, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3", request_type: "take", action_type: "sale", movement_type: "stock_out", to_location: "sold", request_status: "approved", reviewed_by: other, reviewed_at: created, review_note: "Confirmed for delivery.", submitted_by: other, submitter_display_name: null },
   { ...movement, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4", request_type: "book", action_type: "internal_transfer", from_location: null, to_location: null, request_status: "rejected", reviewed_by: other, reviewed_at: created, review_note: "Please confirm the required delivery date." },
 ];
