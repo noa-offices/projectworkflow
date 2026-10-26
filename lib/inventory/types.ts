@@ -43,7 +43,8 @@ export const LOCATION_QUANTITY_COLUMNS = {
 
 interface ProductIdentity {
   id: string;
-  brand_id: string;
+  brand_id: string | null;
+  local_brand_id?: string | null;
   category_id: string;
   subcategory_id: string | null;
   custom_category_name: string | null;
@@ -97,8 +98,10 @@ export interface InventoryProduct extends InventoryProductRow {
   costs?: InventoryCosts;
 }
 export interface InventoryProductSummary {
+  brand_name?: string | null;
   id: string;
-  brand_id: string;
+  brand_id: string | null;
+  local_brand_id?: string | null;
   stock_ref: string;
   item_code: string | null;
   item_name: string;
@@ -145,7 +148,7 @@ export interface InventoryCategory {
   is_active: boolean; sort_order: number; created_at: string; updated_at: string;
 }
 export interface InventoryCategoryNode extends InventoryCategory { children: InventoryCategoryNode[] }
-export interface InventoryBrand { id: string; name: string }
+export interface InventoryBrand { id: string; name: string; code?: string; kind?: "public" | "local" }
 export interface InventoryMovementRow {
   id: string; product_id: string; movement_type: MovementType; action_type: MovementAction;
   from_location: InventoryLocation | null; to_location: InventoryLocation | null;

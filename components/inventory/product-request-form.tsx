@@ -1,4 +1,5 @@
 "use client";
+import { BrandPicker } from "./brand-picker";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -68,7 +69,7 @@ export function ProductRequestForm({ brands, categories, role, preview = false, 
     <fieldset disabled={pending} className="min-w-0 space-y-4 disabled:opacity-60">
       <section className={sectionStyle}><h2 className="font-semibold text-zinc-900">Item details</h2><p className="text-sm text-zinc-600">Required fields are marked *.</p>
         <div className="grid min-w-0 gap-4 sm:grid-cols-2">
-          <label className="min-w-0 text-sm font-medium text-zinc-700">Brand *<select required name="brand_id" className={fieldStyle} defaultValue={request?.brand_id ?? ''}><option value="" disabled>Choose brand</option>{request && !brands.some(row => row.id === request.brand_id) && <option value={request.brand_id}>{request.brand_name || 'Current brand'}</option>}{brands.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+          <BrandPicker brands={brands} role={role} current={request} preview={preview} />
           <label className="min-w-0 text-sm font-medium text-zinc-700">Category *<select required name="category_id" value={category} onChange={event => setCategory(event.target.value)} className={fieldStyle}><option value="" disabled>Choose category</option>{activeCategories.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
           <label className="min-w-0 text-sm font-medium text-zinc-700">Subcategory<select key={category} name="subcategory_id" disabled={!subcategories.length} className={fieldStyle} defaultValue={request?.subcategory_id ?? ''}><option value="">No subcategory</option>{subcategories.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
           <label className="min-w-0 text-sm font-medium text-zinc-700">Custom category<input name="custom_category_name" maxLength={200} defaultValue={request?.custom_category_name ?? ''} className={fieldStyle} /></label>

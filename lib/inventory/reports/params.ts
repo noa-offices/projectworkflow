@@ -1,3 +1,4 @@
+import { isBrandSelection } from "../brands";
 import { ITEM_TYPES, LOCATION_LABELS, MOVEMENT_ACTIONS, PRODUCT_STATUSES } from "../types";
 import type { InventoryLocation, ItemType, MovementAction, ProductStatus } from "../types";
 import { dubaiDateKey, dubaiDayBounds, isValidDateKey, shiftDateKey } from "./format";
@@ -21,7 +22,7 @@ export function parseCurrentInventoryParams(raw: Raw): ParseResult<CurrentInvent
   const format = get(raw, "format") === "pdf" ? "pdf" : get(raw, "format") === "xlsx" || get(raw, "format") === "" ? "xlsx" : null;
   if (!format) return fail("Choose Excel or PDF.");
   const brand = get(raw, "brand"), category = get(raw, "category");
-  if ((brand && !UUID.test(brand)) || (category && !UUID.test(category))) return fail("Choose a brand and category from the list.");
+  if ((brand && !isBrandSelection(brand)) || (category && !UUID.test(category))) return fail("Choose a brand and category from the list.");
   const itemType = allowed(get(raw, "itemType"), ITEM_TYPES), location = allowed(get(raw, "location"), Object.keys(LOCATION_LABELS) as InventoryLocation[]), status = allowed(get(raw, "status"), PRODUCT_STATUSES);
   if (itemType === null) return fail("Choose an item type from the list.");
   if (location === null) return fail("Choose a location from the list.");

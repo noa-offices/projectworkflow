@@ -1,4 +1,5 @@
 import "server-only";
+import { brandFilterLabel } from "./brands";
 
 import { requireInventoryUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -55,18 +56,25 @@ async function inChunks<T>(values: string[], read: (part: string[]) => PromiseLi
 }
 const ids = (values: (string | null | undefined)[]) => [...new Set(values.filter((value): value is string => !!value))];
 
-async function names(client: Client, products: { brand_id: string; category_id: string; subcategory_id: string | null }[]) {
+// This project has no generated Inventory schema types. Describe the table-returning
+// RPC explicitly so Supabase treats it as a row set rather than a scalar function.
+function localBrandQuery(client: Client, name: "list_local_brands" | "read_local_brand_names") {
+  return client.schema("inventory").rpc<typeof name, Record<string, never>, {Row: InventoryBrand; Result: InventoryBrand[]; RelationName: typeof name; Relationships: null}>(name, {}, {get:true,count:"exact"});
+}
+async function names(client: Client, products: { brand_id: string | null; local_brand_id?: string | null; category_id?: string; subcategory_id?: string | null }[]) {
   const brands = ids(products.map(row => row.brand_id));
   const categories = ids(products.flatMap(row => [row.category_id, row.subcategory_id]));
-  const [brandRows, categoryRows] = await Promise.all([
+  const [brandRows, categoryRows, localRows] = await Promise.all([
     brands.length ? client.schema("public").from("brands").select("id,name").in("id", brands).returns<InventoryBrand[]>().then(rows) : [],
     categories.length ? client.schema("inventory").from("categories").select("id,name").in("id", categories).returns<InventoryBrand[]>().then(rows) : [],
+    inChunks(ids(products.map(row=>row.local_brand_id)), part => allRows<InventoryBrand>((from,to)=>localBrandQuery(client,"read_local_brand_names").in("id",part).order("id").range(from,to))),
   ]);
+  const localMap = new Map(localRows.map(row => [row.id,row.name]));
   const brandMap = new Map(brandRows.map(row => [row.id, row.name]));
   const categoryMap = new Map(categoryRows.map(row => [row.id, row.name]));
   return (row: typeof products[number]) => ({
-    brand_name: brandMap.get(row.brand_id) ?? null,
-    category_name: categoryMap.get(row.category_id) ?? null,
+    brand_name: row.local_brand_id ? localMap.get(row.local_brand_id) ?? null : row.brand_id ? brandMap.get(row.brand_id) ?? null : null,
+    category_name: row.category_id ? categoryMap.get(row.category_id) ?? null : null,
     subcategory_name: row.subcategory_id ? categoryMap.get(row.subcategory_id) ?? null : null,
   });
 }
@@ -81,7 +89,8 @@ async function productSummaries(client: Client, productIds: (string | null)[]) {
   const unique = ids(productIds);
   if (!unique.length) return new Map<string, InventoryProductSummary>();
   const data = await inChunks(unique, part => client.schema("inventory").from("products").select(SUMMARY_COLUMNS.join(",")).in("id", part).returns<InventoryProductSummary[]>().then(rows));
-  return new Map(data.map(row => [row.id, pick(row, SUMMARY_COLUMNS)]));
+  const localLabels = await names(client,data.map(row=>({...row,category_id:"",subcategory_id:null})));
+  return new Map(data.map(row => [row.id, {...pick(row, SUMMARY_COLUMNS),brand_name:localLabels(row).brand_name}]));
 }
 async function costRows(client: Client, allowed: boolean, table: "product_costs" | "product_request_costs", ownerIds: string[]) {
   const result = new Map<string, InventoryCosts>();
@@ -124,8 +133,16 @@ async function activeReservations(client: Client, productIds: string[]): Promise
 
 const MAX_LOOKUP_IDS = 200;
 /** Ids of products whose name, stock ref, item code or model match the text (any active state). */
+async function brandSearchFilter(client: Client, text: string | null, base: string | null): Promise<string | null> {
+  const term=text?.trim().slice(0,100).replace(/\\/g,"\\\\").replace(/%/g,"\\%").replace(/_/g,"\\_"); if(!term) return base;
+  const [shared,local]=await Promise.all([
+    allRows<{id:string}>((from,to)=>client.schema("public").from("brands").select("id",{count:"exact"}).ilike("name",`%${term}%`).order("id").range(from,to).returns<{id:string}[]>()),
+    allRows<{id:string}>((from,to)=>localBrandQuery(client,"read_local_brand_names").ilike("name",`%${term}%`).order("id").range(from,to))
+  ]);
+  return [base,shared.length ? `brand_id.in.(${shared.map(row=>row.id).join(",")})` : null,local.length ? `local_brand_id.in.(${local.map(row=>row.id).join(",")})` : null].filter(Boolean).join(",") || null;
+}
 async function matchingProductIds(client: Client, text: string | null): Promise<string[] | null> {
-  const filter = searchFilter(text ?? undefined);
+  const filter = await brandSearchFilter(client,text,searchFilter(text ?? undefined));
   if (!filter) return null;
   return rows(await client.schema("inventory").from("products").select("id").or(filter).order("id").limit(MAX_LOOKUP_IDS).returns<{ id: string }[]>()).map(row => row.id);
 }
@@ -161,7 +178,10 @@ function applyProductFilters(query: ProductReadQuery, plan: ReturnType<typeof bu
   if (stockIds) query = query.in("id", stockIds);
   if (plan.active !== null) query = query.eq("is_active", plan.active);
   if (plan.search) query = query.or(plan.search);
-  for (const key of ["brand_id", "category_id", "subcategory_id", "status", "item_type"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
+  if (plan.brand_id === "none") query = query.is("brand_id",null).is("local_brand_id",null);
+  else if (plan.brand_id?.startsWith("local:")) query = query.eq("local_brand_id",plan.brand_id.slice(6));
+  else if (plan.brand_id) query = query.eq("brand_id",plan.brand_id);
+  for (const key of ["category_id", "subcategory_id", "status", "item_type"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
   if (plan.location_column) query = query.gt(plan.location_column, 0);
   return query;
 }
@@ -171,6 +191,7 @@ export async function getProductTypeCounts(filters: ProductFilters = {}): Promis
   const { profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
   const plan = buildProductFilters({ ...filters, item_type: undefined }), stockIds = await stockFilterIds(client, plan);
+  plan.search = await brandSearchFilter(client, filters.search ?? null, plan.search);
   const counts = await Promise.all(ITEM_TYPES.map(async itemType => total(await applyProductFilters(
     client.schema("inventory").from("products").select("id", { count: "exact", head: true }),
     { ...plan, item_type: itemType }, stockIds,
@@ -183,6 +204,7 @@ export async function listProducts(filters: ProductFilters = {}, page = 1): Prom
   const { profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
   const plan = buildProductFilters(filters), range = pagination(page), stockIds = await stockFilterIds(client, plan);
+  plan.search = await brandSearchFilter(client, filters.search ?? null, plan.search);
   const query = applyProductFilters(client.schema("inventory").from("products").select(PRODUCT_COLUMNS.join(","), { count: "exact" }), plan, stockIds);
   const response = await query.order(plan.order.column, { ascending: plan.order.ascending }).order("id").range(range.from, range.to).returns<InventoryProductRow[]>();
   if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
@@ -225,7 +247,8 @@ export async function listActiveBrands(): Promise<InventoryBrand[]> {
   const { profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
   const brands = await allRows<InventoryBrand>((from, to) => client.schema("public").from("brands").select("id,name", { count: "exact" }).eq("is_active", true).order("name").order("id").range(from, to).returns<InventoryBrand[]>());
-  return brands.map(row => pick(row, ["id", "name"]));
+  const locals = await allRows<InventoryBrand>((from,to)=>localBrandQuery(client,"list_local_brands").range(from,to));
+  return [...brands.map(row => pick(row, ["id", "name"])),...locals.map(row=>({...row,kind:"local" as const}))];
 }
 
 export async function listProductRequests(filters: ProductRequestFilters = {}): Promise<InventoryPage<InventoryProductRequest>> {
@@ -234,7 +257,11 @@ export async function listProductRequests(filters: ProductRequestFilters = {}): 
   const plan = requestFilters(filters), productPlan = buildProductFilters({ ...filters, search: lookupText(filters.search) ?? undefined }), range = pagination(filters.page);
   let query = client.schema("inventory").from("product_requests").select(PRODUCT_REQUEST_COLUMNS.join(","), { count: "exact" });
   for (const key of ["request_status", "submitted_by"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
-  for (const key of ["brand_id", "category_id", "subcategory_id", "item_type"] as const) if (productPlan[key] !== null) query = query.eq(key, productPlan[key]);
+  if (productPlan.brand_id === "none") query = query.is("brand_id",null).is("local_brand_id",null);
+  else if (productPlan.brand_id?.startsWith("local:")) query = query.eq("local_brand_id",productPlan.brand_id.slice(6));
+  else if (productPlan.brand_id) query = query.eq("brand_id",productPlan.brand_id);
+  for (const key of ["category_id", "subcategory_id", "item_type"] as const) if (productPlan[key] !== null) query = query.eq(key, productPlan[key]);
+  productPlan.search = await brandSearchFilter(client,filters.search ?? null,productPlan.search);
   const search = requestSearchFilter(productPlan.search, await matchingPersonIds(client, profile?.role, plan.search));
   if (search) query = query.or(search);
   const response = await query.order("submitted_at", { ascending: false }).order("id").range(range.from, range.to).returns<InventoryProductRequestRow[]>();
@@ -255,7 +282,7 @@ export async function listMovementRequests(filters: RequestFilters = {}): Promis
   let query = client.schema("inventory").from("movement_requests").select(MOVEMENT_REQUEST_COLUMNS.join(","), { count: "exact" });
   for (const key of ["request_status", "submitted_by", "request_type", "product_id"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
   if (plan.search) {
-    const [productIds, personIds] = await Promise.all([matchingProductIds(client, plan.search), matchingPersonIds(client, profile?.role, plan.search)]);
+    const [productIds, personIds] = await Promise.all([matchingProductIds(client, filters.search?.trim().slice(0,100) || null), matchingPersonIds(client, profile?.role, plan.search)]);
     const parts = [productIds?.length ? `product_id.in.(${productIds.join(",")})` : null, personIds.length ? `submitted_by.in.(${personIds.join(",")})` : null].filter((part): part is string => !!part);
     if (!parts.length) return emptyPage(range.page);
     query = query.or(parts.join(","));
@@ -333,8 +360,8 @@ export async function listMovementsForReport(filters: MovementFilters, limit: nu
   return { movements: await withMovementDetails(client, movements, wantPhotos), photosOmitted: !!options.photos && !wantPhotos && movements.length > 0 };
 }
 
-const REPORT_COLUMNS = ["id", "stock_ref", "item_code", "item_name", "model_name", "brand_id", "category_id", "subcategory_id", "item_type", "status", "condition", "quantity", ...Object.values(LOCATION_QUANTITY_COLUMNS)].join(",");
-type ReportProductRow = { id: string; stock_ref: string | null; item_code: string | null; item_name: string; model_name: string | null; brand_id: string; category_id: string; subcategory_id: string | null; item_type: string; status: string; condition: string; quantity: number } & Record<typeof LOCATION_QUANTITY_COLUMNS[keyof typeof LOCATION_QUANTITY_COLUMNS], number>;
+const REPORT_COLUMNS = ["id", "stock_ref", "item_code", "item_name", "model_name", "brand_id", "local_brand_id", "category_id", "subcategory_id", "item_type", "status", "condition", "quantity", ...Object.values(LOCATION_QUANTITY_COLUMNS)].join(",");
+type ReportProductRow = { id: string; stock_ref: string | null; item_code: string | null; item_name: string; model_name: string | null; brand_id: string | null; local_brand_id?: string | null; category_id: string; subcategory_id: string | null; item_type: string; status: string; condition: string; quantity: number } & Record<typeof LOCATION_QUANTITY_COLUMNS[keyof typeof LOCATION_QUANTITY_COLUMNS], number>;
 
 /** Current inventory for the Excel and PDF report. Stock numbers only: costs are never read. */
 export async function listCurrentInventoryReport(filters: CurrentInventoryFilters, options: { photos?: boolean; photoLimit?: number } = {}): Promise<{ rows: CurrentInventoryRow[]; brandName: string | null; categoryName: string | null; photosOmitted: boolean }> {
@@ -363,10 +390,10 @@ export async function listCurrentInventoryReport(filters: CurrentInventoryFilter
     };
   });
   const [brandRows, categoryRows] = await Promise.all([
-    filters.brand ? client.schema("public").from("brands").select("id,name").eq("id", filters.brand).limit(1).returns<InventoryBrand[]>().then(rows) : [],
+    filters.brand ? listActiveBrands() : [],
     filters.category ? client.schema("inventory").from("categories").select("id,name").eq("id", filters.category).limit(1).returns<InventoryBrand[]>().then(rows) : [],
   ]);
-  return { rows: items, brandName: brandRows[0]?.name ?? null, categoryName: categoryRows[0]?.name ?? null, photosOmitted };
+  return { rows: items, brandName: filters.brand ? brandFilterLabel(filters.brand,brandRows) : null, categoryName: categoryRows[0]?.name ?? null, photosOmitted };
 }
 
 /** Categories with subcategories and how many active products use each. Managers only. */

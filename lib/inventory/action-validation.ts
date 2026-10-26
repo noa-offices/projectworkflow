@@ -96,7 +96,9 @@ export function productInput(value: unknown, costsAllowed: boolean, patch: boole
   for (const [key, max] of Object.entries({ custom_category_name: 200, description: 5000, note: 2000, ...(patch && !review ? { location: 200 } : {}) })) {
     if (key in input) result[key] = text(input[key], key, max);
   }
-  for (const key of ["brand_id", "category_id"]) if (!patch || key in input) result[key] = uuid(input[key]);
+  if (!patch || "category_id" in input) result.category_id = uuid(input.category_id);
+  for (const key of ["brand_id", "local_brand_id"]) if (!patch || key in input) result[key] = input[key] == null || input[key] === "" ? null : uuid(input[key]);
+  if (result.brand_id && result.local_brand_id) invalid("Choose only one brand.");
   if ("subcategory_id" in input) result.subcategory_id = input.subcategory_id === null ? null : uuid(input.subcategory_id);
   for (const [key, choices] of Object.entries({
     [patch && !review ? "status" : "requested_status"]: PRODUCT_STATUSES,

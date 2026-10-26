@@ -1,3 +1,4 @@
+import { brandFields } from "./brands";
 import { canManageInventory } from "./access";
 import { changedProductRequestFields, PRODUCT_COST_FIELDS } from "./product-request-submission";
 import type { InventoryProductDetail } from "./types";
@@ -13,7 +14,7 @@ const blankToNull = (value: FormDataEntryValue | null) => { const text = String(
 /** Reads the edit form. Stock ref and quantity are never read: they are not editable here. */
 export function productEditFormInput(data: FormData, options: { costsAllowed: boolean; hasLocation: boolean }): Record<string, unknown> {
   const input: Record<string, unknown> = {
-    brand_id: data.get("brand_id"), category_id: data.get("category_id"), subcategory_id: blankToNull(data.get("subcategory_id")),
+    ...brandFields(data), category_id: data.get("category_id"), subcategory_id: blankToNull(data.get("subcategory_id")),
     custom_category_name: blankToNull(data.get("custom_category_name")), item_type: data.get("item_type"),
     item_name: String(data.get("item_name") ?? "").trim(), item_code: blankToNull(data.get("item_code")), model_name: blankToNull(data.get("model_name")),
     description: blankToNull(data.get("description")), note: blankToNull(data.get("note")),

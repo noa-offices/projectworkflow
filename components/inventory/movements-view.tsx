@@ -19,6 +19,7 @@ function ProductCell({ movement, detailHrefPrefix }: { movement: InventoryMoveme
   return <div className="flex min-w-0 items-center gap-3"><Thumb movement={movement} />
     <div className="min-w-0">
       {product ? <Link href={`${detailHrefPrefix}${product.id}`} className="inline-flex min-h-11 items-center break-words font-semibold text-zinc-950 hover:text-emerald-800">{product.item_name}</Link> : <span className="font-semibold text-zinc-950">Unknown product</span>}
+      {product?.brand_name && <p className="text-sm text-zinc-600 [overflow-wrap:anywhere]">{product.brand_name}</p>}
       <p className="text-sm text-emerald-800 [overflow-wrap:anywhere]">{product?.stock_ref ?? "—"}</p>
     </div></div>;
 }

@@ -45,6 +45,8 @@ const client = createSupabaseClient("https://inventory.test", "test-publishable-
     if (table === failTable) return Response.json({ message: "fixture failure" }, { status: 500 });
     let rows = fixtures[table] ?? [];
     for (const [key, value] of url.searchParams) {
+      if (value === "is.null") rows = rows.filter(row => row[key] == null);
+      if (["brands","read_local_brand_names","list_local_brands"].includes(table) && value.startsWith("ilike.")) rows = rows.filter(row=>String(row[key] ?? "").toLowerCase().includes(value.slice(6).replaceAll("%", "").toLowerCase()));
       if (value.startsWith("eq.")) rows = rows.filter(row => String(row[key]) === value.slice(3));
       if (value.startsWith("gt.")) rows = rows.filter(row => Number(row[key]) > Number(value.slice(3)));
       if (value.startsWith("in.(")) rows = rows.filter(row => value.slice(4, -1).split(",").includes(String(row[key])));
@@ -81,7 +83,7 @@ test('type counts use three full-dataset HEAD reads and ignore the selected type
 test('type counts share every list filter except selected item type and sort', async () => {
   reset();
   await queries.getProductTypeCounts({search:'Chair',brand_id:'b1',category_id:'c1',subcategory_id:'s1',status:'hold',location:'warehouse',active:false,item_type:'temporary',sort:'quantity_desc'});
-  for (const {url} of calls) {
+  for (const {url} of calls.filter(call=>call.table==="products")) {
     for (const [key,value] of Object.entries({brand_id:'eq.b1',category_id:'eq.c1',subcategory_id:'eq.s1',status:'eq.hold',warehouse_quantity:'gt.0',is_active:'eq.false'})) assert.equal(url.searchParams.get(key),value);
     assert.match(url.searchParams.get('or')!,/stock_ref.ilike/);
     assert.equal(url.searchParams.has('order'),false);
@@ -415,4 +417,50 @@ test("movements report pages through all rows and refuses more than the limit", 
   assert.equal(callsTo("movements")[0].method, "HEAD");
   await assert.rejects(() => queries.listMovementsForReport({}, 2), (error: Error) => error.name === "ReportTooLargeError" && /Narrow the date range/.test(error.message));
   for (const viewerRole of ["viewer", "warehouse_staff", "procurement_manager"]) { reset(viewerRole); await assert.rejects(() => queries.listMovementsForReport({}, 10), /Inventory access denied/); assert.equal(clientCalls, 0); }
+});
+
+test('local and no-brand identities resolve labels, filters and movement summaries',async()=>{
+ reset('admin_manager');
+ fixtures.products=[{...product,brand_id:null,local_brand_id:'shop'}];
+ fixtures.read_local_brand_names=[{id:'shop',name:'Shop',code:'SHP'}];
+ fixtures.list_local_brands=fixtures.read_local_brand_names;
+ const listed=await queries.listProducts({brand_id:'local:shop'});
+ assert.equal(listed.items[0].brand_name,'Shop');
+ assert.equal(calls.find(c=>c.table==='products')!.url.searchParams.get('local_brand_id'),'eq.shop');
+ assert.equal((await queries.listActiveBrands()).find(row=>row.id==='shop')?.kind,'local');
+ assert.equal((await queries.listMovements()).items[0].product?.brand_name,'Shop');
+ fixtures.products=[{...product,brand_id:null,local_brand_id:null}]; calls=[];
+ assert.equal((await queries.listProducts({brand_id:'none'})).items[0].brand_name,null);
+ const url=calls.find(c=>c.table==='products')!.url;
+ assert.equal(url.searchParams.get('brand_id'),'is.null');assert.equal(url.searchParams.get('local_brand_id'),'is.null');
+});
+test('brand names join the search across products, requests and movement lookups',async()=>{
+ reset('admin_manager'); fixtures.read_local_brand_names=[{id:'shop',name:'Shop'}];
+ await queries.listProducts({search:'Shop'});
+ assert.match(calls.find(c=>c.table==='products')!.url.searchParams.get('or')!,/local_brand_id.in.\(shop\)/);
+ calls=[]; await queries.listProductRequests({search:'Shop'});
+ assert.match(calls.find(c=>c.table==='product_requests')!.url.searchParams.get('or')!,/local_brand_id.in.\(shop\)/);
+ calls=[];await queries.listMovements({search:'Shop'});
+ assert.match(calls.find(c=>c.table==='products')!.url.searchParams.get('or')!,/local_brand_id.in.\(shop\)/);
+});
+
+test('historical local names paginate within chunks for large reports',async()=>{
+ reset('admin_manager'); cap=1;
+ fixtures.products=Array.from({length:155},(_,index)=>({...product,id:`p${index}`,brand_id:null,local_brand_id:`shop${index}`}));
+ fixtures.read_local_brand_names=fixtures.products.map((row,index)=>({id:row.local_brand_id,name:`Shop ${index}`}));
+ const filters={brand:'',category:'',itemType:'' as const,location:'' as const,status:'' as const,includeSoldOut:true,photos:false,excelPhotos:false};
+ const result=await queries.listCurrentInventoryReport(filters);
+ assert.equal(result.rows.length,155);assert.ok(result.rows.every((row,index)=>row.brand===`Shop ${index}`));
+ assert.ok(calls.filter(call=>call.table==='read_local_brand_names').every(call=>(call.url.searchParams.get('id')?.split(',').length ?? 0)<=150));
+});
+test('brand search keeps visible punctuation in names',async()=>{
+ reset();fixtures.read_local_brand_names=[{id:'shop',name:'Acme (UAE)'}];
+ await queries.listProducts({search:'Acme (UAE)'});
+ const call=calls.find(row=>row.table==='read_local_brand_names')!;
+ assert.equal(call.url.searchParams.get('name'),'ilike.%Acme (UAE)%');
+ assert.match(calls.find(row=>row.table==='products')!.url.searchParams.get('or')!,/local_brand_id.in.\(shop\)/);
+ for(const read of [()=>queries.listMovementRequests({search:'Acme (UAE)'}),()=>queries.listMovements({search:'Acme (UAE)'}),()=>queries.listMovementsForReport({search:'Acme (UAE)'},100)]) {
+  reset('admin_manager');fixtures.read_local_brand_names=[{id:'shop',name:'Acme (UAE)'}];await read();
+  assert.equal(calls.find(row=>row.table==='read_local_brand_names')!.url.searchParams.get('name'),'ilike.%Acme (UAE)%');
+ }
 });

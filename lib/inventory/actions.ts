@@ -286,3 +286,14 @@ export async function removeProductPhoto(input: unknown) {
     return {};
   });
 }
+
+export async function createLocalBrand(input: unknown) {
+ const {profile}=await requireInventoryUser();
+ if (!canManageInventory(profile?.role)) return denied();
+ return perform("create Inventory-only brand",async()=>{
+  const value=object(input), name=text(value.name,"Brand name",200,true)!, shortCode=text(value.code,"Short code",5,true)!.toUpperCase();
+  if(!/^[A-Z0-9]{2,5}$/.test(shortCode) || shortCode==="GEN") invalid("Use 2?5 letters or numbers. GEN is reserved.");
+  const brandId=returnedId(await rpc(await createClient(),"create_local_brand",{name,code:shortCode}));
+  refresh();return {brandId};
+ });
+}

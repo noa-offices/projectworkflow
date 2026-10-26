@@ -7,6 +7,7 @@ import ts from 'typescript';
 import * as React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import * as access from './access';
+import * as brands from './brands';
 import * as presentation from './presentation';
 import * as requests from './request-presentation';
 import * as submission from './product-request-submission';
@@ -39,7 +40,7 @@ function loadSync(url: URL, dependencies: Record<string,unknown> = {}) {
 async function load(path: string, dependencies: Record<string,unknown> = {}) { return loadSync(new URL(path,import.meta.url),dependencies); }
 const shared = {
   'next/link':{__esModule:true,default:Link}, 'next/navigation':{useRouter:()=>({push(){},refresh(){}}),usePathname:()=>'/inventory'}, '@/lib/inventory/movement-form':movementForm, '@/lib/inventory/movement-history':movementHistory, '@/lib/inventory/category-form':categoryForm,
-  '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
+  '@/lib/inventory/brands':brands, '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
   '@/lib/inventory/types':types,
   '@/lib/inventory/product-request-submission':submission, '@/lib/inventory/action-validation':validation,
   '@/lib/inventory/actions':{}, '@/lib/inventory/product-edit':productEdit, '@/lib/inventory/save-errors':saveErrors, '@/lib/inventory/request-presentation':requests, '@/lib/inventory/photo-upload':{},
@@ -520,4 +521,27 @@ test('Overview has no low-stock card and the cards reflow cleanly',async()=>{
   assert.doesNotMatch(html(edit,{product:previewProduct,brands:previewBrands,categories:previewCategories,role:'admin_manager',productHref:'/p'}),/Low-stock|low_stock/i);
   const detail=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-reservations':{ProductReservations:stub},'./product-image-gallery':{ProductImageGallery:stub},'./stock-by-location':{StockByLocation:stub}})).ProductDetailView;
   assert.doesNotMatch(html(detail,{product:{...previewProduct,quantity:1}}),/Low stock/i);
+});
+
+test('brand picker groups shared and Inventory-only brands and offers manager-only creation',async()=>{
+ const picker=(await load('../../components/inventory/brand-picker.tsx',shared)).BrandPicker;
+ const options=[{id:'shared',name:'PW brand'},{id:'shop',name:'Shop',kind:'local'}];
+ for(const role of ['system_owner','admin_manager','warehouse_staff','designer','sales_designer','viewer']) {
+  const markup=html(picker,{brands:options,role});
+  assert.match(markup,/<optgroup label="Brands">/);assert.match(markup,/<optgroup label="Local brands \(Inventory only\)">/);
+  assert.match(markup,/<option value="local:shop">Shop<\/option>/);assert.match(markup,/<option value="none" selected="">No brand/);
+  assert.equal(markup.includes('+ New local brand (Inventory only)'),access.canManageInventory(role));
+ }
+ const inactive=html(picker,{brands:[],role:'admin_manager',current:{brand_id:null,local_brand_id:'old',brand_name:'Old shop'}});
+ assert.match(inactive,/Old shop \(inactive\)/);
+});
+
+test('local names appear on cards and detail while no-brand hides the glass and detail field',async()=>{
+ const card=(await load('../../components/inventory/product-card.tsx',shared)).ProductCard;
+ const detail=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-reservations':{ProductReservations:stub},'./product-image-gallery':{ProductImageGallery:stub},'./stock-by-location':{StockByLocation:stub}})).ProductDetailView;
+ const local={...previewProduct,brand_id:null,local_brand_id:'shop',brand_name:'Neighbourhood shop'};
+ for(const component of [card,detail]) assert.match(html(component,{product:local}),/Neighbourhood shop/);
+ const none={...local,local_brand_id:null,brand_name:null};
+ assert.doesNotMatch(html(card,{product:none}),/data-card-brand/);
+ assert.doesNotMatch(html(detail,{product:none}),/>Brand<\//);
 });

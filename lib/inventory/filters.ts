@@ -69,7 +69,7 @@ export function movementFilters(filters: MovementFilters = {}) {
   return {
     product_id: filters.product_id ?? null, created_by: filters.created_by ?? null,
     movement_type: allowed(filters.movement_type, MOVEMENT_TYPES), action_type: allowed(filters.action_type, MOVEMENT_ACTIONS),
-    search: lookupText(filters.search), person: lookupText(filters.person),
+    search: filters.search?.trim().slice(0,100) || null, person: lookupText(filters.person),
     location: allowed(filters.location, Object.keys(LOCATION_QUANTITY_COLUMNS) as (keyof typeof LOCATION_QUANTITY_COLUMNS)[]),
     from, to,
   };

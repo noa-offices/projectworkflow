@@ -1,3 +1,4 @@
+import { isBrandSelection } from "./brands";
 import { ITEM_TYPES, LOCATION_LABELS, LOCATION_QUANTITY_COLUMNS, PRODUCT_STATUSES, STOCK_FILTERS } from "./types";
 import type { InventoryImage, InventoryLocation, InventoryProductRow, ProductFilters, ProductSort, StockBuckets } from "./types";
 
@@ -11,7 +12,7 @@ export function parseInventoryProductParams(params: InventorySearchParams) {
   const allowed = (key: string, choices: readonly string[]) => choices.includes(first(key)) ? first(key) : "";
   const rawPage = first("page"), page = /^\d+$/.test(rawPage) && Number(rawPage) >= 1 && Number(rawPage) <= 1000000 ? Number(rawPage) : 1;
   const state: ProductUrlState = {
-    stock: allowed("stock", STOCK_FILTERS), q: first("q").trim().slice(0, 200), brand: identifier("brand"), category: identifier("category"), subcategory: identifier("subcategory"),
+    stock: allowed("stock", STOCK_FILTERS), q: first("q").trim().slice(0, 200), brand: isBrandSelection(first("brand")) ? first("brand").toLowerCase() : "", category: identifier("category"), subcategory: identifier("subcategory"),
     status: allowed("status", PRODUCT_STATUSES), itemType: allowed("itemType", ITEM_TYPES), location: allowed("location", Object.keys(LOCATION_LABELS)),
     sort: (allowed("sort", Object.keys(PRODUCT_SORT_LABELS)) || "name_asc") as ProductSort, page,
   };

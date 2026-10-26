@@ -13,7 +13,7 @@ export class ReportTooLargeError extends Error { constructor() { super(NARROW_RA
 
 export const MOVEMENT_EXCEL_COLUMNS: SheetColumn[] = [
   { key: "photo", header: "Photo", width: 14, center: true }, { key: "when", header: "Date and time (Dubai time)", width: 20 }, { key: "stock_ref", header: "Stock ref", width: 11 }, { key: "item_name", header: "Item name", width: 30 },
-  { key: "action", header: "Action", width: 11 }, { key: "from", header: "From", width: 17 }, { key: "to", header: "To", width: 17 },
+  { key: "brand", header: "Brand", width: 20 }, { key: "action", header: "Action", width: 11 }, { key: "from", header: "From", width: 17 }, { key: "to", header: "To", width: 17 },
   { key: "quantity", header: "Quantity", width: 10, number: true }, { key: "before", header: "Total before", width: 11, number: true }, { key: "after", header: "Total after", width: 11, number: true },
   { key: "note", header: "Note", width: 36 }, { key: "by", header: "Done by", width: 20 }, { key: "linked", header: "Linked request or reservation", width: 24 },
 ];
@@ -24,7 +24,7 @@ const place = (location: InventoryMovement["from_location"]) => location ? LOCAT
 /** Plain-values view of one movement, with real numbers and a real date. */
 export function movementReportRow(movement: InventoryMovement) {
   return {
-    when: excelDubaiDate(movement.created_at), stock_ref: movement.product?.stock_ref ?? "", item_name: movement.product?.item_name ?? "Unknown product",
+    brand: movement.product?.brand_name ?? "", when: excelDubaiDate(movement.created_at), stock_ref: movement.product?.stock_ref ?? "", item_name: movement.product?.item_name ?? "Unknown product",
     action: actionHistoryLabel(movement.action_type), from: place(movement.from_location), to: place(movement.to_location),
     quantity: movement.quantity, before: movement.previous_quantity, after: movement.new_quantity, note: movement.note ?? "", by: movement.actor_display_name ?? "Unknown", linked: movementLinkLabel(movement.linked) ?? "",
   };
@@ -46,7 +46,7 @@ export async function buildMovementsWorkbook(movements: readonly InventoryMoveme
   const imageIds = new Map<string, number>(), index = new Map(MOVEMENT_EXCEL_COLUMNS.map((column, position) => [column.key, position + 1]));
   movements.forEach((movement, position) => {
     const rowNumber = FIRST_DATA_ROW + position, excel = sheet.getRow(rowNumber), row = movementReportRow(movement);
-    const text: Record<string, string> = { stock_ref: safeCell(row.stock_ref), item_name: safeCell(row.item_name), action: row.action, from: safeCell(row.from), to: safeCell(row.to), note: safeCell(row.note), by: safeCell(row.by), linked: safeCell(row.linked) };
+    const text: Record<string, string> = { brand: safeCell(row.brand), stock_ref: safeCell(row.stock_ref), item_name: safeCell(row.item_name), action: row.action, from: safeCell(row.from), to: safeCell(row.to), note: safeCell(row.note), by: safeCell(row.by), linked: safeCell(row.linked) };
     for (const [key, value] of Object.entries(text)) if (value !== "") excel.getCell(index.get(key)!).value = value;
     if (row.when) excel.getCell(index.get("when")!).value = row.when; // a real date
     excel.getCell(index.get("quantity")!).value = row.quantity; excel.getCell(index.get("before")!).value = row.before; excel.getCell(index.get("after")!).value = row.after;
