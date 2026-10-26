@@ -14,6 +14,7 @@ import * as presentation from './presentation';
 import * as dateTime from './date-time';
 import * as profile from './profile';
 import * as attribution from './attribution';
+import * as workerMove from './worker-move';
 import * as notificationPresentation from './notification-presentation';
 import * as requests from './request-presentation';
 import * as submission from './product-request-submission';
@@ -454,7 +455,7 @@ test('compact toolbar: one primary Add item, Move stock beside it, categories in
     assert.match(markup,/aria-label="More"/);
   }
   const staff=html(actions,{role:'warehouse_staff'});
-  assert.ok(staff.includes('Add item')); assert.equal(staff.includes('Move stock'),false); assert.equal(staff.includes('role="menu"'),false);
+  assert.ok(staff.includes('Add item')); assert.ok(staff.includes('Take / Move stock')); assert.equal(staff.includes('href="/inventory/move"'),false); assert.equal(staff.includes('role="menu"'),false);
   for(const role of ['viewer','designer','sales_designer','procurement_manager',null]) assert.equal(html(actions,{role}),'');
 });
 test('More menu opens on demand and labels its button',async()=>{
@@ -713,4 +714,47 @@ test('Overview, Movements rows and the product movement list all use the shared 
   const detail=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-image-gallery':{ProductImageGallery:stub},'./product-reservations':{ProductReservations:stub}})).ProductDetailView;
   assert.match(html(detail,{product:{...previewProduct,recent_movements:[movement]},role:'viewer'}),new RegExp(line));
   assert.match(html(movements,{result:{items:[movement],total:1,page:1,page_count:1,page_size:24},state:movementHistory.parseMovementParams({}).state,role:'admin_manager'}),new RegExp(line));
+});
+
+test('the action row gives Warehouse Staff Add item + Take / Move stock, managers only Move stock, and nothing to other roles',async()=>{
+  const row=(await load('../../components/inventory/inventory-actions.tsx',{...shared,'./inventory-ui-client':{MoreMenu:stub}})).InventoryActions;
+  for(const role of ['warehouse_staff','system_owner','admin_manager','procurement_manager','sales_designer','sales_coordinator','designer','viewer','unknown',null]) {
+    const markup=html(row,{role});
+    const worker=role==='warehouse_staff', manager=role==='system_owner'||role==='admin_manager';
+    assert.equal(/Take \/ Move stock/.test(markup),worker,String(role));
+    assert.equal(markup.includes('href="/inventory/request-move"'),worker,String(role));
+    assert.equal(/>Move stock</.test(markup)||/Move stock<\/a>/.test(markup)&&!worker,manager,String(role));
+    assert.equal(markup.includes('href="/inventory/requests/new-product"'),worker||manager,String(role));
+    if(worker) {
+      const link=markup.match(/<a[^>]*href="\/inventory\/request-move"[^>]*>/)?.[0];
+      assert.ok(link);assert.match(link,/min-h-11/);
+      assert.doesNotMatch(markup,/href="\/inventory\/move"/);
+    }
+    if(!worker&&!manager) assert.equal(markup,'',String(role));
+  }
+});
+
+test('the worker request screen shows each step with large cards, available stock, a pending message and no costs',async()=>{
+  const loadWith=async(state:Record<number,unknown>)=>{
+    let index=0;
+    const fakeReact={...React,useState:(initial:unknown)=>{const at=index++;return [at in state ? state[at] : initial,()=>{}]},useEffect:()=>{},useRef:()=>({current:false})};
+    const view=(await load('../../components/inventory/worker-move-request.tsx',{...shared,react:fakeReact,'next/image':{__esModule:true,default:stub},'@/lib/inventory/worker-move':workerMove,'@/lib/inventory/actions':{},'@/lib/inventory/request-presentation':requests})).WorkerMoveRequest as Component;
+    return html(view,{});
+  };
+  const picked=previewPickerProducts[0];
+  const step1=await loadWith({2:previewPickerProducts});
+  assert.match(step1,/Step 1 of 3/);assert.match(step1,/Search by name, Stock ref, item code or model/);
+  for(const row of previewPickerProducts) assert.ok(step1.includes(row.item_name));
+  assert.match(step1,/Available \d+/);assert.match(step1,/<button[^>]*type="button"[^>]*min-h-11/);
+  const step2=await loadWith({0:picked});
+  assert.match(step2,/Step 2 of 3/);assert.match(step2,/Take stock out \(Sold\)/);assert.match(step2,/available/);assert.match(step2,/Send request/);
+  assert.match(step2,/Whole units, up to \d+ available in this location/);
+  const move=await loadWith({0:picked,5:'move'});assert.match(move,/To location/);
+  const over=await loadWith({0:picked,11:'Only 5 units are available in Warehouse; 2 units are reserved across locations.'});
+  assert.match(over,/role="alert"[^>]*>Only 5 units are available/);
+  const busy=await loadWith({0:picked,10:true});assert.match(busy,/Sending…/);assert.match(busy,/<button[^>]*disabled=""[^>]*>[^]*Sending…/);
+  const done=await loadWith({0:picked,12:true});
+  assert.match(done,/Step 3 of 3/);assert.match(done,/Request sent\. A manager will approve it\./);
+  assert.match(done,/href="\/inventory\/requests\?tab=movements&amp;mine=1"/);
+  for(const markup of [step1,step2,move,done]) assert.doesNotMatch(markup,/cost|price|freight|never@example\.com/i);
 });
