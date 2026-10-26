@@ -187,3 +187,15 @@ test('review edits ignore rejected edits and require a rejection note before RPC
   reset();assert.equal((await actions.reviewProductRequestWithEdits({requestId:id,decision:'approved',edits:{quantity:2,initial_stock:{mockup:2},costs:{price:10,total_cost:999},reviewed_by:other}})).ok,true);
   assert.deepEqual((calls.at(-1)?.body as Record<string,unknown>).edits,{quantity:2,initial_stock:{mockup:2},costs:{price:10}});
 });
+
+test('only managers create Inventory-only brands, normalize codes and refresh Inventory',async()=>{
+ for(const nextRole of ['system_owner','admin_manager','procurement_manager','sales_designer','sales_coordinator','designer','warehouse_staff','viewer']) {
+  reset(nextRole);const result=await actions.createLocalBrand({name:' Shop ',code:'shp'});
+  assert.equal(result.ok,managers.has(nextRole));assert.equal(clients,managers.has(nextRole)?1:0);
+  if(result.ok) {assert.deepEqual(calls[0].body,{name:'Shop',code:'SHP'});assert.equal(invalidations,1);}
+ }
+ reset();assert.equal((await actions.createLocalBrand({name:'Shop',code:'GEN'})).ok,false);assert.equal(clients,0);
+ reset();failure={code:'23505',message:'Code already belongs to a PW brand'};
+ const duplicate=await actions.createLocalBrand({name:'Shop',code:'PW'});assert.equal(duplicate.ok,false);
+ if(!duplicate.ok) assert.match(duplicate.error,/short code is already in use/);
+});

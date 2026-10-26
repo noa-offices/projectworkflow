@@ -1,4 +1,5 @@
 "use client";
+import { BrandPicker } from "./brand-picker";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -53,7 +54,7 @@ export function ProductEditForm({ product, brands, categories, role, productHref
           <label className={labelStyle}>Item code<input name="item_code" maxLength={100} defaultValue={product.item_code ?? ""} className={fieldStyle} /></label>
           <label className={labelStyle}>Model name<input name="model_name" maxLength={200} defaultValue={product.model_name ?? ""} className={fieldStyle} /></label>
           <label className={labelStyle}>Item type *<select name="item_type" defaultValue={product.item_type} className={fieldStyle}>{ITEM_TYPES.map(value => <option key={value} value={value}>{inventoryLabel(value)}</option>)}</select></label>
-          <label className={labelStyle}>Brand *<select required name="brand_id" defaultValue={product.brand_id} className={fieldStyle}>{!brands.some(row => row.id === product.brand_id) && <option value={product.brand_id}>{product.brand_name || "Current brand"}</option>}{brands.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+          <BrandPicker brands={brands} role={role} current={product} preview={preview} />
           <label className={labelStyle}>Category *<select required name="category_id" value={category} onChange={event => setCategory(event.target.value)} className={fieldStyle}>{activeCategories.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
           <label className={labelStyle}>Subcategory<select key={category} name="subcategory_id" disabled={!subcategories.length} defaultValue={category === product.category_id ? product.subcategory_id ?? "" : ""} className={fieldStyle}><option value="">No subcategory</option>{subcategories.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
           <label className={labelStyle}>Custom category<input name="custom_category_name" maxLength={200} defaultValue={product.custom_category_name ?? ""} className={fieldStyle} /></label>

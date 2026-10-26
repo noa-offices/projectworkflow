@@ -1,4 +1,5 @@
 "use client";
+import { brandOptions } from "@/lib/inventory/brands";
 
 import { useRef, useState } from "react";
 import { FileSpreadsheet, FileText, Loader2, Search, X } from "lucide-react";
@@ -68,7 +69,7 @@ export function ReportsView({ brands, categories, role, defaultRange, preview = 
     <section aria-labelledby="report-current" className={`${cardClass} space-y-4`}>
       <div><h2 id="report-current" className="text-lg font-semibold text-zinc-950">Current inventory</h2><p className="mt-1 text-sm text-zinc-600">Stock by location for every item, with totals. Photos are added when there are 500 items or fewer.</p></div>
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-        {select("rc-brand", "Brand", current.brand, value => setC("brand", value), brands.map(row => [row.id, row.name] as const), "All brands")}
+        {select("rc-brand", "Brand", current.brand, value => setC("brand", value), brandOptions(brands), "All brands")}
         {select("rc-category", "Category", current.category, value => setC("category", value), categories.map(row => [row.id, row.name] as const), "All categories")}
         {select("rc-type", "Item type", current.itemType, value => setC("itemType", value as CurrentInventoryFilters["itemType"]), ITEM_TYPES.map(value => [value, inventoryLabel(value)] as const), "All item types")}
         {select("rc-location", "Location with stock", current.location, value => setC("location", value as CurrentInventoryFilters["location"]), locations.map(([value, name]) => [value, name] as const), "All locations")}

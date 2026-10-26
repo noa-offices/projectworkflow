@@ -24,7 +24,7 @@ test("product whitelist ignores non-manager costs and stock patches",()=>{
 test('new items need only an item name, brand, category and quantity; browser references are ignored',()=>{
   const base={brand_id:id,category_id:id,item_name:' Chair ',quantity:1};
   for(const stock_ref of ['spoofed','',null,{unexpected:true}]) {
-    assert.deepEqual(productInput({...base,stock_ref,item_code:'  ',model_name:''},false,false),{item_name:'Chair',item_code:null,model_name:null,brand_id:id,category_id:id,quantity:1});
+    assert.deepEqual(productInput({...base,stock_ref,item_code:'  ',model_name:''},false,false),{item_name:'Chair',item_code:null,model_name:null,brand_id:id,local_brand_id:null,category_id:id,quantity:1});
     assert.deepEqual(productInput({stock_ref,item_code:'',model_name:'  '},true,true,true),{item_code:null,model_name:null});
   }
   assert.throws(()=>productInput({...base,item_name:''},true,false));

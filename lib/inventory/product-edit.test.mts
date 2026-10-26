@@ -8,7 +8,7 @@ import { previewProduct } from "./preview-data";
 const product = { ...previewProduct, item_code: "CHR-042", model_name: "Arlo", dimension_length: 60, dimension_width: 50, dimension_height: 90, dimension_unit: "cm" as const, location: "Aisle 4" };
 function form(overrides: Record<string, string> = {}) {
   const values: Record<string, string> = {
-    brand_id: product.brand_id, category_id: product.category_id, subcategory_id: product.subcategory_id ?? "", custom_category_name: product.custom_category_name ?? "",
+    brand_id: product.brand_id ?? "", category_id: product.category_id, subcategory_id: product.subcategory_id ?? "", custom_category_name: product.custom_category_name ?? "",
     item_type: product.item_type, item_name: product.item_name, item_code: product.item_code ?? "", model_name: product.model_name ?? "", description: product.description ?? "", note: product.note ?? "",
     status: product.status, condition: product.condition, location: product.location ?? "",
     dimension_length: "60", dimension_width: "50", dimension_height: "90", dimension_unit: "cm",

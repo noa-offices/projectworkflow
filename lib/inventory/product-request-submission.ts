@@ -1,3 +1,4 @@
+import { brandFields } from "./brands";
 import { productInput } from "./action-validation";
 import type { InventoryPhotoUploadResult } from "./photo-upload";
 import type { PhotoFileInput, PhotoOwner } from "./action-validation";
@@ -12,6 +13,9 @@ export function changedProductRequestFields(before: object, after: Record<string
       if (Object.keys(costs).length) edits.costs = costs;
     } else if (JSON.stringify(original[key] ?? null) !== JSON.stringify(value ?? null)) edits[key] = value;
   }
+  if ('brand_id' in edits || 'local_brand_id' in edits) {
+    edits.brand_id = after.brand_id ?? null; edits.local_brand_id = after.local_brand_id ?? null;
+  }
   const dimensionKeys = ['dimension_length','dimension_width','dimension_height','dimension_unit'];
   if (dimensionKeys.some(key => key in edits)) for (const key of dimensionKeys) edits[key] = after[key];
   return edits;
@@ -25,6 +29,7 @@ export function productRequestFormInput(data: FormData, costsAllowed: boolean): 
   const input: Record<string, unknown> = {};
   for (const key of ["brand_id", "category_id", "custom_category_name", "item_code", "item_name", "model_name", "description", "note", "item_type", "requested_status", "condition", "source"])
     if (data.has(key)) input[key] = data.get(key);
+  Object.assign(input, brandFields(data));
   input.subcategory_id = data.get("subcategory_id") || null;
   input.quantity = Number(data.get("quantity"));
   const locations = ['warehouse','dubai_showroom','abudhabi_showroom','mockup','temporary_out'];

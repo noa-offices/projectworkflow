@@ -1,4 +1,5 @@
 "use client";
+import { brandOptions, brandFilterLabel } from "@/lib/inventory/brands";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -28,7 +29,7 @@ export function ProductFilters({ state, brands, categories, baseHref = "/invento
   const subcategories = state.category ? categories.find(parent => parent.id === state.category)?.children ?? [] : children;
   const chips: { key: keyof ProductUrlState; label: string; patch: Partial<ProductUrlState> }[] = [];
   if (state.q) chips.push({ key: "q", label: `Search: ${state.q}`, patch: { q: "" } });
-  if (state.brand) chips.push({ key: "brand", label: `Brand: ${brands.find(row => row.id === state.brand)?.name ?? "Selected brand"}`, patch: { brand: "" } });
+  if (state.brand) chips.push({ key: "brand", label: `Brand: ${brandFilterLabel(state.brand, brands)}`, patch: { brand: "" } });
   if (state.category) chips.push({ key: "category", label: `Category: ${categories.find(row => row.id === state.category)?.name ?? "Selected category"}`, patch: { category: "", subcategory: "" } });
   if (state.subcategory) chips.push({ key: "subcategory", label: `Subcategory: ${children.find(row => row.id === state.subcategory)?.name ?? "Selected subcategory"}`, patch: { subcategory: "" } });
   if (state.status) chips.push({ key: "status", label: `Status: ${inventoryLabel(state.status)}`, patch: { status: "" } });
@@ -37,7 +38,7 @@ export function ProductFilters({ state, brands, categories, baseHref = "/invento
   if (state.stock) chips.push({ key: "stock", label: STOCK_FILTER_LABELS[state.stock as keyof typeof STOCK_FILTER_LABELS], patch: { stock: "" } });
   const sheetCount = chips.filter(chip => chip.key !== "q").length;
   const choices = [
-    { key: "brand", label: "Brand", options: brands.map(row => [row.id, row.name]) },
+    { key: "brand", label: "Brand", options: brandOptions(brands) },
     { key: "category", label: "Category", options: categories.map(row => [row.id, row.name]) },
     { key: "subcategory", label: "Subcategory", options: subcategories.map(row => [row.id, row.name]) },
     { key: "status", label: "Status", options: PRODUCT_STATUSES.map(value => [value, inventoryLabel(value)]) },

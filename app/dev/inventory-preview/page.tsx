@@ -1,3 +1,4 @@
+import { brandValue } from "@/lib/inventory/brands";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
@@ -49,8 +50,8 @@ export default async function InventoryPreviewPage({ searchParams }: { searchPar
     <iframe title={`Phone inventory ${view} preview`} src={`/dev/inventory-preview?${frameQuery}`} className="mx-auto block h-[1900px] w-full max-w-[390px] rounded-lg border border-zinc-200 bg-white shadow-sm" />
   </main>;
   const { state, filters } = parseInventoryProductParams(params);
-  const matchingProducts = previewProducts.filter(product => (!filters.search || [product.item_name, product.item_code, product.stock_ref, product.model_name].some(value => value?.toLowerCase().includes(filters.search!.toLowerCase()) ?? false))
-    && (!filters.brand_id || product.brand_id === filters.brand_id) && (!filters.category_id || product.category_id === filters.category_id)
+  const matchingProducts = previewProducts.filter(product => (!filters.search || [product.item_name, product.item_code, product.stock_ref, product.model_name, product.brand_name].some(value => value?.toLowerCase().includes(filters.search!.toLowerCase()) ?? false))
+    && (!filters.brand_id || brandValue(product) === filters.brand_id) && (!filters.category_id || product.category_id === filters.category_id)
     && (!filters.subcategory_id || product.subcategory_id === filters.subcategory_id) && (!filters.status || product.status === filters.status)
     && stockMatches(product, filters.stock) && (filters.active === "all" || product.is_active === (filters.active ?? true)) && (!filters.location || product[LOCATION_QUANTITY_COLUMNS[filters.location]] > 0));
   const counts: ProductTypeCounts = { all: matchingProducts.length, product: 0, accessory: 0, temporary: 0 };

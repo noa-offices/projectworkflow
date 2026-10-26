@@ -69,7 +69,7 @@ export function ProductDetailView({ product, productsHref = "/inventory/products
           </div>
           <dl className="mt-5 grid min-w-0 grid-cols-2 gap-x-4 gap-y-4 border-t border-zinc-100 pt-5">
             <DetailField label="Stock reference">{product.stock_ref}</DetailField>
-            <DetailField label="Brand">{product.brand_name}</DetailField>
+            {product.brand_name && <DetailField label="Brand">{product.brand_name}</DetailField>}
             <DetailField label="Category">{product.custom_category_name || product.category_name}</DetailField>
             <DetailField label="Subcategory">{product.subcategory_name}</DetailField>
             <DetailField label="Source">{inventoryLabel(product.source)}</DetailField>
