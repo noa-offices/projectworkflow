@@ -7,6 +7,8 @@ import type { LucideIcon } from "lucide-react";
 import type { AppRole } from "@/lib/supabase/types";
 import { canViewInventory } from "@/lib/inventory/access";
 import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
+import { ReadCacheSignOut } from "@/components/local-read-cache/sign-out";
+import { INVENTORY_NOTIFICATIONS_PATH, INVENTORY_PROFILE_PATH, isInventoryPath, profileHref } from "@/lib/inventory/profile";
 import {
   Archive,
   BarChart3,
@@ -225,7 +227,11 @@ export function ErpSidebar({
         return [{
           title: "Workspace",
           iconColors: { bg: "bg-emerald-100", icon: "text-emerald-700" },
-          items: [{ label: "Inventory", href: "/inventory", icon: Package, active: pathname === "/inventory" || pathname.startsWith("/inventory/") }],
+          items: [
+            { label: "Inventory", href: "/inventory", icon: Package, active: isInventoryPath(pathname) && pathname !== INVENTORY_PROFILE_PATH && pathname !== INVENTORY_NOTIFICATIONS_PATH },
+            { label: "My profile", href: INVENTORY_PROFILE_PATH, icon: User, active: pathname === INVENTORY_PROFILE_PATH },
+            { label: "Notifications", href: INVENTORY_NOTIFICATIONS_PATH, icon: Bell, active: pathname === INVENTORY_NOTIFICATIONS_PATH },
+          ],
         }];
       }
       const canProcure = role === "system_owner" || role === "admin_manager" || role === "procurement_manager";
@@ -399,7 +405,7 @@ export function ErpSidebar({
           aria-expanded={mobileOpen}
           aria-label="Open navigation"
           onClick={() => setMobileOpen(true)}
-          className="rounded-md border border-zinc-200 bg-white p-1.5 text-zinc-700"
+          className="rounded-md border border-zinc-200 bg-white inline-flex h-11 w-11 items-center justify-center text-zinc-700"
         >
           <Menu className="h-5 w-5" aria-hidden="true" />
         </button>
@@ -412,7 +418,7 @@ export function ErpSidebar({
           </span>
         </Link>
         <div className="ml-auto flex items-center gap-1.5">
-          <Link href="/settings/profile" aria-label="My profile" className="rounded-full">
+          <Link href={profileHref(pathname)} aria-label="My profile" className="inline-flex h-11 w-11 items-center justify-center rounded-full">
             <ResolvedAvatar
               path={userAvatarUrl ?? null}
               alt={userDisplayName ?? "Profile"}
@@ -513,7 +519,7 @@ export function ErpSidebar({
       {/* User profile card */}
       <div className="border-t border-zinc-200 px-3 py-3">
         <Link
-          href="/settings/profile"
+          href={profileHref(pathname)}
           className="flex items-center gap-3 rounded-md px-3 py-2 transition hover:bg-zinc-100"
         >
           <ResolvedAvatar
@@ -536,6 +542,7 @@ export function ErpSidebar({
           </div>
         </Link>
       </div>
+      {isInventoryPath(pathname) ? <div className="border-t border-zinc-200 px-3 py-3 lg:hidden"><ReadCacheSignOut large /></div> : null}
       </aside>
     </>
   );

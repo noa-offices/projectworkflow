@@ -131,7 +131,7 @@ export function NotificationsPageContent({
           <button
             type="button"
             onClick={handleMarkAll}
-            className="text-sm font-medium text-emerald-800 transition hover:text-emerald-900"
+            className="inline-flex min-h-11 items-center px-2 text-sm font-medium text-emerald-800 transition hover:text-emerald-900"
           >
             Mark all as read
           </button>
