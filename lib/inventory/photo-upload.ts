@@ -1,8 +1,10 @@
+import { compressInventoryPhoto } from "./photo-compress";
+import { inventoryPhotoError, type InventoryPhotoType } from "./photo-limits";
 import { createClient } from "@/lib/supabase/client";
 
 export interface UploadedInventoryPhoto {
   path: string;
-  contentType: "image/jpeg";
+  contentType: InventoryPhotoType;
   sizeBytes: number;
 }
 
@@ -12,68 +14,7 @@ export interface InventoryPhotoUploadResult {
   errors: string[];
 }
 
-const MAX_BYTES = 4.5 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-async function decodeImage(file: File): Promise<{
-  source: CanvasImageSource;
-  width: number;
-  height: number;
-  release: () => void;
-}> {
-  if (typeof createImageBitmap === "function") {
-    try {
-      const bitmap = await createImageBitmap(file);
-      return { source: bitmap, width: bitmap.width, height: bitmap.height, release: () => bitmap.close() };
-    } catch {
-      // Some browsers support formats through Image but not createImageBitmap.
-    }
-  }
-  const url = URL.createObjectURL(file);
-  try {
-    const image = new Image();
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("This photo could not be opened."));
-      image.src = url;
-    });
-    return { source: image, width: image.naturalWidth, height: image.naturalHeight, release: () => URL.revokeObjectURL(url) };
-  } catch (error) {
-    URL.revokeObjectURL(url);
-    throw error;
-  }
-}
-
-async function preparePhoto(file: File): Promise<Blob> {
-  const decoded = await decodeImage(file);
-  const canvas = document.createElement("canvas");
-  try {
-    if (!Number.isFinite(decoded.width) || !Number.isFinite(decoded.height) || decoded.width <= 0 || decoded.height <= 0) {
-      throw new Error("This photo has invalid dimensions.");
-    }
-    const scale = Math.min(1, 1600 / Math.max(decoded.width, decoded.height));
-    canvas.width = Math.max(1, Math.round(decoded.width * scale));
-    canvas.height = Math.max(1, Math.round(decoded.height * scale));
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Photo processing is unavailable in this browser.");
-    // JPEG has no alpha channel; transparent input is flattened onto white.
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
-    for (const quality of [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2]) {
-      const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/jpeg", quality));
-      if (!blob || blob.type !== "image/jpeg" || blob.size === 0) {
-        throw new Error("This photo could not be processed.");
-      }
-      if (blob.size < MAX_BYTES) return blob;
-    }
-    throw new Error("This photo is still too large. Please choose a smaller photo.");
-  } finally {
-    decoded.release();
-    canvas.width = 0;
-    canvas.height = 0;
-  }
-}
 
 /**
  * Uploads directly with the signed-in browser client. Successful files remain
@@ -112,18 +53,21 @@ export async function uploadInventoryPhotos({ ownerType, ownerId, files }: {
     }
     let blob: Blob;
     try {
-      blob = await preparePhoto(file);
-    } catch {
+      blob = (await compressInventoryPhoto(file)).file;
+      const problem=inventoryPhotoError(blob.size,blob.type); if(problem) throw new Error(problem);
+    } catch (error) {
       result.failedCount++;
-      result.errors.push(`Photo ${index + 1}: Could not process this image. Choose a smaller supported photo and try again.`);
+      result.errors.push(`Photo ${index + 1}: ${error instanceof Error ? error.message : "Could not process this photo. Choose another photo."}`);
       continue;
     }
     try {
       const prefix = ownerType === "product" ? "products" : "requests";
-      const path = `${prefix}/${ownerId.toLowerCase()}/${crypto.randomUUID()}.jpg`;
-      const { error } = await client.storage.from("inventory-images").upload(path, blob, { contentType: "image/jpeg", upsert: false });
+      const extension = blob.type === "image/webp" ? "webp" : "jpg";
+      const contentType = blob.type as InventoryPhotoType;
+      const path = `${prefix}/${ownerId.toLowerCase()}/${crypto.randomUUID()}.${extension}`;
+      const { error } = await client.storage.from("inventory-images").upload(path, blob, { contentType, upsert: false });
       if (error) throw error;
-      result.files.push({ path, contentType: "image/jpeg", sizeBytes: blob.size });
+      result.files.push({ path, contentType, sizeBytes: blob.size });
     } catch {
       result.failedCount++;
       result.errors.push(`Photo ${index + 1}: Upload failed. Please try this photo again.`);

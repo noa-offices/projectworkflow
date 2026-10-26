@@ -26,6 +26,7 @@ const costLabels = { price: "Price", freight_cost: "Freight cost", c_and_f: "C &
 
 export function ProductRequestForm({ brands, categories, role, preview = false, request, images = [], onCancel, onApproved, onBusyChange }: { brands: InventoryBrand[]; categories: InventoryCategoryNode[]; role: string | null; preview?: boolean; request?: InventoryProductRequest; images?: InventoryImage[]; onCancel?: () => void; onApproved?: () => void; onBusyChange?: (busy:boolean) => void }) {
   const quantityHelpId = useId();
+  const [compressing,setCompressing]=useState(false);
   const [category, setCategory] = useState(request?.category_id ?? ""), [files, setFiles] = useState<File[]>([]), [pending, setPending] = useState(false);
   const locations = Object.keys(LOCATION_LABELS).filter(key => key !== 'sold') as Exclude<keyof typeof LOCATION_LABELS,'sold'>[];
   const [stock, setStock] = useState<Record<string, string>>(() => Object.fromEntries(locations.map(key => [key, String(request?.initial_stock?.[key] ?? (key === 'warehouse' && !request?.initial_stock ? request?.quantity ?? 1 : 0))])));
@@ -45,7 +46,7 @@ export function ProductRequestForm({ brands, categories, role, preview = false, 
     <Link href={preview ? `/dev/inventory-preview?view=requests&frame=1&mine=1&status=all&role=${encodeURIComponent(role ?? '')}` : "/inventory/requests?tab=products&mine=1&status=all"} className="inline-flex min-h-11 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white">My requests</Link>
   </section></>;
   return <>{heading}<form aria-label={manager ? "Add item" : "Add-item request"} aria-describedby={error ? "product-request-error" : undefined} onSubmit={async event => {
-    event.preventDefault(); if (held.current) return;
+    event.preventDefault(); if (held.current || compressing) return;
     held.current = true; setPending(true); onBusyChange?.(true); setError("");
     const data = new FormData(event.currentTarget);
     try {
@@ -89,14 +90,14 @@ export function ProductRequestForm({ brands, categories, role, preview = false, 
         <label className="min-w-0 text-sm font-medium text-zinc-700">Unit<select name="dimension_unit" defaultValue={request?.dimension_unit ?? "mm"} className={fieldStyle}><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option></select></label>
       </div></section>
       {costsAllowed && <section className={sectionStyle}><h2 className="font-semibold text-zinc-900">Costs</h2><div className="grid min-w-0 grid-cols-2 gap-4">{PRODUCT_COST_FIELDS.map(key => <label key={key} className="min-w-0 text-sm font-medium text-zinc-700">{costLabels[key]}<NumberInput decimals name={key} maxLength={13} value={costValues[key]} onValueChange={text => setCostValues(previous => ({...previous,[key]:text}))} className={fieldStyle} /></label>)}</div><p role="status" className="mt-3 text-sm font-semibold">Total cost: {Object.values(costValues).reduce((sum, value) => sum + numberValue(value), 0).toFixed(2)}</p></section>}
-      <div className={sectionStyle}>{request ? <><h2 className="mb-3 font-semibold">Photos</h2><ProductImageGallery images={images} productName={request.item_name} /><p className="mt-2 text-sm text-zinc-500">Photos are read only during review.</p></> : <RequestPhotoPicker ownerType={manager ? "product" : "request"} onChange={setFiles} disabled={pending} />}</div>
+      <div className={sectionStyle}>{request ? <><h2 className="mb-3 font-semibold">Photos</h2><ProductImageGallery images={images} productName={request.item_name} /><p className="mt-2 text-sm text-zinc-500">Photos are read only during review.</p></> : <RequestPhotoPicker ownerType={manager ? "product" : "request"} onChange={setFiles} onBusyChange={setCompressing} disabled={pending} />}</div>
       <section className={sectionStyle}><label className="block text-sm font-medium text-zinc-700">Note<textarea name="note" defaultValue={request?.note ?? ''} maxLength={2000} rows={3} className={fieldStyle} placeholder="Anything the reviewer should know" /></label></section>
       {request && <section className={sectionStyle}><label className="block text-sm font-medium text-zinc-700">Review note<textarea name="review_note" maxLength={2000} rows={3} className={fieldStyle} /></label></section>}
       <StickyActionBar>
         {error && <p id="product-request-error" ref={errorRef} tabIndex={-1} role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error} Your entries are retained.</p>}
         {request && <button type="button" disabled={pending} onClick={onCancel} className="min-h-11 w-full rounded-md border border-zinc-300 px-4 text-sm font-semibold">Cancel</button>}
-        <button type="submit" disabled={pending} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-emerald-900 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait"><Send size={18} aria-hidden="true" />{pending ? "Saving…" : request ? 'Approve' : manager ? 'Add item' : "Send request"}</button>
-        <p role="status" aria-live="polite" className="text-sm text-zinc-600">{pending ? "Please wait while your request and photos are sent." : preview ? "Preview only. Nothing will be submitted or uploaded." : request ? "Approval saves these details and adds the stock." : manager ? "Saving adds this item and its stock immediately." : "Your request will be reviewed before any stock is added."}</p>
+        <button type="submit" disabled={pending || compressing} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-emerald-900 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait"><Send size={18} aria-hidden="true" />{compressing ? "Compressing..." : pending ? "Saving…" : request ? 'Approve' : manager ? 'Add item' : "Send request"}</button>
+        <p role="status" aria-live="polite" className="text-sm text-zinc-600">{compressing ? "Compressing photos before upload..." : pending ? "Please wait while your request and photos are sent." : preview ? "Preview only. Nothing will be submitted or uploaded." : request ? "Approval saves these details and adds the stock." : manager ? "Saving adds this item and its stock immediately." : "Your request will be reviewed before any stock is added."}</p>
       </StickyActionBar>
     </fieldset>
   </form></>;
