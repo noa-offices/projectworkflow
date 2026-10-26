@@ -1,13 +1,14 @@
 "use server";
 
 import { inventoryPhotoError, inventoryPhotoContentType } from "./photo-limits";
+import { deleteConfirmationMatches, deletedProductMessage, type ProductDeleteSummary } from "./delete-product";
 import { revalidatePath } from "next/cache";
 import { requireInventoryUser } from "@/lib/auth";
 import { logServerActionError } from "@/lib/action-errors";
 import { createClient } from "@/lib/supabase/server";
 import { canManageInventory, canSeeCosts, canSubmitAddTake, canSubmitHoldBook, canViewInventory } from "./access";
 import { inventoryErrorMessage } from "./action-errors";
-import { InventoryInputError, boolean, categoryInput, code, fulfilReservationInput, invalid, movementInput, object, photoInput, productInput, text, uuid, validatePhotoSet } from "./action-validation";
+import { InventoryInputError, integer, boolean, categoryInput, code, fulfilReservationInput, invalid, movementInput, object, photoInput, productInput, text, uuid, validatePhotoSet } from "./action-validation";
 
 export type InventoryActionResult<T extends object = Record<never, never>> = ({ ok: true } & T) | { ok: false; error: string };
 type Client = Awaited<ReturnType<typeof createClient>>;
@@ -303,5 +304,39 @@ export async function createLocalBrand(input: unknown) {
   if(!/^[A-Z0-9]{2,5}$/.test(shortCode) || shortCode==="GEN") invalid("Use 2?5 letters or numbers. GEN is reserved.");
   const brandId=returnedId(await rpc(await createClient(),"create_local_brand",{name,code:shortCode}));
   refresh();return {brandId};
+ });
+}
+
+function parseDeleteSummary(value: unknown): ProductDeleteSummary {
+ const row=object(value);
+ if(typeof row.stock_ref!=="string" || !row.stock_ref) throw new Error("Product has no stock reference");
+ return {stock_ref:row.stock_ref,photos:integer(row.photos),movements:integer(row.movements),reservations:integer(row.reservations)};
+}
+export async function getProductDeleteSummary(input: unknown) {
+ const {profile}=await requireInventoryUser();
+ if(!canManageInventory(profile?.role)) return {...denied(),code:"42501" as const};
+ return perform("read permanent delete summary",async()=>{
+  const productId=uuid(object(input).productId);
+  return {summary:parseDeleteSummary(await rpc(await createClient(),"get_product_delete_summary",{product_id:productId}))};
+ });
+}
+export async function deleteProductPermanently(input: unknown) {
+ const {profile}=await requireInventoryUser();
+ if(!canManageInventory(profile?.role)) return {...denied(),code:"42501" as const};
+ return perform("permanently delete item",async()=>{
+  const value=object(input), productId=uuid(value.productId), client=await createClient();
+  const summary=parseDeleteSummary(await rpc(client,"get_product_delete_summary",{product_id:productId}));
+  if(typeof value.stockRef!=="string" || !deleteConfirmationMatches(value.stockRef,summary.stock_ref)) invalid("Type the item's Stock ref exactly to delete it.");
+  const returned=await rpc(client,"delete_product_permanently",{product_id:productId});
+  if(!Array.isArray(returned) || returned.some(path=>typeof path!=="string" || !path)) throw new Error("Item deletion returned invalid photo paths");
+  const paths=[...new Set(returned as string[])], leftovers:string[]=[];
+  // The database transaction has committed. Each failure here is a cleanup warning.
+  for(const path of paths) {
+   try {const {error}=await client.storage.from("inventory-images").remove([path]);if(error) throw error;}
+   catch {leftovers.push(path);}
+  }
+  if(leftovers.length) logServerActionError("Inventory: item deleted; photo cleanup incomplete",new Error("Storage cleanup failed"),{productId,leftoverPaths:leftovers});
+  refresh();
+  return {failedPhotoCount:leftovers.length,message:deletedProductMessage(leftovers.length)};
  });
 }

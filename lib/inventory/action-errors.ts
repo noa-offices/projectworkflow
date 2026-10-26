@@ -6,6 +6,8 @@ export function inventoryErrorMessage(error: unknown): string | null {
   if (message.includes("local_brands_code_key") || message === "Code already belongs to a PW brand") return "That short code is already in use. Choose another code.";
   if (message === "Choose an active Inventory-only brand") return "This brand is inactive. Choose another brand or No brand.";
   if (message === "Choose only one brand") return "Choose only one brand.";
+  if (message === "Product not found") return "This item has already been deleted or is no longer available.";
+  if (message === "Product has an unsupported dependency; deletion was not performed" || message === "This item has history linked to another item; deletion was not performed") return `${message}.`;
   if (message === 'Brand needs a code') return 'Brand needs a code.';
   if (/^Only \d+ units are available; \d+ are reserved$/.test(message)) return `${message}.`;
   if (['Release reservations first','Reservation is no longer active','Book requires a project or reference','Hold until must be in the future','Hold until must be in the future and is only allowed for holds'].includes(message)) return `${message}.`;
