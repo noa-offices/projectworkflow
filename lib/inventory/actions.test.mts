@@ -290,3 +290,16 @@ test('permanent delete mixed cleanup failures and thrown transport errors count/
   } finally {logs.mock.restore();}
  }
 });
+
+test("worker item search is for Warehouse Staff only and never creates a client for anyone else",async()=>{
+  for(const nextRole of [...managers,...office,"viewer","unknown"]){
+    reset(nextRole);
+    assert.deepEqual(await actions.searchRequestProducts("chair"),{ok:false,error:"You do not have permission to do that."},nextRole);
+    assert.equal(clients,0,nextRole);assert.equal(calls.length,0,nextRole);
+  }
+  reset("warehouse_staff");
+  const result=await actions.searchRequestProducts("chair");
+  assert.notEqual((result as {error?:string}).error,"You do not have permission to do that.");
+  reset("warehouse_staff");
+  assert.equal((await actions.searchRequestProducts("x".repeat(101))).ok,false);
+});

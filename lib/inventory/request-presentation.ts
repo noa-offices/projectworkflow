@@ -2,7 +2,7 @@ import { canManageInventory, canSubmitAddTake, canSubmitHoldBook } from './acces
 import { code, invalid, movementInput, text, uuid } from './action-validation';
 import type { InventorySearchParams } from './presentation';
 import { LOCATION_LABELS, LOCATION_QUANTITY_COLUMNS, REQUEST_STATUSES } from './types';
-import type { InventoryProduct, RequestType } from './types';
+import type { InventoryProduct, RequestType, StockBuckets } from './types';
 
 export function requestButtons(role: string | null | undefined) {
   const manager = canManageInventory(role);
@@ -24,11 +24,21 @@ export function parseRequestParams(params: InventorySearchParams, manager: boole
     page: /^\d+$/.test(page) && Number(page) >= 1 && Number(page) <= 1000000 ? Number(page) : 1,
   };
 }
-export function availableLocations(product: InventoryProduct) {
+/** What a take/move request needs from an item: stock numbers only, never costs. */
+export type RequestStockProduct = StockBuckets & Pick<InventoryProduct, 'id' | 'available_quantity' | 'reserved_quantity' | 'is_active'>;
+
+export const WORKER_MOVE_PATH = '/inventory/request-move';
+/** Who may use the worker take/move page: Warehouse Staff only. Managers use the direct Move stock page; everyone else goes back to Inventory. */
+export function moveRequestAccess(role: string | null | undefined): 'worker' | 'manager' | 'none' {
+  if (canManageInventory(role)) return 'manager';
+  return canSubmitAddTake(role) ? 'worker' : 'none';
+}
+
+export function availableLocations(product: RequestStockProduct) {
   return (Object.keys(LOCATION_LABELS) as (keyof typeof LOCATION_LABELS)[]).filter(location => location !== 'sold').map(location => ({ location, label: LOCATION_LABELS[location], available: Math.min(product[LOCATION_QUANTITY_COLUMNS[location]], product.available_quantity) }));
 }
 export type MovementRequestDraft = { kind: RequestType; quantity: string; from: string; to: string; note: string; projectId?: string | null; referenceNote?: string | null; expiresAt?: string | null };
-export function movementRequestPayload(product: InventoryProduct, draft: MovementRequestDraft) {
+export function movementRequestPayload(product: RequestStockProduct, draft: MovementRequestDraft) {
   if (!product.is_active) invalid('Requests are not available for removed products.');
   if (!/^\d+$/.test(draft.quantity)) invalid('Quantity must be a positive whole number.');
   const quantity = Number(draft.quantity);

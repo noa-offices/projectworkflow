@@ -140,6 +140,18 @@ export async function searchMovementProducts(search: string) {
     return { products: page.items.map(toPickerProduct) };
   });
 }
+/** Item choices for the worker take/move page. Warehouse Staff only; stock numbers only, never costs. */
+export async function searchRequestProducts(search: string) {
+  const { profile } = await requireInventoryUser();
+  if (!canSubmitAddTake(profile?.role)) return denied();
+  return perform("search request products", async () => {
+    const term = text(search, "Search", 100) ?? "";
+    const { listProducts } = await import("./queries");
+    const { toPickerProduct } = await import("./movement-form");
+    const page = await listProducts({ search: term, sort: "name_asc", active: true }, 1);
+    return { products: page.items.map(toPickerProduct) };
+  });
+}
 export async function updateProduct(input: unknown) {
   const { profile } = await requireInventoryUser();
   if (!canManageInventory(profile?.role)) return denied();

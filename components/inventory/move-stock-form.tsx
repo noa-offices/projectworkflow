@@ -17,7 +17,7 @@ const field = "mt-1 min-h-11 w-full min-w-0 rounded-md border border-zinc-300 bg
 const card = "min-w-0 space-y-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-5";
 const stockOf = (product: MovementPickerProduct, location: InventoryLocation) => product[LOCATION_QUANTITY_COLUMNS[location]];
 
-function ProductSummary({ product }: { product: MovementPickerProduct }) {
+export function ProductSummary({ product }: { product: MovementPickerProduct }) {
   return <div className="flex min-w-0 items-start gap-3">
     <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md bg-zinc-100">
       {product.main_image_url ? <Image src={product.main_image_url} alt="" fill unoptimized className="object-cover" sizes="64px" /> : <div className="flex h-full items-center justify-center text-zinc-400"><Package size={22} aria-hidden="true" /></div>}
