@@ -10,7 +10,7 @@ export const reasonLabels: Record<SmartSetupSupplierCheckResult["reason"], strin
   shared_price_baseline_drift: "Rows sharing this code carry different prices.", needs_dimension_mapping: "The supplier category/size is not mapped to this column.",
   invalid_source_evidence: "The supplier price for this code is not usable.", companion_reference: "The supplier list only references this code as a companion.",
 };
-const statusOrder: Record<SmartSetupSupplierCheckStatus, number> = { MISMATCH: 0, NEEDS_REVIEW: 1, NOT_FOUND: 2, MATCHED: 3 };
+export const statusOrder: Record<SmartSetupSupplierCheckStatus, number> = { MISMATCH: 0, NEEDS_REVIEW: 1, NOT_FOUND: 2, MATCHED: 3 };
 
 /** Stable 32-bit FNV-1a over a string, with its length: cheap, deterministic, and independent of any dirty flag. */
 export function smartSetupFingerprint(parts: unknown): string {
