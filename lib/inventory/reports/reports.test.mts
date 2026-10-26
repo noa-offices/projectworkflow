@@ -180,7 +180,7 @@ test("Movements workbook: same look, plain-words actions, Dubai dates, real numb
   assert.deepEqual((sheet.getRow(5).values as string[]).slice(1), MOVEMENT_HEADERS);
   assert.deepEqual(MOVEMENT_HEADERS, ["Photo", "Date and time (Dubai time)", "Stock ref", "Item name", "Brand", "Action", "From", "To", "Quantity", "Total before", "Total after", "Note", "Done by", "Linked request or reservation"]);
   const first = sheet.getRow(6);
-  assert.ok(first.getCell(2).value instanceof Date); assert.equal((first.getCell(2).value as Date).toISOString(), "2026-10-25T02:30:00.000Z"); assert.equal(first.getCell(2).numFmt, "dd mmm yyyy hh:mm");
+  assert.ok(first.getCell(2).value instanceof Date); assert.equal((first.getCell(2).value as Date).toISOString(), "2026-10-25T02:30:00.000Z"); assert.equal(first.getCell(2).numFmt, "d mmm yyyy, hh:mm");
   assert.deepEqual([6, 7, 8, 13, 14].map(column => first.getCell(column).value), ["Moved", "Warehouse", "Dubai Showroom", "Alex Morgan", "Stock request"]);
   assert.deepEqual([9, 10, 11].map(column => first.getCell(column).value), [3, 17, 17]); assert.equal(first.getCell(9).numFmt, '0;-0;"–"');
   const second = sheet.getRow(7);

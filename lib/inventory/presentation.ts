@@ -1,4 +1,5 @@
 import { isBrandSelection } from "./brands";
+import { formatDubaiDateTime } from './date-time';
 import { ITEM_TYPES, LOCATION_LABELS, LOCATION_QUANTITY_COLUMNS, PRODUCT_STATUSES, STOCK_FILTERS } from "./types";
 import type { InventoryImage, InventoryLocation, InventoryProductRow, ProductFilters, ProductSort, StockBuckets } from "./types";
 
@@ -49,8 +50,12 @@ export function inventoryLabel(value: string): string {
 }
 export function formatInventoryNumber(value: number): string { return new Intl.NumberFormat("en-US").format(value); }
 export function formatInventoryDate(value: string): string {
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? `${new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }).format(date)} UTC` : "Unknown date";
+  return formatDubaiDateTime(value) || 'Unknown date';
+}
+/** Only full_name is passed here. Never use email as a display-name fallback. */
+export function inventoryPersonName(value: string | null | undefined): string {
+  const name = value?.trim();
+  return name && !name.includes('@') && name.toLowerCase() !== 'unknown' ? name : 'Team member';
 }
 export function productStockLocations(product: StockBuckets) {
   return (Object.keys(LOCATION_LABELS) as InventoryLocation[]).map(code => ({ code, label: LOCATION_LABELS[code], quantity: product[LOCATION_QUANTITY_COLUMNS[code]], cumulative: code === "sold" }));

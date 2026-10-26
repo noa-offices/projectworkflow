@@ -218,6 +218,20 @@ export interface InventoryOverview extends InventoryStockSummary {
   pending_movement_requests: number;
 }
 
+export interface InventoryActivityEntry {
+  id: string;
+  product_id: string | null;
+  item_name: string;
+  display_name: string | null;
+  created_at: string;
+}
+export interface InventoryOverviewActivity {
+  pending_products: InventoryActivityEntry[];
+  pending_movements: InventoryActivityEntry[];
+  recent_products: InventoryActivityEntry[];
+  recent_movements: InventoryActivityEntry[];
+}
+
 export type ProductSort = "name_asc" | "name_desc" | "newest" | "oldest" | "quantity_asc" | "quantity_desc";
 export interface ProductFilters {
   search?: string; brand_id?: string; category_id?: string; subcategory_id?: string;

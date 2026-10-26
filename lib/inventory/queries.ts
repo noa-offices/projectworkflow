@@ -17,6 +17,7 @@ import { isActiveReservation, reservationTotals } from "./reservations";
 import type { InventoryReservationRow, InventoryReservation, InventoryProjectOption } from "./types";
 import { ITEM_TYPES, LOCATION_QUANTITY_COLUMNS } from "./types";
 import type { ProductTypeCounts } from "./types";
+import type { InventoryOverviewActivity } from './types';
 
 type Client = Awaited<ReturnType<typeof createClient>>;
 type ReadResult<T> = { data: T[] | null; error: unknown; count?: number | null };
@@ -164,6 +165,34 @@ export async function getInventoryOverview(): Promise<InventoryOverview> {
   ]);
   const reservations = await activeReservations(client, stock.map(row => row.id));
   return { reserved_quantity: reservations.reduce((sum,row) => sum + row.quantity,0), reserved_product_count: new Set(reservations.map(row => row.product_id)).size, ...summarizeStock(stock), pending_product_requests: total(productRequests), pending_movement_requests: total(movementRequests) };
+}
+
+/** Five newest entries per manager list. Same signed-in name lookup as Movements; no costs. */
+export async function getInventoryOverviewActivity(): Promise<InventoryOverviewActivity | null> {
+  const { profile } = await requireInventoryUser();
+  if (!canViewInventory(profile?.role)) throw new Error('Inventory access denied');
+  if (!canManageInventory(profile?.role)) return null;
+  const client = await inventoryClient(profile?.role);
+  type ProductEntry = { id: string; item_name: string; created_by: string | null; created_at: string };
+  type RequestEntry = { id: string; item_name: string; submitted_by: string; submitted_at: string };
+  type MovementEntry = { id: string; product_id: string; created_by: string; created_at: string };
+  type MovementRequestEntry = { id: string; product_id: string; submitted_by: string; submitted_at: string };
+  const [products, productRequests, movements, movementRequests] = await Promise.all([
+    client.schema('inventory').from('products').select('id,item_name,created_by,created_at').eq('is_active',true).order('created_at',{ascending:false}).order('id').limit(5).returns<ProductEntry[]>().then(rows),
+    client.schema('inventory').from('product_requests').select('id,item_name,submitted_by,submitted_at').eq('request_status','pending_review').order('submitted_at',{ascending:false}).order('id').limit(5).returns<RequestEntry[]>().then(rows),
+    client.schema('inventory').from('movements').select('id,product_id,created_by,created_at').order('created_at',{ascending:false}).order('id').limit(5).returns<MovementEntry[]>().then(rows),
+    client.schema('inventory').from('movement_requests').select('id,product_id,submitted_by,submitted_at').eq('request_status','pending_review').order('submitted_at',{ascending:false}).order('id').limit(5).returns<MovementRequestEntry[]>().then(rows),
+  ]);
+  const [people, items] = await Promise.all([
+    displayNames(client, ids([...products.map(row=>row.created_by), ...productRequests.map(row=>row.submitted_by), ...movements.map(row=>row.created_by), ...movementRequests.map(row=>row.submitted_by)])),
+    productSummaries(client, [...movements,...movementRequests].map(row=>row.product_id)),
+  ]);
+  return {
+    pending_products: productRequests.map(row=>({id:row.id,product_id:null,item_name:row.item_name,display_name:people.get(row.submitted_by) ?? null,created_at:row.submitted_at})),
+    pending_movements: movementRequests.map(row=>({id:row.id,product_id:row.product_id,item_name:items.get(row.product_id)?.item_name ?? 'Inventory item',display_name:people.get(row.submitted_by) ?? null,created_at:row.submitted_at})),
+    recent_products: products.map(row=>({id:row.id,product_id:row.id,item_name:row.item_name,display_name:row.created_by ? people.get(row.created_by) ?? null : null,created_at:row.created_at})),
+    recent_movements: movements.map(row=>({id:row.id,product_id:row.product_id,item_name:items.get(row.product_id)?.item_name ?? 'Inventory item',display_name:people.get(row.created_by) ?? null,created_at:row.created_at})),
+  };
 }
 
 type ProductReadQuery = ReturnType<ReturnType<ReturnType<Client['schema']>['from']>['select']>;

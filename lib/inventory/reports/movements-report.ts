@@ -1,3 +1,4 @@
+import { inventoryPersonName } from "../presentation";
 import ExcelJS from "exceljs";
 import { LOCATION_LABELS } from "../types";
 import type { InventoryMovement } from "../types";
@@ -26,7 +27,7 @@ export function movementReportRow(movement: InventoryMovement) {
   return {
     brand: movement.product?.brand_name ?? "", when: excelDubaiDate(movement.created_at), stock_ref: movement.product?.stock_ref ?? "", item_name: movement.product?.item_name ?? "Unknown product",
     action: actionHistoryLabel(movement.action_type), from: place(movement.from_location), to: place(movement.to_location),
-    quantity: movement.quantity, before: movement.previous_quantity, after: movement.new_quantity, note: movement.note ?? "", by: movement.actor_display_name ?? "Unknown", linked: movementLinkLabel(movement.linked) ?? "",
+    quantity: movement.quantity, before: movement.previous_quantity, after: movement.new_quantity, note: movement.note ?? "", by: inventoryPersonName(movement.actor_display_name), linked: movementLinkLabel(movement.linked) ?? "",
   };
 }
 export function movementFilterLines(filters: MovementReportFilters, names: { product?: string | null } = {}): string[] {
@@ -51,7 +52,7 @@ export async function buildMovementsWorkbook(movements: readonly InventoryMoveme
     if (row.when) excel.getCell(index.get("when")!).value = row.when; // a real date
     excel.getCell(index.get("quantity")!).value = row.quantity; excel.getCell(index.get("before")!).value = row.before; excel.getCell(index.get("after")!).value = row.after;
     styleDataRow(sheet, rowNumber, MOVEMENT_EXCEL_COLUMNS, MOVEMENT_DIVIDERS, height);
-    excel.getCell(index.get("when")!).numFmt = "dd mmm yyyy hh:mm";
+    excel.getCell(index.get("when")!).numFmt = "d mmm yyyy, hh:mm";
     excel.getCell(index.get("stock_ref")!).font = { name: "Calibri", size: 11, bold: true, color: { argb: GREEN } };
     excel.getCell(index.get("item_name")!).font = { name: "Calibri", size: 11, bold: true };
     const key = photoKey(movement.main_image_url), buffer = key ? photos?.buffers.get(key) : undefined;

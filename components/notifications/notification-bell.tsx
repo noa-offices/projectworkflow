@@ -1,4 +1,5 @@
 "use client";
+import { inventoryNotificationTime, inventoryNotificationSender } from "@/lib/inventory/notification-presentation";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -168,11 +169,11 @@ export function NotificationBell() {
                             : item.body}
                         </p>
                         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                          {item.sender_name && (
-                            <span className="text-xs text-zinc-500">{item.sender_name}</span>
+                          {(inventoryNotificationSender(item) || item.sender_name) && (
+                            <span className="text-xs text-zinc-500">{inventoryNotificationSender(item) ?? item.sender_name}</span>
                           )}
                           <span className="text-xs text-zinc-400">
-                            {relativeTime(item.created_at)}
+                            {inventoryNotificationTime(item) ?? relativeTime(item.created_at)}
                           </span>
                           {item.order_no && (
                             <span className="rounded-full bg-zinc-100 px-2 py-px text-[11px] font-medium text-zinc-600">

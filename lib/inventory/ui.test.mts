@@ -11,6 +11,8 @@ import * as brands from './brands';
 import * as deletion from './delete-product';
 import * as photoCompression from './photo-compress';
 import * as presentation from './presentation';
+import * as dateTime from './date-time';
+import * as notificationPresentation from './notification-presentation';
 import * as requests from './request-presentation';
 import * as submission from './product-request-submission';
 import * as validation from './action-validation';
@@ -43,11 +45,47 @@ async function load(path: string, dependencies: Record<string,unknown> = {}) { r
 const shared = {
   'next/link':{__esModule:true,default:Link}, 'next/navigation':{useRouter:()=>({push(){},refresh(){}}),usePathname:()=>'/inventory'}, '@/lib/inventory/movement-form':movementForm, '@/lib/inventory/movement-history':movementHistory, '@/lib/inventory/category-form':categoryForm,
   '@/lib/inventory/photo-compress':photoCompression, '@/lib/inventory/delete-product':deletion, '@/lib/inventory/brands':brands, '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
-  '@/lib/inventory/types':types,
+  '@/lib/inventory/date-time':dateTime, '@/lib/inventory/types':types,
   '@/lib/inventory/product-request-submission':submission, '@/lib/inventory/action-validation':validation,
   '@/lib/inventory/actions':{}, '@/lib/inventory/product-edit':productEdit, '@/lib/inventory/save-errors':saveErrors, '@/lib/inventory/request-presentation':requests, '@/lib/inventory/photo-upload':{},
 };
 const html = (component:Component,props:Record<string,unknown>) => renderToStaticMarkup(React.createElement(component,props));
+
+test('Overview activity shows names and Dubai time only to managers, with no email fallback', async()=>{
+  const view=(await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
+  const entry={id:'r1',item_name:'Sample chair',display_name:'Junais KP',created_at:'2026-10-26T04:56:00Z',product_id:previewProduct.id};
+  const activity={pending_products:[entry],pending_movements:[{...entry,display_name:null}],recent_products:[{...entry,display_name:'never@example.com'}],recent_movements:[entry]};
+  const markup=html(view,{overview:previewOverview,role:'admin_manager',activity});
+  assert.match(markup,/Junais KP/); assert.match(markup,/Team member/); assert.match(markup,/26 Oct 2026, 08:56/);
+  assert.match(markup,/Recently added items/); assert.match(markup,/Recent movements/);
+  assert.doesNotMatch(markup,/never@example.com|Unknown|UTC/);
+  for(const role of ['viewer','designer','warehouse_staff']) assert.doesNotMatch(html(view,{overview:previewOverview,role,activity}),/Junais KP|Recently added items|Recent movements/);
+});
+
+test('product recent movements show full names or Team member and Dubai dates',async()=>{
+  const view=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-image-gallery':{ProductImageGallery:stub},'./product-reservations':{ProductReservations:stub}})).ProductDetailView;
+  for(const actor of ['Junais KP',null,'','never@example.com']) {
+    const product={...previewProduct,recent_movements:[{...previewProduct.recent_movements[0],actor_display_name:actor,created_at:'2026-10-26T04:56:00Z'}]};
+    const markup=html(view,{product,role:'admin_manager'});
+    assert.ok(markup.includes(actor==='Junais KP' ? 'Junais KP' : 'Team member'));
+    assert.match(markup,/26 Oct 2026, 08:56/);assert.doesNotMatch(markup,/never@example.com|Unknown| UTC/);
+  }
+});
+
+test('Inventory notification bell, received and sent lists render Dubai time and safe names',async()=>{
+  const item={id:'n1',order_no:'/inventory/requests?tab=products',created_at:'2026-10-26T04:56:00Z',sender_name:'email@example.com',recipient_name:'email@example.com',body:'New item request',read_at:null,sent_to_role:null,requires_response:false,response:null};
+  for(const [file,exportName,state] of [
+    ['notification-bell','NotificationBell',[1,[item],true,false]],
+    ['notifications-page-content','NotificationsPageContent',[[item],false,null]],
+    ['notifications-tabs','NotificationsTabs',['sent',false,0,[item],[],false,null,new Set()]],
+  ] as const) {
+    let index=0;
+    const fakeReact={...React,useState:()=>[state[index++],()=>{}],useEffect:()=>{},useCallback:(fn:unknown)=>fn,useRef:()=>({current:null})};
+    const view=(await load(`../../components/notifications/${file}.tsx`,{...shared,react:fakeReact,'@/lib/inventory/notification-presentation':notificationPresentation,'@/lib/notifications/actions':{},'@/components/notifications/notification-queries':{},'@/components/notifications/notifications-page-content':{NotificationsPageContent:stub},'@/components/notifications/send-notification-form':{SendNotificationForm:stub},'@/lib/notifications/send-form-data':{}}))[exportName];
+    const markup=html(view,{});
+    assert.match(markup,/26 Oct 2026, 08:56/,file);assert.match(markup,/Team member/,file);assert.doesNotMatch(markup,/email@example.com| UTC/,file);
+  }
+});
 
 test('overview and products show a full-width Add item link for only managers and warehouse staff',async()=>{
   const dependencies = {...shared,'./product-type-tabs':{ProductTypeTabs:stub},'./product-filters':{ProductFilters:stub},'./product-list-view':{ProductListView:stub}};

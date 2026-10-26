@@ -1,4 +1,5 @@
 "use client";
+import { inventoryNotificationTime, inventoryNotificationPerson } from '@/lib/inventory/notification-presentation';
 
 import { useCallback, useEffect, useState } from "react";
 import { NotificationsPageContent } from "@/components/notifications/notifications-page-content";
@@ -135,8 +136,7 @@ function SentTab() {
                               </span>
                             )}
                             <span className="text-xs text-zinc-400">
-                              {relativeTime(b.created_at)} &middot;{" "}
-                              {absoluteTime(b.created_at)}
+                              {inventoryNotificationTime(b) ?? <>{relativeTime(b.created_at)} &middot;{" "}{absoluteTime(b.created_at)}</>}
                             </span>
                           </div>
 
@@ -171,7 +171,7 @@ function SentTab() {
                                   {b.recipients.map((r, j) => (
                                     <li key={j} className="flex items-center justify-between gap-3">
                                       <span className="text-xs text-zinc-600">
-                                        {r.recipient_name ?? "Unknown"}
+                                        {inventoryNotificationPerson(b,r.recipient_name) ?? r.recipient_name ?? "Unknown"}
                                       </span>
                                       <span
                                         className={`text-xs font-semibold ${responseLabelClass(r.response)}`}
@@ -210,14 +210,13 @@ function SentTab() {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm leading-relaxed text-zinc-800">{item.body}</p>
                         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-                          {item.recipient_name && (
+                          {(inventoryNotificationPerson(item,item.recipient_name) || item.recipient_name) && (
                             <span className="text-xs text-zinc-500">
-                              To: {item.recipient_name}
+                              To: {inventoryNotificationPerson(item,item.recipient_name) ?? item.recipient_name}
                             </span>
                           )}
                           <span className="text-xs text-zinc-400">
-                            {relativeTime(item.created_at)} &middot;{" "}
-                            {absoluteTime(item.created_at)}
+                            {inventoryNotificationTime(item) ?? <>{relativeTime(item.created_at)} &middot;{" "}{absoluteTime(item.created_at)}</>}
                           </span>
                           {item.order_no && (
                             <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 ring-1 ring-inset ring-emerald-600/20">

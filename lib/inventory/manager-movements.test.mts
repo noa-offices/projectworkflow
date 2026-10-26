@@ -78,7 +78,7 @@ test("history labels and routes are plain words", () => {
 test("movement history filters come from the URL and unknown values are dropped", () => {
   const { state, filters, page } = parseMovementParams({ q: " chair ", action: "sale", location: "warehouse", from: "2026-10-01", to: "2026-10-31", person: "Alex", product: id.toUpperCase(), page: "3" });
   assert.deepEqual(state, { q: "chair", action: "sale", location: "warehouse", from: "2026-10-01", to: "2026-10-31", person: "Alex", product: id, page: 3 });
-  assert.deepEqual(filters, { search: "chair", person: "Alex", action_type: "sale", location: "warehouse", product_id: id, from: "2026-10-01T00:00:00.000Z", to: "2026-10-31T23:59:59.999Z" });
+  assert.deepEqual(filters, { search: "chair", person: "Alex", action_type: "sale", location: "warehouse", product_id: id, from: "2026-09-30T20:00:00.000Z", to: "2026-10-31T19:59:59.999Z" });
   assert.equal(page, 3);
   const bad = parseMovementParams({ action: "steal", location: "moon", from: "2026-02-31", to: "nonsense", product: "x", page: "0" });
   assert.deepEqual([bad.state.action, bad.state.location, bad.state.from, bad.state.to, bad.state.product, bad.state.page], ["", "", "", "", "", 1]);

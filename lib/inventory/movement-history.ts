@@ -1,4 +1,5 @@
 import { isInventoryProductId } from "./presentation";
+import { dubaiDayBounds } from './date-time';
 import type { InventorySearchParams } from "./presentation";
 import { LOCATION_LABELS, MOVEMENT_ACTIONS } from "./types";
 import type { InventoryLocation, MovementAction, MovementFilters } from "./types";
@@ -22,7 +23,7 @@ export function parseMovementParams(params: InventorySearchParams): { state: Mov
   const filters: MovementFilters = {
     search: state.q || undefined, person: state.person || undefined, action_type: (state.action || undefined) as MovementAction | undefined,
     location: (state.location || undefined) as InventoryLocation | undefined, product_id: state.product || undefined,
-    from: state.from ? `${state.from}T00:00:00.000Z` : undefined, to: state.to ? `${state.to}T23:59:59.999Z` : undefined,
+    from: state.from ? dubaiDayBounds(state.from,state.from).from : undefined, to: state.to ? dubaiDayBounds(state.to,state.to).to : undefined,
   };
   return { state, filters, page };
 }
