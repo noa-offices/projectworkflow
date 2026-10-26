@@ -99,7 +99,8 @@ test('Overview activity maps full names without costs, emails or extra profile a
   const activity = await queries.getInventoryOverviewActivity();
   assert.equal(activity?.pending_products[0].display_name,'Junais KP');
   assert.equal(activity?.pending_movements[0].display_name,'Junais KP');
-  assert.equal(activity?.recent_movements[0].display_name,'Junais KP');
+  assert.equal('recent_movements' in (activity ?? {}),false);
+  assert.equal(calls.some(call=>call.table==='movements'),false,'the Overview no longer reads movements');
   assert.equal(activity?.recent_products[0].display_name,'Junais KP');
   assert.equal(activity?.recent_products[0].stock_ref,product.stock_ref);
   assert.equal(activity?.pending_movements[0].stock_ref,product.stock_ref);
@@ -520,6 +521,38 @@ test('brand search keeps visible punctuation in names',async()=>{
   reset('admin_manager');fixtures.read_local_brand_names=[{id:'shop',name:'Acme (UAE)'}];await read();
   assert.equal(calls.find(row=>row.table==='read_local_brand_names')!.url.searchParams.get('name'),'ilike.%Acme (UAE)%');
  }
+});
+
+test('approved requests supply the requester for items and movements through the existing read path', async () => {
+  reset('admin_manager');
+  fixtures.profiles = [{id:'worker', full_name:'Subair'},{id:'boss', full_name:'Junais KP'}];
+  fixtures.products = [{...product,created_by:'boss',created_at:'2026-10-26T04:56:00Z'}];
+  fixtures.product_requests = [{...product,id:'r1',submitted_by:'worker',reviewed_by:'boss',approved_product_id:'p1',request_status:'approved'}];
+  fixtures.movements = [{id:'m1',product_id:'p1',created_by:'boss',created_at:'2026-10-23T00:00:00Z',reference_type:'manual',reference_id:null},{id:'m2',product_id:'p1',created_by:'boss',created_at:'2026-10-22T00:00:00Z',reference_type:'product_request',reference_id:'r1'},{id:'m3',product_id:'p1',created_by:'boss',created_at:'2026-10-21T00:00:00Z',reference_type:'manual',reference_id:null}];
+  fixtures.movement_requests = [{id:'mr1',product_id:'p1',submitted_by:'worker',reviewed_by:'boss',approved_movement_id:'m1',request_status:'approved'},{id:'mr2',product_id:'p1',submitted_by:'boss',reviewed_by:'boss',approved_movement_id:'m3',request_status:'approved'}];
+  const activity = await queries.getInventoryOverviewActivity();
+  assert.deepEqual(activity?.recent_products[0].attribution, {creator_name:'Junais KP',request:{requester_id:'worker',requester_name:'Subair',approver_id:'boss',approver_name:'Junais KP'}});
+  assert.equal(calls.some(call=>call.table.includes('cost')),false,'Overview reads no costs');
+  const detail = await queries.getProduct('p1');
+  const byId = Object.fromEntries(detail!.recent_movements.map(row => [row.id,row.attribution]));
+  assert.equal(byId.m1?.request?.requester_name,'Subair');   // movement request
+  assert.equal(byId.m2?.request?.requester_name,'Subair');   // item added by a product request
+  assert.equal(byId.m3?.request?.requester_id,'boss');       // requester is the approver
+  assert.ok(!JSON.stringify([activity,detail]).includes('never@example.com'));
+  assert.equal(calls.filter(call=>call.table==='profiles').length,0);
+});
+
+test('a manager adding directly has no request, so the creator is shown alone', async () => {
+  reset('admin_manager');
+  fixtures.profiles = [{id:'boss', full_name:'Junais KP'}];
+  fixtures.products = [{...product,created_by:'boss',created_at:'2026-10-26T04:56:00Z'}];
+  fixtures.product_requests = [];
+  fixtures.movements = [{id:'m1',product_id:'p1',created_by:'boss',created_at:'2026-10-23T00:00:00Z',reference_type:'manual',reference_id:null}];
+  fixtures.movement_requests = [];
+  assert.equal((await queries.getInventoryOverviewActivity())?.recent_products[0].attribution?.request,null);
+  const detail = await queries.getProduct('p1');
+  assert.equal(detail?.recent_movements[0].attribution?.request,null);
+  assert.equal(detail?.recent_movements[0].attribution?.creator_name,'Junais KP');
 });
 
 test('every Inventory role gets names through person_names, never from public.profiles', async () => {

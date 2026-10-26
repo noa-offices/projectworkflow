@@ -1,10 +1,11 @@
+import { inventoryAttributionLine } from "@/lib/inventory/attribution";
 import Image from "next/image";
 import Link from "next/link";
 import { ChevronDown, History, Package } from "lucide-react";
 import { EmptyState, Pager, buttonClass } from "./inventory-ui";
 import { ACTION_FORM_LABELS, actionHistoryLabel, canUseManagerMovements, movementLinkLabel, movementRoute } from "@/lib/inventory/movement-form";
 import { hasMovementFilters, movementsHref, type MovementUrlState } from "@/lib/inventory/movement-history";
-import { inventoryIdentifier, inventoryPersonName, formatInventoryDate, formatInventoryNumber } from "@/lib/inventory/presentation";
+import { inventoryIdentifier, formatInventoryDate, formatInventoryNumber } from "@/lib/inventory/presentation";
 import { LOCATION_LABELS, MOVEMENT_ACTIONS, type InventoryMovement, type InventoryPage } from "@/lib/inventory/types";
 
 const control = "mt-1 min-h-11 w-full min-w-0 rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
@@ -59,7 +60,7 @@ export function MovementsView({ result, state, role, baseHref = "/inventory/move
           <p className="text-sm text-zinc-700">{movementRoute(movement)}</p>
           <p className="text-sm font-semibold text-zinc-900">{formatInventoryNumber(movement.quantity)} {movement.quantity === 1 ? "unit" : "units"} <span className="font-normal text-zinc-500">· total {formatInventoryNumber(movement.previous_quantity)} → {formatInventoryNumber(movement.new_quantity)}</span></p>
           {movement.note && <p className="whitespace-pre-wrap text-sm text-zinc-600 [overflow-wrap:anywhere]">{movement.note}</p>}
-          <p className="text-sm text-zinc-500 [overflow-wrap:anywhere]">{inventoryPersonName(movement.actor_display_name)}{movementLinkLabel(movement.linked) ? ` · ${movementLinkLabel(movement.linked)}` : ""}</p>
+          <p className="text-sm text-zinc-500 [overflow-wrap:anywhere]">{inventoryAttributionLine(movement.attribution ?? { creator_name: movement.actor_display_name, request: null }, "Recorded")}{movementLinkLabel(movement.linked) ? ` · ${movementLinkLabel(movement.linked)}` : ""}</p>
         </li>)}
       </ul>
       <div className="hidden min-w-0 overflow-x-auto rounded-lg border border-zinc-200 bg-white shadow-sm md:block">
@@ -73,7 +74,7 @@ export function MovementsView({ result, state, role, baseHref = "/inventory/move
             <td className="px-3 py-3 font-semibold tabular-nums">{formatInventoryNumber(movement.quantity)}</td>
             <td className="whitespace-nowrap px-3 py-3 tabular-nums text-zinc-600">{formatInventoryNumber(movement.previous_quantity)} → {formatInventoryNumber(movement.new_quantity)}</td>
             <td className="max-w-56 px-3 py-3 text-zinc-600 [overflow-wrap:anywhere]">{movement.note || "—"}</td>
-            <td className="px-3 py-3 text-zinc-600 [overflow-wrap:anywhere]">{inventoryPersonName(movement.actor_display_name)}{movementLinkLabel(movement.linked) ? <span className="block text-sm text-zinc-500">{movementLinkLabel(movement.linked)}</span> : null}</td>
+            <td className="px-3 py-3 text-zinc-600 [overflow-wrap:anywhere]">{inventoryAttributionLine(movement.attribution ?? { creator_name: movement.actor_display_name, request: null }, "Recorded")}{movementLinkLabel(movement.linked) ? <span className="block text-sm text-zinc-500">{movementLinkLabel(movement.linked)}</span> : null}</td>
           </tr>)}</tbody>
         </table>
       </div>

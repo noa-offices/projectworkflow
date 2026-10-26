@@ -13,6 +13,7 @@ import * as photoCompression from './photo-compress';
 import * as presentation from './presentation';
 import * as dateTime from './date-time';
 import * as profile from './profile';
+import * as attribution from './attribution';
 import * as notificationPresentation from './notification-presentation';
 import * as requests from './request-presentation';
 import * as submission from './product-request-submission';
@@ -46,7 +47,7 @@ async function load(path: string, dependencies: Record<string,unknown> = {}) { r
 const shared = {
   'next/link':{__esModule:true,default:Link}, 'next/navigation':{useRouter:()=>({push(){},refresh(){}}),usePathname:()=>'/inventory'}, '@/lib/inventory/movement-form':movementForm, '@/lib/inventory/movement-history':movementHistory, '@/lib/inventory/category-form':categoryForm,
   '@/lib/inventory/photo-compress':photoCompression, '@/lib/inventory/delete-product':deletion, '@/lib/inventory/brands':brands, '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
-  '@/lib/inventory/date-time':dateTime, '@/lib/inventory/profile':profile, '@/lib/inventory/types':types,
+  '@/lib/inventory/date-time':dateTime, '@/lib/inventory/profile':profile, '@/lib/inventory/attribution':attribution, '@/lib/inventory/types':types,
   '@/lib/inventory/product-request-submission':submission, '@/lib/inventory/action-validation':validation,
   '@/lib/inventory/actions':{}, '@/lib/inventory/product-edit':productEdit, '@/lib/inventory/save-errors':saveErrors, '@/lib/inventory/request-presentation':requests, '@/lib/inventory/photo-upload':{},
 };
@@ -76,10 +77,10 @@ test('Overview pending cards and reservations show the shared identifier line',a
 test('Overview activity shows names and Dubai time only to managers, with no email fallback', async()=>{
   const view=(await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
   const entry={id:'r1',item_name:'Sample chair',display_name:'Junais KP',created_at:'2026-10-26T04:56:00Z',product_id:previewProduct.id};
-  const activity={pending_products:[entry],pending_movements:[{...entry,display_name:null}],recent_products:[{...entry,display_name:'never@example.com'}],recent_movements:[entry]};
+  const activity={pending_products:[entry],pending_movements:[{...entry,display_name:null}],recent_products:[{...entry,display_name:'never@example.com'}]};
   const markup=html(view,{overview:previewOverview,role:'admin_manager',activity});
   assert.match(markup,/Junais KP/); assert.match(markup,/Team member/); assert.match(markup,/26 Oct 2026, 08:56/);
-  assert.match(markup,/Recently added items/); assert.match(markup,/Recent movements/);
+  assert.match(markup,/Recently added items/); assert.doesNotMatch(markup,/Recent movements/);
   assert.doesNotMatch(markup,/never@example.com|Unknown|UTC/);
   for(const role of ['viewer','designer','warehouse_staff']) assert.doesNotMatch(html(view,{overview:previewOverview,role,activity}),/Junais KP|Recently added items|Recent movements/);
 });
@@ -683,4 +684,33 @@ test('My profile shows saving, success and error states, read-only email and rol
   const mismatch=await render({4:'longenough',5:'different1',6:{confirmPassword:'The two passwords do not match.'},7:{tone:'error',text:'Check the highlighted fields.'}},false);
   assert.match(mismatch,/The two passwords do not match\./);
   assert.match(mismatch,/<input[^>]*type="password"[^>]*value="longenough"/,'typed password stays in the field for correction');
+});
+
+test('Overview drops Recent movements for every role and keeps every other section; Recently added items is full width',async()=>{
+  const view=(await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
+  const entry={id:'r1',item_name:'Sample chair',display_name:'Junais KP',created_at:'2026-10-26T04:56:00Z',product_id:previewProduct.id};
+  const activity={pending_products:[entry],pending_movements:[entry],recent_products:[entry]};
+  for(const role of ['system_owner','admin_manager','procurement_manager','sales_designer','sales_coordinator','designer','viewer','warehouse_staff']) {
+    const markup=html(view,{overview:previewOverview,role,activity});
+    assert.doesNotMatch(markup,/Recent movements|Recorded by|href="\/inventory\/movements"/,role);
+    for(const section of ['Units','Products','Accessories','Temporary','Browse products','Reserved','Pending product requests','Pending movement requests','Quantity by location']) assert.match(markup,new RegExp(section),`${role} ${section}`);
+    if(['system_owner','admin_manager'].includes(role)) {
+      assert.match(markup,/Recently added items/,role);
+      assert.match(markup,/<section[^>]*lg:col-span-2[^>]*>\s*<h2[^>]*>Recently added items/,'full width');
+    } else assert.doesNotMatch(markup,/Recently added items/,role);
+  }
+});
+
+test('Overview, Movements rows and the product movement list all use the shared requested/approved line',async()=>{
+  const requested={creator_name:'Junais KP',request:{requester_id:'w',requester_name:'Subair',approver_id:'m',approver_name:'Junais KP'}};
+  const overview=(await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
+  const entry={id:'r1',item_name:'Sample chair',display_name:'Junais KP',created_at:'2026-10-26T04:56:00Z',product_id:previewProduct.id};
+  const line='Requested by Subair · Approved by Junais KP';
+  assert.match(html(overview,{overview:previewOverview,role:'admin_manager',activity:{pending_products:[],pending_movements:[],recent_products:[{...entry,attribution:requested}]}}),new RegExp(line));
+  assert.match(html(overview,{overview:previewOverview,role:'admin_manager',activity:{pending_products:[],pending_movements:[],recent_products:[{...entry,attribution:{creator_name:'Junais KP',request:null}}]}}),/Added by Junais KP/);
+  const movement={...previewMovementHistory[0],attribution:requested};
+  const movements=(await load('../../components/inventory/movements-view.tsx',{...shared,'next/image':{__esModule:true,default:stub}})).MovementsView;
+  const detail=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-image-gallery':{ProductImageGallery:stub},'./product-reservations':{ProductReservations:stub}})).ProductDetailView;
+  assert.match(html(detail,{product:{...previewProduct,recent_movements:[movement]},role:'viewer'}),new RegExp(line));
+  assert.match(html(movements,{result:{items:[movement],total:1,page:1,page_count:1,page_size:24},state:movementHistory.parseMovementParams({}).state,role:'admin_manager'}),new RegExp(line));
 });

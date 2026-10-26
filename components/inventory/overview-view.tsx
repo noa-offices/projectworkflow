@@ -4,6 +4,7 @@ import { inventoryIdentifier, formatInventoryDate, inventoryPersonName, formatIn
 import { canManageInventory } from '@/lib/inventory/access';
 import type { InventoryOverviewActivity } from '@/lib/inventory/types';
 import { LOCATION_LABELS, type InventoryLocation, type InventoryOverview } from "@/lib/inventory/types";
+import { inventoryAttributionLine } from '@/lib/inventory/attribution';
 import { InventoryActions } from './inventory-actions';
 
 const cardLink = "group relative block min-h-11 min-w-0 rounded-lg transition hover:border-emerald-400 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700";
@@ -62,17 +63,16 @@ export function InventoryOverviewView({ overview, activity, productsHref = "/inv
 
       {canManageInventory(role) && activity ? <div className="grid min-w-0 gap-4 lg:grid-cols-2">
         {([
-          ['Pending product requests',activity.pending_products,'Requested by','/inventory/requests?tab=products&status=pending_review'],
-          ['Pending movement requests',activity.pending_movements,'Requested by','/inventory/requests?tab=movements&status=pending_review'],
-          ['Recently added items',activity.recent_products,'Added by',''],
-          ['Recent movements',activity.recent_movements,'Recorded by','/inventory/movements'],
-        ] as const).map(([title,entries,by,destination])=><section key={title} className="min-w-0 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
+          ['Pending product requests',activity.pending_products,'/inventory/requests?tab=products&status=pending_review','lg:col-span-1'],
+          ['Pending movement requests',activity.pending_movements,'/inventory/requests?tab=movements&status=pending_review','lg:col-span-1'],
+          ['Recently added items',activity.recent_products,'','lg:col-span-2'],
+        ] as const).map(([title,entries,destination,span])=><section key={title} className={`min-w-0 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-5 ${span}`}>
           <h2 className="text-base font-semibold text-zinc-950">{title}</h2>
           <p className="mt-1 text-sm text-zinc-500">Latest five</p>
           {entries.length ? <ul className="mt-3 divide-y divide-zinc-100">{entries.map(entry=><li key={entry.id} className="min-w-0 py-3 text-sm [overflow-wrap:anywhere]">
             <Link href={destination || `/inventory/products/${entry.product_id}`} className="inline-flex min-h-11 items-center font-semibold text-emerald-900 underline underline-offset-4">{entry.item_name}</Link>
             <p className="text-emerald-800">{inventoryIdentifier(entry,title === "Pending product requests")}</p>
-            <p className="text-zinc-700">{by} {inventoryPersonName(entry.display_name)}</p>
+            <p className="text-zinc-700">{entry.attribution ? inventoryAttributionLine(entry.attribution) : `${destination ? "Requested" : "Added"} by ${inventoryPersonName(entry.display_name)}`}</p>
             <time dateTime={entry.created_at} className="mt-1 block text-zinc-500">{formatInventoryDate(entry.created_at)}</time>
           </li>)}</ul> : <p className="mt-3 text-sm text-zinc-500">No items to show.</p>}
         </section>)}

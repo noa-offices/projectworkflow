@@ -1,4 +1,5 @@
-import { inventoryIdentifier, inventoryPersonName } from "@/lib/inventory/presentation";
+import { inventoryAttributionLine } from "@/lib/inventory/attribution";
+import { inventoryIdentifier } from "@/lib/inventory/presentation";
 import Link from "next/link";
 import { ArrowLeft, Package } from "lucide-react";
 import type { ReactNode } from "react";
@@ -132,7 +133,7 @@ export function ProductDetailView({ product, productsHref = "/inventory/products
                   {movement.to_location ? LOCATION_LABELS[movement.to_location] : "—"}
                 </p>
                 <p className="mt-2 text-sm leading-5 text-zinc-500 [overflow-wrap:anywhere]">
-                  {inventoryPersonName(movement.actor_display_name)} · <time dateTime={movement.created_at}>{formatInventoryDate(movement.created_at)}</time>
+                  {inventoryAttributionLine(movement.attribution ?? { creator_name: movement.actor_display_name, request: null }, "Recorded")} · <time dateTime={movement.created_at}>{formatInventoryDate(movement.created_at)}</time>
                 </p>
                 {movement.note ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-zinc-600 [overflow-wrap:anywhere]">{movement.note}</p> : null}
               </li>
