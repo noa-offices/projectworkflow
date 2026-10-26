@@ -8,6 +8,7 @@ import { Camera, ImageOff, ImagePlus, Star, Trash2 } from "lucide-react";
 import { registerInventoryPhotos, removeProductPhoto, setMainProductPhoto } from "@/lib/inventory/actions";
 import { photoSelectionError } from "@/lib/inventory/product-request-submission";
 import { MAX_PRODUCT_PHOTOS, PHOTO_PICKER_TYPES, canUseProductTools, photoSlotsLeft, photoUploadPlan } from "@/lib/inventory/product-edit";
+import { compressInventoryPhoto, photoSizeLabel } from "@/lib/inventory/photo-compress";
 import { uploadInventoryPhotos } from "@/lib/inventory/photo-upload";
 import { orderedProductImages } from "@/lib/inventory/presentation";
 import type { InventoryImage } from "@/lib/inventory/types";
@@ -18,6 +19,7 @@ const buttonStyle = "inline-flex min-h-11 flex-1 items-center justify-center gap
 
 export function ProductPhotoManager({ productId, productName, images, role, productHref, preview = false }: { productId: string; productName: string; images: InventoryImage[]; role: string | null; productHref: string; preview?: boolean }) {
   const router = useRouter(), lock = useRef(false);
+  const [compression,setCompression]=useState<{name:string;original:number;size?:number;error?:string}[]>([]);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [confirming, setConfirming] = useState<InventoryImage | null>(null);
   const [previewImages, setLocal] = useState(() => orderedProductImages(images));
   if (!canUseProductTools(role)) return <p role="alert" className="rounded-lg border border-zinc-200 bg-white p-4 text-sm text-zinc-700">You do not have permission to manage photos.</p>;
@@ -36,16 +38,29 @@ export function ProductPhotoManager({ productId, productName, images, role, prod
     if (!incoming.length) return;
     const problem = photoSelectionError(local.length, incoming);
     if (problem) { setError(problem); setNotice(""); return; }
-    if (preview) { setNotice("Preview only. Nothing was uploaded."); return; }
     void run(async () => {
-      const uploaded = await uploadInventoryPhotos({ ownerType: "product", ownerId: productId, files: incoming });
+      setCompression(incoming.map(file=>({name:file.name,original:file.size})));
+      const prepared:File[]=[], failures:string[]=[];
+      for(const [index,file] of incoming.entries()) {
+        try {
+          const result=await compressInventoryPhoto(file);prepared.push(result.file);
+          setCompression(rows=>rows.map((row,i)=>i===index ? {...row,size:result.sizeBytes} : row));
+        } catch(error) {
+          const message=error instanceof Error ? error.message : "Could not compress this photo.";
+          failures.push(`${file.name}: ${message}`);setCompression(rows=>rows.map((row,i)=>i===index ? {...row,error:message} : row));
+        }
+      }
+      if(preview) return failures.length ? {ok:false,error:failures.join(" ")} : {ok:true};
+      if(!prepared.length) return {ok:false,error:failures.join(" ")};
+      const uploaded = await uploadInventoryPhotos({ ownerType: "product", ownerId: productId, files: prepared });
+      uploaded.failedCount+=failures.length;uploaded.errors.push(...failures);
       if (!uploaded.files.length) return { ok: false, error: uploaded.errors.join(" ") || "The photo could not be uploaded." };
       const plan = photoUploadPlan(local, uploaded.files.length);
       const registered = await registerInventoryPhotos({ ownerType: "product", ownerId: productId, files: uploaded.files.map((file, index) => ({ ...file, ...plan[index] })) });
       if (!registered.ok) return registered;
       if (uploaded.failedCount) return { ok: false, error: `${uploaded.failedCount} ${uploaded.failedCount === 1 ? "photo" : "photos"} could not be added. ${uploaded.errors.join(" ")}` };
       return { ok: true };
-    }, "Photo added.");
+    }, preview ? "Preview only. Nothing was uploaded." : "Photo added.");
   }
   const picker = (camera: boolean) => <label className={`${buttonStyle} cursor-pointer focus-within:ring-2 focus-within:ring-emerald-800 ${busy || left === 0 ? "cursor-not-allowed opacity-50" : ""}`}>
     {camera ? <Camera size={18} aria-hidden="true" /> : <ImagePlus size={18} aria-hidden="true" />}{camera ? "Camera" : "Gallery"}
@@ -58,6 +73,7 @@ export function ProductPhotoManager({ productId, productName, images, role, prod
       <h2 className="font-semibold text-zinc-900">Photos <span className="text-sm font-normal text-zinc-500">({local.length}/{MAX_PRODUCT_PHOTOS})</span></h2>
       <p className="text-sm text-zinc-600">{left === 0 ? "This item has the maximum of three photos. Remove one to add another." : "JPEG, PNG or WebP. The main photo appears first."}</p>
       <div className="grid min-w-0 grid-cols-2 gap-2">{picker(true)}{picker(false)}</div>
+      {compression.length>0 && <ul aria-label="Photo upload sizes" className="min-w-0 space-y-2">{compression.map((photo,index)=><li key={index} className="rounded-md bg-zinc-50 p-3 text-sm [overflow-wrap:anywhere]"><p className="font-medium text-zinc-800">{photo.name}</p><p aria-live="polite" className={photo.error ? "text-red-700" : "text-zinc-600"}>{photo.error || (photo.size === undefined ? "Compressing..." : photoSizeLabel(photo.original,photo.size))}</p></li>)}</ul>}
       {error && <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {notice && <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{notice}</p>}
     </section>

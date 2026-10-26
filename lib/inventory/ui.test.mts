@@ -8,6 +8,7 @@ import * as React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import * as access from './access';
 import * as brands from './brands';
+import * as photoCompression from './photo-compress';
 import * as presentation from './presentation';
 import * as requests from './request-presentation';
 import * as submission from './product-request-submission';
@@ -40,7 +41,7 @@ function loadSync(url: URL, dependencies: Record<string,unknown> = {}) {
 async function load(path: string, dependencies: Record<string,unknown> = {}) { return loadSync(new URL(path,import.meta.url),dependencies); }
 const shared = {
   'next/link':{__esModule:true,default:Link}, 'next/navigation':{useRouter:()=>({push(){},refresh(){}}),usePathname:()=>'/inventory'}, '@/lib/inventory/movement-form':movementForm, '@/lib/inventory/movement-history':movementHistory, '@/lib/inventory/category-form':categoryForm,
-  '@/lib/inventory/brands':brands, '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
+  '@/lib/inventory/photo-compress':photoCompression, '@/lib/inventory/brands':brands, '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
   '@/lib/inventory/types':types,
   '@/lib/inventory/product-request-submission':submission, '@/lib/inventory/action-validation':validation,
   '@/lib/inventory/actions':{}, '@/lib/inventory/product-edit':productEdit, '@/lib/inventory/save-errors':saveErrors, '@/lib/inventory/request-presentation':requests, '@/lib/inventory/photo-upload':{},

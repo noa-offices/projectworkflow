@@ -1,0 +1,151 @@
+[
+  {
+    "width": 360,
+    "largeOriginalBytes": 35345350,
+    "requestEncodes": [
+      {
+        "width": 2000,
+        "height": 1333,
+        "type": "image/webp",
+        "size": 1603168
+      },
+      {
+        "width": 64,
+        "height": 128,
+        "type": "image/webp",
+        "size": 642
+      },
+      {
+        "width": 64,
+        "height": 128,
+        "type": "image/webp",
+        "size": 642
+      }
+    ],
+    "exifOrientation": {
+      "top": [
+        254,
+        0,
+        0,
+        255
+      ],
+      "bottom": [
+        0,
+        0,
+        255,
+        255
+      ]
+    },
+    "passed": true
+  },
+  {
+    "width": 390,
+    "largeOriginalBytes": 35345350,
+    "requestEncodes": [
+      {
+        "width": 2000,
+        "height": 1333,
+        "type": "image/webp",
+        "size": 1603168
+      },
+      {
+        "width": 64,
+        "height": 128,
+        "type": "image/webp",
+        "size": 642
+      },
+      {
+        "width": 64,
+        "height": 128,
+        "type": "image/webp",
+        "size": 642
+      }
+    ],
+    "exifOrientation": {
+      "top": [
+        254,
+        0,
+        0,
+        255
+      ],
+      "bottom": [
+        0,
+        0,
+        255,
+        255
+      ]
+    },
+    "passed": true
+  },
+  {
+    "width": 430,
+    "largeOriginalBytes": 35345350,
+    "requestEncodes": [
+      {
+        "width": 2000,
+        "height": 1333,
+        "type": "image/webp",
+        "size": 1603168
+      },
+      {
+        "width": 64,
+        "height": 128,
+        "type": "image/webp",
+        "size": 642
+      },
+      {
+        "width": 64,
+        "height": 128,
+        "type": "image/webp",
+        "size": 642
+      }
+    ],
+    "exifOrientation": {
+      "top": [
+        254,
+        0,
+        0,
+        255
+      ],
+      "bottom": [
+        0,
+        0,
+        255,
+        255
+      ]
+    },
+    "passed": true
+  },
+  {
+    "fallback": "Image decoder + JPEG encoder",
+    "encodes": [
+      {
+        "width": 64,
+        "height": 128,
+        "type": "image/png",
+        "size": 497
+      },
+      {
+        "width": 64,
+        "height": 128,
+        "type": "image/jpeg",
+        "size": 899
+      }
+    ],
+    "pixels": {
+      "top": [
+        254,
+        0,
+        0,
+        255
+      ],
+      "bottom": [
+        0,
+        0,
+        254,
+        255
+      ]
+    },
+    "passed": true
+  }
+]

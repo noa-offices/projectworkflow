@@ -1,5 +1,6 @@
 "use server";
 
+import { inventoryPhotoError, inventoryPhotoContentType } from "./photo-limits";
 import { revalidatePath } from "next/cache";
 import { requireInventoryUser } from "@/lib/auth";
 import { logServerActionError } from "@/lib/action-errors";
@@ -244,7 +245,14 @@ export async function registerInventoryPhotos(input: unknown) {
       }
       const size = data.size ?? data.metadata?.size;
       const contentType = data.contentType ?? data.metadata?.mimetype;
+      const problem=inventoryPhotoError(size,contentType); if(problem) invalid(problem);
       if (size !== file.sizeBytes || contentType !== file.contentType) invalid("Photo details do not match the uploaded file. Please upload it again.");
+      const {data:stored,error:downloadError}=await storage.download(file.path);
+      if(downloadError) throw downloadError;
+      if(!stored) invalid("This photo could not be read. Please upload it again.");
+      const actualType=inventoryPhotoContentType(new Uint8Array(await stored.slice(0,12).arrayBuffer()));
+      const actualProblem=inventoryPhotoError(stored.size,actualType);if(actualProblem) invalid(actualProblem);
+      if(stored.size!==size || actualType!==contentType) invalid("Photo contents do not match the file details. Choose a JPEG, PNG or WebP photo and upload it again.");
     }));
     const { error: insertError } = await client.schema("inventory").from("product_images").insert(plan.files.map(file => ({
       product_id: plan.ownerType === "product" ? plan.ownerId : null,

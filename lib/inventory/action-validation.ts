@@ -1,3 +1,4 @@
+import { inventoryPhotoError, INVENTORY_PHOTO_TYPES, MAX_INVENTORY_PHOTO_BYTES } from "./photo-limits";
 import { ITEM_TYPES, LOCATION_LABELS, PRODUCT_STATUSES, REQUEST_TYPES } from "./types";
 
 export class InventoryInputError extends Error {}
@@ -145,12 +146,13 @@ export function photoInput(value: unknown): PhotoOwner & { files: PhotoFileInput
   const prefix = `${ownerType === "product" ? "products" : "requests"}/${ownerId}/`;
   const files = input.files.map(value => {
     const file = object(value), path = text(file.path, "Photo path", 250, true)!;
-    const contentType = code(file.contentType, ["image/jpeg", "image/png", "image/webp"], "photo format");
+    const problem=inventoryPhotoError(file.sizeBytes,file.contentType); if(problem) invalid(problem);
+    const contentType = code(file.contentType, INVENTORY_PHOTO_TYPES, "photo format");
     const suffix = path.slice(prefix.length);
     if (!path.startsWith(prefix) || !/^[A-Za-z0-9_-][A-Za-z0-9_-]*\.(jpg|jpeg|png|webp)$/.test(suffix)) invalid("Photo path does not match its owner.");
     const extension = suffix.split(".").at(-1);
     if (!(contentType === "image/jpeg" ? ["jpg", "jpeg"] : [contentType.split("/")[1]]).includes(extension!)) invalid("Photo extension does not match its format.");
-    return { path, contentType, sizeBytes: integer(file.sizeBytes, 1, 5 * 1024 * 1024), sortOrder: integer(file.sortOrder, 0, 2), isMain: boolean(file.isMain) };
+    return { path, contentType, sizeBytes: integer(file.sizeBytes, 1, MAX_INVENTORY_PHOTO_BYTES), sortOrder: integer(file.sortOrder, 0, 2), isMain: boolean(file.isMain) };
   });
   if (new Set(files.map(file => file.path)).size !== files.length) invalid("Each uploaded photo must be different.");
   return { ownerType, ownerId, files };

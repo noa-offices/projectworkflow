@@ -5,7 +5,7 @@ const id="11111111-1111-4111-8111-111111111111", other="22222222-2222-4222-8222-
 let role:string|null="viewer", authenticated=true, clients=0, adminClients=0, invalidations=0;
 let calls:{url:URL;method:string;body:Record<string,unknown>|Record<string,unknown>[]|null}[]=[];
 let failure:{code:string;message:string}|null=null, failStorage=false, requestOwner=id, requestStatus="pending_review";
-let images:Record<string,unknown>[]=[], storageSize=100;
+let images:Record<string,unknown>[]=[], storageSize=100, storageType="image/jpeg", disguisedPhoto=false, storageBytesType:string|null=null;
 let photoInsertFailure=false;
 let categoryRows:Record<string,unknown>[]=[];
 const client=sdkClient("https://inventory.test","publishable-fixture",{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false},global:{fetch:async(input,init)=>{
@@ -22,7 +22,13 @@ const client=sdkClient("https://inventory.test","publishable-fixture",{auth:{per
   }
   if(url.pathname.includes("/storage/")){
     if(method==="DELETE")return failStorage?Response.json({message:"fixture remove failure"},{status:500}):Response.json([]);
-    return Response.json({name:`products/${id}/image.jpg`,size:storageSize,content_type:"image/jpeg"});
+    if(!url.pathname.includes('/object/info/')) {
+      const bytes=new Uint8Array(storageSize), format=storageBytesType ?? storageType;
+      const signature=disguisedPhoto ? [71,73,70,56,57,97] : format==='image/webp' ? [82,73,70,70,0,0,0,0,87,69,66,80] : format==='image/png' ? [137,80,78,71,13,10,26,10] : [255,216,255];
+      bytes.set(signature);
+      return new Response(bytes,{headers:{'Content-Type':storageType}});
+    }
+    return Response.json({name:`products/${id}/image.jpg`,size:storageSize,content_type:storageType});
   }
   assert.equal(new Headers(init?.headers).get(method==="GET"?"Accept-Profile":"Content-Profile"),"inventory");
   if(name==="product_images"&&method==="POST"&&photoInsertFailure)return Response.json({code:"42501",message:"Photos require a pending product request"},{status:403});
@@ -44,7 +50,7 @@ const actions=await import("./actions");
 const product={brand_id:id,category_id:id,stock_ref:"S1",item_code:"I1",item_name:"Chair",model_name:"Model",quantity:2};
 const photo={path:`products/${id}/image.jpg`,contentType:"image/jpeg",sizeBytes:100,sortOrder:0,isMain:true};
 function reset(nextRole="admin_manager"){
-  role=nextRole;authenticated=true;clients=0;adminClients=0;invalidations=0;calls=[];failure=null;failStorage=false;images=[];requestOwner=id;requestStatus="pending_review";storageSize=100;categoryRows=[];photoInsertFailure=false;
+  role=nextRole;authenticated=true;clients=0;adminClients=0;invalidations=0;calls=[];failure=null;failStorage=false;images=[];requestOwner=id;requestStatus="pending_review";storageSize=100;storageType="image/jpeg";disguisedPhoto=false;storageBytesType=null;categoryRows=[];photoInsertFailure=false;
 }
 const managers=new Set(["system_owner","admin_manager"]);
 const office=new Set(["procurement_manager","sales_designer","sales_coordinator","designer"]);
@@ -198,4 +204,40 @@ test('only managers create Inventory-only brands, normalize codes and refresh In
  reset();failure={code:'23505',message:'Code already belongs to a PW brand'};
  const duplicate=await actions.createLocalBrand({name:'Shop',code:'PW'});assert.equal(duplicate.ok,false);
  if(!duplicate.ok) assert.match(duplicate.error,/short code is already in use/);
+});
+
+test('server rejects oversized or unsupported stored photos even when browser metadata lies',async()=>{
+ for(const scenario of ['size','type']) {
+  reset();if(scenario==='size') storageSize=2097153;else storageType='image/gif';
+  const result=await actions.registerInventoryPhotos({ownerType:'product',ownerId:id,files:[photo]});
+  assert.equal(result.ok,false);if(!result.ok) assert.match(result.error,scenario==='size'?/2 MB/:/JPEG|PNG|WebP/);
+  assert.equal(calls.some(call=>call.method==='POST'),false);
+ }
+ reset();const result=await actions.registerInventoryPhotos({ownerType:'product',ownerId:id,files:[{...photo,sizeBytes:2097153}]});
+ assert.equal(result.ok,false);if(!result.ok) assert.match(result.error,/2 MB/);assert.equal(clients,0);
+});
+
+test('server accepts the exact 2 MiB boundary from actual Storage metadata',async()=>{
+ reset();storageSize=2097152;
+ const result=await actions.registerInventoryPhotos({ownerType:'product',ownerId:id,files:[{...photo,sizeBytes:2097152}]});
+ assert.equal(result.ok,true);
+});
+
+test('server rejects GIF bytes disguised as an allowed JPEG upload',async()=>{
+ reset();disguisedPhoto=true;
+ const result=await actions.registerInventoryPhotos({ownerType:'product',ownerId:id,files:[photo]});
+ assert.equal(result.ok,false);if(!result.ok) assert.match(result.error,/JPEG|PNG|WebP/);
+ assert.equal(calls.some(call=>call.method==='POST'),false);
+});
+
+test('server registers WebP and PNG but rejects valid image bytes with a mismatched declared type',async()=>{
+ for(const [type,extension] of [['image/webp','webp'],['image/png','png']]) {
+  reset();storageType=type;
+  const result=await actions.registerInventoryPhotos({ownerType:'product',ownerId:id,files:[{...photo,path:`products/${id}/photo.${extension}`,contentType:type}]});
+  assert.equal(result.ok,true,type);
+ }
+ reset();storageBytesType='image/png';
+ const mismatch=await actions.registerInventoryPhotos({ownerType:'product',ownerId:id,files:[photo]});
+ assert.equal(mismatch.ok,false);if(!mismatch.ok) assert.match(mismatch.error,/contents do not match/);
+ assert.equal(calls.some(call=>call.method==='POST'),false);
 });
