@@ -1,0 +1,85 @@
+import {chromium} from 'playwright';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {buildCurrentInventoryPdfHtml} from '../lib/inventory/reports/current-inventory.ts';
+
+const browser=await chromium.launch({headless:true,executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'});
+const results=[];
+const mainId='44444444-4444-4444-8444-444444444444';
+try {
+ for(const width of [360,390,430]) {
+  const context=await browser.newContext({viewport:{width,height:900},timezoneId:'Asia/Dubai'});
+  const page=await context.newPage();
+  const errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  const visit=async(view,extra='')=>{
+   const role=extra.includes('role=warehouse_staff') ? 'warehouse_staff' : 'admin_manager';
+   await page.goto(`http://localhost:3000/dev/inventory-preview?frame=1&role=${role}&view=${view}${extra.replace('&role=warehouse_staff','')}`,{waitUntil:'networkidle',timeout:180000});
+   await page.locator('main').first().waitFor();
+  };
+  const check=async(screen,needle,screenshot=false)=>{
+   if(needle) await page.getByText(needle,{exact:false}).first().waitFor({timeout:30000});
+   const text=await page.locator('body').innerText();
+   assert.ok(!text.includes('— · —'),screen);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${width}/${screen}: overflow`);
+   const dialog=page.getByRole('dialog');
+   if(await dialog.count()) assert.equal(await dialog.evaluate(el=>el.scrollWidth>el.clientWidth),false,`${screen}: dialog overflow`);
+   if(screenshot) await page.screenshot({path:`artifacts/task-14-${screen}-${width}.png`,fullPage:true});
+   results.push({width,screen,identifierVisible:true,noOverflow:true});
+  };
+  await visit('requests','&tab=movements&status=all');
+  await check('movement-requests','GEN-0001',true);
+  const temporary=page.locator('article').filter({hasText:'Temporary meeting chair'});
+  assert.match(await temporary.innerText(),/Temporary meeting chair\s+GEN-0001\s/);
+  await temporary.getByRole('button',{name:'View details'}).click();
+  await check('movement-request-details','GEN-0001');
+  await page.getByRole('button',{name:'Close details'}).click();
+  await visit('requests','&tab=products&status=all');
+  await check('product-requests','Ref assigned on approval',true);
+  assert.ok((await page.locator('body').innerText()).includes('02-0001 · Code CHR-052'));
+  await page.getByRole('button',{name:'View details'}).first().click();
+  await check('product-request-details','Ref assigned on approval');
+  await page.getByRole('button',{name:'Close details'}).click();
+  await page.getByRole('button',{name:'Review and approve',exact:true}).first().click();
+  await check('review-item','Ref assigned on approval');
+  await visit('overview'); await check('overview','Ref assigned on approval',true);
+  await visit('products'); await check('products','02-0002',width===360);
+  for(const text of await page.locator('[data-card-identifier]').allTextContents()) assert.ok(/^02-\d{4}(?: · Code| · Model|$)/.test(text));
+  await visit('detail'); await check('product-detail','02-0001 · Code CHR-042 · Model Arlo Mid Back',width===360);
+  await page.getByRole('button',{name:'Delete item',exact:true}).click();
+  await check('delete-confirmation','02-0001 · Code CHR-042 · Model Arlo Mid Back');
+  await visit('detail','&id=55555555-5555-4555-8555-555555555555');
+  await check('product-detail-ref-only','02-0002');
+  await visit('movements',`&product=${mainId}`); await check('movements-filtered','02-0001');
+  await visit('move');
+  await page.locator('#move-search').fill('02-0002');
+  const pick=page.getByRole('button').filter({hasText:'Arlo meeting chair'}).first();
+  await pick.waitFor(); assert.ok((await pick.innerText()).includes('02-0002'));
+  await check('move-picker-results','02-0002'); await pick.click();
+  await check('move-selected-item','02-0002');
+  await visit('hold-book'); await check('book-form','02-0001 · Code CHR-042',width===360);
+  await page.getByRole('dialog').getByRole('button',{name:'Close',exact:true}).click();
+  await page.getByRole('button',{name:'Hold now',exact:true}).click();
+  await check('hold-form','02-0001 · Code CHR-042');
+  await visit('edit'); await check('edit-form','02-0001 · Code CHR-042');
+  await visit('photos'); await check('photo-manager','02-0001 · Code CHR-042');
+  await visit('remove'); await check('remove-confirmation','02-0001 · Code CHR-042');
+  await visit('new-product','&role=warehouse_staff'); await check('new-item-form','Ref assigned on approval');
+  await visit('reports');
+  await page.locator('#rm-product').fill('02-0002');
+  const reportPick=page.getByRole('button').filter({hasText:'Arlo meeting chair'}).first();
+  await reportPick.waitFor();assert.ok((await reportPick.innerText()).includes('02-0002'));
+  await check('reports-picker','02-0002',width===360);await reportPick.click();
+  await check('reports-selected-item','02-0002');
+  assert.deepEqual(errors,[],`page errors ${width}`);
+  await context.close();console.log(`PASS ${width}px`);
+ }
+ const row={stock_ref:'GEN-0001',item_code:null,item_name:'Temporary meeting chair',model_name:null,brand:null,category:'Chairs',subcategory:null,item_type:'temporary',status:'available',condition:'new',warehouse:1,dubai_showroom:0,abudhabi_showroom:0,mockup:0,temporary_out:0,total_live:1,reserved:0,available:1,sold:0};
+ const html=buildCurrentInventoryPdfHtml([row,{...row,stock_ref:'IK1-0001',item_name:'IKEA meeting chair',item_code:'1234',model_name:'X'}],{generatedAt:new Date('2026-10-26T08:00:00Z'),filterLines:[]},{photos:false});
+ const printPage=await browser.newPage({viewport:{width:1123,height:794}});
+ await printPage.setContent(html);await printPage.emulateMedia({media:'print'});
+ assert.ok((await printPage.locator('body').innerText()).includes('IK1-0001 · Code 1234 · Model X'));
+ await printPage.screenshot({path:'artifacts/task-14-report-print.png',fullPage:true});
+ results.push({screen:'PDF HTML print layout',identifierVisible:true});
+ fs.writeFileSync('artifacts/task-14-browser-results.json',JSON.stringify(results,null,2)+'\n');
+} finally {await browser.close();}

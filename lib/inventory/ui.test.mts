@@ -25,7 +25,7 @@ import * as movementForm from './movement-form';
 import * as movementHistory from './movement-history';
 import * as categoryForm from './category-form';
 import {previewBrands,previewCategories,previewOverview,previewProduct,previewPickerProducts,previewMovementHistory,previewCategoryOverview} from './preview-data';
-import {previewProductRequests} from './request-preview-data';
+import {previewProductRequests,previewMovementRequests} from './request-preview-data';
 
 type Component = React.ComponentType<Record<string, unknown>>;
 const Link = ({children,...props}: React.ComponentProps<'a'>) => React.createElement('a',props,children);
@@ -52,6 +52,27 @@ const shared = {
 };
 const html = (component:Component,props:Record<string,unknown>) => renderToStaticMarkup(React.createElement(component,props));
 
+test('request cards and details use Stock ref and never empty optional identifier placeholders',async()=>{
+  const view=(await load('../../components/inventory/requests-view.tsx',{...shared,'./product-image-gallery':{ProductImageGallery:stub},'./request-dialog':{RequestDialog:stub},'./product-request-form':{ProductRequestForm:stub},'@/lib/inventory/request-reads':{}})).RequestsView;
+  const props={status:'all',mine:false,userId:'u',page:1,pageCount:1,total:1,role:'admin_manager'};
+  const movement={...previewMovementRequests[0],product:{...previewMovementRequests[0].product,stock_ref:'GEN-0001',item_code:null,model_name:null}};
+  const markup=html(view,{...props,tab:'movements',movements:[movement],products:[]});
+  assert.match(markup,/GEN-0001<\/p>/);assert.doesNotMatch(markup,/— · —/);
+  const pending=html(view,{...props,tab:'products',products:[{...previewProductRequests[0],stock_ref:null,item_code:null,model_name:null}],movements:[]});
+  assert.match(pending,/Ref assigned on approval<\/p>/);assert.doesNotMatch(pending,/— · —/);
+  const approved=html(view,{...props,tab:'products',products:[{...previewProductRequests[0],request_status:'approved',stock_ref:null,approved_product:{...previewProduct,stock_ref:'IK1-0001'}}],movements:[]});
+  assert.match(approved,/IK1-0001/);
+});
+
+test('Overview pending cards and reservations show the shared identifier line',async()=>{
+  const overview=(await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
+  const entry={id:'r',product_id:previewProduct.id,item_name:'Chair',display_name:'Junais KP',created_at:previewProduct.created_at,stock_ref:'GEN-0001',item_code:null,model_name:null};
+  const markup=html(overview,{overview:previewOverview,role:'admin_manager',activity:{pending_products:[{...entry,stock_ref:null}],pending_movements:[entry],recent_products:[],recent_movements:[]}});
+  assert.match(markup,/GEN-0001/);assert.match(markup,/Ref assigned on approval/);
+  const reservations=(await load('../../components/inventory/product-reservations.tsx',{...shared,'@/lib/inventory/reservations':{canReleaseReservation:()=>false}})).ProductReservations;
+  assert.match(html(reservations,{product:{...previewProduct,stock_ref:'GEN-0001',item_code:null,model_name:null},role:'viewer'}),/GEN-0001/);
+});
+
 test('Overview activity shows names and Dubai time only to managers, with no email fallback', async()=>{
   const view=(await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
   const entry={id:'r1',item_name:'Sample chair',display_name:'Junais KP',created_at:'2026-10-26T04:56:00Z',product_id:previewProduct.id};
@@ -74,7 +95,7 @@ test('product recent movements show full names or Team member and Dubai dates',a
 });
 
 test('Inventory notification bell, received and sent lists render Dubai time and safe names',async()=>{
-  const item={id:'n1',order_no:'/inventory/requests?tab=products',created_at:'2026-10-26T04:56:00Z',sender_name:'email@example.com',recipient_name:'email@example.com',body:'New item request',read_at:null,sent_to_role:null,requires_response:false,response:null};
+  const item={id:'n1',order_no:'/inventory/requests?tab=products',created_at:'2026-10-26T04:56:00Z',sender_name:'email@example.com',recipient_name:'email@example.com',body:`New item request: ${'Long name '.repeat(12)}\nGEN-0001`,read_at:null,sent_to_role:null,requires_response:false,response:null};
   for(const [file,exportName,state] of [
     ['notification-bell','NotificationBell',[1,[item],true,false]],
     ['notifications-page-content','NotificationsPageContent',[[item],false,null]],
@@ -85,7 +106,24 @@ test('Inventory notification bell, received and sent lists render Dubai time and
     const view=(await load(`../../components/notifications/${file}.tsx`,{...shared,react:fakeReact,'@/lib/inventory/notification-presentation':notificationPresentation,'@/lib/notifications/actions':{},'@/components/notifications/notification-queries':{},'@/components/notifications/notifications-page-content':{NotificationsPageContent:stub},'@/components/notifications/send-notification-form':{SendNotificationForm:stub},'@/lib/notifications/send-form-data':{}}))[exportName];
     const markup=html(view,{});
     assert.match(markup,/26 Oct 2026, 08:56/,file);assert.match(markup,/Team member/,file);assert.doesNotMatch(markup,/email@example.com| UTC/,file);
+    assert.match(markup,/GEN-0001/,`${file} must not truncate the identifying Stock ref`);
   }
+});
+
+test('item forms and photo management retain the shared identifier',async()=>{
+  const product={...previewProduct,stock_ref:'GEN-0001',item_code:null,model_name:null};
+  const dependencies={...shared,'./product-image-gallery':{ProductImageGallery:stub},'./request-photo-picker':{RequestPhotoPicker:stub},'next/image':{__esModule:true,default:stub}};
+  for(const [file,exportName,props] of [
+    ['product-edit-form','ProductEditForm',{product,brands:previewBrands,categories:previewCategories,productHref:'/inventory/products/p'}],
+    ['product-photo-manager','ProductPhotoManager',{productId:product.id,productName:product.item_name,identifiers:product,images:[],productHref:'/inventory/products/p'}],
+    ['product-manager-tools','ProductManagerTools',{product,initialRemove:true}],
+    ['delete-item-button','DeleteItemDialog',{product,onClose(){}}],
+  ] as const) {
+    const view=(await load(`../../components/inventory/${file}.tsx`,dependencies))[exportName];
+    assert.match(html(view,{...props,role:'admin_manager',preview:true}),/<p[^>]*>GEN-0001<\/p>/,file);
+  }
+  const add=(await load('../../components/inventory/product-request-form.tsx',dependencies)).ProductRequestForm;
+  assert.match(html(add,{role:'warehouse_staff',brands:previewBrands,categories:previewCategories}),/Ref assigned on approval/);
 });
 
 test('overview and products show a full-width Add item link for only managers and warehouse staff',async()=>{
@@ -168,7 +206,7 @@ test('cards and detail put the stock reference directly below the name and omit 
   const product={...previewProduct,stock_ref:'02-0001',item_code:null,model_name:null,main_image_url:null};
   const card=(await load('../../components/inventory/product-card.tsx',shared)).ProductCard;
   const cardMarkup=html(card,{product});
-  assert.match(cardMarkup,/<\/h2><p[^>]*><span[^>]*>02-0001<\/span>/);
+  assert.match(cardMarkup,/<\/h2><p[^>]*>02-0001<\/p>/);
   assert.doesNotMatch(cardMarkup,/Code:|>—<|>null<|>undefined</);
   const detail=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-reservations':{ProductReservations:stub},'./product-image-gallery':{ProductImageGallery:stub},'./stock-by-location':{StockByLocation:stub}})).ProductDetailView;
   const detailMarkup=html(detail,{product});
@@ -179,13 +217,13 @@ test('cards and detail put the stock reference directly below the name and omit 
   for(const item_code of ['', '   ', '1234']) {
     for(const [component,props] of [[card,{product:{...product,item_code}}],[detail,{product:{...product,item_code}}]] as const) {
       const markup=html(component,props);
-      assert.equal(markup.includes('Code: 1234'),item_code==='1234');
+      assert.equal(markup.includes('Code 1234'),item_code==='1234');
       if(item_code!=='1234') assert.doesNotMatch(markup,/Code:|Item code/);
     }
   }
   const requestsView=(await load('../../components/inventory/requests-view.tsx',{...shared,'@/lib/inventory/request-reads':{},'./product-image-gallery':{ProductImageGallery:stub},'./request-dialog':{RequestDialog:stub},'./product-request-form':{ProductRequestForm:stub}})).RequestsView;
   const requestMarkup=html(requestsView,{products:[{...previewProductRequests[0],stock_ref:null,item_code:null,model_name:null}],movements:[],tab:'products',status:'pending_review',mine:false,userId:'viewer',role:'viewer',page:1,pageCount:1,total:1});
-  assert.match(requestMarkup,/— · —/);assert.doesNotMatch(requestMarkup,/>null<|>undefined</);
+  assert.match(requestMarkup,/Ref assigned on approval/);assert.doesNotMatch(requestMarkup,/>null<|>undefined</);
 });
 
 test('photo cards lead with a cover image and show only nonzero stock locations as compact labelled chips',async()=>{

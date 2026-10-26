@@ -1,5 +1,5 @@
 "use client";
-import { inventoryNotificationTime, inventoryNotificationSender } from "@/lib/inventory/notification-presentation";
+import { isInventoryNotification, inventoryNotificationTime, inventoryNotificationSender } from "@/lib/inventory/notification-presentation";
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -159,7 +159,7 @@ export function NotificationsPageContent({
                   <div className="min-w-0 flex-1">
                     {/* Full body — not truncated on full page */}
                     <p
-                      className={`text-sm leading-relaxed text-zinc-800 ${item.read_at ? "" : "font-semibold"}`}
+                      className={`text-sm leading-relaxed text-zinc-800 ${isInventoryNotification(item) ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : ''} ${item.read_at ? "" : "font-semibold"}`}
                     >
                       {item.body}
                     </p>

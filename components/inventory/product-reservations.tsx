@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { releaseReservation, fulfilReservation } from '@/lib/inventory/actions';
 import { canManageInventory } from '@/lib/inventory/access';
 import { canReleaseReservation } from '@/lib/inventory/reservations';
-import { inventoryPersonName, formatInventoryDate, formatInventoryNumber, inventoryLabel } from '@/lib/inventory/presentation';
+import { inventoryIdentifier, inventoryPersonName, formatInventoryDate, formatInventoryNumber, inventoryLabel } from '@/lib/inventory/presentation';
 import { LOCATION_LABELS, LOCATION_QUANTITY_COLUMNS, type InventoryProductDetail, type InventoryReservation, type InventoryLocation } from '@/lib/inventory/types';
 import { RequestDialog } from './request-dialog';
 
@@ -24,6 +24,7 @@ export function ProductReservations({ product, role, userId, preview = false }: 
     {message && <p role="status" className="mt-3 rounded-md bg-emerald-50 p-3 text-sm text-emerald-900">{message}</p>}
     {reservations.length ? <ol className="mt-4 divide-y divide-zinc-100">{reservations.map(row => <li key={row.id} className="min-w-0 space-y-2 py-4 first:pt-0 last:pb-0">
       <div className="flex flex-wrap justify-between gap-2"><p className="text-sm font-semibold">{inventoryLabel(row.kind)}</p><p className="text-sm font-semibold">{formatInventoryNumber(row.quantity)} units</p></div>
+      <p className="text-sm font-semibold text-zinc-950 [overflow-wrap:anywhere]">{product.item_name}</p><p className="text-sm text-emerald-800 [overflow-wrap:anywhere]">{inventoryIdentifier(row.product ?? product)}</p>
       <p className="break-words text-sm text-zinc-700">{row.project_label || row.reference_note || 'No project or reference'}</p>
       {row.project_label && row.reference_note && <p className="break-words text-sm text-zinc-600">{row.reference_note}</p>}
       <p className="break-words text-sm text-zinc-500">{inventoryPersonName(row.creator_display_name)} · <time dateTime={row.created_at}>{formatInventoryDate(row.created_at)}</time></p>
@@ -57,7 +58,7 @@ function ReservationActionForm({ reservation, action, product, preview, onClose,
     finally { lock.current = false; setBusy(false); }
   }
   return <RequestDialog title={action === 'release' ? 'Release reservation' : 'Fulfil reservation'} onClose={onClose} busy={busy}>
-    <p className="mb-4 break-words text-sm">{product.item_name} · {reservation.quantity} reserved units</p>
+    <div className="mb-4 text-sm [overflow-wrap:anywhere]"><p>{product.item_name}</p><p className="mt-1 text-emerald-800">{inventoryIdentifier(product)}</p><p>{reservation.quantity} reserved units</p></div>
     <form onSubmit={submit} className="min-w-0 space-y-4">
       <fieldset disabled={busy} className="min-w-0 space-y-4">
         {action === 'fulfil' && <>

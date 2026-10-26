@@ -1,5 +1,5 @@
 "use client";
-import { inventoryNotificationTime, inventoryNotificationPerson } from '@/lib/inventory/notification-presentation';
+import { isInventoryNotification, inventoryNotificationTime, inventoryNotificationPerson } from '@/lib/inventory/notification-presentation';
 
 import { useCallback, useEffect, useState } from "react";
 import { NotificationsPageContent } from "@/components/notifications/notifications-page-content";
@@ -123,7 +123,7 @@ function SentTab() {
                     <li key={i} className="px-5 py-4">
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm leading-relaxed text-zinc-800">{b.body}</p>
+                          <p className={`text-sm leading-relaxed text-zinc-800 ${isInventoryNotification(b) ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : ""}`}>{b.body}</p>
 
                           {/* Pills + timestamp row */}
                           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -208,7 +208,7 @@ function SentTab() {
                   <li key={item.id} className="px-5 py-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm leading-relaxed text-zinc-800">{item.body}</p>
+                        <p className={`text-sm leading-relaxed text-zinc-800 ${isInventoryNotification(item) ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : ""}`}>{item.body}</p>
                         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
                           {(inventoryNotificationPerson(item,item.recipient_name) || item.recipient_name) && (
                             <span className="text-xs text-zinc-500">

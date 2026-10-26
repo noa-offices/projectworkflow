@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { formatInventoryDate, inventoryPersonName, formatInventoryNumber, inventoryOverviewHref } from "@/lib/inventory/presentation";
+import { inventoryIdentifier, formatInventoryDate, inventoryPersonName, formatInventoryNumber, inventoryOverviewHref } from "@/lib/inventory/presentation";
 import { canManageInventory } from '@/lib/inventory/access';
 import type { InventoryOverviewActivity } from '@/lib/inventory/types';
 import { LOCATION_LABELS, type InventoryLocation, type InventoryOverview } from "@/lib/inventory/types";
@@ -71,6 +71,7 @@ export function InventoryOverviewView({ overview, activity, productsHref = "/inv
           <p className="mt-1 text-sm text-zinc-500">Latest five</p>
           {entries.length ? <ul className="mt-3 divide-y divide-zinc-100">{entries.map(entry=><li key={entry.id} className="min-w-0 py-3 text-sm [overflow-wrap:anywhere]">
             <Link href={destination || `/inventory/products/${entry.product_id}`} className="inline-flex min-h-11 items-center font-semibold text-emerald-900 underline underline-offset-4">{entry.item_name}</Link>
+            <p className="text-emerald-800">{inventoryIdentifier(entry,title === "Pending product requests")}</p>
             <p className="text-zinc-700">{by} {inventoryPersonName(entry.display_name)}</p>
             <time dateTime={entry.created_at} className="mt-1 block text-zinc-500">{formatInventoryDate(entry.created_at)}</time>
           </li>)}</ul> : <p className="mt-3 text-sm text-zinc-500">No items to show.</p>}

@@ -1,5 +1,6 @@
 import type ExcelJS from "exceljs";
 import { formatDubaiDateTime } from "./format";
+import { inventoryIdentifier } from '../presentation';
 
 /** Shared look for the Inventory Excel reports: dark green header, light grey grid, medium green dividers. */
 export const GREEN = "FF064E3B", GREEN_LINE = "FF6EE7B7", GREY_TEXT = "FF6B7280", GRID = "FFD1D5DB", TINT = "FFF4F8F6", TOTAL_FILL = "FFD1FAE5", AMBER = "FFB45309", AMBER_FILL = "FFFEF3C7";
@@ -7,6 +8,11 @@ export const DASH_FORMAT = '0;-0;"–"';
 export const HEADER_ROW = 5, FIRST_DATA_ROW = 6;
 export const PHOTO_SIZE = { width: 88, height: 66 } as const; // px, 4:3
 export const DATA_ROW_HEIGHT_WITH_PHOTO = 66, DATA_ROW_HEIGHT_PLAIN = 36, HEADER_HEIGHT = 38;
+/** Leave room for both the name and identifying line, including long optional details. */
+export function inventoryReportRowHeight(item: {item_name:string;stock_ref?:string|null;item_code?:string|null;model_name?:string|null}, minimum: number): number {
+  const lines = Math.ceil(item.item_name.length / 28) + Math.ceil(inventoryIdentifier(item).length / 28);
+  return Math.max(minimum,lines * 16);
+}
 const EMU_PER_PX = 9525, PX_PER_CHAR = 7, PX_PER_POINT = 96 / 72;
 
 const side = (style: ExcelJS.BorderStyle, color: string): Partial<ExcelJS.Border> => ({ style, color: { argb: color } });

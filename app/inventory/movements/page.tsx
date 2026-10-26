@@ -1,3 +1,4 @@
+import { inventoryIdentifier } from "@/lib/inventory/presentation";
 import { redirect } from "next/navigation";
 import { MovementsView } from "@/components/inventory/movements-view";
 import { requireInventoryUser } from "@/lib/auth";
@@ -17,5 +18,5 @@ export default async function InventoryMovementsPage({ searchParams }: { searchP
   });
   if (page > Math.max(1, result.page_count)) redirect(movementsHref(state, { page: Math.max(1, result.page_count) }));
   const product = state.product ? await getProduct(state.product) : null;
-  return <MovementsView result={result} state={state} role={profile?.role ?? null} productName={product?.item_name ?? null} />;
+  return <MovementsView result={result} state={state} role={profile?.role ?? null} productName={product?.item_name ?? null} productIdentifier={inventoryIdentifier(product)} />;
 }

@@ -10,14 +10,14 @@ import { photoSelectionError } from "@/lib/inventory/product-request-submission"
 import { MAX_PRODUCT_PHOTOS, PHOTO_PICKER_TYPES, canUseProductTools, photoSlotsLeft, photoUploadPlan } from "@/lib/inventory/product-edit";
 import { compressInventoryPhoto, photoSizeLabel } from "@/lib/inventory/photo-compress";
 import { uploadInventoryPhotos } from "@/lib/inventory/photo-upload";
-import { orderedProductImages } from "@/lib/inventory/presentation";
-import type { InventoryImage } from "@/lib/inventory/types";
+import { inventoryIdentifier, orderedProductImages } from "@/lib/inventory/presentation";
+import type { InventoryImage, InventoryProductSummary } from "@/lib/inventory/types";
 import { RequestDialog } from "./request-dialog";
 import { saveFailureMessage } from "@/lib/inventory/save-errors";
 
 const buttonStyle = "inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50";
 
-export function ProductPhotoManager({ productId, productName, images, role, productHref, preview = false }: { productId: string; productName: string; images: InventoryImage[]; role: string | null; productHref: string; preview?: boolean }) {
+export function ProductPhotoManager({ productId, productName, identifiers, images, role, productHref, preview = false }: { productId: string; productName: string; identifiers?: Pick<InventoryProductSummary,'stock_ref'|'item_code'|'model_name'>; images: InventoryImage[]; role: string | null; productHref: string; preview?: boolean }) {
   const router = useRouter(), lock = useRef(false);
   const [compression,setCompression]=useState<{name:string;original:number;size?:number;error?:string}[]>([]);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [confirming, setConfirming] = useState<InventoryImage | null>(null);
@@ -68,7 +68,7 @@ export function ProductPhotoManager({ productId, productName, images, role, prod
       onChange={event => { add(event.target.files); event.target.value = ""; }} />
   </label>;
   return <div className="min-w-0 space-y-4">
-    <header className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Manage photos</h1><p className="break-words text-sm text-zinc-600">{productName}</p></header>
+    <header className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Manage photos</h1><p className="break-words text-sm text-zinc-600">{productName}</p><p className="text-sm text-emerald-800 [overflow-wrap:anywhere]">{inventoryIdentifier(identifiers)}</p></header>
     <section className="min-w-0 space-y-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-5" aria-label="Add photos">
       <h2 className="font-semibold text-zinc-900">Photos <span className="text-sm font-normal text-zinc-500">({local.length}/{MAX_PRODUCT_PHOTOS})</span></h2>
       <p className="text-sm text-zinc-600">{left === 0 ? "This item has the maximum of three photos. Remove one to add another." : "JPEG, PNG or WebP. The main photo appears first."}</p>

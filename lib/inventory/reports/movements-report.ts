@@ -1,11 +1,11 @@
-import { inventoryPersonName } from "../presentation";
+import { inventoryIdentifier, inventoryPersonName } from "../presentation";
 import ExcelJS from "exceljs";
 import { LOCATION_LABELS } from "../types";
 import type { InventoryMovement } from "../types";
 import { actionHistoryLabel, movementLinkLabel } from "../movement-form";
 import type { MovementReportFilters } from "./params";
 import { excelDubaiDate, safeCell } from "./format";
-import { DATA_ROW_HEIGHT_PLAIN, DATA_ROW_HEIGHT_WITH_PHOTO, FIRST_DATA_ROW, GREEN, HEADER_ROW, applyFreeze, applyPrintSetup, placePhoto, styleDataRow, writeHeader, writeSkippedNote, writeTitleBlock, type SheetColumn } from "./excel-style";
+import { DATA_ROW_HEIGHT_PLAIN, DATA_ROW_HEIGHT_WITH_PHOTO, FIRST_DATA_ROW, GREEN, HEADER_ROW, applyFreeze, inventoryReportRowHeight, applyPrintSetup, placePhoto, styleDataRow, writeHeader, writeSkippedNote, writeTitleBlock, type SheetColumn } from "./excel-style";
 import { photoKey, type PhotoSet } from "./photos";
 
 export const MOVEMENT_REPORT_LIMIT = 20000;
@@ -47,11 +47,11 @@ export async function buildMovementsWorkbook(movements: readonly InventoryMoveme
   const imageIds = new Map<string, number>(), index = new Map(MOVEMENT_EXCEL_COLUMNS.map((column, position) => [column.key, position + 1]));
   movements.forEach((movement, position) => {
     const rowNumber = FIRST_DATA_ROW + position, excel = sheet.getRow(rowNumber), row = movementReportRow(movement);
-    const text: Record<string, string> = { brand: safeCell(row.brand), stock_ref: safeCell(row.stock_ref), item_name: safeCell(row.item_name), action: row.action, from: safeCell(row.from), to: safeCell(row.to), note: safeCell(row.note), by: safeCell(row.by), linked: safeCell(row.linked) };
+    const text: Record<string, string> = { brand: safeCell(row.brand), stock_ref: safeCell(row.stock_ref), item_name: safeCell([row.item_name,inventoryIdentifier(movement.product)].filter(Boolean).join("\n")), action: row.action, from: safeCell(row.from), to: safeCell(row.to), note: safeCell(row.note), by: safeCell(row.by), linked: safeCell(row.linked) };
     for (const [key, value] of Object.entries(text)) if (value !== "") excel.getCell(index.get(key)!).value = value;
     if (row.when) excel.getCell(index.get("when")!).value = row.when; // a real date
     excel.getCell(index.get("quantity")!).value = row.quantity; excel.getCell(index.get("before")!).value = row.before; excel.getCell(index.get("after")!).value = row.after;
-    styleDataRow(sheet, rowNumber, MOVEMENT_EXCEL_COLUMNS, MOVEMENT_DIVIDERS, height);
+    styleDataRow(sheet, rowNumber, MOVEMENT_EXCEL_COLUMNS, MOVEMENT_DIVIDERS, inventoryReportRowHeight(movement.product ?? row,height));
     excel.getCell(index.get("when")!).numFmt = "d mmm yyyy, hh:mm";
     excel.getCell(index.get("stock_ref")!).font = { name: "Calibri", size: 11, bold: true, color: { argb: GREEN } };
     excel.getCell(index.get("item_name")!).font = { name: "Calibri", size: 11, bold: true };
@@ -59,7 +59,7 @@ export async function buildMovementsWorkbook(movements: readonly InventoryMoveme
     if (key && buffer) {
       let id = imageIds.get(key);
       if (id === undefined) { id = workbook.addImage({ buffer: buffer as unknown as ExcelJS.Buffer, extension: "jpeg" }); imageIds.set(key, id); }
-      placePhoto(workbook, sheet, id, 1, rowNumber, MOVEMENT_EXCEL_COLUMNS[0].width, height);
+      placePhoto(workbook, sheet, id, 1, rowNumber, MOVEMENT_EXCEL_COLUMNS[0].width, excel.height ?? height);
     }
   });
   const last = FIRST_DATA_ROW + movements.length - 1;

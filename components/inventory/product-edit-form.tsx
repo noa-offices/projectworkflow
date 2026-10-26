@@ -1,4 +1,5 @@
 "use client";
+import { inventoryIdentifier } from "@/lib/inventory/presentation";
 import { BrandPicker } from "./brand-picker";
 
 import Link from "next/link";
@@ -44,7 +45,7 @@ export function ProductEditForm({ product, brands, categories, role, productHref
     } catch (failure) { setError(failure instanceof InventoryInputError ? failure.message : saveFailureMessage(failure, "Could not save your changes. Please try again.")); }
     finally { held.current = false; setPending(false); requestAnimationFrame(() => errorRef.current?.focus()); }
   }}>
-    <header className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Edit item</h1><p className="break-words text-sm text-zinc-600">{product.item_name}</p></header>
+    <header className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Edit item</h1><p className="break-words text-sm text-zinc-600">{product.item_name}</p><p className="text-sm text-emerald-800 [overflow-wrap:anywhere]">{inventoryIdentifier(product)}</p></header>
     <fieldset disabled={pending} className="min-w-0 space-y-4 disabled:opacity-60">
       <section className={sectionStyle}><h2 className="font-semibold text-zinc-900">Item details</h2><p className="text-sm text-zinc-600">Required fields are marked *.</p>
         <div className="grid min-w-0 gap-4 sm:grid-cols-2">
