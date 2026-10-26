@@ -13,6 +13,7 @@ import { buildSmartSetupCheckRequest, checkFingerprint } from "@/lib/products/sm
 // The panel imports server actions (auth, cookies). Panel rendering is presentation-only, so the actions are stubbed.
 mock.module("@/app/products/smart-setup-supplier-check-actions", { namedExports: { checkSmartSetupSupplierPrices: async () => { throw Error("not called in static render"); }, listSmartSetupSupplierSourcesAction: async () => ({ status: "unauthorized" }) } });
 const { SupplierVerificationPanel } = await import("./smart-setup-supplier-verification");
+const { SupplierReviewDialog } = await import("./smart-setup-supplier-review-dialog");
 
 const priced = (id: string, code: string | null, price: number | null, extra: Record<string, unknown> = {}) => ({ id, label: id, displayName: null, dimensions: null, currency: "EUR" as const, price, specification: null, supplierCodes: code ? [code] : [], referenceCodes: [], ...extra });
 const draft = (pricing: Record<string, unknown> = {}, optionGroups: unknown[] = []): ProductTemplateDraft => ({ version: 1, template: { supplierCodes: [], referenceCodes: [], templateName: "T", templateCode: null, itemCode: null, internalSelectionName: null, description: null, specification: null, origin: null, supplierName: null, dimensions: null }, defaultCurrency: "EUR",
@@ -83,7 +84,7 @@ test("no applicable version, unknown basis, or unknown brand means no usable sou
 const result = (over: Partial<SmartSetupSupplierCheckResult>): SmartSetupSupplierCheckResult => ({ locator: "base_model:legacy:m", role: "main_product", code: "A1", priceField: "unit_price", dimension: "", status: "MATCHED", reason: "same_price", importedPrice: 100, importedCurrency: "EUR", referencePrice: 100, referenceCurrency: "EUR", source: { versionId: "v1", definitionId: "d1", title: "List 2024", currency: "EUR", basis: "list" }, evidence: { identityKey: "k", sheet: "S1", rowNumber: 7, sourceRowCount: null }, ...over });
 const option = { definitionId: "d1", name: "Furniture", versionId: "v1", versionTitle: "List 2024", effectiveFrom: "2024-02-01", receivedAt: null, currency: "EUR", basis: "list" };
 const output = (results: SmartSetupSupplierCheckResult[]): SmartSetupSupplierCheckOutput => ({ source: results[0].source, results });
-const panel = (over: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(SupplierVerificationPanel, { brandId: "b1", sources: { state: "ready", options: [option] }, definitionId: "d1", onSelect() {}, selected: option, running: false, error: null, stale: false, fresh: null, showAll: false, onShowAll() {}, limit: 50, onMore() {}, onRun() {}, ...over } as never));
+const panel = (over: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(SupplierVerificationPanel, { brandId: "b1", sources: { state: "ready", options: [option] }, definitionId: "d1", onSelect() {}, selected: option, running: false, error: null, stale: false, fresh: null, reviewOpen: false, onReviewOpen() {}, onReviewClose() {}, onRun() {}, ...over } as never));
 
 test("panel states: no brand, loading, unauthorized, no applicable list, selection required", () => {
   assert.match(panel({ brandId: "", sources: { state: "loading" } }), /Select a brand/);
@@ -95,32 +96,53 @@ test("panel states: no brand, loading, unauthorized, no applicable list, selecti
   assert.doesNotMatch(panel(), /<button[^>]*disabled=""[^>]*>Check Supplier Prices/);
 });
 
-test("results: backend counts, discrepancy-first rows, ambiguous rows show no supplier price, source identity shown", () => {
-  const results = [
-    result({ locator: "l1", code: "OK1" }),
-    result({ locator: "l2", code: "MM1", status: "MISMATCH", reason: "price_differs", importedPrice: 120, referencePrice: 110 }),
-    result({ locator: "l3", code: "AMB1", status: "NEEDS_REVIEW", reason: "ambiguous_source_contexts", referencePrice: null, referenceCurrency: null, evidence: null, importedPrice: 10 }),
-    result({ locator: "l4", code: "NF1", status: "NOT_FOUND", reason: "no_source_candidate", referencePrice: null, referenceCurrency: null, evidence: null }),
-  ];
-  const html = panel({ fresh: { fingerprint: "x", output: output(results), cells: [], unsupported: [] } });
-  for (const text of ["MATCHED 1", "MISMATCH 1", "NOT FOUND 1", "NEEDS REVIEW 1", "List 2024", "EUR", "list price"]) assert.ok(html.includes(text), text);
-  assert.ok(html.indexOf("MM1") < html.indexOf("AMB1"), "mismatch before needs review");
-  assert.ok(!html.includes("OK1") && !html.includes("NF1"), "matched and not found are hidden by default");
-  assert.match(html, /EUR 120/); assert.match(html, /EUR 110/);                      // imported and supplier prices remain separate columns
-  const amb = html.slice(html.indexOf("AMB1")); assert.match(amb.slice(0, amb.indexOf("</tr>")), /<td>EUR 10<\/td><td>—<\/td>/);
-  assert.match(html, /several prices for this code/); assert.match(html, /informational; you can still apply/);
-  const all = panel({ showAll: true, fresh: { fingerprint: "x", output: output(results), cells: [], unsupported: [] } }); assert.ok(all.includes("OK1") && all.includes("NF1"));
+const fresh = (results: SmartSetupSupplierCheckResult[]) => ({ fingerprint: "x", output: output(results), cells: [], unsupported: [] });
+const mixed = [
+  result({ locator: "l1", code: "OK1" }),
+  result({ locator: "l2", code: "MM1", status: "MISMATCH", reason: "price_differs", importedPrice: 120, referencePrice: 110 }),
+  result({ locator: "l3", code: "AMB1", status: "NEEDS_REVIEW", reason: "ambiguous_source_contexts", referencePrice: null, referenceCurrency: null, evidence: null, importedPrice: 10 }),
+  result({ locator: "l4", code: "NF1", status: "NOT_FOUND", reason: "no_source_candidate", referencePrice: null, referenceCurrency: null, evidence: null }),
+];
+const openButton = /<button[^>]*disabled=""[^>]*>Open full review/;
+
+test("footer summary: backend counts and source identity, no table, and Open full review is disabled until a check has run", () => {
+  const html = panel({ fresh: fresh(mixed) });
+  for (const text of ["MATCHED 1", "MISMATCH 1", "NOT FOUND 1", "NEEDS REVIEW 1", "List 2024", "EUR", "list price", "2 to review"]) assert.ok(html.includes(text), text);
+  assert.match(html, /informational; you can still apply/);
+  assert.doesNotMatch(html, /<table|<tr |MM1|AMB1|Also show matched|Show \d+ more/, "the footer no longer renders the table");
+  assert.doesNotMatch(html, /max-h-72/, "no inner scroll box");
+  assert.doesNotMatch(html, openButton); assert.match(panel(), openButton); assert.match(panel({ stale: true }), openButton);
+  assert.doesNotMatch(html, /role="dialog"/, "closed by default");
 });
 
-test("a stale result is not shown as current", () => {
-  const html = panel({ stale: true, fresh: null });
-  assert.match(html, /no longer shown/); assert.doesNotMatch(html, /MATCHED \d/); assert.match(html, /Result is out of date/);
+test("full review dialog: same result, default filters, plain labels, sticky header and one scroll area", () => {
+  const html = panel({ reviewOpen: true, fresh: fresh(mixed) });
+  assert.match(html, /role="dialog"[^>]*aria-modal="true"[^>]*aria-labelledby/); assert.match(html, /z-\[80\]/);
+  for (const text of ["Supplier price review", "List 2024", "Currency", "Price basis", "Effective", "2024-02-01", "Showing 2 of 4 rows", "Export CSV", "Close"]) assert.ok(html.includes(text), text);
+  for (const [label, pressed] of [["Needs review", "true"], ["Mismatch", "true"], ["Not found", "false"], ["Matched", "false"]]) assert.match(html, new RegExp(`aria-pressed="${pressed}"[^>]*>${label} <span[^>]*>1</span>`), label);
+  assert.ok(html.indexOf("MM1") < html.indexOf("AMB1"), "mismatch before needs review"); assert.ok(!html.includes("OK1") && !html.includes("NF1"), "matched and not found are off by default");
+  assert.match(html, /EUR 120/); assert.match(html, /EUR 110/); assert.match(html, /text-red-700[^>]*>\+10/, "imported higher shows red");
+  const amb = html.slice(html.indexOf("AMB1")); assert.match(amb.slice(0, amb.indexOf("</tr>")), /EUR 10<\/td><td[^>]*>—<\/td>/); assert.match(html, /several prices for this code/);
+  assert.equal(html.match(/<thead/g)?.length, 1); assert.match(html, /sticky top-0/); assert.equal(html.match(/overflow-auto/g)?.length, 1);
 });
 
-test("large results render a bounded page", () => {
-  const results = Array.from({ length: 120 }, (_, i) => result({ locator: `l${i}`, code: `C${i}`, status: "MISMATCH", reason: "price_differs" }));
-  const html = panel({ fresh: { fingerprint: "x", output: output(results), cells: [], unsupported: [] } });
-  assert.equal(html.match(/<tr /g)?.length, 51); // header + 50 rows assert.match(html, /70 remaining/);
+test("full review dialog: every chip on shows all rows; lower imported price is blue", () => {
+  const html = renderToStaticMarkup(createElement(SupplierReviewDialog, { fresh: fresh([...mixed, result({ locator: "l5", code: "LOW1", status: "MISMATCH", importedPrice: 90, referencePrice: 100 })]), stale: false, selected: option, onClose() {}, initialStatuses: ["NEEDS_REVIEW", "MISMATCH", "NOT_FOUND", "MATCHED"] }));
+  assert.match(html, /Showing 5 of 5 rows/); for (const code of ["OK1", "MM1", "AMB1", "NF1", "LOW1"]) assert.ok(html.includes(code), code);
+  assert.match(html, /text-blue-700[^>]*>-10/); assert.doesNotMatch(html, /aria-pressed="false"/);
+});
+
+test("full review dialog: a stale result is not shown, also while the dialog is open", () => {
+  const html = panel({ reviewOpen: true, stale: true, fresh: null });
+  assert.match(html, /role="dialog"/); assert.match(html, /out of date and is no longer shown/); assert.doesNotMatch(html, /<table|Export CSV|aria-pressed/); assert.match(html, />Close</);
+});
+
+test("large results render a windowed slice in the dialog, never in the footer", () => {
+  const results = Array.from({ length: 450 }, (_, i) => result({ locator: `l${i}`, code: `C${i}`, status: "MISMATCH", reason: "price_differs" }));
+  const html = panel({ reviewOpen: true, fresh: fresh(results) });
+  assert.match(html, /Showing 450 of 450 rows/); const rendered = html.match(/<tr style="height:60px"/g)?.length ?? 0;
+  assert.ok(rendered > 0 && rendered < 60, `rendered ${rendered}`);
+  assert.match(html, /<tr aria-hidden="true" style="height:\d+px">/, "spacer for the rows below");
 });
 
 // ---- integration wiring ----
@@ -132,5 +154,6 @@ test("Smart Setup wiring: verification sits before Apply, brand is bridged, Appl
   assert.ok(importer.indexOf("<SmartSetupSupplierVerification key={brandId}") < importer.indexOf("onClick={confirmApply}") || importer.indexOf("<SmartSetupSupplierVerification") < importer.indexOf("Continue"));
   assert.match(importer, /brandId=\{brandId\}/);
   assert.doesNotMatch(importer.slice(importer.indexOf("const requestApply"), importer.indexOf("const routingValidation")), /SupplierVerification|checkSmartSetupSupplierPrices/); // Apply path does not consult the check
-  assert.doesNotMatch(ui, /supplierApplyReviewedPrice|supplierWrite|\.insert\(|\.update\(|\.rpc\(|matchSupplierPrices/);
+  assert.doesNotMatch(importer, /max-h-72/);
+  assert.doesNotMatch(ui + readFileSync("components/products/smart-setup-supplier-review-dialog.tsx", "utf8") + readFileSync("lib/products/smart-setup-supplier-review.ts", "utf8"), /supplierApplyReviewedPrice|supplierWrite|\.insert\(|\.update\(|\.rpc\(|matchSupplierPrices/);
 });
