@@ -1,0 +1,26 @@
+[
+  {
+    "width": 360,
+    "active": true,
+    "archived": true,
+    "exactRefGate": true,
+    "nonmanagerHidden": true,
+    "passed": true
+  },
+  {
+    "width": 390,
+    "active": true,
+    "archived": true,
+    "exactRefGate": true,
+    "nonmanagerHidden": true,
+    "passed": true
+  },
+  {
+    "width": 430,
+    "active": true,
+    "archived": true,
+    "exactRefGate": true,
+    "nonmanagerHidden": true,
+    "passed": true
+  }
+]

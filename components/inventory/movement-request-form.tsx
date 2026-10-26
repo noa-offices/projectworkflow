@@ -21,7 +21,7 @@ const sampleProjects: InventoryProjectOption[] = [
 export function ProductRequestActions({ product, role, preview = false, initialKind, initialRemove = false }: { product: InventoryProduct; role: string | null; preview?: boolean; initialKind?: RequestType; initialRemove?: boolean }) {
   const [kind, setKind] = useState<RequestType | null>(initialKind ?? null), [success, setSuccess] = useState(false);
   const buttons = requestButtons(role);
-  if (!product.is_active) return null;
+  if (!product.is_active) return canManageInventory(role) ? <section aria-label="Item tools" className="my-4 rounded-lg border border-zinc-200 bg-white p-4"><ProductManagerTools product={product} role={role} preview={preview} /></section> : null;
   return <section className="my-4 min-w-0 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm" aria-label="Product requests">
     {buttons.takeMove || buttons.holdBook ? <><h2 className="mb-3 text-base font-semibold">{canManageInventory(role) ? "Stock actions" : "Request stock"}</h2><div className="flex flex-wrap gap-2">
       {buttons.takeMove && <button className={button} onClick={() => { setKind('take'); setSuccess(false); }}>Take / Move stock</button>}

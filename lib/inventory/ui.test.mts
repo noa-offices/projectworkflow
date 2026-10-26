@@ -8,6 +8,7 @@ import * as React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import * as access from './access';
 import * as brands from './brands';
+import * as deletion from './delete-product';
 import * as photoCompression from './photo-compress';
 import * as presentation from './presentation';
 import * as requests from './request-presentation';
@@ -41,7 +42,7 @@ function loadSync(url: URL, dependencies: Record<string,unknown> = {}) {
 async function load(path: string, dependencies: Record<string,unknown> = {}) { return loadSync(new URL(path,import.meta.url),dependencies); }
 const shared = {
   'next/link':{__esModule:true,default:Link}, 'next/navigation':{useRouter:()=>({push(){},refresh(){}}),usePathname:()=>'/inventory'}, '@/lib/inventory/movement-form':movementForm, '@/lib/inventory/movement-history':movementHistory, '@/lib/inventory/category-form':categoryForm,
-  '@/lib/inventory/photo-compress':photoCompression, '@/lib/inventory/brands':brands, '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
+  '@/lib/inventory/photo-compress':photoCompression, '@/lib/inventory/delete-product':deletion, '@/lib/inventory/brands':brands, '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
   '@/lib/inventory/types':types,
   '@/lib/inventory/product-request-submission':submission, '@/lib/inventory/action-validation':validation,
   '@/lib/inventory/actions':{}, '@/lib/inventory/product-edit':productEdit, '@/lib/inventory/save-errors':saveErrors, '@/lib/inventory/request-presentation':requests, '@/lib/inventory/photo-upload':{},
@@ -545,4 +546,35 @@ test('local names appear on cards and detail while no-brand hides the glass and 
  const none={...local,local_brand_id:null,brand_name:null};
  assert.doesNotMatch(html(card,{product:none}),/data-card-brand/);
  assert.doesNotMatch(html(detail,{product:none}),/>Brand<\//);
+});
+
+test('permanent delete is separate from archive, manager-only and available for archived items',async()=>{
+ const tools=(await load('../../components/inventory/product-manager-tools.tsx',shared)).ProductManagerTools;
+ for(const role of ['system_owner','admin_manager','warehouse_staff','designer','viewer','sales_designer']) {
+  const markup=html(tools,{product:previewProduct,role,preview:true});
+  assert.equal(markup.includes('Delete item'),access.canManageInventory(role));
+  if(access.canManageInventory(role)) {assert.match(markup,/Remove item/);assert.match(markup,/border-t border-red-100/);}
+ }
+ const archived=html(tools,{product:{...previewProduct,is_active:false},role:'admin_manager',preview:true});
+ assert.match(archived,/Delete item/);assert.doesNotMatch(archived,/Remove item|Edit item|Move stock/);
+ const dialog=(await load('../../components/inventory/delete-item-button.tsx',shared)).DeleteItemDialog;
+ const markup=html(dialog,{product:previewProduct,preview:true,onClose(){}});
+ assert.match(markup,/This permanently deletes the item, its photos and its stock history. This cannot be undone./);
+ assert.match(markup,/Photos/);assert.match(markup,/Movements/);assert.match(markup,/Holds\/bookings/);
+ assert.match(markup,/Type the Stock ref to confirm/);assert.match(markup,/<button type="submit" disabled=""/);
+});
+
+test('Products shows permanent-delete success or photo cleanup warning only for managers',async()=>{
+ let role='admin_manager';
+ const page=(await load('../../app/inventory/products/page.tsx',{
+  ...shared,'@/components/inventory/products-browser':{ProductsBrowser:stub},
+  '@/lib/auth':{requireInventoryUser:async()=>({profile:{role}})},
+  '@/lib/inventory/queries':{listProducts:async()=>({items:[],total:0,page:1,page_count:1,page_size:24}),getProductTypeCounts:async()=>({all:0,product:0,accessory:0,temporary:0}),listActiveBrands:async()=>[],listCategories:async()=>[]},
+ })).default as unknown as (props:object)=>Promise<React.ReactNode>;
+ const render=async(params:Record<string,string>)=>renderToStaticMarkup(await page({searchParams:Promise.resolve(params)}));
+ assert.match(await render({deleted:'1'}),/Item deleted\./);
+ assert.match(await render({deleted:'1',photoCleanup:'2'}),/Item deleted, 2 photos could not be removed/);
+ assert.match(await render({deleted:'1',photoCleanup:'1'}),/Item deleted, 1 photo could not be removed/);
+ assert.doesNotMatch(await render({}),/Item deleted/);
+ role='viewer';assert.doesNotMatch(await render({deleted:'1',photoCleanup:'2'}),/Item deleted/);
 });
