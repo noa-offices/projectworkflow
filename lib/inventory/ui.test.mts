@@ -68,7 +68,7 @@ test('request cards and details use Stock ref and never empty optional identifie
 test('Overview pending cards and reservations show the shared identifier line',async()=>{
   const overview=(await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
   const entry={id:'r',product_id:previewProduct.id,item_name:'Chair',display_name:'Junais KP',created_at:previewProduct.created_at,stock_ref:'GEN-0001',item_code:null,model_name:null};
-  const markup=html(overview,{overview:previewOverview,role:'admin_manager',activity:{pending_products:[{...entry,stock_ref:null}],pending_movements:[entry],recent_products:[],recent_movements:[]}});
+  const markup=html(overview,{overview:previewOverview,role:'admin_manager',activity:{pending_products:[{...entry,stock_ref:null}],pending_movements:[entry]}});
   assert.match(markup,/GEN-0001/);assert.match(markup,/Ref assigned on approval/);
   const reservations=(await load('../../components/inventory/product-reservations.tsx',{...shared,'@/lib/inventory/reservations':{canReleaseReservation:()=>false}})).ProductReservations;
   assert.match(html(reservations,{product:{...previewProduct,stock_ref:'GEN-0001',item_code:null,model_name:null},role:'viewer'}),/GEN-0001/);
@@ -77,10 +77,10 @@ test('Overview pending cards and reservations show the shared identifier line',a
 test('Overview activity shows names and Dubai time only to managers, with no email fallback', async()=>{
   const view=(await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
   const entry={id:'r1',item_name:'Sample chair',display_name:'Junais KP',created_at:'2026-10-26T04:56:00Z',product_id:previewProduct.id};
-  const activity={pending_products:[entry],pending_movements:[{...entry,display_name:null}],recent_products:[{...entry,display_name:'never@example.com'}]};
+  const activity={pending_products:[entry],pending_movements:[{...entry,display_name:null}]};
   const markup=html(view,{overview:previewOverview,role:'admin_manager',activity});
   assert.match(markup,/Junais KP/); assert.match(markup,/Team member/); assert.match(markup,/26 Oct 2026, 08:56/);
-  assert.match(markup,/Recently added items/); assert.doesNotMatch(markup,/Recent movements/);
+  assert.doesNotMatch(markup,/Recently added items|Recent movements/);
   assert.doesNotMatch(markup,/never@example.com|Unknown|UTC/);
   for(const role of ['viewer','designer','warehouse_staff']) assert.doesNotMatch(html(view,{overview:previewOverview,role,activity}),/Junais KP|Recently added items|Recent movements/);
 });
@@ -686,31 +686,37 @@ test('My profile shows saving, success and error states, read-only email and rol
   assert.match(mismatch,/<input[^>]*type="password"[^>]*value="longenough"/,'typed password stays in the field for correction');
 });
 
-test('Overview drops Recent movements for every role and keeps every other section; Recently added items is full width',async()=>{
+test('Overview has no Recently added items or Recent movements for any role, and keeps every other section',async()=>{
   const view=(await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
   const entry={id:'r1',item_name:'Sample chair',display_name:'Junais KP',created_at:'2026-10-26T04:56:00Z',product_id:previewProduct.id};
-  const activity={pending_products:[entry],pending_movements:[entry],recent_products:[entry]};
+  const activity={pending_products:[entry],pending_movements:[entry]};
   for(const role of ['system_owner','admin_manager','procurement_manager','sales_designer','sales_coordinator','designer','viewer','warehouse_staff']) {
     const markup=html(view,{overview:previewOverview,role,activity});
-    assert.doesNotMatch(markup,/Recent movements|Recorded by|href="\/inventory\/movements"/,role);
+    assert.doesNotMatch(markup,/Recently added items|Recent movements|Recorded by|href="\/inventory\/movements"/,role);
     for(const section of ['Units','Products','Accessories','Temporary','Browse products','Reserved','Pending product requests','Pending movement requests','Quantity by location']) assert.match(markup,new RegExp(section),`${role} ${section}`);
-    if(['system_owner','admin_manager'].includes(role)) {
-      assert.match(markup,/Recently added items/,role);
-      assert.match(markup,/<section[^>]*lg:col-span-2[^>]*>\s*<h2[^>]*>Recently added items/,'full width');
-    } else assert.doesNotMatch(markup,/Recently added items/,role);
+    if(['system_owner','admin_manager'].includes(role)) assert.match(markup,/Requested by Junais KP/,role);
   }
 });
 
-test('Overview, Movements rows and the product movement list all use the shared requested/approved line',async()=>{
+test('Movements rows and the product movement list both use the shared requested/approved line',async()=>{
   const requested={creator_name:'Junais KP',request:{requester_id:'w',requester_name:'Subair',approver_id:'m',approver_name:'Junais KP'}};
-  const overview=(await load('../../components/inventory/overview-view.tsx',shared)).InventoryOverviewView;
-  const entry={id:'r1',item_name:'Sample chair',display_name:'Junais KP',created_at:'2026-10-26T04:56:00Z',product_id:previewProduct.id};
   const line='Requested by Subair · Approved by Junais KP';
-  assert.match(html(overview,{overview:previewOverview,role:'admin_manager',activity:{pending_products:[],pending_movements:[],recent_products:[{...entry,attribution:requested}]}}),new RegExp(line));
-  assert.match(html(overview,{overview:previewOverview,role:'admin_manager',activity:{pending_products:[],pending_movements:[],recent_products:[{...entry,attribution:{creator_name:'Junais KP',request:null}}]}}),/Added by Junais KP/);
   const movement={...previewMovementHistory[0],attribution:requested};
   const movements=(await load('../../components/inventory/movements-view.tsx',{...shared,'next/image':{__esModule:true,default:stub}})).MovementsView;
   const detail=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-image-gallery':{ProductImageGallery:stub},'./product-reservations':{ProductReservations:stub}})).ProductDetailView;
   assert.match(html(detail,{product:{...previewProduct,recent_movements:[movement]},role:'viewer'}),new RegExp(line));
   assert.match(html(movements,{result:{items:[movement],total:1,page:1,page_count:1,page_size:24},state:movementHistory.parseMovementParams({}).state,role:'admin_manager'}),new RegExp(line));
+});
+
+test('Movements shows a New items quick filter outside More filters, active state, and keeps it through paging',async()=>{
+  const movements=(await load('../../components/inventory/movements-view.tsx',{...shared,'next/image':{__esModule:true,default:stub}})).MovementsView;
+  const result={items:previewMovementHistory,total:60,page:1,page_count:3,page_size:24};
+  const off=html(movements,{result,state:movementHistory.parseMovementParams({q:'chair'}).state,role:'admin_manager'});
+  const chip=off.match(/<a[^>]*aria-pressed="false"[^>]*>New items<\/a>/)?.[0];
+  assert.ok(chip);assert.match(chip,/min-h-11/);assert.match(chip,/href="\/inventory\/movements\?q=chair&amp;new=1"/);
+  assert.ok(off.indexOf('New items')<off.indexOf('More filters'),'visible before the More filters section');
+  const on=html(movements,{result,state:movementHistory.parseMovementParams({q:'chair',new:'1'}).state,role:'admin_manager'});
+  assert.match(on,/<a[^>]*aria-pressed="true"[^>]*href="\/inventory\/movements\?q=chair"[^>]*>New items<\/a>|<a[^>]*href="\/inventory\/movements\?q=chair"[^>]*aria-pressed="true"[^>]*>New items<\/a>/);
+  assert.match(on,/<input[^>]*type="hidden"[^>]*name="new"[^>]*value="1"|<input[^>]*name="new"[^>]*type="hidden"/,'form submits keep the filter');
+  assert.match(on,/href="\/inventory\/movements\?q=chair&amp;new=1&amp;page=2"/,'next page keeps the filter');
 });
