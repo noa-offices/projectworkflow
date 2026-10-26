@@ -11,6 +11,7 @@ import { ProductManagerTools } from './product-manager-tools';
 import { StickyActionBar, buttonClass } from './inventory-ui';
 import { NumberInput } from './number-input';
 import { saveFailureMessage } from "@/lib/inventory/save-errors";
+import { dubaiLocalToIso } from '@/lib/inventory/date-time';
 
 const input = 'mt-1 min-h-11 w-full min-w-0 rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-950';
 const button = 'inline-flex min-h-11 items-center justify-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-50';
@@ -65,7 +66,7 @@ export function MovementRequestForm({ product, role = null, initialKind, preview
       const holdUntil = kind === 'hold' ? String(data.get('holdUntil') ?? '') : '';
       const payload = movementRequestPayload(product, { kind, from, to, quantity: String(data.get('quantity') ?? ''), note: String(data.get('note') ?? ''),
         projectId: stock ? null : project?.id ?? null, referenceNote: stock ? null : String(data.get('referenceNote') ?? ''),
-        expiresAt: holdUntil ? new Date(holdUntil).toISOString() : null });
+        expiresAt: holdUntil ? dubaiLocalToIso(holdUntil) : null });
       lock.current = true; setBusy(true);
       const result: InventoryActionResult = preview ? {ok:true} : await submitMovementRequest(payload);
       if (!result.ok) { setError(result.error); return; }
@@ -94,7 +95,7 @@ export function MovementRequestForm({ product, role = null, initialKind, preview
             </div>
           </>}
           <label className="block text-sm font-medium">Reference {kind === 'book' && !project ? '(required without a project)' : '(optional)'}<input className={input} name="referenceNote" maxLength={2000} required={kind === 'book' && !project} placeholder="Client, delivery or other reference" /></label>
-          {kind === 'hold' && <label className="block text-sm font-medium">Hold until (optional)<input className={input} name="holdUntil" type="datetime-local" /><span className="mt-1 block text-sm text-zinc-500">Your local date and time. The units become available after this time.</span></label>}
+          {kind === 'hold' && <label className="block text-sm font-medium">Hold until (optional)<input className={input} name="holdUntil" type="datetime-local" /><span className="mt-1 block text-sm text-zinc-500">Dubai date and time. The units become available after this time.</span></label>}
         </div>}
         <label className="block text-sm font-medium">Note (optional)<textarea name="note" maxLength={2000} rows={3} className={input} /></label>
       </fieldset>

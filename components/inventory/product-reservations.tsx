@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { releaseReservation, fulfilReservation } from '@/lib/inventory/actions';
 import { canManageInventory } from '@/lib/inventory/access';
 import { canReleaseReservation } from '@/lib/inventory/reservations';
-import { formatInventoryDate, formatInventoryNumber, inventoryLabel } from '@/lib/inventory/presentation';
+import { inventoryPersonName, formatInventoryDate, formatInventoryNumber, inventoryLabel } from '@/lib/inventory/presentation';
 import { LOCATION_LABELS, LOCATION_QUANTITY_COLUMNS, type InventoryProductDetail, type InventoryReservation, type InventoryLocation } from '@/lib/inventory/types';
 import { RequestDialog } from './request-dialog';
 
@@ -26,7 +26,7 @@ export function ProductReservations({ product, role, userId, preview = false }: 
       <div className="flex flex-wrap justify-between gap-2"><p className="text-sm font-semibold">{inventoryLabel(row.kind)}</p><p className="text-sm font-semibold">{formatInventoryNumber(row.quantity)} units</p></div>
       <p className="break-words text-sm text-zinc-700">{row.project_label || row.reference_note || 'No project or reference'}</p>
       {row.project_label && row.reference_note && <p className="break-words text-sm text-zinc-600">{row.reference_note}</p>}
-      <p className="break-words text-sm text-zinc-500">{row.creator_display_name || 'Unknown'} · <time dateTime={row.created_at}>{formatInventoryDate(row.created_at)}</time></p>
+      <p className="break-words text-sm text-zinc-500">{inventoryPersonName(row.creator_display_name)} · <time dateTime={row.created_at}>{formatInventoryDate(row.created_at)}</time></p>
       {row.expires_at && <p className="text-sm text-zinc-600">Hold until <time dateTime={row.expires_at}>{formatInventoryDate(row.expires_at)}</time></p>}
       {row.note && <p className="whitespace-pre-wrap break-words text-sm text-zinc-600">{row.note}</p>}
       <div className="flex flex-wrap gap-2">

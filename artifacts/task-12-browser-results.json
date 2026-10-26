@@ -1,0 +1,89 @@
+[
+  {
+    "width": 360,
+    "view": "overview",
+    "noOverflow": true,
+    "dubaiDates": true
+  },
+  {
+    "width": 360,
+    "view": "detail",
+    "noOverflow": true,
+    "dubaiDates": true
+  },
+  {
+    "width": 360,
+    "view": "movements",
+    "noOverflow": true,
+    "dubaiDates": true
+  },
+  {
+    "width": 360,
+    "view": "requests",
+    "noOverflow": true,
+    "dubaiDates": true
+  },
+  {
+    "width": 360,
+    "viewerActivityHidden": true,
+    "hydrationErrors": 0
+  },
+  {
+    "width": 390,
+    "view": "overview",
+    "noOverflow": true,
+    "dubaiDates": true
+  },
+  {
+    "width": 390,
+    "view": "detail",
+    "noOverflow": true,
+    "dubaiDates": true
+  },
+  {
+    "width": 390,
+    "view": "movements",
+    "noOverflow": true,
+    "dubaiDates": true
+  },
+  {
+    "width": 390,
+    "view": "requests",
+    "noOverflow": true,
+    "dubaiDates": true
+  },
+  {
+    "width": 390,
+    "viewerActivityHidden": true,
+    "hydrationErrors": 0
+  },
+  {
+    "width": 430,
+    "view": "overview",
+    "noOverflow": true,
+    "dubaiDates": true
+  },
+  {
+    "width": 430,
+    "view": "detail",
+    "noOverflow": true,
+    "dubaiDates": true
+  },
+  {
+    "width": 430,
+    "view": "movements",
+    "noOverflow": true,
+    "dubaiDates": true
+  },
+  {
+    "width": 430,
+    "view": "requests",
+    "noOverflow": true,
+    "dubaiDates": true
+  },
+  {
+    "width": 430,
+    "viewerActivityHidden": true,
+    "hydrationErrors": 0
+  }
+]

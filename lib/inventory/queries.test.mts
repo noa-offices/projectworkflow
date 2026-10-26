@@ -66,6 +66,40 @@ mock.module("@/lib/auth", { namedExports: { requireInventoryUser: async () => {
 mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => { clientCalls++; return client; } } });
 const queries = await import("./queries");
 
+test('product movement actors use the same safe name source as Movements', async () => {
+  reset('system_owner');
+  fixtures.profiles = [{id:'hidden', full_name:'Junais KP', email:'never@example.com'}];
+  const detail = await queries.getProduct('p1');
+  const history = await queries.listMovements({product_id:'p1'});
+  assert.equal(detail?.recent_movements[0].actor_display_name, 'Junais KP');
+  assert.equal(detail?.recent_movements[0].actor_display_name, history.items[0].actor_display_name);
+  assert.ok(calls.filter(call => call.table === 'profiles').every(call => call.url.searchParams.get('select') === 'id,full_name'));
+  assert.ok(!JSON.stringify(detail).includes('never@example.com'));
+  fixtures.profiles = [];
+  assert.equal((await queries.getProduct('p1'))?.recent_movements[0].actor_display_name, null);
+});
+
+test('Overview activity maps full names without costs, emails or extra profile access', async () => {
+  reset('admin_manager');
+  fixtures.profiles = [{id:'hidden', full_name:'Junais KP', email:'never@example.com'}];
+  fixtures.products = [{...product,created_by:'hidden',created_at:'2026-10-26T04:56:00Z'}];
+  const activity = await queries.getInventoryOverviewActivity();
+  assert.equal(activity?.pending_products[0].display_name,'Junais KP');
+  assert.equal(activity?.pending_movements[0].display_name,'Junais KP');
+  assert.equal(activity?.recent_movements[0].display_name,'Junais KP');
+  assert.equal(activity?.recent_products[0].display_name,'Junais KP');
+  assert.ok(!JSON.stringify(activity).includes('never@example.com'));
+  assert.equal(calls.some(call=>call.table.includes('cost')),false);
+  assert.ok(calls.filter(call=>call.table==='profiles').every(call=>call.url.searchParams.get('select')==='id,full_name'));
+  fixtures.profiles=[];
+  assert.equal((await queries.getInventoryOverviewActivity())?.pending_products[0].display_name,null);
+  for (const value of ['warehouse_staff','designer','viewer','sales_designer']) {
+    reset(value);
+    assert.equal(await queries.getInventoryOverviewActivity(),null);
+    assert.equal(clientCalls,0);
+  }
+});
+
 test('type counts use three full-dataset HEAD reads and ignore the selected type', async () => {
   reset(); cap = 1;
   fixtures.products = ['product','product','accessory','temporary'].map((item_type,i) => ({...product,id:`p${i}`,item_type}));

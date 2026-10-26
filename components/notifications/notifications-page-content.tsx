@@ -1,4 +1,5 @@
 "use client";
+import { inventoryNotificationTime, inventoryNotificationSender } from "@/lib/inventory/notification-presentation";
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -165,13 +166,13 @@ export function NotificationsPageContent({
 
                     {/* Meta row */}
                     <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-                      {item.sender_name && (
+                      {(inventoryNotificationSender(item) || item.sender_name) && (
                         <span className="text-xs text-zinc-500">
-                          From: {item.sender_name}
+                          From: {inventoryNotificationSender(item) ?? item.sender_name}
                         </span>
                       )}
                       <span className="text-xs text-zinc-400">
-                        {relativeTime(item.created_at)} &middot; {absoluteTime(item.created_at)}
+                        {inventoryNotificationTime(item) ?? <>{relativeTime(item.created_at)} &middot; {absoluteTime(item.created_at)}</>}
                       </span>
                       {item.order_no && (
                         <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 ring-1 ring-inset ring-emerald-600/20">

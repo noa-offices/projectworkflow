@@ -1,7 +1,14 @@
 import { summarizeStock } from "./mapping";
+import type { InventoryOverviewActivity } from './types';
 import type { InventoryBrand, InventoryCategoryNode, InventoryOverview, InventoryProduct, InventoryProductDetail } from "./types";
 
 const created = "2026-10-23T06:30:00.000Z";
+export const previewOverviewActivity: InventoryOverviewActivity = {
+  pending_products: [{id:'request-1',product_id:null,item_name:'New meeting room chair',display_name:'Junais KP',created_at:'2026-10-26T04:56:00Z'}],
+  pending_movements: [{id:'request-2',product_id:'44444444-4444-4444-8444-444444444444',item_name:'Arlo ergonomic task chair',display_name:null,created_at:'2026-10-26T21:30:00Z'}],
+  recent_products: [{id:'44444444-4444-4444-8444-444444444444',product_id:'44444444-4444-4444-8444-444444444444',item_name:'Arlo ergonomic task chair',display_name:'Alex Morgan',created_at:'2026-10-26T04:56:00Z'}],
+  recent_movements: [{id:'movement-1',product_id:'44444444-4444-4444-8444-444444444444',item_name:'Arlo ergonomic task chair',display_name:'Junais KP',created_at:'2026-10-26T04:56:00Z'}],
+};
 export const previewBrands: InventoryBrand[] = [{ id: "11111111-1111-4111-8111-111111111111", name: "Nora Office" }, {id:"11111111-1111-4111-8111-111111111112",name:"Neighbourhood shop",code:"SHP",kind:"local"}];
 export const previewCategories: InventoryCategoryNode[] = [{
   id: "22222222-2222-4222-8222-222222222222", parent_id: null, name: "Chairs", slug: "chairs", is_active: true, sort_order: 0, created_at: created, updated_at: created,
