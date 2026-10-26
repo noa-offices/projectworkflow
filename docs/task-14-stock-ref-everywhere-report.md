@@ -98,7 +98,7 @@ Additional checks: pending requests on a product page and notification bell/rece
 - `lib/inventory/types.ts`
 - `lib/inventory/ui.test.mts`
 - `supabase/migrations/20261026150000_inventory_stock_ref_notifications.sql`
-- `supabase/tests/inventory_stock_ref_notifications.sql`
+- `supabase/tests/inventory_notifications.sql`
 - `supabase/tests/inventory_stock_ref_notifications.test.mts`
 
 Mobile/print screenshots: `artifacts/task-14-*.png` (14 files). Verification logs: `artifacts/task-14-tests-final.log`, `artifacts/task-14-typecheck-final.log`, `artifacts/task-14-inventory-lint-final.log`, `artifacts/task-14-browser-final.log`, `artifacts/task-14-repository-lint.log`. Unrelated existing workspace files were left alone.

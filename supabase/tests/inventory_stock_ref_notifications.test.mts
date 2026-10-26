@@ -43,7 +43,7 @@ test("inventory_stock_ref_notifications: rollback-only offline SQL assertions", 
  await db.exec(await sql("../migrations/20261025100000_inventory_notifications.sql"));
  await db.exec(await sql("../migrations/20261026150000_inventory_stock_ref_notifications.sql"));
  await db.exec(await sql("../migrations/20261026150000_inventory_stock_ref_notifications.sql"));
- await db.exec(await sql("./inventory_stock_ref_notifications.sql"));
+ await db.exec(await sql("./inventory_notifications.sql"));
  assert.deepEqual((await db.query("select count(*)::int as count from inventory.products")).rows,[{count:0}]);
  } finally { await db.close(); }
 });
