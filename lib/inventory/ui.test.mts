@@ -12,6 +12,7 @@ import * as deletion from './delete-product';
 import * as photoCompression from './photo-compress';
 import * as presentation from './presentation';
 import * as dateTime from './date-time';
+import * as profile from './profile';
 import * as notificationPresentation from './notification-presentation';
 import * as requests from './request-presentation';
 import * as submission from './product-request-submission';
@@ -45,7 +46,7 @@ async function load(path: string, dependencies: Record<string,unknown> = {}) { r
 const shared = {
   'next/link':{__esModule:true,default:Link}, 'next/navigation':{useRouter:()=>({push(){},refresh(){}}),usePathname:()=>'/inventory'}, '@/lib/inventory/movement-form':movementForm, '@/lib/inventory/movement-history':movementHistory, '@/lib/inventory/category-form':categoryForm,
   '@/lib/inventory/photo-compress':photoCompression, '@/lib/inventory/delete-product':deletion, '@/lib/inventory/brands':brands, '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
-  '@/lib/inventory/date-time':dateTime, '@/lib/inventory/types':types,
+  '@/lib/inventory/date-time':dateTime, '@/lib/inventory/profile':profile, '@/lib/inventory/types':types,
   '@/lib/inventory/product-request-submission':submission, '@/lib/inventory/action-validation':validation,
   '@/lib/inventory/actions':{}, '@/lib/inventory/product-edit':productEdit, '@/lib/inventory/save-errors':saveErrors, '@/lib/inventory/request-presentation':requests, '@/lib/inventory/photo-upload':{},
 };
@@ -615,4 +616,33 @@ test('Products shows permanent-delete success or photo cleanup warning only for 
  assert.match(await render({deleted:'1',photoCleanup:'1'}),/Item deleted, 1 photo could not be removed/);
  assert.doesNotMatch(await render({}),/Item deleted/);
  role='viewer';assert.doesNotMatch(await render({deleted:'1',photoCleanup:'2'}),/Item deleted/);
+});
+
+test('My profile shows saving, success and error states, read-only email and role, and the right links per role',async()=>{
+  const base={userId:'u1',displayName:'Amal Khan',email:'amal@example.com',roleLabel:'Warehouse Staff',fullName:'Amal Khan',phone:'+971 50 123 4567',avatarUrl:null};
+  const render=async(state:Record<number,unknown>,pending:boolean,props:Record<string,unknown>={})=>{
+    let index=0;
+    const fakeReact={...React,useState:(initial:unknown)=>{const at=index++;return [at in state ? state[at] : initial,()=>{}]},useTransition:()=>[pending,()=>{}]};
+    const view=(await load('../../components/inventory/profile-view.tsx',{...shared,react:fakeReact,'@/components/settings/avatar-upload':{AvatarUpload:stub},'@/components/local-read-cache/sign-out':{ReadCacheSignOut:()=>React.createElement('button',null,'Sign out')},'@/lib/inventory/profile-actions':{},'@/lib/inventory/profile':profile})).ProfileView;
+    return html(view,{...base,...props,showFullProfileLink:false,...props});
+  };
+  const idle=await render({},false);
+  assert.match(idle,/My profile/);assert.match(idle,/Photo/);assert.match(idle,/Your details/);assert.match(idle,/Change password/);
+  assert.match(idle,/href="\/inventory\/notifications"/);assert.match(idle,/Sign out/);
+  assert.doesNotMatch(idle,/href="\/settings\/profile"/,'warehouse staff get no link outside Inventory');
+  assert.match(idle,/<p[^>]*data-readonly[^>]*>amal@example\.com<\/p>/);assert.match(idle,/<p[^>]*data-readonly[^>]*>Warehouse Staff<\/p>/);
+  assert.doesNotMatch(idle,/<input[^>]*name="(email|role)"/,'email and role are never editable inputs');
+  assert.match(idle,/<input[^>]*type="password"[^>]*autoComplete="new-password"/);
+  assert.match(idle,/<input[^>]*name="phone"[^>]*type="tel"|<input[^>]*type="tel"[^>]*name="phone"/);
+  assert.match(await render({},false,{showFullProfileLink:true}),/href="\/settings\/profile"/);
+
+  const saving=await render({},true);
+  assert.match(saving,/Saving…/);assert.match(saving,/Changing…/);assert.match(saving,/<button[^>]*disabled=""[^>]*>Saving…/);
+  assert.match(await render({3:{tone:'success',text:'Your details are saved.'}},false),/role="status"[^>]*>Your details are saved\./);
+  assert.match(await render({3:{tone:'error',text:'Your details could not be saved.'}},false),/role="alert"[^>]*>Your details could not be saved\./);
+  assert.match(await render({2:{fullName:'Enter your full name.'}},false),/role="alert"[^>]*>Enter your full name\./);
+  assert.match(await render({7:{tone:'success',text:'Your password is changed.'}},false),/role="status"[^>]*>Your password is changed\./);
+  const mismatch=await render({4:'longenough',5:'different1',6:{confirmPassword:'The two passwords do not match.'},7:{tone:'error',text:'Check the highlighted fields.'}},false);
+  assert.match(mismatch,/The two passwords do not match\./);
+  assert.match(mismatch,/<input[^>]*type="password"[^>]*value="longenough"/,'typed password stays in the field for correction');
 });
