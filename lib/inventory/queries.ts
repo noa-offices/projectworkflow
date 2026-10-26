@@ -79,11 +79,20 @@ async function names(client: Client, products: { brand_id: string | null; local_
     subcategory_name: row.subcategory_id ? categoryMap.get(row.subcategory_id) ?? null : null,
   });
 }
-async function displayNames(client: Client, userIds: string[]) {
+// Names come only from these two functions (SECURITY DEFINER, can_view() check, id + full_name only, only people who appear in
+// Inventory records). public.profiles is never read for names here, so every Inventory role sees the same names.
+type PersonRpc<Name extends string, Row> = { Row: Row; Result: Row[]; RelationName: Name; Relationships: null };
+function personNames(client: Client, part: string[]) {
+  return client.schema("inventory").rpc<"person_names", { p_ids: string[] }, PersonRpc<"person_names", { id: string; full_name: string | null }>>("person_names", { p_ids: part }, { get: true });
+}
+function personSearch(client: Client, term: string) {
+  return client.schema("inventory").rpc<"search_people", { term: string }, PersonRpc<"search_people", { id: string }>>("search_people", { term }, { get: true });
+}
+async function displayNames(client: Client, userIds: (string | null)[]) {
   const unique = ids(userIds);
   if (!unique.length) return new Map<string, string | null>();
-  const data = await inChunks(unique, part => client.schema("public").from("profiles").select("id,full_name").in("id", part).returns<{ id: string; full_name: string | null }[]>().then(rows));
-  // Profiles hidden by RLS keep their identifier and a null display name.
+  const data = await inChunks(unique, part => personNames(client, part).then(rows));
+  // People with no Inventory activity, or no name, are absent or null and show as "Team member".
   return new Map(data.map(row => [row.id, row.full_name]));
 }
 async function productSummaries(client: Client, productIds: (string | null)[]) {
@@ -147,10 +156,10 @@ async function matchingProductIds(client: Client, text: string | null): Promise<
   if (!filter) return null;
   return rows(await client.schema("inventory").from("products").select("id").or(filter).order("id").limit(MAX_LOOKUP_IDS).returns<{ id: string }[]>()).map(row => row.id);
 }
-/** Ids of people whose name matches. Only managers may search by name. */
+/** Ids of people (with Inventory activity) whose name matches. Only managers may search by name. */
 async function matchingPersonIds(client: Client, role: string | null | undefined, text: string | null): Promise<string[]> {
   if (!text || !canManageInventory(role)) return [];
-  return rows(await client.schema("public").from("profiles").select("id").ilike("full_name", `%${text}%`).order("id").limit(100).returns<{ id: string }[]>()).map(row => row.id);
+  return rows(await personSearch(client, text)).map(row => row.id);
 }
 function emptyPage<T>(page: number): InventoryPage<T> { return pageResult<T>([], 0, page, pagination(page).page_size); }
 
