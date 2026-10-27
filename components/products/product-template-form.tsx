@@ -153,6 +153,7 @@ type CategoryPricingRow = {
 type AccessoryPricingRow = {
   id?: string;
   group_name?: string;
+  default_item_ids?: string[];
   item_name?: string;
   supplier_price_list_code?: string;
   price?: number | null;

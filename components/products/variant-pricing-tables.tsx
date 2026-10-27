@@ -148,6 +148,7 @@ export type AccessoryPricingRow = {
   id?: string;
   group_name?: string;
   group_is_required?: boolean;
+  default_item_ids?: string[];
   price_categories?: Array<{ id: string; label: string }>;
   items?: AccessoryPricingItem[];
   item_name?: string;
@@ -318,6 +319,7 @@ function normalizeAccessoryGroup(row: AccessoryPricingRow, index: number): Acces
     id: row.id || `add-on-group-${index}`,
     group_name: row.group_name?.trim() || "Accessories",
     group_is_required: row.group_is_required === true,
+    ...(row.default_item_ids?.length ? { default_item_ids: row.default_item_ids.filter((id) => (row.items ?? flatItem).some((item) => item.id === id)) } : {}),
     is_active: row.is_active !== false,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
     ...(row.price_categories?.length ? { price_categories: row.price_categories.map((category) => ({ ...category })) } : {}),

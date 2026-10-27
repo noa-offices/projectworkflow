@@ -245,6 +245,48 @@ export function updateReviewedOptionItem(
   };
 }
 
+export type ManualOptionLine = { id: string; name: string; supplierCode: string; price: string; specification: string };
+export function addReviewedOptionLine(draft: ProductTemplateDraft, groupIndex: number, input: ManualOptionLine): ProductTemplateDraft {
+  const name = input.name.trim();
+  if (!name) return draft;
+  const group = draft.optionGroups[groupIndex];
+  if (!group) return draft;
+  const price = nullableReviewNumber(input.price);
+  const item: ProductTemplateDraft["optionGroups"][number]["items"][number] = {
+    id: input.id, label: name, displayName: name, supplierCodes: input.supplierCode.trim() ? [input.supplierCode.trim()] : [], referenceCodes: [],
+    dimensions: null, currency: "EUR", price, specification: input.specification.trim() || null,
+    ...(group.priceCategories?.length ? { prices: Object.fromEntries(group.priceCategories.map((category) => [category.id, price])) } : {}),
+  };
+  return { ...draft, optionGroups: draft.optionGroups.map((entry, index) => index === groupIndex ? { ...entry, items: [...entry.items, item] } : entry) };
+}
+
+export function moveReviewedOptionLine(draft: ProductTemplateDraft, groupIndex: number, itemIndex: number, direction: -1 | 1): ProductTemplateDraft {
+  const group = draft.optionGroups[groupIndex], target = itemIndex + direction;
+  if (!group || target < 0 || target >= group.items.length) return draft;
+  const items = [...group.items]; [items[itemIndex], items[target]] = [items[target], items[itemIndex]];
+  return { ...draft, optionGroups: draft.optionGroups.map((entry, index) => index === groupIndex ? { ...entry, items } : entry) };
+}
+
+export function removeReviewedOptionLine(draft: ProductTemplateDraft, groupIndex: number, itemId: string): ProductTemplateDraft {
+  const group = draft.optionGroups[groupIndex];
+  if (!group || group.items.length <= 1 || !group.items.some((item) => item.id === itemId)) return draft;
+  return { ...draft, optionGroups: draft.optionGroups.map((entry, index) => index === groupIndex ? {
+    ...entry, items: entry.items.filter((item) => item.id !== itemId),
+    selection: { ...entry.selection, defaultItemIds: entry.selection.defaultItemIds.filter((id) => id !== itemId) },
+  } : entry) };
+}
+
+export function toggleReviewedOptionDefault(draft: ProductTemplateDraft, groupIndex: number, itemId: string): ProductTemplateDraft {
+  const group = draft.optionGroups[groupIndex];
+  if (!group || !group.items.some((item) => item.id === itemId)) return draft;
+  const current = group.selection.defaultItemIds, selected = current.includes(itemId);
+  const single = group.selection.maxSelections === 1 || group.conditionalConfiguration?.selection === "exactly_one";
+  const defaultItemIds = single ? selected ? [] : [itemId]
+    : selected ? current.filter((id) => id !== itemId)
+      : group.selection.maxSelections !== null && current.length >= group.selection.maxSelections ? current : [...current, itemId];
+  return { ...draft, optionGroups: draft.optionGroups.map((entry, index) => index === groupIndex ? { ...entry, selection: { ...entry.selection, defaultItemIds } } : entry) };
+}
+
 export function updateReviewedMaterialSuggestion(
   draft: ProductTemplateDraft,
   index: number,
