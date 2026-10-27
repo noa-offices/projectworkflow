@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { fetchNoaAttentionCapability } from "@/lib/noa/noa-attention-capability.server";
+import { isNoaRouteDiagnosticsEnabled } from "@/lib/noa/noa-intent-router";
 import { fetchNoaClientCapability } from "@/lib/noa/noa-client-capability.server";
 import { fetchNoaInsightsCapability } from "@/lib/noa/noa-insights-capability.server";
 import { fetchNoaPriceCapability } from "@/lib/noa/noa-price-capability.server";
@@ -40,6 +41,19 @@ const INSIGHT_REPORTS = {
 export const CLIENT_NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N} .,&'()-]{0,79}$/u;
 export const PROJECT_FILE_NUMBER_PATTERN = /^CO-\d{3,}(?:-\d+)*$/i; // same shape as PROJECT_FILE_IDENTIFIER_PATTERN in the project capability
 export const PROCUREMENT_ORDER_NUMBER_PATTERN = /^[A-Za-z]{0,4}-?\d{3,}[A-Za-z0-9-]{0,35}$/; // an order-number-shaped token, as the procurement capability expects
+// Product and Price capabilities classify by keywords too. Product: how many / count / number of -> count; show / list / all / which -> list; otherwise detail.
+// A brand or category in a list / count message is matched against real DB names (singular or plural), so the term is passed through unchanged.
+// Price: summary / every / all / how many ... -> broad price STATUS for a brand or category; which / show / list -> status list; otherwise one product.
+export const PRODUCT_TERM_PATTERN = CLIENT_NAME_PATTERN; // plain name / code: letters, digits, spaces and basic punctuation, 80 characters at most
+export const PRODUCT_TERM_TRIGGERS = /\b(how many|count|number of|show|list|all|which|every|summar(?:y|ize)|overall)\b/i; // a term holding these words would switch the question kind
+export const PRODUCT_MESSAGES = { list: (term: string) => `show all ${term}`, count: (term: string) => `how many ${term}` } as const;
+// "detail" / "single" carry the product name only in options.product.productText, so a product named "Every" or "All" cannot switch the question kind.
+export const PRODUCT_DETAIL_MESSAGE = "give me the product information";
+export const PRICE_SINGLE_MESSAGE = "give me the product price";
+export const PRICE_MESSAGES = { status_summary: (term: string) => `summarize ${term} price status` } as const;
+const debugToolCall = (tool: string, request: string, message: string) => {
+  if (isNoaRouteDiagnosticsEnabled(process.env.NODE_ENV, process.env.NOA_DEBUG_ROUTING)) console.info("[NOA_V2_TOOL]", JSON.stringify({ tool, request, message }));
+};
 const CLIENT_REPORTS = ["list", "count", "detail", "projects"] as const;
 const PROJECT_REPORTS = ["active_list", "completed_list", "active_count", "completed_count", "detail"] as const;
 const PROCUREMENT_REPORTS = ["active_list", "completed_list", "active_count", "completed_count", "order_detail"] as const;
@@ -67,14 +81,32 @@ export function createNoaAgentTools(context: NoaPageContext) {
   };
   const tools = {
     searchProducts: tool({
-      description: "Search product templates by name, code or description. Read-only.",
-      inputSchema: z.object({ query: z.string() }),
-      execute: async ({ query }) => validText(query, 200) ? collect(await fetchNoaProductCapability(query, context)) : refuse(INVALID_TEXT),
+      description: `Search the Product Library. request values: list = list the products of a brand or category (term is the brand or category name, for example "chairs"); count = how many products a brand or category has (same term); detail = find one product (term is the product name or code). term is plain text only, 80 characters at most, and for list and count it must not contain words like all, list, show, count or which. Read-only. If the request is not covered, do not call this tool; say it is not available.`,
+      inputSchema: z.object({ request: z.enum(["list", "count", "detail"]), term: z.string() }),
+      execute: async ({ request, term: rawTerm }) => {
+        const term = rawTerm.trim();
+        const inMessage = request !== "detail"; // list / count keep the term inside the message, so keyword words stay refused there
+        if (!PRODUCT_TERM_PATTERN.test(term) || (inMessage && PRODUCT_TERM_TRIGGERS.test(term))) return refuse(inMessage
+          ? "The product term is not valid. Use only a brand or category name (letters, digits, spaces, basic punctuation, 80 characters at most) without words like all, list or count."
+          : "The product name is not valid. Use letters, digits, spaces and basic punctuation, 80 characters at most.");
+        const message = request === "detail" ? PRODUCT_DETAIL_MESSAGE : PRODUCT_MESSAGES[request](term);
+        debugToolCall("searchProducts", request, message);
+        return collect(await fetchNoaProductCapability(message, context, request === "detail" ? { product: { productText: term } } : undefined));
+      },
     }),
     getProductPrice: tool({
-      description: "Get the current price information for a product. Read-only.",
-      inputSchema: z.object({ query: z.string() }),
-      execute: async ({ query }) => validText(query, 200) ? collect(await fetchNoaPriceCapability(query, context)) : refuse(INVALID_TEXT),
+      description: `Get product price information. request values: single = the price information of one product (term is the product name); status_summary = the price-check status summary of a whole brand or category (term is the brand or category name). Price lists for a whole category are not available; ask for one product. term is plain text only, 80 characters at most, and for status_summary it must not contain words like all, list, show, count or which. Read-only. If the request is not covered, do not call this tool; say it is not available.`,
+      inputSchema: z.object({ request: z.enum(["single", "status_summary"]), term: z.string() }),
+      execute: async ({ request, term: rawTerm }) => {
+        const term = rawTerm.trim();
+        const inMessage = request !== "single";
+        if (!PRODUCT_TERM_PATTERN.test(term) || (inMessage && PRODUCT_TERM_TRIGGERS.test(term))) return refuse(inMessage
+          ? "The product term is not valid. Use only a brand or category name (letters, digits, spaces, basic punctuation, 80 characters at most) without words like all, list or count."
+          : "The product name is not valid. Use letters, digits, spaces and basic punctuation, 80 characters at most.");
+        const message = request === "single" ? PRICE_SINGLE_MESSAGE : PRICE_MESSAGES[request](term);
+        debugToolCall("getProductPrice", request, message);
+        return collect(await fetchNoaPriceCapability(message, context, request === "single" ? { product: { productText: term } } : undefined));
+      },
     }),
     searchQuotations: tool({
       description: "Search or summarise quotations (client, status, totals). Read-only.",
