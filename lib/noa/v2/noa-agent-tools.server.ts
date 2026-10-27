@@ -1,9 +1,12 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { fetchNoaAttentionCapability } from "@/lib/noa/noa-attention-capability.server";
+import { fetchNoaClientCapability } from "@/lib/noa/noa-client-capability.server";
 import { fetchNoaInsightsCapability } from "@/lib/noa/noa-insights-capability.server";
 import { fetchNoaPriceCapability } from "@/lib/noa/noa-price-capability.server";
+import { fetchNoaProcurementCapability } from "@/lib/noa/noa-procurement-capability.server";
 import { fetchNoaProductCapability } from "@/lib/noa/noa-product-capability.server";
+import { fetchNoaProjectCapability } from "@/lib/noa/noa-project-capability.server";
 import { fetchNoaQuotationCapability } from "@/lib/noa/noa-quotation-capability.server";
 import { fetchNoaUserActivityCapability } from "@/lib/noa/noa-user-activity-capability.server";
 import type { NoaCapabilityResult, NoaPageContext, NoaSource } from "@/lib/noa/noa-types";
@@ -32,6 +35,29 @@ const INSIGHT_REPORTS = {
   client_summary: () => "client summary",
 } as const;
 
+// Client, Project and Procurement capabilities also classify by keywords in the message, so the model sends only closed values or a
+// strictly validated identifier / name. Every message is a fixed template around that input; none contains words that switch the kind.
+export const CLIENT_NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N} .,&'()-]{0,79}$/u;
+export const PROJECT_FILE_NUMBER_PATTERN = /^CO-\d{3,}(?:-\d+)*$/i; // same shape as PROJECT_FILE_IDENTIFIER_PATTERN in the project capability
+export const PROCUREMENT_ORDER_NUMBER_PATTERN = /^[A-Za-z]{0,4}-?\d{3,}[A-Za-z0-9-]{0,35}$/; // an order-number-shaped token, as the procurement capability expects
+const CLIENT_REPORTS = ["list", "count", "detail", "projects"] as const;
+const PROJECT_REPORTS = ["active_list", "completed_list", "active_count", "completed_count", "detail"] as const;
+const PROCUREMENT_REPORTS = ["active_list", "completed_list", "active_count", "completed_count", "order_detail"] as const;
+const PROJECT_MESSAGES = {
+  active_list: "show active project files", completed_list: "show completed project files",
+  active_count: "how many active project files", completed_count: "how many completed project files",
+} as const;
+const PROCUREMENT_MESSAGES = {
+  active_list: "show active procurement orders", completed_list: "show completed procurement orders",
+  active_count: "how many active procurement orders", completed_count: "how many completed procurement orders",
+} as const;
+
+// OpenAI rejects pattern / minLength / maxLength / format in tool schemas, so the model-facing schemas stay plain (enums and plain strings)
+// and every rule runs here, in execute, before any capability is called. A refusal uses the same result shape as the other "cannot look up" cases.
+const refuse = (message: string) => ({ ok: false as const, message, reason: "ambiguous" as const });
+const validText = (value: string, max: number) => value.length >= 1 && value.length <= max;
+const INVALID_TEXT = "That input is not valid. Send a short plain text value.";
+
 /** Read-only NOA v2 tools. Each one delegates to an existing authorized capability and returns its result unchanged. */
 export function createNoaAgentTools(context: NoaPageContext) {
   const sources: NoaSource[] = [];
@@ -42,28 +68,28 @@ export function createNoaAgentTools(context: NoaPageContext) {
   const tools = {
     searchProducts: tool({
       description: "Search product templates by name, code or description. Read-only.",
-      inputSchema: z.object({ query: z.string().min(1).max(200) }),
-      execute: async ({ query }) => collect(await fetchNoaProductCapability(query, context)),
+      inputSchema: z.object({ query: z.string() }),
+      execute: async ({ query }) => validText(query, 200) ? collect(await fetchNoaProductCapability(query, context)) : refuse(INVALID_TEXT),
     }),
     getProductPrice: tool({
       description: "Get the current price information for a product. Read-only.",
-      inputSchema: z.object({ query: z.string().min(1).max(200) }),
-      execute: async ({ query }) => collect(await fetchNoaPriceCapability(query, context)),
+      inputSchema: z.object({ query: z.string() }),
+      execute: async ({ query }) => validText(query, 200) ? collect(await fetchNoaPriceCapability(query, context)) : refuse(INVALID_TEXT),
     }),
     searchQuotations: tool({
       description: "Search or summarise quotations (client, status, totals). Read-only.",
-      inputSchema: z.object({ query: z.string().min(1).max(200) }),
-      execute: async ({ query }) => collect(await fetchNoaQuotationCapability(query, context)),
+      inputSchema: z.object({ query: z.string() }),
+      execute: async ({ query }) => validText(query, 200) ? collect(await fetchNoaQuotationCapability(query, context)) : refuse(INVALID_TEXT),
     }),
     getQuotation: tool({
       description: "Get one quotation by its quotation number. Read-only.",
-      inputSchema: z.object({ quotationNumber: z.string().min(1).max(100) }),
-      execute: async ({ quotationNumber }) => collect(await fetchNoaQuotationCapability(quotationNumber, context)),
+      inputSchema: z.object({ quotationNumber: z.string() }),
+      execute: async ({ quotationNumber }) => validText(quotationNumber, 100) ? collect(await fetchNoaQuotationCapability(quotationNumber, context)) : refuse(INVALID_TEXT),
     }),
     getAttentionItems: tool({
       description: "Get the items that need the current user's attention. Read-only.",
-      inputSchema: z.object({ query: z.string().min(1).max(200) }),
-      execute: async ({ query }) => collect(await fetchNoaAttentionCapability(query, context)),
+      inputSchema: z.object({ query: z.string() }),
+      execute: async ({ query }) => validText(query, 200) ? collect(await fetchNoaAttentionCapability(query, context)) : refuse(INVALID_TEXT),
     }),
     getTeamActivity: tool({
       description: `Get recorded ProjectWorkflow activity for a day. Use scope "team" for questions about who worked, what the team did, or team activity; use scope "mine" only for the current user's own activity. Read-only.`,
@@ -74,6 +100,42 @@ export function createNoaAgentTools(context: NoaPageContext) {
       description: `Get a ProjectWorkflow business report (sales report, top clients, quotation summary). Read-only. report values: quotation_summary = quotation count and value for the period; quotation_analytics = quotation status breakdown, confirmed value and average for the period (use for "sales report" / "sales overview"); quotation_trend = quotation trend over time; quotation_compare = quotations this month versus last month; top_clients_by_quotation_value, top_clients_by_confirmed_value, top_clients_by_project_value = client rankings by that value; quotation_count_per_client = number of quotations per client; project_file_analytics = project file status and value; project_summary = project overview; client_summary = client overview. period applies only to quotation_summary and quotation_analytics (default this_month). If the user asks for something that is not in this list (for example sales by salesperson), do not call this tool; say it is not available.`,
       inputSchema: z.object({ report: z.enum(Object.keys(INSIGHT_REPORTS) as [keyof typeof INSIGHT_REPORTS, ...(keyof typeof INSIGHT_REPORTS)[]]), period: z.enum(Object.keys(INSIGHT_PERIODS) as [keyof typeof INSIGHT_PERIODS, ...(keyof typeof INSIGHT_PERIODS)[]]).optional() }),
       execute: async ({ report, period }) => collect(await fetchNoaInsightsCapability(INSIGHT_REPORTS[report](INSIGHT_PERIODS[period ?? "this_month"]), context)),
+    }),
+    getClientInfo: tool({
+      description: `Get client information. report values: list = the active clients; count = how many clients there are; detail = one client's details (needs clientName); projects = the project files of one client (needs clientName). clientName is a company name only (letters, digits, spaces and basic punctuation, 80 characters at most). Read-only. If the request is not covered, do not call this tool; say it is not available.`,
+      inputSchema: z.object({ report: z.enum(CLIENT_REPORTS), clientName: z.string().optional() }),
+      execute: async ({ report, clientName: rawName }) => {
+        const clientName = rawName?.trim();
+        if ((report === "detail" || report === "projects") !== (clientName !== undefined) || (clientName !== undefined && !CLIENT_NAME_PATTERN.test(clientName))) {
+          return refuse("The client name is missing, not allowed for this report, or not valid. Use a company name with letters, digits, spaces and basic punctuation, 80 characters at most.");
+        }
+        // "detail" is classified as a project question when the name itself contains the word project(s); refuse instead of answering the wrong question.
+        if (report === "detail" && /\bprojects?\b/i.test(clientName ?? "")) return { ok: false as const, message: "I can't look up that client name safely. Try the client number or open the client page.", reason: "ambiguous" as const };
+        const message = report === "list" ? "list clients" : report === "count" ? "how many clients are there" : report === "detail" ? `client details for ${clientName}` : `projects for client ${clientName}`;
+        return collect(await fetchNoaClientCapability(message, context));
+      },
+    }),
+    getProjectInfo: tool({
+      description: `Get project files (ERP Project Files). report values: active_list / completed_list = the active or completed project files; active_count / completed_count = how many; detail = one project file (needs projectFileNumber like CO-1234-56). Read-only. If the request is not covered, do not call this tool; say it is not available.`,
+      inputSchema: z.object({ report: z.enum(PROJECT_REPORTS), projectFileNumber: z.string().optional() }),
+      execute: async ({ report, projectFileNumber: rawNumber }) => {
+        const projectFileNumber = rawNumber?.trim();
+        if ((report === "detail") !== (projectFileNumber !== undefined) || (projectFileNumber !== undefined && !PROJECT_FILE_NUMBER_PATTERN.test(projectFileNumber))) {
+          return refuse("The project file number is missing, not allowed for this report, or not valid. Use a number like CO-1234-56.");
+        }
+        return collect(await fetchNoaProjectCapability(report === "detail" ? `project details for ${projectFileNumber}` : PROJECT_MESSAGES[report], context));
+      },
+    }),
+    getProcurementInfo: tool({
+      description: `Get procurement orders (needs a procurement role). report values: active_list / completed_list = the active or completed procurement orders; active_count / completed_count = how many; order_detail = one order (needs orderNumber). Read-only. If the request is not covered, do not call this tool; say it is not available.`,
+      inputSchema: z.object({ report: z.enum(PROCUREMENT_REPORTS), orderNumber: z.string().optional() }),
+      execute: async ({ report, orderNumber: rawNumber }) => {
+        const orderNumber = rawNumber?.trim();
+        if ((report === "order_detail") !== (orderNumber !== undefined) || (orderNumber !== undefined && !PROCUREMENT_ORDER_NUMBER_PATTERN.test(orderNumber))) {
+          return refuse("The order number is missing, not allowed for this report, or not valid. Use an order number like PW-2024-001.");
+        }
+        return collect(await fetchNoaProcurementCapability(report === "order_detail" ? `order details for ${orderNumber}` : PROCUREMENT_MESSAGES[report], context));
+      },
     }),
   };
   return { tools, sources };

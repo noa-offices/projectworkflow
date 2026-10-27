@@ -51,7 +51,16 @@ export async function runNoaAgentLoop(request: NoaChatRequest): Promise<NoaAnswe
       stopWhen: stepCountIs(5),
     });
     return { domain: "Help", engine: "v2", sources, text: result.text };
-  } catch {
+  } catch (error) {
+    // Debug aid only: safe error fields (never the key, headers, request body, prompt, user message or tool results), key value redacted.
+    const clean = (value: unknown, max = 300) => typeof value === "string" ? value.split(apiKey).join("[redacted]").slice(0, max) : undefined;
+    const details = (value: unknown) => (typeof value === "object" && value !== null ? value as { name?: unknown; message?: unknown; statusCode?: unknown; responseBody?: unknown; cause?: unknown } : {});
+    const failure = details(error);
+    const cause = details(failure.cause);
+    console.error("[NOA_V2_PROVIDER_ERROR]", JSON.stringify({
+      name: clean(failure.name), message: clean(failure.message), statusCode: typeof failure.statusCode === "number" ? failure.statusCode : undefined,
+      responseBody: clean(failure.responseBody, 800), cause: failure.cause ? { name: clean(cause.name), message: clean(cause.message) } : undefined,
+    }));
     throw new NoaProviderError("NOA could not complete that request.");
   }
 }
