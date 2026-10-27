@@ -1,6 +1,8 @@
 import type { SmartSetupSupplierCheckResult, SmartSetupSupplierCheckStatus } from "./smart-setup-supplier-check";
 import type { SmartSetupPriceCell } from "./smart-setup-supplier-targets";
 import { evidenceText, reasonLabels, statusOrder } from "./smart-setup-supplier-verification";
+import { conflictingDecisionKeys, decisionForRow, decisionKey, decisionLabels, type DecisionMap } from "./supplier-review-decisions";
+import { formatDubaiDateTime } from "../inventory/date-time";
 
 /** Pure helpers for the full-screen Supplier price review. They only reshape what the check service returned; nothing is matched or recalculated. */
 export type ReviewStatus = SmartSetupSupplierCheckStatus;
@@ -54,18 +56,23 @@ export function sortReviewRows(rows: ReviewRow[], sort: ReviewSort) {
   return [...rows].sort((a, b) => compare[sort](a, b) || a.index - b.index);
 }
 
-const CSV_HEADER = ["Model", "Supplier code", "Price field", "Category", "Role", "Currency", "Imported price", "Supplier price", "Difference", "Difference %", "Status", "Reason", "Evidence"];
+const CSV_HEADER = ["Model", "Supplier code", "Price field", "Category", "Role", "Currency", "Imported price", "Supplier price", "Difference", "Difference %", "Status", "Reason", "Evidence", "Decision", "My price", "Note", "Decided by", "Decided at"];
 const csvText = (value: string) => {
-  const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value; // spreadsheet formula injection guard
+  const safe = /^[\t\r\n]|^\s*[=+\-@]/.test(value) ? `'${value}` : value; // guard all text, including notes
   return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 };
 const csvNumber = (value: number | null) => (value === null ? "" : String(value));
 /** UTF-8 with a BOM so Excel opens it correctly. Numbers are written as plain numbers; only text cells are quoted or guarded. */
-export function reviewRowsToCsv(rows: ReviewRow[]) {
-  const lines = rows.map(({ result: r, model, category, difference }) => [
+export function reviewRowsToCsv(rows: ReviewRow[], decisions: DecisionMap = {}, conflicts: ReadonlySet<string> = conflictingDecisionKeys(rows)) {
+  const lines = rows.map((row) => {
+    const { result: r, model, category, difference } = row;
+    const saved = decisions[decisionKey(row)], decision = conflicts.has(decisionKey(row)) ? "" : decisionForRow(row, saved);
+    return [
     csvText(model), csvText(r.code), csvText(r.priceField), csvText(category), csvText(r.role), csvText(r.importedCurrency), csvNumber(r.importedPrice),
     csvNumber(r.status === "MATCHED" || r.status === "MISMATCH" ? r.referencePrice : null), csvNumber(difference?.amount ?? null), csvNumber(difference?.percent ?? null),
     csvText(reviewStatusLabels[r.status]), csvText(reasonLabels[r.reason]), csvText(evidenceText(r)),
-  ].join(","));
-  return `﻿${[CSV_HEADER.map(csvText).join(","), ...lines].join("\r\n")}\r\n`;
+    csvText(decision ? decisionLabels[decision] : "Not decided"), csvNumber(decision === "set_custom" ? saved.custom_price : null),
+    csvText(saved?.note ?? ""), csvText(saved?.decided_by_name || (saved ? "Team member" : "")), csvText(saved ? formatDubaiDateTime(saved.decided_at) : ""),
+  ].join(","); });
+  return `\uFEFF${[CSV_HEADER.map(csvText).join(","), ...lines].join("\r\n")}\r\n`;
 }

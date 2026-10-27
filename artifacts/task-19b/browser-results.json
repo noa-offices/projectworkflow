@@ -1,0 +1,17 @@
+{
+  "checks": [
+    "saved decisions load; stale tag; missing supplier disabled; custom price/note; unsaved close confirmation",
+    "screenshots at 1440/1024/390; mobile controls fit; save persists through reopen without another check",
+    "select all, bulk action, clear selection, decision filter; failed save preserves changes and can retry",
+    "editing a stale note retains its warning and undecided state; explicit confirmation is required before saving",
+    "205 selected rows save in 200+5 batches; failure retains only the last 5; retry saves only those",
+    "failed load blocks editing until retry; read-only users have no controls and make no decision RPCs"
+  ],
+  "browserErrors": [],
+  "screenshots": [
+    1440,
+    1024,
+    390
+  ],
+  "fixtureOnly": true
+}
