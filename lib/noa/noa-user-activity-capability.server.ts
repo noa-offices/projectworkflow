@@ -412,7 +412,7 @@ function rangeLabel(range: DateRangeKey) {
   }
 }
 
-type ActivityCategory = "other" | "procurement" | "product_template" | "project" | "quotation";
+type ActivityCategory = "inventory" | "other" | "procurement" | "product_template" | "project" | "quotation";
 
 // PART 6/8: one authoritative categorization of an audit_activity_log row for aggregation -
 // entity_type values proven by the UA read-only audit (quotation/quotation_item/quotation_section,
@@ -421,6 +421,7 @@ type ActivityCategory = "other" | "procurement" | "product_template" | "project"
 // NOT also queried here, to avoid double-counting the same real-world event from two sources.
 function activityCategory(entityType: string): ActivityCategory {
   if (entityType.startsWith("quotation")) return "quotation";
+  if (entityType.startsWith("inventory")) return "inventory";
   if (entityType === "product_template") return "product_template";
   if (entityType === "procurement_vendor") return "procurement";
   if (entityType === "project_activity") return "project";
@@ -428,6 +429,7 @@ function activityCategory(entityType: string): ActivityCategory {
 }
 
 const CATEGORY_LABEL: Record<ActivityCategory, string> = {
+  inventory: "inventory",
   other: "other",
   procurement: "procurement",
   product_template: "product template",
