@@ -1,4 +1,4 @@
-import { getProfileForUser, isWarehouseStaffRequest } from "@/lib/auth";
+import { isWarehouseStaffRequest } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { logServerActionError } from "@/lib/action-errors";
 import { isNoaConversationReference } from "@/lib/noa/noa-conversation-reference";
@@ -126,12 +126,9 @@ export async function POST(request: Request) {
   };
 
   try {
-    // Experimental NOA v2 (read-only agent loop): flag on, System Owner / Admin Manager only, and the caller may opt out with engine: "old".
+    // NOA v2 (read-only agent loop): NOA_AGENT_LOOP=true is the single switch (unset or any other value runs the old NOA for everyone); the caller may opt out with engine: "old".
     if (process.env.NOA_AGENT_LOOP === "true" && (body as { engine?: unknown }).engine !== "old") {
-      const agentProfile = await getProfileForUser(user.id);
-      if (agentProfile?.account_status === "active" && (agentProfile.role === "system_owner" || agentProfile.role === "admin_manager")) {
-        return NextResponse.json(await runNoaAgentLoop(chatRequest));
-      }
+      return NextResponse.json(await runNoaAgentLoop(chatRequest));
     }
     const sessionId = noaSessionId((body as { sessionId?: unknown }).sessionId);
     const answer = await runNoaShadowTurn({ ...chatRequest, sessionId }, {
