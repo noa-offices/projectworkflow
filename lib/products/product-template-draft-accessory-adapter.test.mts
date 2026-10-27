@@ -31,6 +31,15 @@ test("safe accessory groups preserve prices, order, required state, and code war
   assert.equal(required.groups[0].group_is_required, true);
 });
 
+test("reviewed option defaults and manual order reach the saved accessory payload", () => {
+  const source = draft("optional", 0, 1, ["chrome"]);
+  source.optionGroups[0].items.reverse();
+  const mapped = mapDraftOptionGroupsToAccessories(source, createSmartSetupReviewRouting(source));
+  assert.deepEqual(mapped.groups[0].default_item_ids, ["chrome"]);
+  assert.deepEqual(mapped.groups[0].items.map((item) => [item.id, item.sort_order]), [["chrome", 0], ["standard", 1]]);
+  assert.equal(mapped.groups[0].items[1].price, 0);
+});
+
 test("accessory dimensions preserve authoritative raw source text", () => {
   const source = draft("optional", 0, null);
   source.optionGroups[0].items[0] = { ...source.optionGroups[0].items[0], dimensions: { width: 90, depth: 37, height: null, diameter: null, unit: "cm", rawText: " L.90 x p.37 " } };

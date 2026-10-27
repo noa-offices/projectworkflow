@@ -59,7 +59,7 @@ import {
   type StructuralSupportCompatibleTarget,
 } from "@/lib/products/accessory-conditional-configuration";
 import { filterCompatibleBaseModelGroups, unionStructuralSupportCompatibleTargets } from "@/lib/products/structural-support-compatibility";
-import { evaluateProductAccessorySelection } from "@/lib/quotations/product-accessory-configuration";
+import { defaultProductAccessoryQuantities, evaluateProductAccessorySelection } from "@/lib/quotations/product-accessory-configuration";
 import { accessoryOptionLabel } from "@/lib/quotations/accessory-option-label";
 import { flattenWorkstationPricingRows, workstationPricingGroups } from "@/lib/products/workstation-pricing-groups";
 import { productTemplateRowReferenceKey, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
@@ -233,6 +233,7 @@ type AccessoryPricingRow = {
   id?: string;
   group_name?: string;
   group_is_required?: boolean;
+  default_item_ids?: string[];
   price_categories?: Array<{ id: string; label: string }>;
   items?: AccessoryPricingItem[];
   item_name?: string;
@@ -793,6 +794,7 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null): Array<Accesso
       id: group.id ?? `add-on-group-${groupIndex}`,
       group_name: group.group_name?.trim() || "Accessories",
       group_is_required: group.group_is_required === true,
+      default_item_ids: (group.default_item_ids ?? []).filter((id) => activeItems.some((item) => item.id === id)),
       price_categories: group.price_categories,
       conditional_configuration: group.conditional_configuration,
       is_active: group.is_active !== false,
@@ -1253,7 +1255,7 @@ export function ProductLibrarySelector({
   const [finalSpecifications, setFinalSpecifications] = useState<Record<string, string>>({});
   const [finalSpecificationEditedByTemplate, setFinalSpecificationEditedByTemplate] = useState<Record<string, boolean>>({});
   const [selectedWorkstationLayouts, setSelectedWorkstationLayouts] = useState<Record<string, string>>({});
-  const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
+  const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>(() => Object.fromEntries(templates.map((template) => [template.id, defaultProductAccessoryQuantities(template.accessory_pricing)])));
   const [requiredOverrides, setRequiredOverrides] = useState<Record<string, RequiredComponentOverrides>>({});
   const [selectedAccessoryCategories, setSelectedAccessoryCategories] = useState<Record<string, string>>({});
   const [expandedAccessoryGroups, setExpandedAccessoryGroups] = useState<Record<string, boolean>>({});
@@ -1415,6 +1417,7 @@ export function ProductLibrarySelector({
 
   const addTemplateRecord = (newTemplate: ProductLibraryTemplate) => {
     setTemplateRecords((current) => [...current, newTemplate]);
+    setPricingAccessoryQuantities((current) => ({ ...current, [newTemplate.id]: defaultProductAccessoryQuantities(newTemplate.accessory_pricing) }));
   };
 
   const closeTemplateEditor = () => {

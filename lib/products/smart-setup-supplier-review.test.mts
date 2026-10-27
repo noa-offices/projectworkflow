@@ -1,10 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SmartSetupSupplierCheckResult } from "./smart-setup-supplier-check";
-import { buildReviewRows, countReviewStatuses, DEFAULT_REVIEW_STATUSES, filterReviewRows, priceDifference, reviewRowsToCsv, sortReviewRows, toggleReviewStatus, type ReviewStatus } from "./smart-setup-supplier-review";
+import { decisionKey, type ReviewDecision, type SavedReviewDecision } from "./supplier-review-decisions";
+import { buildReviewRows, countReviewStatuses, DEFAULT_REVIEW_STATUSES, filterReviewedRows, filterReviewRows, isReviewedRow, priceDifference, reviewRowsToCsv, sortReviewRows, toggleReviewStatus, type ReviewStatus } from "./smart-setup-supplier-review";
 
 const result = (over: Partial<SmartSetupSupplierCheckResult>): SmartSetupSupplierCheckResult => ({ locator: "l", role: "main_product", code: "A1", priceField: "unit_price", dimension: "", status: "MATCHED", reason: "same_price", importedPrice: 100, importedCurrency: "EUR", referencePrice: 100, referenceCurrency: "EUR", source: { versionId: "v", definitionId: "d", title: "T", currency: "EUR", basis: "list" }, evidence: { identityKey: "k", sheet: "S1", rowNumber: 7, sourceRowCount: null }, ...over });
 const rows = (list: Partial<SmartSetupSupplierCheckResult>[], labels: Record<string, string> = {}) => buildReviewRows(list.map((o, i) => result({ locator: `l${i}`, ...o })), Object.entries(labels).map(([locator, label]) => ({ locator, label, dimensionLabel: "" }) as never));
+
+test("reviewed means a current saved final decision without an unsaved edit", () => {
+  const row = rows([{ status: "MISMATCH", importedPrice: 120, referencePrice: 100 }])[0];
+  const saved = (decision: ReviewDecision, status: SavedReviewDecision["status"] = "open") => ({ decision, status, supplier_price: 100, currency: "EUR" }) as SavedReviewDecision;
+  assert.equal(isReviewedRow(row), false);
+  for (const decision of ["use_supplier", "keep_imported", "set_custom", "ignore"] as const) assert.equal(isReviewedRow(row, saved(decision)), true, decision);
+  assert.equal(isReviewedRow(row, saved("check_later")), false);
+  assert.equal(isReviewedRow(row, saved("ignore", "cancelled")), false);
+  assert.equal(isReviewedRow(row, saved("ignore", "applied")), false);
+  assert.equal(isReviewedRow(row, saved("ignore"), true), false);
+  assert.equal(isReviewedRow(row, { ...saved("ignore"), supplier_price: 90 }), false, "price-changed tag keeps the row visible");
+  assert.equal(isReviewedRow(row, { ...saved("ignore"), currency: "USD" }), false);
+});
+
+test("reviewed filter keeps edits and check later visible; toggle shows all", () => {
+  const reviewRows = rows([{ code: "A" }, { code: "B" }, { code: "C" }]);
+  const saved = Object.fromEntries(reviewRows.map((row, i) => [decisionKey(row), { decision: i === 2 ? "check_later" : "ignore", status: "open", supplier_price: 100, currency: "EUR" } as SavedReviewDecision]));
+  const edited = new Set([decisionKey(reviewRows[1])]);
+  assert.deepEqual(filterReviewedRows(reviewRows, saved, edited, false).map((row) => row.result.code), ["B", "C"]);
+  assert.deepEqual(filterReviewedRows(reviewRows, saved, edited, true).map((row) => row.result.code), ["A", "B", "C"]);
+});
 
 test("difference: higher, lower, equal, missing and zero supplier price", () => {
   assert.deepEqual(priceDifference(110, 100), { amount: 10, percent: 10 });
