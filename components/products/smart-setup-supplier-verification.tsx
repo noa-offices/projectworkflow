@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { checkSmartSetupSupplierPrices, listSmartSetupSupplierSourcesAction } from "@/app/products/smart-setup-supplier-check-actions";
-import { listSupplierPriceDecisions } from "@/app/products/supplier-review-decision-actions";
+import { listSupplierCarryOverDecisions, listSupplierPriceDecisions } from "@/app/products/supplier-review-decision-actions";
 import type { ProductTemplateDraft } from "@/lib/products/product-template-draft";
 import type { SmartSetupSupplierCheckOutput } from "@/lib/products/smart-setup-supplier-check";
 import type { SmartSetupSupplierSourceOption } from "@/lib/products/smart-setup-supplier-sources";
@@ -73,7 +73,8 @@ export function SupplierVerificationPanel({ brandId, sources, definitionId, onSe
   useEffect(() => {
     if (!canManageDecisions || !fresh) return;
     let current = true;
-    listSupplierPriceDecisions(fresh.output.source.versionId).then((records) => { if (current) onDecisionsSaved(records); }).catch(() => {});
+    Promise.allSettled([listSupplierPriceDecisions(fresh.output.source.versionId), listSupplierCarryOverDecisions(fresh.output.source.versionId)])
+      .then(([own]) => { if (current && own.status === "fulfilled") onDecisionsSaved(own.value); });
     return () => { current = false; };
   }, [canManageDecisions, fresh, onDecisionsSaved]);
   const decidedCount = fresh && decisionSummary?.fingerprint === fresh.fingerprint ? decisionSummary.count : null;

@@ -5,9 +5,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { canManageReviewDecisions, type DecisionDraft } from "@/lib/products/supplier-review-decisions";
 import { buildReviewRows } from "@/lib/products/smart-setup-supplier-review";
 import type { SmartSetupSupplierCheckResult } from "@/lib/products/smart-setup-supplier-check";
-import { ReviewDecisionControls, ReviewSaveButton } from "./supplier-review-decision-controls";
+import { CarryOverSummary, ReviewDecisionControls, ReviewSaveButton } from "./supplier-review-decision-controls";
 
-mock.module("@/app/products/supplier-review-decision-actions", { namedExports: { listSupplierPriceDecisions: async () => [], saveSupplierPriceDecisions: async () => { throw Error("No save during render"); } } });
+mock.module("@/app/products/supplier-review-decision-actions", { namedExports: { listSupplierPriceDecisions: async () => [], listSupplierCarryOverDecisions: async () => [], saveSupplierPriceDecisions: async () => { throw Error("No save during render"); } } });
 const { SupplierReviewDialog } = await import("./smart-setup-supplier-review-dialog");
 const r: SmartSetupSupplierCheckResult = { locator: "l", role: "main_product", code: "A1", priceField: "unit_price", dimension: "", status: "MISMATCH", reason: "price_differs", importedPrice: 120, importedCurrency: "EUR", referencePrice: 100, referenceCurrency: "EUR", source: { versionId: "19b00000-0000-0000-0002-000000000001", definitionId: "d", title: "List", currency: "EUR", basis: "list" }, evidence: null };
 const fresh = { fingerprint: "fp", output: { source: r.source, results: [r] }, cells: [], unsupported: [] };
@@ -35,6 +35,23 @@ test("custom price, note, changed-price tag and unsaved count render plainly", (
   assert.match(html, /Confirm this decision/);
   const button = renderToStaticMarkup(createElement(ReviewSaveButton, { count: 5, disabled: false, saving: false, onSave() {} }));
   assert.match(button, /5 unsaved changes/); assert.doesNotMatch(button, /disabled=""/);
+});
+test("no row or Select all shown is pre-selected when a manager opens the dialog", () => {
+  const html = renderToStaticMarkup(createElement(SupplierReviewDialog, { fresh, stale: false, selected: null, onClose() {}, canManageDecisions: true }));
+  assert.match(html, /Select all shown/);
+  assert.doesNotMatch(html, /type="checkbox"[^>]*checked=""/);
+  assert.doesNotMatch(html, />\d+ selected</);
+});
+test("carry summary, tags, source tooltip and unsaved count render without overflow-prone fixed widths", () => {
+  const summary = renderToStaticMarkup(createElement(CarryOverSummary, { carriedOver: 14, priceChanged: 3, newlyFound: 4, saved: 6 }));
+  assert.match(summary, /Carried over 14.*Price changed 3.*New 4.*Saved 6/);
+  assert.match(summary, /flex-wrap/);
+  const earlier = { model_code: "A1", price_field: "unit_price", category: "Standard", decision: "set_custom", custom_price: 85, note: "Check", imported_price: 120, supplier_price: 100, currency: "EUR", decided_at: "2026-10-26T12:00:00Z", decided_by_name: "Junais KP", from_source_id: "old", from_label: "INTERSTUHL - October 2026" } as const;
+  const carried = controls({}, { draft: { decision: "set_custom", customPrice: "85", note: "Check" }, carryState: { kind: "carried_over", earlier } });
+  assert.match(carried, /Carried over/); assert.match(carried, /From INTERSTUHL - October 2026, decided by Junais KP on 26 Oct 2026, 16:00/);
+  const changed = controls({}, { carryState: { kind: "price_changed", earlier } });
+  assert.match(changed, /Price changed, check again/); assert.match(changed, /Set my price/);
+  assert.match(renderToStaticMarkup(createElement(ReviewSaveButton, { count: 14, disabled: false, saving: false, onSave() {} })), /14 unsaved changes/);
 });
 test("manager view shows every row without paging; footer count appears only once decisions are known", async () => {
   const many = Array.from({ length: 120 }, (_, i) => ({ ...r, locator: `l${i}`, code: `C${i}` }));

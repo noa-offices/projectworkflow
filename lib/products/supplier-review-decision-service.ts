@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { canManageReviewDecisions, isSourceId, validateDecisionInput, type SavedReviewDecision } from "./supplier-review-decisions";
+import type { CarryOverDecision } from "./supplier-carry-over";
 
 type Dependencies = { getProfile: () => Promise<{ role?: string | null; account_status?: string | null } | null>; getClient: () => Promise<SupabaseClient> };
 async function requireManager(deps: Dependencies) {
@@ -12,6 +13,13 @@ export async function listReviewDecisions(deps: Dependencies, sourceId: unknown)
   const { data, error } = await (await deps.getClient()).rpc("list_supplier_price_decisions", { p_supplier_source_id: sourceId });
   if (error) throw Error("Saved decisions could not be loaded. Try again before making changes.");
   return data as SavedReviewDecision[];
+}
+export async function listCarryOverDecisions(deps: Dependencies, sourceId: unknown): Promise<CarryOverDecision[]> {
+  await requireManager(deps);
+  if (!isSourceId(sourceId)) throw Error("Choose a valid supplier price list.");
+  const { data, error } = await (await deps.getClient()).rpc("list_carry_over_decisions", { p_supplier_source_id: sourceId });
+  if (error) throw Error("Earlier decisions could not be loaded. You can still review this price list.");
+  return data as CarryOverDecision[];
 }
 export async function saveReviewDecisions(deps: Dependencies, values: unknown): Promise<SavedReviewDecision[]> {
   await requireManager(deps);

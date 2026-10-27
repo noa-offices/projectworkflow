@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { listReviewDecisions, saveReviewDecisions } from "./supplier-review-decision-service";
+import { listReviewDecisions, listCarryOverDecisions, saveReviewDecisions } from "./supplier-review-decision-service";
 
 const source = "19b00000-0000-0000-0002-000000000001";
 const payload = { supplier_source_id: source, supplier_price_list_label: "List", model_code: "A1", price_field: "unit_price", category: null, imported_price: 120, supplier_price: 100, currency: "EUR", decision: "use_supplier", custom_price: null, note: null, status: "open" };
@@ -14,8 +14,18 @@ test("all non-managers are rejected before any decision RPC", async () => {
     const d = deps(role);
     await assert.rejects(listReviewDecisions(d.deps, source), /Only/);
     await assert.rejects(saveReviewDecisions(d.deps, [payload]), /Only/);
+    await assert.rejects(listCarryOverDecisions(d.deps, source), /Only/);
     assert.deepEqual(d.calls, []);
   }
+});
+test("carry-over reads use only the manager-gated RPC and reject bad sources before RPC", async () => {
+  const d = deps("admin_manager");
+  await listCarryOverDecisions(d.deps, source);
+  assert.deepEqual(d.calls, [["list_carry_over_decisions", { p_supplier_source_id: source }]]);
+  await assert.rejects(listCarryOverDecisions(d.deps, "bad"), /valid supplier/);
+  assert.equal(d.calls.length, 1);
+  const failed = deps("system_owner", { message: "internal database details" });
+  await assert.rejects(listCarryOverDecisions(failed.deps, source), /Earlier decisions could not be loaded/);
 });
 test("managers call only the decision RPC; malformed, oversized and duplicate payloads never reach it", async () => {
   const d = deps("admin_manager");

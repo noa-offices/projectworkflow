@@ -3,6 +3,7 @@ import type { SmartSetupPriceCell } from "./smart-setup-supplier-targets";
 import { evidenceText, reasonLabels, statusOrder } from "./smart-setup-supplier-verification";
 import { conflictingDecisionKeys, decisionForRow, decisionKey, decisionLabels, type DecisionMap } from "./supplier-review-decisions";
 import { formatDubaiDateTime } from "../inventory/date-time";
+import type { CarryOverRowState } from "./supplier-carry-over";
 
 /** Pure helpers for the full-screen Supplier price review. They only reshape what the check service returned; nothing is matched or recalculated. */
 export type ReviewStatus = SmartSetupSupplierCheckStatus;
@@ -56,23 +57,29 @@ export function sortReviewRows(rows: ReviewRow[], sort: ReviewSort) {
   return [...rows].sort((a, b) => compare[sort](a, b) || a.index - b.index);
 }
 
-const CSV_HEADER = ["Model", "Supplier code", "Price field", "Category", "Role", "Currency", "Imported price", "Supplier price", "Difference", "Difference %", "Status", "Reason", "Evidence", "Decision", "My price", "Note", "Decided by", "Decided at"];
+const CSV_HEADER = ["Model", "Supplier code", "Price field", "Category", "Role", "Currency", "Imported price", "Supplier price", "Difference", "Difference %", "Status", "Reason", "Evidence", "Decision", "My price", "Note", "Decided by", "Decided at", "Source of decision"];
 const csvText = (value: string) => {
   const safe = /^[\t\r\n]|^\s*[=+\-@]/.test(value) ? `'${value}` : value; // guard all text, including notes
   return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 };
 const csvNumber = (value: number | null) => (value === null ? "" : String(value));
 /** UTF-8 with a BOM so Excel opens it correctly. Numbers are written as plain numbers; only text cells are quoted or guarded. */
-export function reviewRowsToCsv(rows: ReviewRow[], decisions: DecisionMap = {}, conflicts: ReadonlySet<string> = conflictingDecisionKeys(rows)) {
+export function reviewRowsToCsv(rows: ReviewRow[], decisions: DecisionMap = {}, conflicts: ReadonlySet<string> = conflictingDecisionKeys(rows), carryStates: Record<string, CarryOverRowState> = {}, dismissed: ReadonlySet<string> = new Set()) {
+  const includeSource = Object.keys(carryStates).length > 0;
   const lines = rows.map((row) => {
     const { result: r, model, category, difference } = row;
-    const saved = decisions[decisionKey(row)], decision = conflicts.has(decisionKey(row)) ? "" : decisionForRow(row, saved);
+    const key = decisionKey(row), saved = decisions[key], state = carryStates[key];
+    const carried = state?.kind === "carried_over" ? state.earlier : null;
+    const snapshot = saved ?? carried;
+    const decision = conflicts.has(key) || dismissed.has(key) ? "" : saved ? decisionForRow(row, saved) : carried?.decision ?? "";
+    const source = state?.kind === "saved" ? "Saved" : state?.kind === "carried_over" ? "Carried over" : state?.kind === "price_changed" ? "Price changed" : saved ? "Saved" : "New";
     return [
     csvText(model), csvText(r.code), csvText(r.priceField), csvText(category), csvText(r.role), csvText(r.importedCurrency), csvNumber(r.importedPrice),
     csvNumber(r.status === "MATCHED" || r.status === "MISMATCH" ? r.referencePrice : null), csvNumber(difference?.amount ?? null), csvNumber(difference?.percent ?? null),
     csvText(reviewStatusLabels[r.status]), csvText(reasonLabels[r.reason]), csvText(evidenceText(r)),
-    csvText(decision ? decisionLabels[decision] : "Not decided"), csvNumber(decision === "set_custom" ? saved.custom_price : null),
-    csvText(saved?.note ?? ""), csvText(saved?.decided_by_name || (saved ? "Team member" : "")), csvText(saved ? formatDubaiDateTime(saved.decided_at) : ""),
+    csvText(decision ? decisionLabels[decision] : "Not decided"), csvNumber(decision === "set_custom" ? snapshot?.custom_price ?? null : null),
+    csvText(decision ? snapshot?.note ?? "" : ""), csvText(decision ? snapshot?.decided_by_name || "Team member" : ""), csvText(decision && snapshot ? formatDubaiDateTime(snapshot.decided_at) : ""),
+    ...(includeSource ? [csvText(source)] : []),
   ].join(","); });
-  return `\uFEFF${[CSV_HEADER.map(csvText).join(","), ...lines].join("\r\n")}\r\n`;
+  return `\uFEFF${[(includeSource ? CSV_HEADER : CSV_HEADER.slice(0,-1)).map(csvText).join(","), ...lines].join("\r\n")}\r\n`;
 }
