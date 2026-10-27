@@ -90,6 +90,7 @@ import {
   type ProductConfigurationTemplateInput,
 } from "@/lib/products/product-configuration-state";
 import { loadProductConfigurationTemplate, type ProductConfigurationTemplateLoadResult } from "@/lib/products/product-configuration-loader.server";
+import { CONFIGURATION_MAX_RATE, CONFIGURATION_MIN_RATE, convertConfiguredPrice, formatAedMinorUnits, isCurrencyConversionMessage } from "@/lib/noa/noa-product-configuration-currency";
 import {
   isNoaProductConfigurationReference,
   type NoaProductConfigurationReference,
@@ -1596,7 +1597,7 @@ function productConfigurationPriceAnswer(
   return { domain: "Product", productConfigurationReference: reference, sources: [], text: lines.join("\n") };
 }
 
-type ProductConfigurationPostCompletionIntent = "specification" | "summary" | "price";
+type ProductConfigurationPostCompletionIntent = "specification" | "convert_currency" | "summary" | "price";
 
 // PART 2: a SMALL deterministic classifier - keyword matching only, no semantic extractor call, no
 // general intent router. Applies ONLY while a reference is already GPC-3.3-complete (see the two
@@ -1606,9 +1607,34 @@ function classifyProductConfigurationPostCompletionIntent(message: string): Prod
   const normalized = message.trim().toLowerCase();
   if (!normalized) return null;
   if (normalized.includes("specification")) return "specification";
+  // Checked BEFORE price ("convert price to AED" is a conversion, not a price question). Safe here: only consulted once the configuration is complete.
+  if (isCurrencyConversionMessage(normalized)) return "convert_currency";
   if (/\bprice\b/.test(normalized) || normalized.includes("how much")) return "price";
   if (normalized.includes("summary") || normalized.includes("what did i configure") || /show (?:the )?configur/.test(normalized)) return "summary";
   return null;
+}
+
+// Source unit price -> AED with a rate the user types. Decision and arithmetic live in noa-product-configuration-currency.ts (integer
+// cents, no AI); this only words the result. The reference is passed straight through so the flow continues.
+function productConfigurationConversionAnswer(
+  state: ProductConfigurationState,
+  message: string,
+  reference: NoaProductConfigurationReference,
+): NoaAnswer {
+  const conversion = convertConfiguredPrice(state.price, message);
+  const answer = (text: string): NoaAnswer => ({ domain: "Product", productConfigurationReference: reference, sources: [], text });
+  if (conversion.kind === "unsupported") return answer("Converting a mixed or other-currency price is not supported yet.");
+  if (conversion.kind === "already_aed") return answer(`The configured source unit price is already in AED: AED ${state.price.unit.toLocaleString()}.`);
+  if (conversion.kind === "ask_rate") {
+    const ask = `The configured source unit price is ${conversion.currency} ${state.price.unit.toLocaleString()}. What ${conversion.currency} to AED rate should I use? You can type just the number, for example 4.05.`;
+    return answer(conversion.invalidRate ? `That is not a valid rate - it must be between ${CONFIGURATION_MIN_RATE} and ${CONFIGURATION_MAX_RATE}. ${ask}` : ask);
+  }
+  return answer([
+    `Source unit price: ${conversion.currency} ${state.price.unit.toLocaleString()}`,
+    `Rate used: ${conversion.rate} (${conversion.currency} to AED)`,
+    `Converted: AED ${formatAedMinorUnits(conversion.aedMinorUnits)}`,
+    "This is the source price converted. It does not include markup, discount or VAT.",
+  ].join("\n"));
 }
 
 // PART 10: the CURRENT user message decides which of the three deterministic answers comes back -
@@ -1623,6 +1649,7 @@ function productConfigurationCompletionResponse(
 ): NoaAnswer {
   const intent = classifyProductConfigurationPostCompletionIntent(message);
   if (intent === "specification") return productConfigurationSpecificationAnswer(template, state, reference);
+  if (intent === "convert_currency") return productConfigurationConversionAnswer(state, message, reference);
   if (intent === "price") return productConfigurationPriceAnswer(template, state, reference);
   return productConfigurationSummaryAnswer(template, state, selections, reference);
 }
@@ -1785,6 +1812,12 @@ async function maybeHandleProductConfigurationTurn(request: NoaChatRequest): Pro
 
   // PART 15: an obvious fresh other-domain request is never consumed as a configuration answer -
   // fall through to normal routing (the wrapper below re-attaches this reference afterward).
+  // Narrow exception, checked first: "convert price to AED" routes as a fresh Price question, but once the configuration is COMPLETE it is a
+  // conversion of the configured price. Any other message, or a conversion message while a step is still pending, takes the paths below as before.
+  if (isCurrencyConversionMessage(request.message)) {
+    const conversion = await completedConfigurationConversionAnswer(incomingReference, request.message);
+    if (conversion) return conversion;
+  }
   if (looksLikeFreshOtherDomainRequest(request.message, request.context)) return null;
 
   return resumeProductConfiguration(incomingReference, request.message);
@@ -2549,6 +2582,16 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
     if (deterministicText) return { analytics, conversationReference: newConversationReference, domain, sources: capabilityResult.sources, text: deterministicText };
     throw error;
   }
+}
+
+// Null (normal routing continues) unless the template still loads and the configuration is already complete. Kept outside the GPC-3 block
+// on purpose: that block's source-pinned tests expect exactly two template loads (start + resume).
+async function completedConfigurationConversionAnswer(reference: NoaProductConfigurationReference, message: string): Promise<NoaAnswer | null> {
+  const loaded = await loadProductConfigurationTemplate(reference.templateId);
+  if (!loaded.ok) return null;
+  const state = resolveProductConfigurationState(loaded.template, reference.selections);
+  if (state.nextRequiredStep ?? state.optionalSteps[0]) return null;
+  return productConfigurationConversionAnswer(state, message, reference);
 }
 
 // PART 15/20: the real public entry point. After conversational/finding pre-routing,

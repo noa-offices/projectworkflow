@@ -47,7 +47,7 @@ export function NoaChatDrawer({
           : "pointer-events-none translate-y-2 scale-95 opacity-0"
       }`}
     >
-      <NoaHeader onClose={close} state={state} />
+      <NoaHeader engine={[...messages].reverse().find((m) => m.role === "assistant")?.engine} onClose={close} state={state} />
       {/* A request in flight disables choices and the composer through the same busy state. */}
       <NoaMessages isBusy={isBusy} messages={messages} onQuickPrompt={manualSend} voice={realtime.active ? undefined : voice} />
       <NoaStatus pendingDomain={pendingDomain} state={state} />

@@ -11,10 +11,13 @@
     "eval:noa-planner": "node --import tsx --experimental-test-module-mocks lib/noa/evals/noa-planner-live.eval.mts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.89",
+    "@ai-sdk/openai": "^4.0.103",
     "@sparticuz/chromium": "^148.0.0",
     "@sparticuz/chromium-min": "^148.0.0",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.105.1",
+    "ai": "^7.0.154",
     "dexie": "^4.4.2",
     "exceljs": "^4.4.0",
     "html-to-image": "^1.11.13",
@@ -29,7 +32,8 @@
     "react-dom": "19.2.4",
     "recharts": "^3.8.1",
     "sharp": "^0.35.2",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",

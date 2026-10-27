@@ -65,6 +65,7 @@ export type NoaSemanticRequest = {
   quotation?: NoaSemanticQuotation;
   product?: NoaSemanticProduct;
   entity?: NoaSemanticEntity;
+  detail?: "events";
 };
 
 // The safe, deterministic result for any extraction failure (malformed provider output, schema

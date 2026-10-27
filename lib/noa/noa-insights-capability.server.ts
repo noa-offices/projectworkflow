@@ -1,6 +1,6 @@
 import "server-only";
 
-import { requireActiveUser, requireProcurementManager, requireProductLibraryManager } from "@/lib/auth";
+import { requireActiveUser, requireProcurementManager, requireProductLibraryManager, requireSettingsManager } from "@/lib/auth";
 import {
   brandPriceBaselineDate,
   latestBrandPriceListUpdate,
@@ -19,6 +19,7 @@ import {
   type ClientPaymentInstallmentRow,
   type ClientPaymentReceiptRow,
 } from "@/lib/projects/client-payment-model";
+import { actualApprovedQuotationsByFolder, type SalesAttributionQuotation } from "@/lib/quotations/sales-attribution";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
@@ -52,6 +53,12 @@ const MAX_ANALYTICS_ORDER_DETAIL = 50;
 
 const UNAUTHORIZED_RESULT: NoaCapabilityResult = {
   message: "I couldn't access ProjectWorkflow insights for this account.",
+  ok: false,
+  reason: "unauthorized",
+};
+
+const SALES_REPORT_UNAUTHORIZED_RESULT: NoaCapabilityResult = {
+  message: "Sales by salesperson isn't available with your current permissions.",
   ok: false,
   reason: "unauthorized",
 };
@@ -1514,6 +1521,86 @@ async function overviewAnswer(
   };
 }
 
+// Sales by salesperson (managers only - gated in the entry point before this runs). Uses ONLY the signed-in user's client;
+// names come from the existing list_commission_sales_managers() RPC. The approval rule is the Sales Report page's own helper.
+// Every quotation is AED by business rule, but a row in another currency is never added into an AED total.
+type SalesQuotationRow = SalesAttributionQuotation & {
+  approved_salesperson_id: string | null;
+  currency: string;
+  grand_total: number | null;
+};
+
+async function salesBySalespersonAnswer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  message: string,
+): Promise<NoaCapabilityResult> {
+  const rangeKey = insightsDateRangeKey(message);
+  const { from, to } = resolveDateRange(rangeKey, undefined, undefined);
+  const [{ data, count }, { data: nameRows }] = await Promise.all([
+    supabase
+      .from("quotations")
+      .select("id,quotation_no,option_no,revision_no,approved_salesperson_id,status,grand_total,currency,created_at,status_updated_at,layout_settings", { count: "exact" })
+      .eq("is_active", true)
+      .gte("created_at", from.toISOString())
+      .lte("created_at", to.toISOString())
+      .order("created_at", { ascending: false })
+      .limit(MAX_QUOTATION_SCAN)
+      .returns<SalesQuotationRow[]>(),
+    supabase.rpc("list_commission_sales_managers"),
+  ]);
+
+  const rows = data ?? [];
+  const totalMatching = count ?? rows.length;
+  const scanCapped = totalMatching > rows.length;
+  const names = new Map(((nameRows ?? []) as Array<{ display_name: string; id: string }>).map((person) => [person.id, person.display_name]));
+
+  const byPerson = new Map<string, { approvedCount: number; approvedTotal: number; name: string }>();
+  const otherCurrencyTotals = new Map<string, { count: number; total: number }>();
+  let pending = { approvedCount: 0, approvedTotal: 0 };
+  for (const row of actualApprovedQuotationsByFolder(rows)) {
+    const amount = row.grand_total ?? 0;
+    if (row.currency !== "AED") {
+      const other = otherCurrencyTotals.get(row.currency) ?? { count: 0, total: 0 };
+      otherCurrencyTotals.set(row.currency, { count: other.count + 1, total: other.total + amount });
+      continue;
+    }
+    if (!row.approved_salesperson_id) {
+      pending = { approvedCount: pending.approvedCount + 1, approvedTotal: pending.approvedTotal + amount };
+      continue;
+    }
+    const entry = byPerson.get(row.approved_salesperson_id)
+      ?? { approvedCount: 0, approvedTotal: 0, name: names.get(row.approved_salesperson_id) ?? "Unresolved salesperson" };
+    byPerson.set(row.approved_salesperson_id, { ...entry, approvedCount: entry.approvedCount + 1, approvedTotal: entry.approvedTotal + amount });
+  }
+
+  const money = (value: number) => value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  const ranked = Array.from(byPerson.values()).sort((a, b) => b.approvedTotal - a.approvedTotal).slice(0, MAX_CLIENT_RANKING_ROWS);
+  const label = rangeLabel(rangeKey);
+  const capNote = scanCapped ? ` (showing the first ${rows.length} of ${totalMatching} quotations)` : "";
+  const lines = [
+    ...ranked.map((person, index) => `${index + 1}. ${person.name} — ${person.approvedCount} approved, AED ${money(person.approvedTotal)}`),
+    ...(pending.approvedCount > 0 ? [`Owner attribution pending — ${pending.approvedCount} approved, AED ${money(pending.approvedTotal)}`] : []),
+    ...Array.from(otherCurrencyTotals.entries()).map(([currency, other]) => `Not included in the AED totals — ${other.count} approved, ${currency} ${money(other.total)}`),
+  ];
+
+  return {
+    data: {
+      kind: "insights_sales_by_salesperson",
+      otherCurrencyTotals: Object.fromEntries(otherCurrencyTotals),
+      pendingOwner: pending,
+      range: rangeKey,
+      rows: ranked.map((person) => ({ approvedCount: person.approvedCount, approvedTotalAed: person.approvedTotal, name: person.name })),
+      scanCapped,
+      totalMatching,
+      deterministicText: lines.length === 0
+        ? `I found no approved sales ${label}${capNote}.`
+        : `Approved sales by salesperson ${label}${capNote}:\n${lines.join("\n")}`,
+    },
+    ok: true,
+    sources: [{ label: "Insights · Calculated from authorized quotation records", type: "insights" }],
+  };
+}
+
 // PART 2 entry point: requireActiveUser() gates the overview and Quotation/Project/Client
 // sections; Product/Price and Procurement additionally require their own existing capability gate
 // before their data is ever read - Insights never broadens access beyond what each domain already
@@ -1521,6 +1608,7 @@ async function overviewAnswer(
 export async function fetchNoaInsightsCapability(
   message: string,
   _context: NoaPageContext,
+  options: { report?: "sales_by_salesperson" } = {},
 ): Promise<NoaCapabilityResult> {
   // N2C4: the role is captured from the SAME base requireActiveUser() call (exactly as the
   // Attention capability does) - used only by the client-payment visibility check below.
@@ -1534,6 +1622,18 @@ export async function fetchNoaInsightsCapability(
   }
 
   const supabase = await createClient();
+
+  // Chosen by the structured option only (never by message wording); managers only, checked before any read.
+  if (options.report === "sales_by_salesperson") {
+    try {
+      await requireSettingsManager();
+    } catch (error) {
+      if (isNextRedirectError(error)) return SALES_REPORT_UNAUTHORIZED_RESULT;
+      throw error;
+    }
+    return salesBySalespersonAnswer(supabase, message);
+  }
+
   const kind = insightsQuestionKind(message);
 
   if (kind === "quotation_summary") return quotationSummaryAnswer(supabase, message);

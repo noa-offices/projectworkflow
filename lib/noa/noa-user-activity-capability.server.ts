@@ -117,6 +117,7 @@ type UserActivityQuestionKind =
   | "other_user_activity"
   | "other_user_last_activity"
   | "team_confirmed_quotation_unsupported"
+  | "team_catch_up"
   | "team_quotation_activity"
   | "team_recent_activity"
   | "team_summary"
@@ -286,7 +287,7 @@ function semanticActivityOverride(
   if (semanticRequest.intent === "recorded_activity") {
     if (subject?.type === "self") return { kind: "summary" };
     if (subject?.type === "named_user" && subject.name.trim()) return { kind: "other_user_activity", targetName: subject.name.trim() };
-    if (subject?.type === "team") return { kind: "team_summary" };
+    if (subject?.type === "team") return semanticRequest.detail === "events" ? { kind: "team_catch_up" } : { kind: "team_summary" };
     return null;
   }
 
@@ -1049,6 +1050,37 @@ async function catchUpProjectFileAnswer(
   );
 }
 
+// Team event details: the same shared Catch-Up presentation as catchUpAnswer(), over every user's rows (RLS still applies) and
+// bounded by the team row cap. Only reachable behind requireSettingsManager() in the entry point.
+async function teamCatchUpAnswer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  message: string,
+): Promise<NoaCapabilityResult> {
+  const rangeKey = activityDateRangeKey(message);
+  const { from, to } = resolveDateRange(rangeKey, undefined, undefined);
+  const { data } = await supabase
+    .from("audit_activity_log")
+    .select(CATCH_UP_SELECT)
+    .gte("created_at", from.toISOString())
+    .lte("created_at", to.toISOString())
+    .order("created_at", { ascending: false })
+    .limit(MAX_TEAM_AUDIT_ROWS)
+    .returns<CatchUpAuditRow[]>();
+
+  const rows = data ?? [];
+  const label = rangeLabel(rangeKey);
+  const capNote = rows.length >= MAX_TEAM_AUDIT_ROWS
+    ? ` Only the ${MAX_TEAM_AUDIT_ROWS} most recent recorded events were checked, so older events may be missing.`
+    : "";
+  const result = buildCatchUpResult(
+    rows,
+    `Here's what changed ${label} across the team.${capNote}`,
+    `I couldn't find any recorded team activity ${label}.`,
+    { range: rangeKey },
+  );
+  return result.ok ? { ...result, sources: [{ label: "User Activity · Checked team ProjectWorkflow activity", type: "user_activity_team" }] } : result;
+}
+
 // PART 6: distinct quotation-family entities touched, never derived from an ownership/assignment
 // column - this counts only entities that appear in the user's OWN recorded audit_activity_log
 // activity.
@@ -1639,7 +1671,7 @@ export async function fetchNoaUserActivityCapability(
     return { data: { ...result, deterministicOnly: true }, ok: true, sources: [{ label: "User Activity · Checked your ProjectWorkflow active time", type: "user_activity_time" }] };
   }
 
-  const isTeamKind = kind === "team_summary" || kind === "team_quotation_activity" ||
+  const isTeamKind = kind === "team_summary" || kind === "team_quotation_activity" || kind === "team_catch_up" ||
     kind === "team_recent_activity" || kind === "team_confirmed_quotation_unsupported";
   const isOtherUserKind = kind === "other_user_activity" || kind === "other_user_last_activity";
 
@@ -1682,6 +1714,7 @@ export async function fetchNoaUserActivityCapability(
         sources: [{ label: "User Activity · Checked team ProjectWorkflow activity", type: "user_activity_team" }],
       };
     }
+    if (kind === "team_catch_up") return teamCatchUpAnswer(supabase, message);
     if (kind === "team_quotation_activity") return teamQuotationActivityAnswer(supabase, message);
     if (kind === "team_recent_activity") return teamRecentActivityAnswer(supabase, message);
     return teamSummaryAnswer(supabase, message);

@@ -300,7 +300,8 @@ test("30. no schema/migration/RLS reference was added in either touched file", (
 });
 
 test("31. no ownership/creator/assigned-user filter was added - every new query is scoped only by requireActiveUser(), no .eq(\"created_by\"...)/.eq(\"assigned_to\"...) style filter", () => {
-  const c2Region = insights.slice(insightsProjectFilesStart, insights.length);
+  // Ends where the manager-only Sales by salesperson report starts: that report is intentionally about salespeople and is covered by its own golden test.
+  const c2Region = insights.slice(insightsProjectFilesStart, insights.indexOf("// Sales by salesperson (managers only"));
   assert.ok(!/created_by|assigned_to|owner_id|salesperson/i.test(c2Region));
 });
 

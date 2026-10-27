@@ -200,6 +200,8 @@ export type NoaMessage = {
   // Set only on assistant replies once a real backend answer arrives (Phase 1B) - user messages
   // never carry these.
   domain?: NoaDomain;
+  // Set only when the experimental NOA v2 engine produced this assistant message.
+  engine?: "v2";
   id: string;
   role: NoaMessageRole;
   sources?: NoaSource[];
@@ -246,6 +248,8 @@ export type NoaSource = {
 };
 
 export type NoaAnswer = {
+  // Set only by the experimental NOA v2 engine; absent for the existing NOA.
+  engine?: "v2";
   // Server-generated alternate presentation of authorized display fields; empty suppresses speech.
   voiceText?: string;
   agentBrief?: NoaAgentBriefTransport;
