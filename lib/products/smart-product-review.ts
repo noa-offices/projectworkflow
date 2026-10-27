@@ -1,4 +1,4 @@
-import { draftModularRows, type ProductTemplateDraft, type ProductTemplateDraftCurrency, type ProductTemplateDraftDimension, type ProductTemplateDraftBaseModelRow, type ProductTemplateDraftMatrixRow, type ProductTemplateDraftPrice, type ProductTemplateDraftWorkstationRow, type ProductTemplateDraftSelectionRule } from "./product-template-draft";
+import { draftModularRows, isDirectModularGroup, type ProductTemplateDraft, type ProductTemplateDraftModularDirectRow, type ProductTemplateDraftModularGroup, type ProductTemplateDraftPriceMatrix, type ProductTemplateDraftCurrency, type ProductTemplateDraftDimension, type ProductTemplateDraftBaseModelRow, type ProductTemplateDraftMatrixRow, type ProductTemplateDraftPrice, type ProductTemplateDraftWorkstationRow, type ProductTemplateDraftSelectionRule } from "./product-template-draft";
 import { smartReviewRuleTarget, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 import { draftUngroupedBaseModelRows, replaceDraftBaseModelScopeRows } from "./base-model-draft-groups";
 import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
@@ -234,16 +234,19 @@ export function removeReviewedRow<T extends { id: string }>(rows: T[], rowId: st
 }
 
 export type ManualMatrixModel = { id: string; name: string; code: string; specification: string; prices: Record<string, string> };
-export function addReviewedMatrixModel(draft: ProductTemplateDraft, matrixIndex: number, input: ManualMatrixModel): ProductTemplateDraft {
-  const matrix = draft.pricing.priceMatrices[matrixIndex];
+function manualMatrixRow(matrix: ProductTemplateDraftPriceMatrix, input: ManualMatrixModel): ProductTemplateDraftMatrixRow {
   const name = input.name.trim();
-  if (!matrix || !name || draft.pricing.priceMatrices.some((entry) => entry.rows.some((row) => row.id === input.id))) return draft;
-  const row: ProductTemplateDraftMatrixRow = {
+  return {
     id: input.id, label: name, displayName: name, supplierCodes: input.code.trim() ? [input.code.trim()] : [], referenceCodes: [],
     dimensions: null, currency: "EUR", specification: input.specification.trim() || null,
     prices: Object.fromEntries(matrix.columns.map((column) => [column.id, nullableReviewNumber(input.prices[column.id] ?? "")])),
   };
-  return updateReviewedMatrix(draft, matrixIndex, { rows: addReviewedRow(matrix.rows, row) });
+}
+export function addReviewedMatrixModel(draft: ProductTemplateDraft, matrixIndex: number, input: ManualMatrixModel): ProductTemplateDraft {
+  const matrix = draft.pricing.priceMatrices[matrixIndex];
+  const name = input.name.trim();
+  if (!matrix || !name || draft.pricing.priceMatrices.some((entry) => entry.rows.some((row) => row.id === input.id))) return draft;
+  return updateReviewedMatrix(draft, matrixIndex, { rows: addReviewedRow(matrix.rows, manualMatrixRow(matrix, input)) });
 }
 export function moveReviewedMatrixModel(draft: ProductTemplateDraft, matrixIndex: number, rowIndex: number, direction: -1 | 1): ProductTemplateDraft {
   const matrix = draft.pricing.priceMatrices[matrixIndex];
@@ -251,16 +254,16 @@ export function moveReviewedMatrixModel(draft: ProductTemplateDraft, matrixIndex
 }
 type ReviewRuleTarget = { kind: string; group_id: string; row_id: string } | null | undefined;
 /** Drops every option-group rule (draft and review plan) whose target `matches`, and fixes the route's row count. */
-function removeReviewedRowRules(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, matches: (target: ReviewRuleTarget) => boolean, routeKey: string, rowCount: number) {
+function removeReviewedRowRules(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, matches: (target: ReviewRuleTarget) => boolean, routeKey: string, rowCount: number | null) {
   const cleanedDraft = { ...draft, optionGroups: draft.optionGroups.map((group) => group.conditionalConfiguration ? {
     ...group, conditionalConfiguration: { ...group.conditionalConfiguration, applicability: group.conditionalConfiguration.applicability.filter((rule) => !matches(rule.target ?? (rule.base_model_group_id && rule.base_model_row_id ? { kind: "base_model", group_id: rule.base_model_group_id, row_id: rule.base_model_row_id } : null))) },
   } : group) };
   const nextPlan = plan ? { ...plan, routes: plan.routes.map((route) => ({
     ...route,
-    ...(route.key === routeKey ? { rowCount } : {}),
+    ...(route.key === routeKey && rowCount !== null ? { rowCount } : {}),
     ...(route.accessory ? { accessory: { ...route.accessory, rules: route.accessory.rules.filter((rule) => !matches(smartReviewRuleTarget(rule))) } } : {}),
   })) } : undefined;
-  return { draft: cleanedDraft, plan: nextPlan };
+  return { draft: cleanedDraft, plan: nextPlan && rowCount === null ? { ...nextPlan, routes: nextPlan.routes.filter((route) => route.key !== routeKey) } : nextPlan };
 }
 export function removeReviewedMatrixModel(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, matrixIndex: number, rowId: string) {
   const matrix = draft.pricing.priceMatrices[matrixIndex];
@@ -272,7 +275,7 @@ export function removeReviewedMatrixModel(draft: ProductTemplateDraft, plan: Sma
 /** Base / Model and Workstation rows: same add / move / remove behaviour as matrix models. An empty price stays missing (null), 0 stays 0. */
 export type ManualPricedRow = { id: string; name: string; code: string; specification: string; price: string; additionalPrice?: string };
 const reviewRowIdTaken = (draft: ProductTemplateDraft, id: string) =>
-  draft.pricing.priceMatrices.some((matrix) => matrix.rows.some((row) => row.id === id)) || draft.pricing.baseModelRows.some((row) => row.id === id) || draft.pricing.workstationRows.some((row) => row.id === id);
+  draft.pricing.priceMatrices.some((matrix) => matrix.rows.some((row) => row.id === id)) || draft.pricing.baseModelRows.some((row) => row.id === id) || draft.pricing.workstationRows.some((row) => row.id === id) || draft.pricing.modularGroups.some((group) => group.id === id || draftModularRows(group).some((row) => row.id === id));
 const manualPricedRow = (input: ManualPricedRow) => {
   const name = input.name.trim();
   return {
@@ -468,4 +471,52 @@ export function getSmartProductReviewSections(draft: ProductTemplateDraft) {
     ["Options / Accessories", draft.optionGroups.length],
   ];
   return sections.filter(([, count]) => count > 0);
+}
+
+/** Modular Pricing: items of a matrix-priced group reuse the matrix row builder, items of a direct-priced group the priced-row builder. */
+export type ManualModularItem = ManualPricedRow & { prices?: Record<string, string> };
+export type ManualModularGroup = ManualPricedRow & { groupId: string; groupName: string };
+const setModularGroup = (draft: ProductTemplateDraft, groupIndex: number, patch: Partial<ProductTemplateDraftModularGroup>): ProductTemplateDraft =>
+  ({ ...draft, pricing: { ...draft.pricing, modularGroups: draft.pricing.modularGroups.map((group, index) => index === groupIndex ? { ...group, ...patch } : group) } });
+const modularRowsPatch = (group: ProductTemplateDraftModularGroup, rows: unknown[]): Partial<ProductTemplateDraftModularGroup> =>
+  isDirectModularGroup(group) ? { directRows: rows as ProductTemplateDraftModularDirectRow[] } : { matrix: group.matrix ? { ...group.matrix, rows: rows as ProductTemplateDraftMatrixRow[] } : undefined };
+export function addReviewedModularItem(draft: ProductTemplateDraft, groupIndex: number, input: ManualModularItem): ProductTemplateDraft {
+  const group = draft.pricing.modularGroups[groupIndex];
+  if (!group || !input.name.trim() || reviewRowIdTaken(draft, input.id)) return draft;
+  const row = isDirectModularGroup(group) ? manualPricedRow(input) : group.matrix ? manualMatrixRow(group.matrix, { ...input, prices: input.prices ?? {} }) : null;
+  return row ? setModularGroup(draft, groupIndex, modularRowsPatch(group, addReviewedRow<unknown>(draftModularRows(group), row))) : draft;
+}
+export function moveReviewedModularItem(draft: ProductTemplateDraft, groupIndex: number, rowIndex: number, direction: -1 | 1): ProductTemplateDraft {
+  const group = draft.pricing.modularGroups[groupIndex];
+  if (!group) return draft;
+  const rows = draftModularRows(group);
+  const next = moveReviewedRow(rows, rowIndex, direction);
+  return next === rows ? draft : setModularGroup(draft, groupIndex, modularRowsPatch(group, next));
+}
+export function removeReviewedModularItem(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, groupIndex: number, rowId: string) {
+  const group = draft.pricing.modularGroups[groupIndex];
+  const rows = group ? draftModularRows(group) : [];
+  if (!group || rows.length <= 1 || !rows.some((row) => row.id === rowId)) return { draft, plan };
+  const matches = (target: ReviewRuleTarget) => target?.kind === "modular" && target.group_id === group.id && target.row_id === rowId;
+  return removeReviewedRowRules(setModularGroup(draft, groupIndex, modularRowsPatch(group, removeReviewedRow(rows, rowId))), plan, matches, `modular:${group.id}`, rows.length - 1);
+}
+/** A manual group is direct-priced with its first item, and gets its own review route (Apply only keeps groups that have one). */
+export function addReviewedModularGroup(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, input: ManualModularGroup) {
+  const label = input.groupName.trim();
+  if (!label || !input.name.trim() || input.groupId === input.id || reviewRowIdTaken(draft, input.groupId) || reviewRowIdTaken(draft, input.id)) return { draft, plan };
+  const group: ProductTemplateDraftModularGroup = { id: input.groupId, label, defaultDimensions: null, defaultSpecification: null, pricingMode: "direct", directRows: [manualPricedRow(input)] };
+  const route = { key: `modular:${group.id}`, sourceId: group.id, sourceKind: "modular" as const, sourceName: label, groupName: label, rowCount: 1, columnCount: 0, recommendedDestination: "modular" as const, destination: "modular" as const, supportedDestinations: ["modular", "skip"] as ("modular" | "skip")[] };
+  const lastModular = plan ? plan.routes.map((item) => item.sourceKind).lastIndexOf("modular") : -1;
+  const firstOption = plan ? plan.routes.findIndex((item) => item.sourceKind === "option") : -1;
+  const at = !plan ? 0 : lastModular >= 0 ? lastModular + 1 : firstOption >= 0 ? firstOption : plan.routes.length;
+  return {
+    draft: { ...draft, pricing: { ...draft.pricing, modularGroups: [...draft.pricing.modularGroups, group] } },
+    plan: plan ? { ...plan, routes: [...plan.routes.slice(0, at), route, ...plan.routes.slice(at)] } : plan,
+  };
+}
+export function removeReviewedModularGroup(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, groupId: string) {
+  if (draft.pricing.modularGroups.length <= 1 || !draft.pricing.modularGroups.some((group) => group.id === groupId)) return { draft, plan };
+  const matches = (target: ReviewRuleTarget) => target?.kind === "modular" && target.group_id === groupId;
+  const without = { ...draft, pricing: { ...draft.pricing, modularGroups: draft.pricing.modularGroups.filter((group) => group.id !== groupId) } };
+  return removeReviewedRowRules(without, plan, matches, `modular:${groupId}`, null);
 }
