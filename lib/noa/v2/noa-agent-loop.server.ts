@@ -1,6 +1,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, hasToolCall, stepCountIs } from "ai";
+import { resolveAiAgentRuntimeConfig, type AiAgentRuntimeConfig } from "@/lib/ai/resolve-agent-runtime-config.server";
 import { NoaProviderError } from "@/lib/noa/noa-provider.server";
 import { withNoaSpokenResponse } from "@/lib/noa/noa-spoken-response";
 import type { NoaAnswer, NoaChatRequest } from "@/lib/noa/noa-types";
@@ -29,17 +30,41 @@ For greetings and small talk, reply briefly and do not use any tool.
 If a tool says the user is not authorized or has no access, tell the user plainly that they do not have access to that information. Do not try other tools to get around it.
 When the user asks for the price of a specific product, or wants to configure a product, use configureProduct. Products are configurable, so there is usually no single price. Use getProductPrice only for price-check status questions. Never guess or calculate a price yourself.`;
 
-/** Experimental NOA v2: a read-only tool-calling loop. Authorization stays inside the existing capabilities. */
-export async function runNoaAgentLoop(request: NoaChatRequest): Promise<NoaAnswer> {
-  // NOA_V2_PROVIDER: "openai" or "anthropic"; anything else or missing means anthropic. OpenAI uses the same key variables as lib/ai/providers/openai.server.ts.
-  const provider = process.env.NOA_V2_PROVIDER?.trim() === "openai" ? "openai" : "anthropic";
-  const apiKey = provider === "openai"
-    ? process.env.OPENAI_API_KEY?.trim() || process.env.SOURCE_QA_AI_API_KEY?.trim()
-    : process.env.ANTHROPIC_API_KEY?.trim();
+type V2Provider = "openai" | "anthropic";
+
+// OpenAI uses the same key variables as lib/ai/providers/openai.server.ts.
+const v2ApiKey = (provider: V2Provider) => provider === "openai"
+  ? process.env.OPENAI_API_KEY?.trim() || process.env.SOURCE_QA_AI_API_KEY?.trim()
+  : process.env.ANTHROPIC_API_KEY?.trim();
+
+// Follows Settings -> AI "NOA Assistant" (the same resolver the old NOA uses). A provider v2 has no SDK for, or a resolver error, falls back to
+// NOA_V2_PROVIDER / NOA_V2_MODEL (anthropic unless "openai"). A supported provider without a key never falls back to another provider.
+async function resolveV2Model(): Promise<{ provider: V2Provider; apiKey: string; model: string }> {
+  let runtime: AiAgentRuntimeConfig | null = null;
+  try {
+    runtime = await resolveAiAgentRuntimeConfig("noa_orchestrator");
+  } catch {
+    console.warn("[NOA_V2_PROVIDER_FALLBACK] resolver_error");
+  }
+  if (runtime && !runtime.enabled) throw new NoaProviderError("NOA is currently disabled by the system administrator.", "not_configured");
+  if (runtime && (runtime.provider === "openai" || runtime.provider === "anthropic")) {
+    const apiKey = v2ApiKey(runtime.provider);
+    if (!runtime.apiKeyConfigured || !apiKey) throw new NoaProviderError("NOA is not configured.", "not_configured");
+    return { provider: runtime.provider, apiKey, model: runtime.model };
+  }
+  if (runtime) console.warn(`[NOA_V2_PROVIDER_FALLBACK] ${runtime.provider}`);
+  // NOA_V2_PROVIDER: "openai" or "anthropic"; anything else or missing means anthropic.
+  const provider: V2Provider = process.env.NOA_V2_PROVIDER?.trim() === "openai" ? "openai" : "anthropic";
+  const apiKey = v2ApiKey(provider);
   if (!apiKey) throw new NoaProviderError("NOA is not configured.", "not_configured");
   const configuredModel = process.env.NOA_V2_MODEL?.trim();
   if (provider === "openai" && !configuredModel) throw new NoaProviderError("NOA v2 model is not set.", "not_configured");
-  const model = configuredModel || DEFAULT_MODEL;
+  return { provider, apiKey, model: configuredModel || DEFAULT_MODEL };
+}
+
+/** Experimental NOA v2: a read-only tool-calling loop. Authorization stays inside the existing capabilities. */
+export async function runNoaAgentLoop(request: NoaChatRequest): Promise<NoaAnswer> {
+  const { provider, apiKey, model } = await resolveV2Model();
   const { tools, sources, getConfigurationAnswer } = createNoaAgentTools(request.context, { displayName: request.displayName });
   const page = `Current page: pathname=${request.context.pathname}, section=${request.context.section}. If the user asks where they are, which page this is, or what they are looking at, answer from this. It is about the ProjectWorkflow page, never about physical location.`;
   const system = `${SYSTEM_PROMPT}\n${page}${request.displayName ? `\nThe user's display name is ${request.displayName}.\nWhen you list recorded activity (own or team), always write the person's name. For the signed-in user write their display name followed by (you), for example: ${request.displayName} (you) created quotation QN-0006-001. Never write only 'you' for the signed-in user in activity lists. For other people write just their name.` : ""}`;
