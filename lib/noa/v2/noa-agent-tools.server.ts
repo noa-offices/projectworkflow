@@ -19,6 +19,7 @@ const ACTIVITY_MESSAGES = {
   team: { today: "show team activity today", yesterday: "show team activity yesterday" },
   mine: { today: "show my activity today", yesterday: "show my activity yesterday" },
 } as const;
+const ACTIVITY_REFERENCE_PATTERN = /^(?:QN|CO)-\d{4}-\d{3}$/i; // checked in execute, never in the JSON schema
 
 // The Insights capability also classifies by keywords in the message, so the model never sends it free text: each closed report value
 // maps to the exact phrasing that selects one kind (the four client rankings are the strings the agent planner already uses).
@@ -127,9 +128,18 @@ export function createNoaAgentTools(context: NoaPageContext, options: { displayN
       execute: async ({ query }) => validText(query, 200) ? collect(await fetchNoaAttentionCapability(query, context)) : refuse(INVALID_TEXT),
     }),
     getTeamActivity: tool({
-      description: `Get recorded ProjectWorkflow activity for a day. Use scope "team" for questions about who worked, what the team did, or team activity; use scope "mine" only for the current user's own activity. Read-only.`,
-      inputSchema: z.object({ scope: z.enum(["team", "mine"]), period: z.enum(["today", "yesterday"]) }),
-      execute: async ({ scope, period }) => collect(await fetchNoaUserActivityCapability(ACTIVITY_MESSAGES[scope][period], context)),
+      description: `Get recorded ProjectWorkflow activity for a day. Use scope "team" for questions about who worked, what the team did, or team activity; use scope "mine" only for the current user's own activity. request "summary" (default) gives counts. request "details" lists the real events: use it when the user asks for detail, or what changed. Details work only for the user's own activity (scope "mine") for today or yesterday, or for one quotation or project file when reference is given (for example QN-0005-001 or CO-0003-001). Team details are not available; offer the user's own details or a team summary. Read-only.`,
+      inputSchema: z.object({ scope: z.enum(["team", "mine"]), period: z.enum(["today", "yesterday"]), request: z.enum(["summary", "details"]).optional(), reference: z.string().optional() }),
+      execute: async ({ scope, period, request, reference }) => {
+        if (request !== "details") return collect(await fetchNoaUserActivityCapability(ACTIVITY_MESSAGES[scope][period], context));
+        const ref = reference?.trim();
+        if (ref) {
+          if (!ACTIVITY_REFERENCE_PATTERN.test(ref)) return refuse("The reference is not valid. Use a quotation number like QN-0005-001 or a project file number like CO-0003-001.");
+          return collect(await fetchNoaUserActivityCapability(`what changed on ${ref.toUpperCase()}`, context));
+        }
+        if (scope === "team") return refuse("Team activity details are not supported yet. I can show your own activity details, or a team activity summary.");
+        return collect(await fetchNoaUserActivityCapability(`what changed ${period}`, context));
+      },
     }),
     getInsights: tool({
       description: `Get a ProjectWorkflow business report (sales report, top clients, quotation summary). Read-only. report values: quotation_summary = quotation count and value for the period; quotation_analytics = quotation status breakdown, confirmed value and average for the period (use for "sales report" / "sales overview"); quotation_trend = quotation trend over time; quotation_compare = quotations this month versus last month; top_clients_by_quotation_value, top_clients_by_confirmed_value, top_clients_by_project_value = client rankings by that value; quotation_count_per_client = number of quotations per client; project_file_analytics = project file status and value; project_summary = project overview; client_summary = client overview. period applies only to quotation_summary and quotation_analytics (default this_month). If the user asks for something that is not in this list (for example sales by salesperson), do not call this tool; say it is not available.`,

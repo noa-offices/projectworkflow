@@ -5,12 +5,13 @@ import { z } from "zod";
 const ok = async () => ({ ok: true, data: {}, sources: [{ label: "Fake", type: "product" }] });
 const seen: string[] = [];
 const seenOptions: unknown[] = [];
+const activityMessages: string[] = [];
 const record = async (message: string, _context?: unknown, options?: unknown) => { seen.push(message); seenOptions.push(options); return ok(); };
 mock.module("@/lib/noa/noa-product-capability.server", { namedExports: { fetchNoaProductCapability: record } });
 mock.module("@/lib/noa/noa-price-capability.server", { namedExports: { fetchNoaPriceCapability: record } });
 mock.module("@/lib/noa/noa-quotation-capability.server", { namedExports: { fetchNoaQuotationCapability: ok } });
 mock.module("@/lib/noa/noa-attention-capability.server", { namedExports: { fetchNoaAttentionCapability: ok } });
-mock.module("@/lib/noa/noa-user-activity-capability.server", { namedExports: { fetchNoaUserActivityCapability: ok } });
+mock.module("@/lib/noa/noa-user-activity-capability.server", { namedExports: { fetchNoaUserActivityCapability: async (message: string) => { activityMessages.push(message); return ok(); } } });
 mock.module("@/lib/noa/noa-client-capability.server", { namedExports: { fetchNoaClientCapability: record } });
 mock.module("@/lib/noa/noa-project-capability.server", { namedExports: { fetchNoaProjectCapability: record } });
 mock.module("@/lib/noa/noa-procurement-capability.server", { namedExports: { fetchNoaProcurementCapability: record } });
@@ -128,6 +129,23 @@ test("list, count and status_summary still refuse keyword terms; detail and sing
   await refused(search, { request: "list", term: "Every" }); await refused(search, { request: "count", term: "all chairs" }); await refused(price, { request: "status_summary", term: "Every" });
   await refused(search, { request: "detail", term: "x".repeat(81) }); await refused(search, { request: "detail", term: "Every; drop" }); await refused(price, { request: "single", term: "" });
   assert.deepEqual(seen, [], "nothing reached a capability");
+});
+
+test("getTeamActivity details: own today/yesterday and QN/CO references send exact messages; bad or team details never reach the capability", async () => {
+  const { tools } = createNoaAgentTools({ pathname: "", section: "other" });
+  const activity = tools.getTeamActivity as unknown as Closed;
+  const run = async (input: unknown) => (await activity.execute(input, {})) as { ok: boolean };
+  activityMessages.length = 0;
+  await run({ scope: "mine", period: "today", request: "details" }); await run({ scope: "mine", period: "yesterday", request: "details" });
+  await run({ scope: "mine", period: "today", request: "details", reference: " qn-0005-001 " }); await run({ scope: "team", period: "today", request: "details", reference: "CO-0003-001" });
+  assert.deepEqual(activityMessages, ["what changed today", "what changed yesterday", "what changed on QN-0005-001", "what changed on CO-0003-001"]);
+  activityMessages.length = 0;
+  assert.equal((await run({ scope: "mine", period: "today", request: "details", reference: "QN-5" })).ok, false);
+  assert.equal((await run({ scope: "mine", period: "today", request: "details", reference: "what changed on QN-0005-001 and more" })).ok, false);
+  assert.equal((await run({ scope: "team", period: "today", request: "details" })).ok, false);
+  assert.deepEqual(activityMessages, [], "refused requests never reach the capability");
+  await run({ scope: "team", period: "today" }); await run({ scope: "mine", period: "yesterday", request: "summary" });
+  assert.deepEqual(activityMessages, ["show team activity today", "show my activity yesterday"]);
 });
 
 test("configureProduct starts the old guided flow with exactly 'configure <term>' and returns the answer untouched", async () => {
