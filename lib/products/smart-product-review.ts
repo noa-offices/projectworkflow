@@ -1,5 +1,7 @@
-import { draftModularRows, type ProductTemplateDraft, type ProductTemplateDraftCurrency, type ProductTemplateDraftDimension, type ProductTemplateDraftMatrixRow, type ProductTemplateDraftPrice, type ProductTemplateDraftSelectionRule } from "./product-template-draft";
+import { draftModularRows, type ProductTemplateDraft, type ProductTemplateDraftCurrency, type ProductTemplateDraftDimension, type ProductTemplateDraftBaseModelRow, type ProductTemplateDraftMatrixRow, type ProductTemplateDraftPrice, type ProductTemplateDraftWorkstationRow, type ProductTemplateDraftSelectionRule } from "./product-template-draft";
 import { smartReviewRuleTarget, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
+import { draftUngroupedBaseModelRows, replaceDraftBaseModelScopeRows } from "./base-model-draft-groups";
+import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
 
 /** Prices of a modular row in either pricing mode (matrix cells or one direct price). */
 function modularRowPrices(row: { prices?: Record<string, ProductTemplateDraftPrice>; price?: ProductTemplateDraftPrice }) {
@@ -247,20 +249,70 @@ export function moveReviewedMatrixModel(draft: ProductTemplateDraft, matrixIndex
   const matrix = draft.pricing.priceMatrices[matrixIndex];
   return matrix ? updateReviewedMatrix(draft, matrixIndex, { rows: moveReviewedRow(matrix.rows, rowIndex, direction) }) : draft;
 }
-export function removeReviewedMatrixModel(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, matrixIndex: number, rowId: string) {
-  const matrix = draft.pricing.priceMatrices[matrixIndex];
-  if (!matrix || matrix.rows.length <= 1 || !matrix.rows.some((row) => row.id === rowId)) return { draft, plan };
-  const matches = (target: { kind: string; group_id: string; row_id: string } | null | undefined) => (target?.kind === "price_matrix" || target?.kind === "base_model") && target.group_id === matrix.id && target.row_id === rowId;
-  const nextDraft = updateReviewedMatrix(draft, matrixIndex, { rows: removeReviewedRow(matrix.rows, rowId) });
-  const cleanedDraft = { ...nextDraft, optionGroups: nextDraft.optionGroups.map((group) => group.conditionalConfiguration ? {
+type ReviewRuleTarget = { kind: string; group_id: string; row_id: string } | null | undefined;
+/** Drops every option-group rule (draft and review plan) whose target `matches`, and fixes the route's row count. */
+function removeReviewedRowRules(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, matches: (target: ReviewRuleTarget) => boolean, routeKey: string, rowCount: number) {
+  const cleanedDraft = { ...draft, optionGroups: draft.optionGroups.map((group) => group.conditionalConfiguration ? {
     ...group, conditionalConfiguration: { ...group.conditionalConfiguration, applicability: group.conditionalConfiguration.applicability.filter((rule) => !matches(rule.target ?? (rule.base_model_group_id && rule.base_model_row_id ? { kind: "base_model", group_id: rule.base_model_group_id, row_id: rule.base_model_row_id } : null))) },
   } : group) };
   const nextPlan = plan ? { ...plan, routes: plan.routes.map((route) => ({
     ...route,
-    ...(route.key === `matrix:${matrix.id}` ? { rowCount: matrix.rows.length - 1 } : {}),
+    ...(route.key === routeKey ? { rowCount } : {}),
     ...(route.accessory ? { accessory: { ...route.accessory, rules: route.accessory.rules.filter((rule) => !matches(smartReviewRuleTarget(rule))) } } : {}),
   })) } : undefined;
   return { draft: cleanedDraft, plan: nextPlan };
+}
+export function removeReviewedMatrixModel(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, matrixIndex: number, rowId: string) {
+  const matrix = draft.pricing.priceMatrices[matrixIndex];
+  if (!matrix || matrix.rows.length <= 1 || !matrix.rows.some((row) => row.id === rowId)) return { draft, plan };
+  const matches = (target: ReviewRuleTarget) => (target?.kind === "price_matrix" || target?.kind === "base_model") && target.group_id === matrix.id && target.row_id === rowId;
+  return removeReviewedRowRules(updateReviewedMatrix(draft, matrixIndex, { rows: removeReviewedRow(matrix.rows, rowId) }), plan, matches, `matrix:${matrix.id}`, matrix.rows.length - 1);
+}
+
+/** Base / Model and Workstation rows: same add / move / remove behaviour as matrix models. An empty price stays missing (null), 0 stays 0. */
+export type ManualPricedRow = { id: string; name: string; code: string; specification: string; price: string; additionalPrice?: string };
+const reviewRowIdTaken = (draft: ProductTemplateDraft, id: string) =>
+  draft.pricing.priceMatrices.some((matrix) => matrix.rows.some((row) => row.id === id)) || draft.pricing.baseModelRows.some((row) => row.id === id) || draft.pricing.workstationRows.some((row) => row.id === id);
+const manualPricedRow = (input: ManualPricedRow) => {
+  const name = input.name.trim();
+  return {
+    id: input.id, label: name, displayName: name, supplierCodes: input.code.trim() ? [input.code.trim()] : [], referenceCodes: [],
+    dimensions: null, currency: "EUR" as const, price: nullableReviewNumber(input.price), specification: input.specification.trim() || null,
+  };
+};
+/** The ungrouped Base / Model rows are the table this phase edits; native System Groups are untouched. */
+const setUngroupedBaseModelRows = (draft: ProductTemplateDraft, rows: ProductTemplateDraftBaseModelRow[]): ProductTemplateDraft =>
+  ({ ...draft, pricing: { ...draft.pricing, baseModelRows: replaceDraftBaseModelScopeRows(draft.pricing.baseModelRows, null, rows) } });
+export function addReviewedBaseModelRow(draft: ProductTemplateDraft, input: ManualPricedRow): ProductTemplateDraft {
+  if (!input.name.trim() || reviewRowIdTaken(draft, input.id)) return draft;
+  return setUngroupedBaseModelRows(draft, addReviewedRow(draftUngroupedBaseModelRows(draft.pricing), manualPricedRow(input)));
+}
+export function moveReviewedBaseModelRow(draft: ProductTemplateDraft, rowIndex: number, direction: -1 | 1): ProductTemplateDraft {
+  const rows = draftUngroupedBaseModelRows(draft.pricing);
+  const next = moveReviewedRow(rows, rowIndex, direction);
+  return next === rows ? draft : setUngroupedBaseModelRows(draft, next);
+}
+export function removeReviewedBaseModelRow(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, rowId: string) {
+  const rows = draftUngroupedBaseModelRows(draft.pricing);
+  if (rows.length <= 1 || !rows.some((row) => row.id === rowId)) return { draft, plan };
+  const matches = (target: ReviewRuleTarget) => (target?.kind === "price_matrix" || target?.kind === "base_model") && target.group_id === LEGACY_BASE_MODEL_GROUP_ID && target.row_id === rowId;
+  return removeReviewedRowRules(setUngroupedBaseModelRows(draft, removeReviewedRow(rows, rowId)), plan, matches, "base_model:rows", rows.length - 1);
+}
+const setWorkstationRows = (draft: ProductTemplateDraft, workstationRows: ProductTemplateDraftWorkstationRow[]): ProductTemplateDraft => ({ ...draft, pricing: { ...draft.pricing, workstationRows } });
+export function addReviewedWorkstationRow(draft: ProductTemplateDraft, input: ManualPricedRow): ProductTemplateDraft {
+  if (!input.name.trim() || reviewRowIdTaken(draft, input.id)) return draft;
+  const row: ProductTemplateDraftWorkstationRow = { ...manualPricedRow(input), additionalPrice: nullableReviewNumber(input.additionalPrice ?? ""), layoutType: null };
+  return setWorkstationRows(draft, addReviewedRow(draft.pricing.workstationRows, row));
+}
+export function moveReviewedWorkstationRow(draft: ProductTemplateDraft, rowIndex: number, direction: -1 | 1): ProductTemplateDraft {
+  const next = moveReviewedRow(draft.pricing.workstationRows, rowIndex, direction);
+  return next === draft.pricing.workstationRows ? draft : setWorkstationRows(draft, next);
+}
+export function removeReviewedWorkstationRow(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, rowId: string) {
+  const rows = draft.pricing.workstationRows;
+  if (rows.length <= 1 || !rows.some((row) => row.id === rowId)) return { draft, plan };
+  const matches = (target: ReviewRuleTarget) => target?.kind === "workstation" && target.row_id === rowId;
+  return removeReviewedRowRules(setWorkstationRows(draft, removeReviewedRow(rows, rowId)), plan, matches, "workstation:rows", rows.length - 1);
 }
 
 export function updateReviewedMatrixPrice(
