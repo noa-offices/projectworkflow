@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups.js";
 import { normalizeProductTemplateDraft, type ProductTemplateDraft } from "./product-template-draft.js";
 import {
   accessoryNeedsReviewCount,
   addReviewedMatrixModel,
+  addReviewedBaseModelRow,
+  addReviewedWorkstationRow,
+  moveReviewedBaseModelRow,
+  moveReviewedWorkstationRow,
+  removeReviewedBaseModelRow,
+  removeReviewedWorkstationRow,
   moveReviewedMatrixModel,
   removeReviewedMatrixModel,
   ACCESSORY_REVIEW_REQUIRED_MESSAGE,
@@ -417,5 +424,89 @@ test("removed matrix model loses option rules in draft and review plan", () => {
   const next = removeReviewedMatrixModel(draft, plan, 0, "aa-9090");
   assert.deepEqual(next.draft.optionGroups[0].conditionalConfiguration?.applicability.map((rule) => rule.target), [keep]);
   assert.deepEqual(next.plan?.routes[1].accessory?.rules.map((rule) => rule.target), [keep]);
+  assert.equal(next.plan?.routes[0].rowCount, 1);
+});
+
+const pricedRow = (id: string, extra: object = {}) => ({ id, label: id, displayName: id, dimensions: null, currency: "EUR" as const, price: 10, specification: null, supplierCodes: [], referenceCodes: [], ...extra });
+const rowsDraft: ProductTemplateDraft = { ...reviewedSource, pricing: { ...reviewedSource.pricing,
+  baseModelRows: [pricedRow("bm-a"), pricedRow("bm-grouped", { groupId: "sys" }), pricedRow("bm-b")],
+  workstationRows: [{ ...pricedRow("ws-a"), additionalPrice: null, layoutType: null }, { ...pricedRow("ws-b"), additionalPrice: null, layoutType: null }] } };
+type RuleTarget = { kind: "base_model" | "price_matrix" | "workstation"; group_id: string; row_id: string };
+const rulesFor = (draft: ProductTemplateDraft, targets: RuleTarget[]) =>
+  ({ ...draft, optionGroups: draft.optionGroups.map((group) => ({ ...group, conditionalConfiguration: { role: "conditional_option" as const, selection: "exactly_one" as const, applicability: targets.map((target) => ({ target, required: true, visible: true })) } })) });
+const rulePlan = (routeKey: string, targets: RuleTarget[]) =>
+  ({ routes: [{ key: routeKey, rowCount: 3 }, { key: "option:extras", rowCount: 1, accessory: { role: "conditional_option" as const, selection: "required_exactly_one" as const, rules: targets.map((target) => ({ target, required: true })) } }] }) as unknown as Parameters<typeof removeReviewedBaseModelRow>[1];
+const ungroupedIds = (draft: ProductTemplateDraft) => draft.pricing.baseModelRows.filter((row) => !row.groupId).map((row) => row.id);
+const noRules = (draft: ProductTemplateDraft) => draft.optionGroups.flatMap((group) => group.conditionalConfiguration?.applicability ?? []);
+
+test("base model row add: unique id, empty price differs from 0, no rule, native groups untouched", () => {
+  const next = addReviewedBaseModelRow(rowsDraft, { id: "bm-new", name: " New ", code: "N1", specification: "", price: "" });
+  assert.deepEqual(ungroupedIds(next), ["bm-a", "bm-b", "bm-new"]);
+  const added = next.pricing.baseModelRows.find((row) => row.id === "bm-new");
+  assert.equal(added?.price, null); assert.equal(added?.displayName, "New"); assert.deepEqual(added?.supplierCodes, ["N1"]); assert.equal(added?.groupId, undefined);
+  assert.equal(addReviewedBaseModelRow(next, { id: "bm-zero", name: "Zero", code: "", specification: "", price: "0" }).pricing.baseModelRows.find((row) => row.id === "bm-zero")?.price, 0);
+  assert.equal(next.pricing.baseModelRows.find((row) => row.id === "bm-grouped")?.groupId, "sys");
+  assert.equal(addReviewedBaseModelRow(next, { id: "bm-new", name: "Dup", code: "", specification: "", price: "" }), next);
+  assert.equal(addReviewedBaseModelRow(next, { id: "ws-a", name: "Clash with a workstation id", code: "", specification: "", price: "" }), next);
+  assert.equal(addReviewedBaseModelRow(next, { id: "blank", name: "  ", code: "", specification: "", price: "" }), next);
+  assert.deepEqual(noRules(next), noRules(rowsDraft));
+});
+
+test("base model row move: swaps inside the ungrouped rows only and stops at the ends", () => {
+  const moved = moveReviewedBaseModelRow(rowsDraft, 1, -1);
+  assert.deepEqual(ungroupedIds(moved), ["bm-b", "bm-a"]);
+  assert.equal(moved.pricing.baseModelRows.find((row) => row.id === "bm-grouped")?.groupId, "sys");
+  assert.equal(moveReviewedBaseModelRow(rowsDraft, 0, -1), rowsDraft);
+  assert.equal(moveReviewedBaseModelRow(rowsDraft, 1, 1), rowsDraft);
+});
+
+test("base model row remove keeps at least one row", () => {
+  const removed = removeReviewedBaseModelRow(rowsDraft, undefined, "bm-a");
+  assert.deepEqual(ungroupedIds(removed.draft), ["bm-b"]);
+  assert.equal(removed.draft.pricing.baseModelRows.some((row) => row.id === "bm-grouped"), true);
+  assert.equal(removeReviewedBaseModelRow(removed.draft, undefined, "bm-b").draft, removed.draft);
+  assert.equal(removeReviewedBaseModelRow(rowsDraft, undefined, "missing").draft, rowsDraft);
+});
+
+test("removed base model row loses option rules (base_model and price_matrix kinds) in draft and review plan", () => {
+  const gone: RuleTarget = { kind: "base_model", group_id: LEGACY_BASE_MODEL_GROUP_ID, row_id: "bm-a" };
+  const goneAsMatrix: RuleTarget = { kind: "price_matrix", group_id: LEGACY_BASE_MODEL_GROUP_ID, row_id: "bm-a" };
+  const keep: RuleTarget = { kind: "base_model", group_id: LEGACY_BASE_MODEL_GROUP_ID, row_id: "bm-b" };
+  const next = removeReviewedBaseModelRow(rulesFor(rowsDraft, [gone, goneAsMatrix, keep]), rulePlan("base_model:rows", [gone, goneAsMatrix, keep]), "bm-a");
+  assert.deepEqual(next.draft.optionGroups[0].conditionalConfiguration?.applicability.map((rule) => rule.target), [keep]);
+  assert.deepEqual(next.plan?.routes[1].accessory?.rules.map((rule) => rule.target), [keep]);
+  assert.equal(next.plan?.routes[0].rowCount, 1);
+});
+
+test("workstation row add: unique id, empty prices differ from 0, no rule", () => {
+  const next = addReviewedWorkstationRow(rowsDraft, { id: "ws-new", name: "New desk", code: "W1", specification: "", price: "0", additionalPrice: "" });
+  assert.deepEqual(next.pricing.workstationRows.map((row) => row.id), ["ws-a", "ws-b", "ws-new"]);
+  const added = next.pricing.workstationRows[2];
+  assert.equal(added.price, 0); assert.equal(added.additionalPrice, null); assert.deepEqual(added.supplierCodes, ["W1"]);
+  assert.equal(addReviewedWorkstationRow(next, { id: "ws-empty", name: "Empty", code: "", specification: "", price: "" }).pricing.workstationRows[3].price, null);
+  assert.equal(addReviewedWorkstationRow(next, { id: "ws-new", name: "Dup", code: "", specification: "", price: "" }), next);
+  assert.equal(addReviewedWorkstationRow(next, { id: "bm-a", name: "Clash with a base model id", code: "", specification: "", price: "" }), next);
+  assert.deepEqual(noRules(next), noRules(rowsDraft));
+});
+
+test("workstation row move keeps the chosen order and stops at the ends", () => {
+  assert.deepEqual(moveReviewedWorkstationRow(rowsDraft, 1, -1).pricing.workstationRows.map((row) => row.id), ["ws-b", "ws-a"]);
+  assert.equal(moveReviewedWorkstationRow(rowsDraft, 0, -1), rowsDraft);
+  assert.equal(moveReviewedWorkstationRow(rowsDraft, 1, 1), rowsDraft);
+});
+
+test("workstation row remove keeps at least one row", () => {
+  const removed = removeReviewedWorkstationRow(rowsDraft, undefined, "ws-a");
+  assert.deepEqual(removed.draft.pricing.workstationRows.map((row) => row.id), ["ws-b"]);
+  assert.equal(removeReviewedWorkstationRow(removed.draft, undefined, "ws-b").draft, removed.draft);
+});
+
+test("removed workstation row loses its workstation-kind option rules in draft and review plan", () => {
+  const gone: RuleTarget = { kind: "workstation", group_id: "ws-group", row_id: "ws-a" };
+  const keep: RuleTarget = { kind: "workstation", group_id: "ws-group", row_id: "ws-b" };
+  const baseModelSameId: RuleTarget = { kind: "base_model", group_id: LEGACY_BASE_MODEL_GROUP_ID, row_id: "ws-a" };
+  const next = removeReviewedWorkstationRow(rulesFor(rowsDraft, [gone, keep, baseModelSameId]), rulePlan("workstation:rows", [gone, keep, baseModelSameId]), "ws-a");
+  assert.deepEqual(next.draft.optionGroups[0].conditionalConfiguration?.applicability.map((rule) => rule.target), [keep, baseModelSameId]);
+  assert.deepEqual(next.plan?.routes[1].accessory?.rules.map((rule) => rule.target), [keep, baseModelSameId]);
   assert.equal(next.plan?.routes[0].rowCount, 1);
 });
