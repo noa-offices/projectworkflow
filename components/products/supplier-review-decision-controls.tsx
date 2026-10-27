@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type Ref } from "react";
 import { decisionLabels, usableSupplierPrice, type DecisionDraft, type ReviewDecision } from "@/lib/products/supplier-review-decisions";
 import type { ReviewRow } from "@/lib/products/smart-setup-supplier-review";
 
-export function ReviewSaveButton({ count, disabled, saving, onSave }: { count: number; disabled: boolean; saving: boolean; onSave: () => void }) {
+export function ReviewSaveButton({ count, disabled, saving, onSave, buttonRef }: { count: number; disabled: boolean; saving: boolean; onSave: () => void; buttonRef?: Ref<HTMLButtonElement> }) {
   return <div className="flex flex-wrap items-center gap-2">
-    <button type="button" onClick={onSave} disabled={disabled || !count} className="min-h-10 rounded-md bg-emerald-800 px-3 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Saving…" : "Save decisions"}</button>
+    <button ref={buttonRef} type="button" onClick={count ? onSave : undefined} disabled={disabled || saving} aria-disabled={disabled || saving || !count} className="min-h-10 rounded-md bg-emerald-800 px-3 text-sm font-semibold text-white disabled:opacity-50 aria-disabled:opacity-50">{saving ? "Saving…" : "Save decisions"}</button>
     {count > 0 ? <span role="status" className="text-sm font-medium text-amber-900">{count} unsaved change{count === 1 ? "" : "s"}</span> : null}
   </div>;
 }
