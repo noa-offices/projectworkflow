@@ -4,6 +4,9 @@ import test from "node:test";
 import { normalizeProductTemplateDraft, type ProductTemplateDraft } from "./product-template-draft.js";
 import {
   accessoryNeedsReviewCount,
+  addReviewedMatrixModel,
+  moveReviewedMatrixModel,
+  removeReviewedMatrixModel,
   ACCESSORY_REVIEW_REQUIRED_MESSAGE,
   applySmartProductReviewCurrencyOverride,
   collectPricedRowCurrencies,
@@ -379,4 +382,40 @@ test("stripAccessoryReviewMetadata removes reviewStatus/reviewReason from every 
   assert.equal(item.id, "electrification");
   // Original draft is untouched.
   assert.equal(draft.optionGroups[0].items[1].reviewStatus, "needs_review");
+});
+
+
+test("manual matrix model adds unique row with distinct zero and missing prices", () => {
+  const source = { ...reviewedSource, pricing: { ...reviewedSource.pricing, priceMatrices: [{ ...reviewedSource.pricing.priceMatrices[0], columns: [{ id: "a", label: "A" }, { id: "b", label: "B" }] }] } };
+  const next = addReviewedMatrixModel(source, 0, { id: "manual-1", name: "New model", code: "N1", specification: "", prices: { a: "0", b: "" } });
+  assert.deepEqual(next.pricing.priceMatrices[0].rows.map((row) => row.id), ["aa-9090", "manual-1"]);
+  assert.deepEqual(next.pricing.priceMatrices[0].rows[1].prices, { a: 0, b: null });
+  assert.deepEqual(next.pricing.priceMatrices[0].rows[1].supplierCodes, ["N1"]);
+  assert.equal(addReviewedMatrixModel(next, 0, { id: "manual-1", name: "Duplicate", code: "", specification: "", prices: {} }), next);
+});
+
+test("matrix model move preserves the chosen order", () => {
+  const added = addReviewedMatrixModel(reviewedSource, 0, { id: "manual-1", name: "New", code: "", specification: "", prices: {} });
+  const moved = moveReviewedMatrixModel(added, 0, 1, -1);
+  assert.deepEqual(moved.pricing.priceMatrices[0].rows.map((row) => row.id), ["manual-1", "aa-9090"]);
+  assert.equal(moveReviewedMatrixModel(moved, 0, 0, -1).pricing.priceMatrices[0].rows[0].id, "manual-1");
+});
+
+test("matrix model remove keeps at least one model", () => {
+  const added = addReviewedMatrixModel(reviewedSource, 0, { id: "manual-1", name: "New", code: "", specification: "", prices: {} });
+  const removed = removeReviewedMatrixModel(added, undefined, 0, "aa-9090");
+  assert.deepEqual(removed.draft.pricing.priceMatrices[0].rows.map((row) => row.id), ["manual-1"]);
+  assert.equal(removeReviewedMatrixModel(removed.draft, undefined, 0, "manual-1").draft, removed.draft);
+});
+
+test("removed matrix model loses option rules in draft and review plan", () => {
+  const added = addReviewedMatrixModel(reviewedSource, 0, { id: "manual-1", name: "New", code: "", specification: "", prices: {} });
+  const target = { kind: "price_matrix" as const, group_id: "lounge", row_id: "aa-9090" };
+  const keep = { kind: "price_matrix" as const, group_id: "lounge", row_id: "manual-1" };
+  const draft = { ...added, optionGroups: added.optionGroups.map((group) => ({ ...group, conditionalConfiguration: { role: "conditional_option" as const, selection: "exactly_one" as const, applicability: [{ target, required: true, visible: true }, { target: keep, required: false, visible: true }] } })) };
+  const plan = { routes: [{ key: "matrix:lounge", rowCount: 2, accessory: { role: "accessory" as const, selection: "optional_multiple" as const, rules: [] } }, { key: "option:extras", rowCount: 1, accessory: { role: "conditional_option" as const, selection: "required_exactly_one" as const, rules: [{ target, required: true }, { target: keep, required: false }] } }] } as Parameters<typeof removeReviewedMatrixModel>[1];
+  const next = removeReviewedMatrixModel(draft, plan, 0, "aa-9090");
+  assert.deepEqual(next.draft.optionGroups[0].conditionalConfiguration?.applicability.map((rule) => rule.target), [keep]);
+  assert.deepEqual(next.plan?.routes[1].accessory?.rules.map((rule) => rule.target), [keep]);
+  assert.equal(next.plan?.routes[0].rowCount, 1);
 });
