@@ -2,6 +2,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, hasToolCall, stepCountIs } from "ai";
 import { NoaProviderError } from "@/lib/noa/noa-provider.server";
+import { withNoaSpokenResponse } from "@/lib/noa/noa-spoken-response";
 import type { NoaAnswer, NoaChatRequest } from "@/lib/noa/noa-types";
 import { createNoaAgentTools } from "./noa-agent-tools.server";
 
@@ -54,8 +55,8 @@ export async function runNoaAgentLoop(request: NoaChatRequest): Promise<NoaAnswe
       stopWhen: [stepCountIs(5), hasToolCall("configureProduct")],
     });
     const configuration = getConfigurationAnswer();
-    if (configuration) return { ...configuration, engine: "v2" }; // the guided flow answer is returned as is, never rewritten by the model
-    return { domain: "Help", engine: "v2", sources, text: result.text };
+    if (configuration) return withNoaSpokenResponse({ ...configuration, engine: "v2" }); // the guided flow answer is returned as is, never rewritten by the model
+    return withNoaSpokenResponse({ domain: "Help", engine: "v2", sources, text: result.text });
   } catch (error) {
     // Debug aid only: safe error fields (never the key, headers, request body, prompt, user message or tool results), key value redacted.
     const clean = (value: unknown, max = 300) => typeof value === "string" ? value.split(apiKey).join("[redacted]").slice(0, max) : undefined;
