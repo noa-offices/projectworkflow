@@ -1,4 +1,5 @@
-import { draftModularRows, type ProductTemplateDraft, type ProductTemplateDraftCurrency, type ProductTemplateDraftDimension, type ProductTemplateDraftPrice, type ProductTemplateDraftSelectionRule } from "./product-template-draft";
+import { draftModularRows, type ProductTemplateDraft, type ProductTemplateDraftCurrency, type ProductTemplateDraftDimension, type ProductTemplateDraftMatrixRow, type ProductTemplateDraftPrice, type ProductTemplateDraftSelectionRule } from "./product-template-draft";
+import { smartReviewRuleTarget, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 
 /** Prices of a modular row in either pricing mode (matrix cells or one direct price). */
 function modularRowPrices(row: { prices?: Record<string, ProductTemplateDraftPrice>; price?: ProductTemplateDraftPrice }) {
@@ -216,6 +217,50 @@ export function updateReviewedMatrixRow(
   return updateReviewedMatrix(draft, matrixIndex, {
     rows: matrix.rows.map((row, index) => index === rowIndex ? { ...row, ...patch } : row),
   });
+}
+
+/** List operations shared by matrix models and later row-based review screens. */
+export function addReviewedRow<T>(rows: T[], row: T): T[] { return [...rows, row]; }
+export function moveReviewedRow<T>(rows: T[], index: number, direction: -1 | 1): T[] {
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= rows.length) return rows;
+  const next = [...rows]; [next[index], next[target]] = [next[target], next[index]];
+  return next;
+}
+export function removeReviewedRow<T extends { id: string }>(rows: T[], rowId: string): T[] {
+  return rows.filter((row) => row.id !== rowId);
+}
+
+export type ManualMatrixModel = { id: string; name: string; code: string; specification: string; prices: Record<string, string> };
+export function addReviewedMatrixModel(draft: ProductTemplateDraft, matrixIndex: number, input: ManualMatrixModel): ProductTemplateDraft {
+  const matrix = draft.pricing.priceMatrices[matrixIndex];
+  const name = input.name.trim();
+  if (!matrix || !name || draft.pricing.priceMatrices.some((entry) => entry.rows.some((row) => row.id === input.id))) return draft;
+  const row: ProductTemplateDraftMatrixRow = {
+    id: input.id, label: name, displayName: name, supplierCodes: input.code.trim() ? [input.code.trim()] : [], referenceCodes: [],
+    dimensions: null, currency: "EUR", specification: input.specification.trim() || null,
+    prices: Object.fromEntries(matrix.columns.map((column) => [column.id, nullableReviewNumber(input.prices[column.id] ?? "")])),
+  };
+  return updateReviewedMatrix(draft, matrixIndex, { rows: addReviewedRow(matrix.rows, row) });
+}
+export function moveReviewedMatrixModel(draft: ProductTemplateDraft, matrixIndex: number, rowIndex: number, direction: -1 | 1): ProductTemplateDraft {
+  const matrix = draft.pricing.priceMatrices[matrixIndex];
+  return matrix ? updateReviewedMatrix(draft, matrixIndex, { rows: moveReviewedRow(matrix.rows, rowIndex, direction) }) : draft;
+}
+export function removeReviewedMatrixModel(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, matrixIndex: number, rowId: string) {
+  const matrix = draft.pricing.priceMatrices[matrixIndex];
+  if (!matrix || matrix.rows.length <= 1 || !matrix.rows.some((row) => row.id === rowId)) return { draft, plan };
+  const matches = (target: { kind: string; group_id: string; row_id: string } | null | undefined) => (target?.kind === "price_matrix" || target?.kind === "base_model") && target.group_id === matrix.id && target.row_id === rowId;
+  const nextDraft = updateReviewedMatrix(draft, matrixIndex, { rows: removeReviewedRow(matrix.rows, rowId) });
+  const cleanedDraft = { ...nextDraft, optionGroups: nextDraft.optionGroups.map((group) => group.conditionalConfiguration ? {
+    ...group, conditionalConfiguration: { ...group.conditionalConfiguration, applicability: group.conditionalConfiguration.applicability.filter((rule) => !matches(rule.target ?? (rule.base_model_group_id && rule.base_model_row_id ? { kind: "base_model", group_id: rule.base_model_group_id, row_id: rule.base_model_row_id } : null))) },
+  } : group) };
+  const nextPlan = plan ? { ...plan, routes: plan.routes.map((route) => ({
+    ...route,
+    ...(route.key === `matrix:${matrix.id}` ? { rowCount: matrix.rows.length - 1 } : {}),
+    ...(route.accessory ? { accessory: { ...route.accessory, rules: route.accessory.rules.filter((rule) => !matches(smartReviewRuleTarget(rule))) } } : {}),
+  })) } : undefined;
+  return { draft: cleanedDraft, plan: nextPlan };
 }
 
 export function updateReviewedMatrixPrice(
