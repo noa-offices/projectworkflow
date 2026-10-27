@@ -9,6 +9,7 @@ type AccessoryGroup = {
   group_is_required: boolean;
   is_active: boolean;
   sort_order: number;
+  default_item_ids?: string[];
   price_categories?: Array<{ id: string; label: string }>;
   items: Array<{ id: string; item_name: string; supplier_price_list_code: string; price: number | null; prices?: Record<string, number | null>; currency?: string; dimension?: string; specification: string; is_active: boolean; sort_order: number; role?: "companion" | "structural_support"; compatible_targets?: StructuralSupportCompatibleTarget[] }>;
   conditional_configuration?: { role: "accessory" | "conditional_option" | "companion"; selection: "unrestricted" | "exactly_one" | "at_least_one" | "choose_multiple"; applicability: AccessoryModelApplicabilityRule[] };
@@ -109,6 +110,7 @@ export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft, r
       group_is_required: reviewedContract?.required ?? group.selection.mode === "required_choose_at_least_one",
       is_active: group.isActive !== false,
       sort_order: groupIndex,
+      ...(group.selection.defaultItemIds.length ? { default_item_ids: group.selection.defaultItemIds.filter((id) => group.items.some((item) => item.id === id)) } : {}),
       ...(configuration ? { conditional_configuration: configuration } : {}),
       items: group.items.map((item, itemIndex) => mapItem(item, item.price, itemIndex, warnings, "Accessory item")),
     }];

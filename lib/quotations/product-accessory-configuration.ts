@@ -11,6 +11,15 @@ export type ProductAccessorySelectionEvaluation = AccessoryConfigurationEvaluati
   unknownItemIds: string[];
 };
 
+/** Defaults are initial quotation selections; subsequent user edits own the selection state. */
+export function defaultProductAccessoryQuantities(accessoryGroups: unknown): Record<string, number> {
+  return Object.fromEntries(parseAccessoryConfigurationGroups(accessoryGroups).groups.flatMap((group) => {
+    if (group.is_active === false || !Array.isArray(group.default_item_ids)) return [];
+    const activeIds = new Set((group.items ?? []).filter((item) => item.is_active !== false).map((item) => item.id));
+    return group.default_item_ids.filter((id): id is string => typeof id === "string" && activeIds.has(id)).map((id) => [id, 1] as const);
+  }));
+}
+
 export function parseSubmittedAccessoryQuantities(values: unknown[]) {
   const quantities: Record<string, number> = {};
   const errors: string[] = [];
