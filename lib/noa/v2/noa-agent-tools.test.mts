@@ -17,7 +17,8 @@ mock.module("@/lib/noa/noa-client-capability.server", { namedExports: { fetchNoa
 mock.module("@/lib/noa/noa-project-capability.server", { namedExports: { fetchNoaProjectCapability: record } });
 mock.module("@/lib/noa/noa-procurement-capability.server", { namedExports: { fetchNoaProcurementCapability: record } });
 const insightMessages: string[] = [];
-mock.module("@/lib/noa/noa-insights-capability.server", { namedExports: { fetchNoaInsightsCapability: async (message: string) => { insightMessages.push(message); return ok(); } } });
+const insightOptions: unknown[] = [];
+mock.module("@/lib/noa/noa-insights-capability.server", { namedExports: { fetchNoaInsightsCapability: async (message: string, _context?: unknown, options?: unknown) => { insightMessages.push(message); insightOptions.push(options); return ok(); } } });
 const orchestratorRequests: unknown[] = [];
 const configurationFixture = { domain: "Product", sources: [], text: "Which finish?", choices: [{ id: "oak", label: "Oak" }], productConfigurationReference: { templateId: "t-1", mode: "configuring", selections: {} } };
 mock.module("@/lib/noa/noa-orchestrator", { namedExports: { runNoaOrchestrator: async (request: unknown) => { orchestratorRequests.push(request); return configurationFixture; } } });
@@ -40,6 +41,16 @@ test("getInsights sends only closed canonical messages to the Insights capabilit
   await insights.execute({ report: "top_clients_by_quotation_value" }, {});
   assert.deepEqual(insightMessages, ["quotation analytics last month", "quotation summary this month", "top clients by quotation value"]);
   assert.equal(insights.inputSchema.safeParse({ report: "sales by salesperson" }).success, false, "free text is rejected");
+});
+
+test("getInsights sales_by_salesperson sends the structured option; other reports send none", async () => {
+  const { tools } = createNoaAgentTools({ pathname: "", section: "other" });
+  const insights = tools.getInsights as unknown as Closed;
+  insightMessages.length = 0; insightOptions.length = 0;
+  await insights.execute({ report: "sales_by_salesperson", period: "last_month" }, {});
+  await insights.execute({ report: "quotation_summary" }, {});
+  assert.deepEqual(insightOptions, [{ report: "sales_by_salesperson" }, undefined]);
+  assert.equal(insights.inputSchema.safeParse({ report: "sales_by_salesperson" }).success, true);
 });
 
 type Closed = { execute: (i: unknown, o: unknown) => Promise<unknown>; inputSchema: { safeParse: (v: unknown) => { success: boolean } } };

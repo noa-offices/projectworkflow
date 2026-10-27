@@ -39,6 +39,8 @@ const INSIGHT_REPORTS = {
   project_file_analytics: () => "project file analytics",
   project_summary: () => "project summary",
   client_summary: () => "client summary",
+  // Selected by the structured option below (managers only in the capability); this text only carries the period.
+  sales_by_salesperson: (period: string) => `quotation analytics ${period}`,
 } as const;
 
 // Client, Project and Procurement capabilities also classify by keywords in the message, so the model sends only closed values or a
@@ -145,9 +147,9 @@ export function createNoaAgentTools(context: NoaPageContext, options: { displayN
       },
     }),
     getInsights: tool({
-      description: `Get a ProjectWorkflow business report (sales report, top clients, quotation summary). Read-only. report values: quotation_summary = quotation count and value for the period; quotation_analytics = quotation status breakdown, confirmed value and average for the period (use for "sales report" / "sales overview"); quotation_trend = quotation trend over time; quotation_compare = quotations this month versus last month; top_clients_by_quotation_value, top_clients_by_confirmed_value, top_clients_by_project_value = client rankings by that value; quotation_count_per_client = number of quotations per client; project_file_analytics = project file status and value; project_summary = project overview; client_summary = client overview. period applies only to quotation_summary and quotation_analytics (default this_month). If the user asks for something that is not in this list (for example sales by salesperson), do not call this tool; say it is not available.`,
+      description: `Get a ProjectWorkflow business report (sales report, top clients, quotation summary). Read-only. report values: quotation_summary = quotation count and value for the period; quotation_analytics = quotation status breakdown, confirmed value and average for the period (use for "sales report" / "sales overview"); quotation_trend = quotation trend over time; quotation_compare = quotations this month versus last month; top_clients_by_quotation_value, top_clients_by_confirmed_value, top_clients_by_project_value = client rankings by that value; quotation_count_per_client = number of quotations per client; project_file_analytics = project file status and value; project_summary = project overview; client_summary = client overview; sales_by_salesperson = approved sales per salesperson (managers only; other users are told they do not have access). period applies only to quotation_summary, quotation_analytics and sales_by_salesperson (default this_month). If the user asks for something that is not in this list (for example sales by salesperson), do not call this tool; say it is not available.`,
       inputSchema: z.object({ report: z.enum(Object.keys(INSIGHT_REPORTS) as [keyof typeof INSIGHT_REPORTS, ...(keyof typeof INSIGHT_REPORTS)[]]), period: z.enum(Object.keys(INSIGHT_PERIODS) as [keyof typeof INSIGHT_PERIODS, ...(keyof typeof INSIGHT_PERIODS)[]]).optional() }),
-      execute: async ({ report, period }) => collect(await fetchNoaInsightsCapability(INSIGHT_REPORTS[report](INSIGHT_PERIODS[period ?? "this_month"]), context)),
+      execute: async ({ report, period }) => collect(await fetchNoaInsightsCapability(INSIGHT_REPORTS[report](INSIGHT_PERIODS[period ?? "this_month"]), context, report === "sales_by_salesperson" ? { report: "sales_by_salesperson" } : undefined)),
     }),
     getClientInfo: tool({
       description: `Get client information. report values: list = the active clients; count = how many clients there are; detail = one client's details (needs clientName); projects = the project files of one client (needs clientName). clientName is a company name only (letters, digits, spaces and basic punctuation, 80 characters at most). Read-only. If the request is not covered, do not call this tool; say it is not available.`,
