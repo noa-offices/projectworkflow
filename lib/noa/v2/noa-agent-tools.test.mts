@@ -16,12 +16,15 @@ mock.module("@/lib/noa/noa-project-capability.server", { namedExports: { fetchNo
 mock.module("@/lib/noa/noa-procurement-capability.server", { namedExports: { fetchNoaProcurementCapability: record } });
 const insightMessages: string[] = [];
 mock.module("@/lib/noa/noa-insights-capability.server", { namedExports: { fetchNoaInsightsCapability: async (message: string) => { insightMessages.push(message); return ok(); } } });
+const orchestratorRequests: unknown[] = [];
+const configurationFixture = { domain: "Product", sources: [], text: "Which finish?", choices: [{ id: "oak", label: "Oak" }], productConfigurationReference: { templateId: "t-1", mode: "configuring", selections: {} } };
+mock.module("@/lib/noa/noa-orchestrator", { namedExports: { runNoaOrchestrator: async (request: unknown) => { orchestratorRequests.push(request); return configurationFixture; } } });
 const { createNoaAgentTools, PRODUCT_MESSAGES, PRICE_MESSAGES, PRODUCT_DETAIL_MESSAGE, PRICE_SINGLE_MESSAGE } = await import("./noa-agent-tools.server");
 
-test("NOA v2 exposes exactly 10 read-only tools", async () => {
+test("NOA v2 exposes exactly 11 read-only tools", async () => {
   const { tools, sources } = createNoaAgentTools({ pathname: "", section: "other" });
   const names = Object.keys(tools);
-  assert.deepEqual(names.sort(), ["getAttentionItems", "getClientInfo", "getInsights", "getProcurementInfo", "getProductPrice", "getProjectInfo", "getQuotation", "getTeamActivity", "searchProducts", "searchQuotations"]);
+  assert.deepEqual(names.sort(), ["configureProduct", "getAttentionItems", "getClientInfo", "getInsights", "getProcurementInfo", "getProductPrice", "getProjectInfo", "getQuotation", "getTeamActivity", "searchProducts", "searchQuotations"]);
   for (const name of names) assert.doesNotMatch(name, /create|update|delete|archive/i);
   await (tools.searchProducts as unknown as { execute: (i: { request: string; term: string }, o: unknown) => Promise<unknown> }).execute({ request: "list", term: "chairs" }, {});
   assert.equal(sources.length, 1, "sources are collected from successful results");
@@ -125,4 +128,19 @@ test("list, count and status_summary still refuse keyword terms; detail and sing
   await refused(search, { request: "list", term: "Every" }); await refused(search, { request: "count", term: "all chairs" }); await refused(price, { request: "status_summary", term: "Every" });
   await refused(search, { request: "detail", term: "x".repeat(81) }); await refused(search, { request: "detail", term: "Every; drop" }); await refused(price, { request: "single", term: "" });
   assert.deepEqual(seen, [], "nothing reached a capability");
+});
+
+test("configureProduct starts the old guided flow with exactly 'configure <term>' and returns the answer untouched", async () => {
+  const { tools, getConfigurationAnswer } = createNoaAgentTools({ pathname: "/products", section: "other" }, { displayName: "Sam" });
+  const configure = tools.configureProduct as unknown as Closed;
+  orchestratorRequests.length = 0;
+  assert.equal(getConfigurationAnswer(), null);
+  assert.deepEqual(await configure.execute({ product: " Every " }, {}), { ok: true, started: true });
+  assert.deepEqual(orchestratorRequests, [{ context: { pathname: "/products", section: "other" }, message: "configure Every", recentMessages: [], displayName: "Sam" }]);
+  assert.equal(getConfigurationAnswer(), configurationFixture, "text, choices and productConfigurationReference come back unchanged (same object)");
+  for (const bad of ["", "x".repeat(81), "Every; drop table", "<b>Every</b>"]) {
+    orchestratorRequests.length = 0;
+    const refused = await (createNoaAgentTools({ pathname: "", section: "other" }).tools.configureProduct as unknown as Closed).execute({ product: bad }, {}) as { ok: boolean };
+    assert.equal(refused.ok, false, bad); assert.deepEqual(orchestratorRequests, []);
+  }
 });

@@ -13,6 +13,7 @@ mock.module("@/lib/supabase/server", { namedExports: { createClient: async () =>
     return { select: () => ({ eq: () => ({ maybeSingle: async () => profile, single: async () => profile }) }) };
   },
 }) } });
+mock.module("@/lib/noa/v2/noa-agent-loop.server", { namedExports: { runNoaAgentLoop: async () => ({ domain: "Help", engine: "v2", sources: [], text: "from v2" }) } });
 const { POST } = await import("../../app/api/noa/chat/route");
 const { runNoaOrchestrator } = await import("./noa-orchestrator");
 const context = { pathname: "/dashboard", section: "dashboard" as const };
@@ -46,4 +47,17 @@ test("route rejects malformed JSON/messages and unauthenticated requests; invali
   authenticated = false;
   try { assert.equal((await POST(request({ message: "Hello" }))).status, 401); }
   finally { authenticated = true; }
+});
+
+test("with NOA_AGENT_LOOP on, v2 answers unless a valid productConfigurationReference is present", async () => {
+  process.env.NOA_AGENT_LOOP = "true";
+  try {
+    const v2 = await (await POST(request({ context, message: "Hello" }))).json();
+    assert.equal(v2.engine, "v2");
+    const old = await (await POST(request({ context, message: "Hello", productConfigurationReference: configuration }))).json();
+    assert.equal(old.engine, undefined, "inside the guided flow the old orchestrator answers");
+    assert.deepEqual(old.productConfigurationReference, configuration);
+    const opted = await (await POST(request({ context, message: "Hello", engine: "old" }))).json();
+    assert.equal(opted.engine, undefined);
+  } finally { delete process.env.NOA_AGENT_LOOP; }
 });

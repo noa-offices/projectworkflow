@@ -5,12 +5,13 @@ import { isNoaRouteDiagnosticsEnabled } from "@/lib/noa/noa-intent-router";
 import { fetchNoaClientCapability } from "@/lib/noa/noa-client-capability.server";
 import { fetchNoaInsightsCapability } from "@/lib/noa/noa-insights-capability.server";
 import { fetchNoaPriceCapability } from "@/lib/noa/noa-price-capability.server";
+import { runNoaOrchestrator } from "@/lib/noa/noa-orchestrator";
 import { fetchNoaProcurementCapability } from "@/lib/noa/noa-procurement-capability.server";
 import { fetchNoaProductCapability } from "@/lib/noa/noa-product-capability.server";
 import { fetchNoaProjectCapability } from "@/lib/noa/noa-project-capability.server";
 import { fetchNoaQuotationCapability } from "@/lib/noa/noa-quotation-capability.server";
 import { fetchNoaUserActivityCapability } from "@/lib/noa/noa-user-activity-capability.server";
-import type { NoaCapabilityResult, NoaPageContext, NoaSource } from "@/lib/noa/noa-types";
+import type { NoaAnswer, NoaCapabilityResult, NoaPageContext, NoaSource } from "@/lib/noa/noa-types";
 
 // The activity capability picks its scope from the message text, so the model never sends it free text: closed values map to the
 // exact deterministic phrasings it already classifies as team summary / own summary for a given day.
@@ -73,8 +74,10 @@ const validText = (value: string, max: number) => value.length >= 1 && value.len
 const INVALID_TEXT = "That input is not valid. Send a short plain text value.";
 
 /** Read-only NOA v2 tools. Each one delegates to an existing authorized capability and returns its result unchanged. */
-export function createNoaAgentTools(context: NoaPageContext) {
+export function createNoaAgentTools(context: NoaPageContext, options: { displayName?: string } = {}) {
   const sources: NoaSource[] = [];
+  // The guided Product Configuration answer (text, choices, productConfigurationReference) is produced by the old orchestrator and must reach the client untouched.
+  let configurationAnswer: NoaAnswer | null = null;
   const collect = (result: NoaCapabilityResult) => {
     if (result.ok) sources.push(...result.sources);
     return result;
@@ -169,6 +172,17 @@ export function createNoaAgentTools(context: NoaPageContext) {
         return collect(await fetchNoaProcurementCapability(report === "order_detail" ? `order details for ${orderNumber}` : PROCUREMENT_MESSAGES[report], context));
       },
     }),
+    configureProduct: tool({
+      description: `Start the guided configuration of a product. Use it when the user asks for the price of a specific product or wants to configure a product: products are configurable, so there is usually no single price. product is the product name only (plain text, 80 characters at most). The guided questions are shown to the user directly. Read-only. If the request is not covered, do not call this tool; say it is not available.`,
+      inputSchema: z.object({ product: z.string() }),
+      execute: async ({ product }) => {
+        const term = product.trim();
+        if (!PRODUCT_TERM_PATTERN.test(term)) return refuse("The product name is not valid. Use letters, digits, spaces and basic punctuation, 80 characters at most.");
+        debugToolCall("configureProduct", "start", "configure <product>");
+        configurationAnswer = await runNoaOrchestrator({ context, message: `configure ${term}`, recentMessages: [], ...(options.displayName ? { displayName: options.displayName } : {}) });
+        return { ok: true as const, started: true as const };
+      },
+    }),
   };
-  return { tools, sources };
+  return { tools, sources, getConfigurationAnswer: () => configurationAnswer };
 }

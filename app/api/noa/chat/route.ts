@@ -126,8 +126,8 @@ export async function POST(request: Request) {
   };
 
   try {
-    // NOA v2 (read-only agent loop): NOA_AGENT_LOOP=true is the single switch (unset or any other value runs the old NOA for everyone); the caller may opt out with engine: "old".
-    if (process.env.NOA_AGENT_LOOP === "true" && (body as { engine?: unknown }).engine !== "old") {
+    // NOA v2 (read-only agent loop): NOA_AGENT_LOOP=true is the single switch (unset or any other value runs the old NOA for everyone); the caller may opt out with engine: "old", and a request inside the guided Product Configuration flow (valid productConfigurationReference) stays on the old path.
+    if (process.env.NOA_AGENT_LOOP === "true" && (body as { engine?: unknown }).engine !== "old" && !productConfigurationReference) {
       return NextResponse.json(await runNoaAgentLoop(chatRequest));
     }
     const sessionId = noaSessionId((body as { sessionId?: unknown }).sessionId);

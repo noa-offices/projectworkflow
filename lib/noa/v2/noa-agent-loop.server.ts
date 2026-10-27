@@ -1,6 +1,6 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
-import { generateText, stepCountIs } from "ai";
+import { generateText, hasToolCall, stepCountIs } from "ai";
 import { NoaProviderError } from "@/lib/noa/noa-provider.server";
 import type { NoaAnswer, NoaChatRequest } from "@/lib/noa/noa-types";
 import { createNoaAgentTools } from "./noa-agent-tools.server";
@@ -25,7 +25,8 @@ Keep answers short: 1 to 3 sentences unless the user asks for detail. No marketi
 Only state what a tool result actually covers. If the result says it checked 'your' activity, do not say 'no one' or 'the team'. Describe the scope exactly as the result describes it.
 Never calculate, sum, convert or estimate numbers yourself. Only repeat numbers and currencies exactly as they appear in a tool result.
 For greetings and small talk, reply briefly and do not use any tool.
-If a tool says the user is not authorized or has no access, tell the user plainly that they do not have access to that information. Do not try other tools to get around it.`;
+If a tool says the user is not authorized or has no access, tell the user plainly that they do not have access to that information. Do not try other tools to get around it.
+When the user asks for the price of a specific product, or wants to configure a product, use configureProduct. Products are configurable, so there is usually no single price. Use getProductPrice only for price-check status questions. Never guess or calculate a price yourself.`;
 
 /** Experimental NOA v2: a read-only tool-calling loop. Authorization stays inside the existing capabilities. */
 export async function runNoaAgentLoop(request: NoaChatRequest): Promise<NoaAnswer> {
@@ -38,7 +39,7 @@ export async function runNoaAgentLoop(request: NoaChatRequest): Promise<NoaAnswe
   const configuredModel = process.env.NOA_V2_MODEL?.trim();
   if (provider === "openai" && !configuredModel) throw new NoaProviderError("NOA v2 model is not set.", "not_configured");
   const model = configuredModel || DEFAULT_MODEL;
-  const { tools, sources } = createNoaAgentTools(request.context);
+  const { tools, sources, getConfigurationAnswer } = createNoaAgentTools(request.context, { displayName: request.displayName });
   const page = `Current page: pathname=${request.context.pathname}, section=${request.context.section}. If the user asks where they are, which page this is, or what they are looking at, answer from this. It is about the ProjectWorkflow page, never about physical location.`;
   const system = `${SYSTEM_PROMPT}\n${page}${request.displayName ? `\nThe user's display name is ${request.displayName}.` : ""}`;
   try {
@@ -50,8 +51,10 @@ export async function runNoaAgentLoop(request: NoaChatRequest): Promise<NoaAnswe
         { role: "user" as const, content: request.message },
       ],
       tools,
-      stopWhen: stepCountIs(5),
+      stopWhen: [stepCountIs(5), hasToolCall("configureProduct")],
     });
+    const configuration = getConfigurationAnswer();
+    if (configuration) return { ...configuration, engine: "v2" }; // the guided flow answer is returned as is, never rewritten by the model
     return { domain: "Help", engine: "v2", sources, text: result.text };
   } catch (error) {
     // Debug aid only: safe error fields (never the key, headers, request body, prompt, user message or tool results), key value redacted.
