@@ -8,6 +8,7 @@ import type { SupplierCheckedResult } from "@/components/products/smart-setup-su
 import { decisionWithDraft, decisionKey, decisionLabels, draftForRow, supplierPriceChanged, usableSupplierPrice, type DecisionMap, type ReviewDecision, type SavedReviewDecision } from "@/lib/products/supplier-review-decisions";
 import { useSupplierReviewDecisions } from "./use-supplier-review-decisions";
 import { ReviewDecisionControls, ReviewSaveButton } from "./supplier-review-decision-controls";
+import { retainShownSelection } from "./supplier-review-selection";
 
 const ROW_HEIGHT = 60;
 const WINDOW_ABOVE = 300; // beyond this many shown rows only the visible slice is rendered
@@ -46,7 +47,8 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
   const [bulkAction, setBulkAction] = useState<ReviewDecision | "">("");
   const [decisionFilter, setDecisionFilter] = useState<"" | "undecided" | "decided" | "check_later">("");
   const [confirmClose, setConfirmClose] = useState(false);
-  const requestClose = () => { if (decisions.saving) return; if (decisions.unsavedCount) setConfirmClose(true); else onClose(); };
+  const closeReview = () => { setSelectedKeys(new Set()); onClose(); };
+  const requestClose = () => { if (decisions.saving) return; if (decisions.unsavedCount) setConfirmClose(true); else closeReview(); };
 
   useEffect(() => { panelRef.current?.focus(); }, []);
   useEffect(() => {
@@ -64,27 +66,35 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
   const allRows = decisions.rows;
   const counts = countReviewStatuses(allRows);
   const effectiveDecision = (row: ReviewRow) => decisions.conflicts.has(decisionKey(row)) ? "" : decisionWithDraft(row, decisions.saved[decisionKey(row)], decisions.edits[decisionKey(row)]);
-  const shown = sortReviewRows(filterReviewRows(allRows, statuses, query).filter((row) => !canManageDecisions || !decisionFilter || (decisionFilter === "undecided" ? !effectiveDecision(row) : decisionFilter === "decided" ? !!effectiveDecision(row) : effectiveDecision(row) === "check_later")), sort);
+  const visibleRows = (nextStatuses: ReadonlySet<ReviewStatus>, nextQuery: string, nextDecisionFilter: typeof decisionFilter) =>
+    filterReviewRows(allRows, nextStatuses, nextQuery).filter((row) => !canManageDecisions || !nextDecisionFilter || (nextDecisionFilter === "undecided" ? !effectiveDecision(row) : nextDecisionFilter === "decided" ? !!effectiveDecision(row) : effectiveDecision(row) === "check_later"));
+  const shown = sortReviewRows(visibleRows(statuses, query, decisionFilter), sort);
   // Manager rows hold action controls and vary in height, so they are all rendered (a check has at most 500 rows); read-only rows are windowed.
   const windowed = !canManageDecisions && shown.length > WINDOW_ABOVE;
   const first = windowed ? Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN) : 0;
   const last = windowed ? Math.min(shown.length, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN) : shown.length;
   const backToTop = () => { if (scrollRef.current) scrollRef.current.scrollTop = 0; setScrollTop(0); };
   const eligibleKeys = [...new Set(shown.filter((r) => !decisions.conflicts.has(decisionKey(r))).map(decisionKey))];
+  const visibleSelectedKeys = retainShownSelection(selectedKeys, eligibleKeys);
+  const reconcileSelection = (nextStatuses: ReadonlySet<ReviewStatus>, nextQuery: string, nextDecisionFilter: typeof decisionFilter) => {
+    const nextKeys = visibleRows(nextStatuses, nextQuery, nextDecisionFilter).filter((r) => !decisions.conflicts.has(decisionKey(r))).map(decisionKey);
+    setSelectedKeys((current) => retainShownSelection(current, nextKeys));
+  };
   const toggleSelected = (key: string) => setSelectedKeys((current) => { const next = new Set(current); if (!next.delete(key)) next.add(key); return next; });
   const actionControls = (row: ReviewRow) => {
     const key = decisionKey(row);
     return <ReviewDecisionControls row={row} draft={decisions.edits[key] ?? draftForRow(row, decisions.saved[key])} disabled={!decisions.enabled} changed={supplierPriceChanged(row, decisions.saved[key]) && !decisions.edits[key]?.confirmed} conflict={decisions.conflicts.has(key)} onChange={(draft) => decisions.updateDraft(key, draft)} />;
   };
-  const selectionBox = (row: ReviewRow) => <input type="checkbox" aria-label={`Select ${row.result.code} ${row.category}`} checked={selectedKeys.has(decisionKey(row))} disabled={!decisions.enabled || decisions.conflicts.has(decisionKey(row))} onChange={() => toggleSelected(decisionKey(row))} className="h-5 w-5 accent-emerald-800" />;
-  const bulkSupplierUnavailable = allRows.some((r) => selectedKeys.has(decisionKey(r)) && usableSupplierPrice(r) === null);
+  const selectionBox = (row: ReviewRow) => <input type="checkbox" aria-label={`Select ${row.result.code} ${row.category}`} checked={visibleSelectedKeys.has(decisionKey(row))} disabled={!decisions.enabled || decisions.conflicts.has(decisionKey(row))} onChange={() => toggleSelected(decisionKey(row))} className="h-5 w-5 accent-emerald-800" />;
+  const bulkSupplierUnavailable = shown.some((r) => visibleSelectedKeys.has(decisionKey(r)) && usableSupplierPrice(r) === null);
   const applyBulk = () => {
     if (!bulkAction || !decisions.enabled || (bulkAction === "use_supplier" && bulkSupplierUnavailable)) return;
-    for (const key of selectedKeys) {
+    for (const key of visibleSelectedKeys) {
       const row = allRows.find((r) => decisionKey(r) === key); if (!row) continue;
       const draft = decisions.edits[key] ?? draftForRow(row, decisions.saved[key]);
       decisions.updateDraft(key, { ...draft, decision: bulkAction, customPrice: bulkAction === "set_custom" ? draft.customPrice : "", confirmed: true });
     }
+    setSelectedKeys(new Set());
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -102,16 +112,16 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
             <div role="group" aria-label="Show rows with these statuses" className="flex flex-wrap gap-2">
               {REVIEW_STATUS_CHIPS.map((s) => {
                 const on = statuses.has(s);
-                return <button key={s} type="button" aria-pressed={on} onClick={() => { setStatuses((current) => toggleReviewStatus(current, s)); backToTop(); }} className={`h-9 rounded-full border px-3 text-sm font-semibold ${on ? chipTone[s].on : chipTone[s].off}`}>{reviewStatusLabels[s]} <span className="font-normal">{counts[s]}</span></button>;
+                return <button key={s} type="button" aria-pressed={on} onClick={() => { const next = toggleReviewStatus(statuses, s); setStatuses(next); reconcileSelection(next, query, decisionFilter); backToTop(); }} className={`h-9 rounded-full border px-3 text-sm font-semibold ${on ? chipTone[s].on : chipTone[s].off}`}>{reviewStatusLabels[s]} <span className="font-normal">{counts[s]}</span></button>;
               })}
             </div>
           </div>
           <div className="flex flex-wrap items-end gap-2">
             <label className="min-w-48 flex-1 text-sm font-medium text-zinc-700">Search
-              <input type="search" value={query} onChange={(e) => { setQuery(e.target.value); backToTop(); }} placeholder="Model, code, category or price field" className="mt-1 block h-9 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm" />
+              <input type="search" value={query} onChange={(e) => { const next = e.target.value; setQuery(next); reconcileSelection(statuses, next, decisionFilter); backToTop(); }} placeholder="Model, code, category or price field" className="mt-1 block h-9 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm" />
             </label>
             <label className="text-sm font-medium text-zinc-700">Sort by
-              <select value={sort} onChange={(e) => { setSort(e.target.value as ReviewSort); backToTop(); }} className="mt-1 block h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm">
+              <select value={sort} onChange={(e) => { setSort(e.target.value as ReviewSort); reconcileSelection(statuses, query, decisionFilter); backToTop(); }} className="mt-1 block h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm">
                 {(Object.keys(reviewSortLabels) as ReviewSort[]).map((k) => <option key={k} value={k}>{reviewSortLabels[k]}</option>)}
               </select>
             </label>
@@ -120,14 +130,14 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
           <p className="text-sm text-zinc-600" aria-live="polite">Showing {shown.length} of {allRows.length} rows</p>
           {canManageDecisions ? <>
             <div role="group" aria-label="Filter decisions" className="flex flex-wrap gap-2">
-              {([["undecided", "Not decided"], ["decided", "Decided"], ["check_later", "Check later"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={decisionFilter === value} onClick={() => { setDecisionFilter(decisionFilter === value ? "" : value); backToTop(); }} className={`min-h-9 rounded-full border px-3 text-sm ${decisionFilter === value ? "border-emerald-800 bg-emerald-100" : "border-zinc-300 bg-white"}`}>{label}</button>)}
+              {([["undecided", "Not decided"], ["decided", "Decided"], ["check_later", "Check later"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={decisionFilter === value} onClick={() => { const next = decisionFilter === value ? "" : value; setDecisionFilter(next); reconcileSelection(statuses, query, next); backToTop(); }} className={`min-h-9 rounded-full border px-3 text-sm ${decisionFilter === value ? "border-emerald-800 bg-emerald-100" : "border-zinc-300 bg-white"}`}>{label}</button>)}
             </div>
             <div className="flex flex-wrap items-center gap-3 text-sm">
-              <label className="flex min-h-10 items-center gap-2"><input type="checkbox" checked={eligibleKeys.length > 0 && eligibleKeys.every((k) => selectedKeys.has(k))} disabled={!decisions.enabled || !eligibleKeys.length} onChange={(e) => setSelectedKeys((current) => { const next = new Set(current); eligibleKeys.forEach((k) => e.target.checked ? next.add(k) : next.delete(k)); return next; })} className="h-5 w-5 accent-emerald-800" />Select all shown</label>
+              <label className="flex min-h-10 items-center gap-2"><input type="checkbox" checked={eligibleKeys.length > 0 && eligibleKeys.every((k) => visibleSelectedKeys.has(k))} disabled={!decisions.enabled || !eligibleKeys.length} onChange={(e) => setSelectedKeys((current) => { const next = retainShownSelection(current, eligibleKeys); eligibleKeys.forEach((k) => e.target.checked ? next.add(k) : next.delete(k)); return next; })} className="h-5 w-5 accent-emerald-800" />Select all shown</label>
               <span>Decided {shown.filter((r) => effectiveDecision(r)).length} of {shown.length} shown</span>
             </div>
-            {selectedKeys.size ? <div className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-sm">
-              <strong>{selectedKeys.size} selected</strong>
+            {visibleSelectedKeys.size ? <div className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-sm">
+              <strong>{visibleSelectedKeys.size} selected</strong>
               <select aria-label="Bulk action" value={bulkAction} disabled={!decisions.enabled} onChange={(e) => setBulkAction(e.target.value as ReviewDecision | "")} className="h-10 rounded-md border border-zinc-300 bg-white px-2">
                 <option value="">Choose an action</option>{(Object.keys(decisionLabels) as ReviewDecision[]).map((d) => <option key={d} value={d} disabled={d === "use_supplier" && bulkSupplierUnavailable}>{decisionLabels[d]}</option>)}
               </select>
@@ -161,7 +171,7 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
         {decisions.saveError ? <p role="alert" className="text-sm text-red-800">{decisions.saveError}</p> : null}
         {confirmClose ? <div role="alertdialog" aria-modal="true" aria-label="Unsaved decisions" className="rounded-md border border-amber-400 bg-amber-50 p-3 text-sm">
           <p>You have {decisions.unsavedCount} unsaved change{decisions.unsavedCount === 1 ? "" : "s"}. Close and discard them?</p>
-          <div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => setConfirmClose(false)} className="min-h-10 rounded border border-zinc-400 bg-white px-3 font-semibold">Keep reviewing</button><button type="button" onClick={onClose} className="min-h-10 rounded border border-red-700 px-3 font-semibold text-red-800">Discard and close</button></div>
+          <div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => setConfirmClose(false)} className="min-h-10 rounded border border-zinc-400 bg-white px-3 font-semibold">Keep reviewing</button><button type="button" onClick={closeReview} className="min-h-10 rounded border border-red-700 px-3 font-semibold text-red-800">Discard and close</button></div>
         </div> : null}
         {controls ? <div className="hidden space-y-3 sm:block">{controls}</div> : null}
       </header>

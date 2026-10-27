@@ -24,6 +24,12 @@ test("Action column and Save decisions are visible only for the two manager role
     if (manager) assert.match(html, /<button[^>]*disabled=""[^>]*>Export CSV<\/button>/, "export waits for saved decisions to load");
   }
 });
+test("opening a manager review starts with no selected rows or bulk bar", () => {
+  const html = renderToStaticMarkup(createElement(SupplierReviewDialog, { fresh, stale: false, selected: null, onClose() {}, canManageDecisions: true }));
+  assert.match(html, /Select all shown/);
+  assert.doesNotMatch(html, /type="checkbox"[^>]*checked=""/);
+  assert.doesNotMatch(html, />\d+ selected</);
+});
 test("Use supplier price is disabled for missing and unusable prices, but zero is usable", () => {
   for (const over of [{ status: "NOT_FOUND", referencePrice: null }, { status: "NEEDS_REVIEW", referencePrice: 5 }, { referencePrice: null }, { referencePrice: -1 }]) assert.match(controls(over as Partial<SmartSetupSupplierCheckResult>), /value="use_supplier" disabled=""/);
   assert.doesNotMatch(controls({ referencePrice: 0 }), /value="use_supplier" disabled/);
