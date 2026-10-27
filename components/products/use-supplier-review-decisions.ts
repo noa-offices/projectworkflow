@@ -68,6 +68,7 @@ export function useSupplierReviewDecisions(fresh: SupplierCheckedResult | null, 
     } catch (error) {
       setSaveError(`${savedCount ? `${savedCount} decisions saved. ` : ""}${error instanceof Error ? error.message : "Decisions could not be saved. Your changes are still here; try again."}`);
     } finally { savingRef.current = false; setSaving(false); }
+    return savedCount;
   };
   return { rows, saved, edits, conflicts, loading, loadError, enabled, saving, message, saveError, updateDraft, save,
     unsavedCount: Object.keys(edits).length, retry: () => { setLoadError(null); setRetry((n) => n + 1); } };

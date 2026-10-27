@@ -1,7 +1,7 @@
 import type { SmartSetupSupplierCheckResult, SmartSetupSupplierCheckStatus } from "./smart-setup-supplier-check";
 import type { SmartSetupPriceCell } from "./smart-setup-supplier-targets";
 import { evidenceText, reasonLabels, statusOrder } from "./smart-setup-supplier-verification";
-import { conflictingDecisionKeys, decisionForRow, decisionKey, decisionLabels, type DecisionMap } from "./supplier-review-decisions";
+import { conflictingDecisionKeys, decisionForRow, decisionKey, decisionLabels, supplierPriceChanged, type DecisionMap, type SavedReviewDecision } from "./supplier-review-decisions";
 import { formatDubaiDateTime } from "../inventory/date-time";
 
 /** Pure helpers for the full-screen Supplier price review. They only reshape what the check service returned; nothing is matched or recalculated. */
@@ -21,6 +21,16 @@ export function priceDifference(imported: number | null, supplier: number | null
 }
 
 export type ReviewRow = { index: number; result: SmartSetupSupplierCheckResult; model: string; category: string; difference: PriceDifference | null };
+/** A row leaves the default queue only after a current, open decision is saved. */
+export function isReviewedRow(row: ReviewRow, saved?: SavedReviewDecision, hasUnsavedEdit = false): boolean {
+  return !hasUnsavedEdit && !!saved && saved.status === "open" && saved.decision !== "check_later" && !supplierPriceChanged(row, saved);
+}
+export function filterReviewedRows(rows: ReviewRow[], saved: DecisionMap, editedKeys: ReadonlySet<string>, includeReviewed: boolean, conflicts: ReadonlySet<string> = new Set()): ReviewRow[] {
+  return includeReviewed ? rows : rows.filter((row) => {
+    const key = decisionKey(row);
+    return conflicts.has(key) || !isReviewedRow(row, saved[key], editedKeys.has(key));
+  });
+}
 /** The supplier price counts only where the service established one (Matched or Mismatch), the same rule as the Supplier price column. */
 export function buildReviewRows(results: SmartSetupSupplierCheckResult[], cells: SmartSetupPriceCell[]): ReviewRow[] {
   const byLocator = new Map(cells.map((c) => [c.locator, c]));

@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { SmartSetupSupplierSourceOption } from "@/lib/products/smart-setup-supplier-sources";
-import { countReviewStatuses, DEFAULT_REVIEW_STATUSES, filterReviewRows, REVIEW_STATUS_CHIPS, reviewRowsToCsv, reviewSortLabels, reviewStatusLabels, sortReviewRows, toggleReviewStatus, type ReviewRow, type ReviewSort, type ReviewStatus } from "@/lib/products/smart-setup-supplier-review";
+import { countReviewStatuses, DEFAULT_REVIEW_STATUSES, filterReviewedRows, filterReviewRows, isReviewedRow, REVIEW_STATUS_CHIPS, reviewRowsToCsv, reviewSortLabels, reviewStatusLabels, sortReviewRows, toggleReviewStatus, type ReviewRow, type ReviewSort, type ReviewStatus } from "@/lib/products/smart-setup-supplier-review";
 import { evidenceText, importedPriceText, reasonLabels, referencePriceText } from "@/lib/products/smart-setup-supplier-verification";
 import type { SupplierCheckedResult } from "@/components/products/smart-setup-supplier-verification";
 import { decisionWithDraft, decisionKey, decisionLabels, draftForRow, supplierPriceChanged, usableSupplierPrice, type DecisionMap, type ReviewDecision, type SavedReviewDecision } from "@/lib/products/supplier-review-decisions";
@@ -35,6 +35,7 @@ export type SupplierReviewDialogProps = { fresh: SupplierCheckedResult | null; s
 export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialStatuses = DEFAULT_REVIEW_STATUSES, initialQuery = "", canManageDecisions = false, onDecisionsSaved }: SupplierReviewDialogProps) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
+  const saveButtonRef = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [statuses, setStatuses] = useState<ReadonlySet<ReviewStatus>>(() => new Set(initialStatuses));
   const [query, setQuery] = useState(initialQuery);
@@ -45,6 +46,7 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [bulkAction, setBulkAction] = useState<ReviewDecision | "">("");
   const [decisionFilter, setDecisionFilter] = useState<"" | "undecided" | "decided" | "check_later">("");
+  const [showReviewed, setShowReviewed] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
   const requestClose = () => { if (decisions.saving) return; if (decisions.unsavedCount) setConfirmClose(true); else onClose(); };
 
@@ -64,23 +66,33 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
   const allRows = decisions.rows;
   const counts = countReviewStatuses(allRows);
   const effectiveDecision = (row: ReviewRow) => decisions.conflicts.has(decisionKey(row)) ? "" : decisionWithDraft(row, decisions.saved[decisionKey(row)], decisions.edits[decisionKey(row)]);
-  const shown = sortReviewRows(filterReviewRows(allRows, statuses, query).filter((row) => !canManageDecisions || !decisionFilter || (decisionFilter === "undecided" ? !effectiveDecision(row) : decisionFilter === "decided" ? !!effectiveDecision(row) : effectiveDecision(row) === "check_later")), sort);
+  const reviewed = (row: ReviewRow) => canManageDecisions && !decisions.conflicts.has(decisionKey(row)) && isReviewedRow(row, decisions.saved[decisionKey(row)], !!decisions.edits[decisionKey(row)]);
+  const filtered = filterReviewRows(allRows, statuses, query).filter((row) => !canManageDecisions || !decisionFilter || (decisionFilter === "undecided" ? !effectiveDecision(row) : decisionFilter === "decided" ? !!effectiveDecision(row) : effectiveDecision(row) === "check_later"));
+  const reviewedCount = filtered.filter(reviewed).length;
+  const hideReviewed = canManageDecisions && !showReviewed && decisionFilter !== "decided";
+  const reviewedHidden = hideReviewed ? reviewedCount : 0;
+  const shown = sortReviewRows(canManageDecisions ? filterReviewedRows(filtered, decisions.saved, new Set(Object.keys(decisions.edits)), !hideReviewed, decisions.conflicts) : filtered, sort);
   // Manager rows hold action controls and vary in height, so they are all rendered (a check has at most 500 rows); read-only rows are windowed.
   const windowed = !canManageDecisions && shown.length > WINDOW_ABOVE;
   const first = windowed ? Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN) : 0;
   const last = windowed ? Math.min(shown.length, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN) : shown.length;
   const backToTop = () => { if (scrollRef.current) scrollRef.current.scrollTop = 0; setScrollTop(0); };
   const eligibleKeys = [...new Set(shown.filter((r) => !decisions.conflicts.has(decisionKey(r))).map(decisionKey))];
+  const selectedShownKeys = new Set([...selectedKeys].filter((key) => eligibleKeys.includes(key)));
+  const saveDecisions = async () => {
+    const savedCount = await decisions.save();
+    if (savedCount) { setSelectedKeys(new Set()); requestAnimationFrame(() => saveButtonRef.current?.focus()); }
+  };
   const toggleSelected = (key: string) => setSelectedKeys((current) => { const next = new Set(current); if (!next.delete(key)) next.add(key); return next; });
   const actionControls = (row: ReviewRow) => {
     const key = decisionKey(row);
     return <ReviewDecisionControls row={row} draft={decisions.edits[key] ?? draftForRow(row, decisions.saved[key])} disabled={!decisions.enabled} changed={supplierPriceChanged(row, decisions.saved[key]) && !decisions.edits[key]?.confirmed} conflict={decisions.conflicts.has(key)} onChange={(draft) => decisions.updateDraft(key, draft)} />;
   };
-  const selectionBox = (row: ReviewRow) => <input type="checkbox" aria-label={`Select ${row.result.code} ${row.category}`} checked={selectedKeys.has(decisionKey(row))} disabled={!decisions.enabled || decisions.conflicts.has(decisionKey(row))} onChange={() => toggleSelected(decisionKey(row))} className="h-5 w-5 accent-emerald-800" />;
-  const bulkSupplierUnavailable = allRows.some((r) => selectedKeys.has(decisionKey(r)) && usableSupplierPrice(r) === null);
+  const selectionBox = (row: ReviewRow) => <input type="checkbox" aria-label={`Select ${row.result.code} ${row.category}`} checked={selectedShownKeys.has(decisionKey(row))} disabled={!decisions.enabled || decisions.conflicts.has(decisionKey(row))} onChange={() => toggleSelected(decisionKey(row))} className="h-5 w-5 accent-emerald-800" />;
+  const bulkSupplierUnavailable = shown.some((r) => selectedShownKeys.has(decisionKey(r)) && usableSupplierPrice(r) === null);
   const applyBulk = () => {
     if (!bulkAction || !decisions.enabled || (bulkAction === "use_supplier" && bulkSupplierUnavailable)) return;
-    for (const key of selectedKeys) {
+    for (const key of selectedShownKeys) {
       const row = allRows.find((r) => decisionKey(r) === key); if (!row) continue;
       const draft = decisions.edits[key] ?? draftForRow(row, decisions.saved[key]);
       decisions.updateDraft(key, { ...draft, decision: bulkAction, customPrice: bulkAction === "set_custom" ? draft.customPrice : "", confirmed: true });
@@ -117,17 +129,20 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
             </label>
             <button type="button" disabled={!shown.length || (canManageDecisions && (decisions.loading || !!decisions.loadError))} onClick={() => downloadCsv(shown, fresh.output.source.title, decisions.saved, decisions.conflicts)} className="h-9 rounded-md border border-emerald-700 bg-white px-3 text-sm font-semibold text-emerald-900 disabled:cursor-not-allowed disabled:opacity-50">Export CSV</button>
           </div>
-          <p className="text-sm text-zinc-600" aria-live="polite">Showing {shown.length} of {allRows.length} rows</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-zinc-600" aria-live="polite">
+            <span>Showing {shown.length} of {allRows.length} rows{reviewedHidden ? ` (${reviewedHidden} reviewed hidden)` : ""}</span>
+            {canManageDecisions ? <><button type="button" aria-pressed={showReviewed} onClick={() => { setShowReviewed((current) => !current); setSelectedKeys(new Set()); backToTop(); }} className="min-h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm font-medium text-zinc-800">Show reviewed ({reviewedCount})</button>{reviewedHidden ? <span>{reviewedHidden} reviewed and hidden</span> : null}</> : null}
+          </div>
           {canManageDecisions ? <>
             <div role="group" aria-label="Filter decisions" className="flex flex-wrap gap-2">
               {([["undecided", "Not decided"], ["decided", "Decided"], ["check_later", "Check later"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={decisionFilter === value} onClick={() => { setDecisionFilter(decisionFilter === value ? "" : value); backToTop(); }} className={`min-h-9 rounded-full border px-3 text-sm ${decisionFilter === value ? "border-emerald-800 bg-emerald-100" : "border-zinc-300 bg-white"}`}>{label}</button>)}
             </div>
             <div className="flex flex-wrap items-center gap-3 text-sm">
-              <label className="flex min-h-10 items-center gap-2"><input type="checkbox" checked={eligibleKeys.length > 0 && eligibleKeys.every((k) => selectedKeys.has(k))} disabled={!decisions.enabled || !eligibleKeys.length} onChange={(e) => setSelectedKeys((current) => { const next = new Set(current); eligibleKeys.forEach((k) => e.target.checked ? next.add(k) : next.delete(k)); return next; })} className="h-5 w-5 accent-emerald-800" />Select all shown</label>
+              <label className="flex min-h-10 items-center gap-2"><input type="checkbox" checked={eligibleKeys.length > 0 && eligibleKeys.every((k) => selectedShownKeys.has(k))} disabled={!decisions.enabled || !eligibleKeys.length} onChange={(e) => setSelectedKeys((current) => { const next = new Set([...current].filter((key) => eligibleKeys.includes(key))); eligibleKeys.forEach((k) => e.target.checked ? next.add(k) : next.delete(k)); return next; })} className="h-5 w-5 accent-emerald-800" />Select all shown</label>
               <span>Decided {shown.filter((r) => effectiveDecision(r)).length} of {shown.length} shown</span>
             </div>
-            {selectedKeys.size ? <div className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-sm">
-              <strong>{selectedKeys.size} selected</strong>
+            {selectedShownKeys.size ? <div className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-sm">
+              <strong>{selectedShownKeys.size} selected</strong>
               <select aria-label="Bulk action" value={bulkAction} disabled={!decisions.enabled} onChange={(e) => setBulkAction(e.target.value as ReviewDecision | "")} className="h-10 rounded-md border border-zinc-300 bg-white px-2">
                 <option value="">Choose an action</option>{(Object.keys(decisionLabels) as ReviewDecision[]).map((d) => <option key={d} value={d} disabled={d === "use_supplier" && bulkSupplierUnavailable}>{decisionLabels[d]}</option>)}
               </select>
@@ -154,7 +169,7 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
           </div>
           <button type="button" onClick={requestClose} disabled={decisions.saving} className="h-9 shrink-0 rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-900 hover:bg-zinc-100 disabled:opacity-50">Close</button>
         </div>
-        {canManageDecisions && fresh ? <ReviewSaveButton count={decisions.unsavedCount} disabled={!decisions.enabled} saving={decisions.saving} onSave={decisions.save} /> : null}
+        {canManageDecisions && fresh ? <ReviewSaveButton count={decisions.unsavedCount} disabled={!decisions.enabled} saving={decisions.saving} onSave={() => { void saveDecisions(); }} buttonRef={saveButtonRef} /> : null}
         {decisions.loading ? <p role="status" className="text-sm text-zinc-600">Loading saved decisions…</p> : null}
         {decisions.loadError ? <p role="alert" className="text-sm text-red-800">{decisions.loadError} <button type="button" onClick={decisions.retry} className="underline">Try again</button></p> : null}
         {decisions.message ? <p role="status" className="text-sm text-emerald-900">{decisions.message}</p> : null}
@@ -173,7 +188,7 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
         {canManageDecisions ? <div className="grid divide-y divide-zinc-200 sm:grid-cols-2 xl:hidden">{shown.slice(first, last).map((row) => <article key={row.result.locator} className="space-y-2 p-3">
           <div className="flex items-start gap-3">{selectionBox(row)}<div className="min-w-0"><h3 className="break-words font-semibold">{row.model}</h3><p className="break-words text-sm text-zinc-600">{row.result.code} · {row.category}</p></div></div>
           <div className="grid grid-cols-2 gap-2 text-sm"><p>Imported <strong className="block">{importedPriceText(row.result)}</strong></p><p>Supplier <strong className="block">{referencePriceText(row.result)}</strong></p></div>
-          <span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold ${pillTone[row.result.status]}`}>{reviewStatusLabels[row.result.status]}</span>
+          <div className="flex flex-wrap gap-1"><span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold ${pillTone[row.result.status]}`}>{reviewStatusLabels[row.result.status]}</span>{reviewed(row) ? <ReviewedTag /> : null}</div>
           <p className="text-xs text-zinc-600">{reasonLabels[row.result.reason]}</p>
           <details open className="rounded-md border border-zinc-200 bg-zinc-50 px-2"><summary className="min-h-10 cursor-pointer py-2 text-sm font-semibold">Action</summary>{actionControls(row)}</details>
         </article>)}</div> : null}
@@ -183,11 +198,11 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
           </thead>
           <tbody>
             {windowed && first > 0 ? <tr aria-hidden="true" style={{ height: first * ROW_HEIGHT }}><td colSpan={7} className="p-0" /></tr> : null}
-            {shown.slice(first, last).map((row) => <ReviewTableRow key={row.result.locator} row={row} selection={canManageDecisions ? selectionBox(row) : undefined} action={canManageDecisions ? actionControls(row) : undefined} />)}
+            {shown.slice(first, last).map((row) => <ReviewTableRow key={row.result.locator} row={row} reviewed={reviewed(row)} selection={canManageDecisions ? selectionBox(row) : undefined} action={canManageDecisions ? actionControls(row) : undefined} />)}
             {windowed && last < shown.length ? <tr aria-hidden="true" style={{ height: (shown.length - last) * ROW_HEIGHT }}><td colSpan={7} className="p-0" /></tr> : null}
           </tbody>
         </table>
-        {!shown.length ? <p className="p-4 text-sm text-zinc-600">{allRows.length ? "No rows match the selected statuses and search." : "The check returned no rows."}</p> : null}
+        {!shown.length ? <p className="p-4 text-sm text-zinc-600">{reviewedHidden ? "All rows in this view are reviewed. Product prices have not changed." : allRows.length ? "No rows match the selected statuses and search." : "The check returned no rows."}</p> : null}
       </div>}
       {canManageDecisions && fresh ? <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-200 bg-zinc-50 px-3 py-2 text-sm">
         <span>{allRows.filter((r) => effectiveDecision(r)).length} decided · {counts.MATCHED} matched · {counts.MISMATCH} mismatch · {counts.NOT_FOUND} not found · {counts.NEEDS_REVIEW} needs review</span>
@@ -196,7 +211,9 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
   </div>;
 }
 
-function ReviewTableRow({ row, selection, action }: { row: ReviewRow; selection?: React.ReactNode; action?: React.ReactNode }) {
+function ReviewedTag() { return <span className="inline-block rounded-full border border-zinc-300 bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">Reviewed</span>; }
+
+export function ReviewTableRow({ row, reviewed, selection, action }: { row: ReviewRow; reviewed: boolean; selection?: React.ReactNode; action?: React.ReactNode }) {
   const { result: r, difference } = row;
   const evidence = evidenceText(r);
   const tone = !difference || difference.amount === 0 ? "text-zinc-700" : difference.amount > 0 ? "text-red-700" : "text-blue-700";
@@ -208,7 +225,7 @@ function ReviewTableRow({ row, selection, action }: { row: ReviewRow; selection?
     <td className="whitespace-nowrap px-3 text-right tabular-nums">{importedPriceText(r)}</td>
     <td className="whitespace-nowrap px-3 text-right tabular-nums">{referencePriceText(r)}</td>
     <td className={`whitespace-nowrap px-3 text-right tabular-nums font-semibold ${tone}`} title={direction || undefined}>{difference ? <>{amountFormat.format(difference.amount)}{difference.percent !== null ? <span className="block text-xs font-normal">{percentFormat.format(difference.percent)}%</span> : null}</> : <span className="font-normal text-zinc-400">—</span>}</td>
-    <td className="px-3"><span className={`whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-semibold ${pillTone[r.status]}`}>{reviewStatusLabels[r.status]}</span></td>
+    <td className="px-3"><div className="flex flex-wrap gap-1"><span className={`whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-semibold ${pillTone[r.status]}`}>{reviewStatusLabels[r.status]}</span>{reviewed ? <ReviewedTag /> : null}</div></td>
     {action ? <td className="w-60 px-3">{action}</td> : null}
     <td className="max-w-md px-3 text-zinc-700"><div className="line-clamp-2" title={reasonLabels[r.reason]}>{reasonLabels[r.reason]}</div>{evidence ? <div className="truncate text-xs text-zinc-500">{evidence}</div> : null}</td>
   </tr>;
