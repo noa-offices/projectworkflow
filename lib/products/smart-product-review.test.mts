@@ -2,10 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups.js";
-import { normalizeProductTemplateDraft, type ProductTemplateDraft } from "./product-template-draft.js";
+import { draftModularRows, normalizeProductTemplateDraft, type ProductTemplateDraft } from "./product-template-draft.js";
 import {
   accessoryNeedsReviewCount,
   addReviewedMatrixModel,
+  addReviewedModularGroup,
+  addReviewedModularItem,
+  moveReviewedModularItem,
+  removeReviewedModularGroup,
+  removeReviewedModularItem,
   addReviewedBaseModelRow,
   addReviewedWorkstationRow,
   moveReviewedBaseModelRow,
@@ -431,7 +436,7 @@ const pricedRow = (id: string, extra: object = {}) => ({ id, label: id, displayN
 const rowsDraft: ProductTemplateDraft = { ...reviewedSource, pricing: { ...reviewedSource.pricing,
   baseModelRows: [pricedRow("bm-a"), pricedRow("bm-grouped", { groupId: "sys" }), pricedRow("bm-b")],
   workstationRows: [{ ...pricedRow("ws-a"), additionalPrice: null, layoutType: null }, { ...pricedRow("ws-b"), additionalPrice: null, layoutType: null }] } };
-type RuleTarget = { kind: "base_model" | "price_matrix" | "workstation"; group_id: string; row_id: string };
+type RuleTarget = { kind: "base_model" | "price_matrix" | "workstation" | "modular"; group_id: string; row_id: string };
 const rulesFor = (draft: ProductTemplateDraft, targets: RuleTarget[]) =>
   ({ ...draft, optionGroups: draft.optionGroups.map((group) => ({ ...group, conditionalConfiguration: { role: "conditional_option" as const, selection: "exactly_one" as const, applicability: targets.map((target) => ({ target, required: true, visible: true })) } })) });
 const rulePlan = (routeKey: string, targets: RuleTarget[]) =>
@@ -509,4 +514,84 @@ test("removed workstation row loses its workstation-kind option rules in draft a
   assert.deepEqual(next.draft.optionGroups[0].conditionalConfiguration?.applicability.map((rule) => rule.target), [keep, baseModelSameId]);
   assert.deepEqual(next.plan?.routes[1].accessory?.rules.map((rule) => rule.target), [keep, baseModelSameId]);
   assert.equal(next.plan?.routes[0].rowCount, 1);
+});
+
+const directGroup = { id: "g-direct", label: "Direct", defaultDimensions: null, defaultSpecification: null, pricingMode: "direct" as const, directRows: [pricedRow("m-a"), pricedRow("m-b")] };
+const matrixGroup = { id: "g-matrix", label: "Matrix", defaultDimensions: null, defaultSpecification: null, pricingMode: "matrix" as const,
+  matrix: { id: "g-matrix", label: "Matrix", columns: [{ id: "c1", label: "C1" }, { id: "c2", label: "C2" }], rows: [{ ...pricedRow("x-a"), price: undefined, prices: { c1: 1, c2: 2 } }, { ...pricedRow("x-b"), price: undefined, prices: { c1: 3, c2: 4 } }] } };
+const modularDraft = { ...rulesFor(rowsDraft, []), pricing: { ...rowsDraft.pricing, modularGroups: [directGroup, matrixGroup] } } as unknown as ProductTemplateDraft;
+const modularPlan = (rules: RuleTarget[] = []) => ({ routes: [
+  { key: "base_model:rows", sourceKind: "base_model", rowCount: 3 },
+  { key: "modular:g-direct", sourceKind: "modular", sourceId: "g-direct", rowCount: 2 },
+  { key: "modular:g-matrix", sourceKind: "modular", sourceId: "g-matrix", rowCount: 2 },
+  { key: "option:extras", sourceKind: "option", rowCount: 1, accessory: { role: "conditional_option", selection: "required_exactly_one", rules: rules.map((target) => ({ target, required: true })) } },
+] }) as unknown as Parameters<typeof removeReviewedModularItem>[1];
+const modularIds = (draft: ProductTemplateDraft, index: number) => draftModularRows(draft.pricing.modularGroups[index]).map((row) => row.id);
+
+test("modular group add: direct group with its first item, own route, unique ids, no rule", () => {
+  const next = addReviewedModularGroup(modularDraft, modularPlan(), { id: "m-new", groupId: "g-new", groupName: " New group ", name: "First", code: "F1", specification: "", price: "" });
+  const group = next.draft.pricing.modularGroups[2];
+  assert.equal(group.id, "g-new"); assert.equal(group.label, "New group"); assert.equal(group.pricingMode, "direct");
+  assert.deepEqual(group.directRows?.map((row) => [row.id, row.price, row.role]), [["m-new", null, undefined]]);
+  assert.deepEqual(next.plan?.routes.map((route) => route.key), ["base_model:rows", "modular:g-direct", "modular:g-matrix", "modular:g-new", "option:extras"]);
+  assert.equal(next.plan?.routes[3].destination, "modular"); assert.equal(next.plan?.routes[3].rowCount, 1);
+  assert.deepEqual(noRules(next.draft), noRules(modularDraft));
+  assert.equal(addReviewedModularGroup(next.draft, next.plan, { id: "m-other", groupId: "g-new", groupName: "Dup group", name: "X", code: "", specification: "", price: "" }).draft, next.draft);
+  assert.equal(addReviewedModularGroup(next.draft, next.plan, { id: "m-a", groupId: "g-other", groupName: "Dup item", name: "X", code: "", specification: "", price: "" }).draft, next.draft);
+  assert.equal(addReviewedModularGroup(next.draft, next.plan, { id: "m-x", groupId: "g-x", groupName: " ", name: "X", code: "", specification: "", price: "" }).draft, next.draft);
+});
+
+test("modular item add: direct and matrix groups, empty price differs from 0, unique ids, no rule", () => {
+  const direct = addReviewedModularItem(modularDraft, 0, { id: "m-new", name: "New", code: "N1", specification: "", price: "" });
+  assert.deepEqual(modularIds(direct, 0), ["m-a", "m-b", "m-new"]);
+  assert.equal((direct.pricing.modularGroups[0].directRows ?? [])[2].price, null);
+  assert.equal((addReviewedModularItem(direct, 0, { id: "m-zero", name: "Zero", code: "", specification: "", price: "0" }).pricing.modularGroups[0].directRows ?? [])[3].price, 0);
+  const matrix = addReviewedModularItem(modularDraft, 1, { id: "x-new", name: "New", code: "", specification: "", price: "", prices: { c1: "0", c2: "" } });
+  assert.deepEqual(modularIds(matrix, 1), ["x-a", "x-b", "x-new"]);
+  assert.deepEqual(matrix.pricing.modularGroups[1].matrix?.rows[2].prices, { c1: 0, c2: null });
+  assert.equal(addReviewedModularItem(direct, 0, { id: "m-new", name: "Dup", code: "", specification: "", price: "" }), direct);
+  assert.equal(addReviewedModularItem(direct, 1, { id: "m-a", name: "Clash", code: "", specification: "", price: "" }), direct);
+  assert.deepEqual(noRules(matrix), noRules(modularDraft));
+});
+
+test("modular item move swaps inside its group and stops at the ends", () => {
+  assert.deepEqual(modularIds(moveReviewedModularItem(modularDraft, 0, 1, -1), 0), ["m-b", "m-a"]);
+  assert.deepEqual(modularIds(moveReviewedModularItem(modularDraft, 1, 0, 1), 1), ["x-b", "x-a"]);
+  assert.equal(moveReviewedModularItem(modularDraft, 0, 0, -1), modularDraft);
+  assert.equal(moveReviewedModularItem(modularDraft, 1, 1, 1), modularDraft);
+  assert.deepEqual(modularIds(moveReviewedModularItem(modularDraft, 0, 1, -1), 1), ["x-a", "x-b"]);
+});
+
+test("modular item remove keeps at least one item in the group", () => {
+  const direct = removeReviewedModularItem(modularDraft, undefined, 0, "m-a");
+  assert.deepEqual(modularIds(direct.draft, 0), ["m-b"]);
+  assert.equal(removeReviewedModularItem(direct.draft, undefined, 0, "m-b").draft, direct.draft);
+  const matrix = removeReviewedModularItem(modularDraft, undefined, 1, "x-a");
+  assert.deepEqual(modularIds(matrix.draft, 1), ["x-b"]);
+  assert.equal(removeReviewedModularItem(matrix.draft, undefined, 1, "x-b").draft, matrix.draft);
+});
+
+test("removed modular item loses its option rules in draft and review plan", () => {
+  const gone: RuleTarget = { kind: "modular", group_id: "g-direct", row_id: "m-a" };
+  const keepSameGroup: RuleTarget = { kind: "modular", group_id: "g-direct", row_id: "m-b" };
+  const keepOtherGroup: RuleTarget = { kind: "modular", group_id: "g-matrix", row_id: "m-a" };
+  const targets = [gone, keepSameGroup, keepOtherGroup];
+  const next = removeReviewedModularItem(rulesFor(modularDraft, targets), modularPlan(targets), 0, "m-a");
+  assert.deepEqual(next.draft.optionGroups[0].conditionalConfiguration?.applicability.map((rule) => rule.target), [keepSameGroup, keepOtherGroup]);
+  assert.deepEqual(next.plan?.routes[3].accessory?.rules.map((rule) => rule.target), [keepSameGroup, keepOtherGroup]);
+  assert.equal(next.plan?.routes[1].rowCount, 1);
+});
+
+test("removed modular group loses its route and every option rule that targets it", () => {
+  const goneA: RuleTarget = { kind: "modular", group_id: "g-direct", row_id: "m-a" };
+  const goneB: RuleTarget = { kind: "modular", group_id: "g-direct", row_id: "m-b" };
+  const keep: RuleTarget = { kind: "modular", group_id: "g-matrix", row_id: "x-a" };
+  const targets = [goneA, goneB, keep];
+  const next = removeReviewedModularGroup(rulesFor(modularDraft, targets), modularPlan(targets), "g-direct");
+  assert.deepEqual(next.draft.pricing.modularGroups.map((group) => group.id), ["g-matrix"]);
+  assert.deepEqual(next.plan?.routes.map((route) => route.key), ["base_model:rows", "modular:g-matrix", "option:extras"]);
+  assert.deepEqual(next.draft.optionGroups[0].conditionalConfiguration?.applicability.map((rule) => rule.target), [keep]);
+  assert.deepEqual(next.plan?.routes[2].accessory?.rules.map((rule) => rule.target), [keep]);
+  assert.equal(removeReviewedModularGroup(next.draft, next.plan, "g-matrix").draft, next.draft);
+  assert.equal(removeReviewedModularGroup(modularDraft, undefined, "missing").draft, modularDraft);
 });
