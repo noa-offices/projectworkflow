@@ -5,9 +5,11 @@ import { NoaAvatar } from "@/components/noa/noa-avatar";
 import type { NoaVisualState } from "@/lib/noa/noa-types";
 
 export function NoaHeader({
+  engine,
   onClose,
   state,
 }: {
+  engine?: "v2";
   onClose: () => void;
   state: NoaVisualState;
 }) {
@@ -27,7 +29,7 @@ export function NoaHeader({
           />
         </span>
         <div className="leading-tight">
-          <p className="text-sm font-semibold leading-tight text-zinc-950">NOA</p>
+          <p className="flex items-center gap-1.5 text-sm font-semibold leading-tight text-zinc-950">NOA{engine === "v2" ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-px text-[10px] font-semibold uppercase leading-none tracking-wide text-emerald-800" title="Answered by the experimental NOA v2 engine">v2</span> : null}</p>
           <p className="text-xs leading-tight text-zinc-400">ProjectWorkflow Assistant</p>
         </div>
       </div>

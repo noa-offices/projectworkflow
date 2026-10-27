@@ -1,4 +1,4 @@
-import { isWarehouseStaffRequest } from "@/lib/auth";
+import { getProfileForUser, isWarehouseStaffRequest } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { logServerActionError } from "@/lib/action-errors";
 import { isNoaConversationReference } from "@/lib/noa/noa-conversation-reference";
@@ -14,6 +14,9 @@ import { describeNoaProjectTotal, describeNoaQuotations, describeNoaRelatedProje
 import { drillDownNoaAggregate, resolveNoaRelation } from "@/lib/noa/noa-relation.server";
 import { noaSessionId } from "@/lib/noa/noa-turn-state";
 import { isNoaRouteDiagnosticsEnabled } from "@/lib/noa/noa-intent-router";
+import { runNoaAgentLoop } from "@/lib/noa/v2/noa-agent-loop.server";
+
+export const maxDuration = 60;
 
 const MAX_MESSAGE_LENGTH = 2000;
 const MAX_RECENT_MESSAGES = 6;
@@ -123,6 +126,13 @@ export async function POST(request: Request) {
   };
 
   try {
+    // Experimental NOA v2 (read-only agent loop): flag on, System Owner / Admin Manager only, and the caller may opt out with engine: "old".
+    if (process.env.NOA_AGENT_LOOP === "true" && (body as { engine?: unknown }).engine !== "old") {
+      const agentProfile = await getProfileForUser(user.id);
+      if (agentProfile?.account_status === "active" && (agentProfile.role === "system_owner" || agentProfile.role === "admin_manager")) {
+        return NextResponse.json(await runNoaAgentLoop(chatRequest));
+      }
+    }
     const sessionId = noaSessionId((body as { sessionId?: unknown }).sessionId);
     const answer = await runNoaShadowTurn({ ...chatRequest, sessionId }, {
       load: loadOrCreateNoaSession, save: saveNoaSession, run: runNoaOrchestrator,

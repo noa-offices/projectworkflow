@@ -613,6 +613,9 @@ export function NoaMessages({
                 {voice.speakingId === message.id ? <Square aria-hidden="true" className="h-4 w-4" /> : <Volume2 aria-hidden="true" className="h-4 w-4" />}
               </button>
             ) : null}
+            {message.role === "assistant" && message.engine === "v2" ? (
+              <span className="mt-1 inline-flex h-5 shrink-0 items-center self-start rounded-full border border-emerald-200 bg-emerald-50 px-1.5 text-[10px] font-semibold uppercase leading-none text-emerald-800" title="Answered by the experimental NOA v2 engine">v2</span>
+            ) : null}
             {/* Source badges only ever render for assistant messages - user messages never carry
                 domain/sources metadata in the first place (see NoaMessage in lib/noa/noa-types.ts). */}
             {message.role === "assistant" ? (
