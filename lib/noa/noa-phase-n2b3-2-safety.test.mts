@@ -168,7 +168,7 @@ test("25. no provider/LLM call was added for structured rendering", () => {
 
 test("26. no new Supabase query was added - CATCH_UP_SELECT already included metadata before this phase", () => {
   assert.ok(source.includes('const CATCH_UP_SELECT = `${AUDIT_LOG_SELECT},metadata,entity_id`;'));
-  assert.equal((source.match(/\.from\("audit_activity_log"\)/g) ?? []).length, 14);
+  assert.equal((source.match(/\.from\("audit_activity_log"\)/g) ?? []).length, 15); // 14 + teamCatchUpAnswer (team event details, manager-gated)
 });
 
 test("27. B3.1 writer files (app/quotations/actions.ts, app/products/templates/actions.ts) are untouched by this phase", () => {

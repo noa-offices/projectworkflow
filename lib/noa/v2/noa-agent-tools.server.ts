@@ -11,6 +11,7 @@ import { fetchNoaProductCapability } from "@/lib/noa/noa-product-capability.serv
 import { fetchNoaProjectCapability } from "@/lib/noa/noa-project-capability.server";
 import { fetchNoaQuotationCapability } from "@/lib/noa/noa-quotation-capability.server";
 import { fetchNoaUserActivityCapability } from "@/lib/noa/noa-user-activity-capability.server";
+import type { NoaSemanticRequest } from "@/lib/noa/noa-semantic-request";
 import type { NoaAnswer, NoaCapabilityResult, NoaPageContext, NoaSource } from "@/lib/noa/noa-types";
 
 // The activity capability picks its scope from the message text, so the model never sends it free text: closed values map to the
@@ -19,6 +20,8 @@ const ACTIVITY_MESSAGES = {
   team: { today: "show team activity today", yesterday: "show team activity yesterday" },
   mine: { today: "show my activity today", yesterday: "show my activity yesterday" },
 } as const;
+// Team event details are chosen by this structured request, never by message wording: the capability gates it behind its manager check.
+const TEAM_EVENTS_REQUEST: NoaSemanticRequest = { domain: "UserActivity", intent: "recorded_activity", subject: { type: "team" }, detail: "events" };
 const ACTIVITY_REFERENCE_PATTERN = /^(?:QN|CO)-\d{4}-\d{3}$/i; // checked in execute, never in the JSON schema
 
 // The Insights capability also classifies by keywords in the message, so the model never sends it free text: each closed report value
@@ -128,7 +131,7 @@ export function createNoaAgentTools(context: NoaPageContext, options: { displayN
       execute: async ({ query }) => validText(query, 200) ? collect(await fetchNoaAttentionCapability(query, context)) : refuse(INVALID_TEXT),
     }),
     getTeamActivity: tool({
-      description: `Get recorded ProjectWorkflow activity for a day. Use scope "team" for questions about who worked, what the team did, or team activity; use scope "mine" only for the current user's own activity. request "summary" (default) gives counts. request "details" lists the real events: use it when the user asks for detail, or what changed. Details work only for the user's own activity (scope "mine") for today or yesterday, or for one quotation or project file when reference is given (for example QN-0005-001 or CO-0003-001). Team details are not available; offer the user's own details or a team summary. Read-only.`,
+      description: `Get recorded ProjectWorkflow activity for a day. Use scope "team" for questions about who worked, what the team did, or team activity; use scope "mine" only for the current user's own activity. request "summary" (default) gives counts. request "details" lists the real events: use it when the user asks for detail, or what changed. Details work for the user's own activity (scope "mine") or the whole team (scope "team") for today or yesterday, or for one quotation or project file when reference is given (for example QN-0005-001 or CO-0003-001). Team details are only for managers; other users are told they do not have access. Read-only.`,
       inputSchema: z.object({ scope: z.enum(["team", "mine"]), period: z.enum(["today", "yesterday"]), request: z.enum(["summary", "details"]).optional(), reference: z.string().optional() }),
       execute: async ({ scope, period, request, reference }) => {
         if (request !== "details") return collect(await fetchNoaUserActivityCapability(ACTIVITY_MESSAGES[scope][period], context));
@@ -137,7 +140,7 @@ export function createNoaAgentTools(context: NoaPageContext, options: { displayN
           if (!ACTIVITY_REFERENCE_PATTERN.test(ref)) return refuse("The reference is not valid. Use a quotation number like QN-0005-001 or a project file number like CO-0003-001.");
           return collect(await fetchNoaUserActivityCapability(`what changed on ${ref.toUpperCase()}`, context));
         }
-        if (scope === "team") return refuse("Team activity details are not supported yet. I can show your own activity details, or a team activity summary.");
+        if (scope === "team") return collect(await fetchNoaUserActivityCapability(ACTIVITY_MESSAGES.team[period], context, { semanticRequest: TEAM_EVENTS_REQUEST }));
         return collect(await fetchNoaUserActivityCapability(`what changed ${period}`, context));
       },
     }),

@@ -6,12 +6,13 @@ const ok = async () => ({ ok: true, data: {}, sources: [{ label: "Fake", type: "
 const seen: string[] = [];
 const seenOptions: unknown[] = [];
 const activityMessages: string[] = [];
+const activityOptions: unknown[] = [];
 const record = async (message: string, _context?: unknown, options?: unknown) => { seen.push(message); seenOptions.push(options); return ok(); };
 mock.module("@/lib/noa/noa-product-capability.server", { namedExports: { fetchNoaProductCapability: record } });
 mock.module("@/lib/noa/noa-price-capability.server", { namedExports: { fetchNoaPriceCapability: record } });
 mock.module("@/lib/noa/noa-quotation-capability.server", { namedExports: { fetchNoaQuotationCapability: ok } });
 mock.module("@/lib/noa/noa-attention-capability.server", { namedExports: { fetchNoaAttentionCapability: ok } });
-mock.module("@/lib/noa/noa-user-activity-capability.server", { namedExports: { fetchNoaUserActivityCapability: async (message: string) => { activityMessages.push(message); return ok(); } } });
+mock.module("@/lib/noa/noa-user-activity-capability.server", { namedExports: { fetchNoaUserActivityCapability: async (message: string, _context?: unknown, options?: unknown) => { activityMessages.push(message); activityOptions.push(options); return ok(); } } });
 mock.module("@/lib/noa/noa-client-capability.server", { namedExports: { fetchNoaClientCapability: record } });
 mock.module("@/lib/noa/noa-project-capability.server", { namedExports: { fetchNoaProjectCapability: record } });
 mock.module("@/lib/noa/noa-procurement-capability.server", { namedExports: { fetchNoaProcurementCapability: record } });
@@ -131,7 +132,7 @@ test("list, count and status_summary still refuse keyword terms; detail and sing
   assert.deepEqual(seen, [], "nothing reached a capability");
 });
 
-test("getTeamActivity details: own today/yesterday and QN/CO references send exact messages; bad or team details never reach the capability", async () => {
+test("getTeamActivity details: own today/yesterday and QN/CO references send exact messages; bad references never reach the capability; team details send a structured request", async () => {
   const { tools } = createNoaAgentTools({ pathname: "", section: "other" });
   const activity = tools.getTeamActivity as unknown as Closed;
   const run = async (input: unknown) => (await activity.execute(input, {})) as { ok: boolean };
@@ -139,11 +140,18 @@ test("getTeamActivity details: own today/yesterday and QN/CO references send exa
   await run({ scope: "mine", period: "today", request: "details" }); await run({ scope: "mine", period: "yesterday", request: "details" });
   await run({ scope: "mine", period: "today", request: "details", reference: " qn-0005-001 " }); await run({ scope: "team", period: "today", request: "details", reference: "CO-0003-001" });
   assert.deepEqual(activityMessages, ["what changed today", "what changed yesterday", "what changed on QN-0005-001", "what changed on CO-0003-001"]);
+  assert.deepEqual(activityOptions, [undefined, undefined, undefined, undefined], "own and reference details send no semantic request");
   activityMessages.length = 0;
   assert.equal((await run({ scope: "mine", period: "today", request: "details", reference: "QN-5" })).ok, false);
   assert.equal((await run({ scope: "mine", period: "today", request: "details", reference: "what changed on QN-0005-001 and more" })).ok, false);
-  assert.equal((await run({ scope: "team", period: "today", request: "details" })).ok, false);
   assert.deepEqual(activityMessages, [], "refused requests never reach the capability");
+  activityOptions.length = 0;
+  assert.equal((await run({ scope: "team", period: "today", request: "details" })).ok, true);
+  await run({ scope: "team", period: "yesterday", request: "details" });
+  assert.deepEqual(activityMessages, ["show team activity today", "show team activity yesterday"]);
+  const teamRequest = { semanticRequest: { domain: "UserActivity", intent: "recorded_activity", subject: { type: "team" }, detail: "events" } };
+  assert.deepEqual(activityOptions, [teamRequest, teamRequest], "team details are chosen by the structured request");
+  activityMessages.length = 0; activityOptions.length = 0;
   await run({ scope: "team", period: "today" }); await run({ scope: "mine", period: "yesterday", request: "summary" });
   assert.deepEqual(activityMessages, ["show team activity today", "show my activity yesterday"]);
 });

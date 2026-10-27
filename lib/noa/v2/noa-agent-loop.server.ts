@@ -41,7 +41,7 @@ export async function runNoaAgentLoop(request: NoaChatRequest): Promise<NoaAnswe
   const model = configuredModel || DEFAULT_MODEL;
   const { tools, sources, getConfigurationAnswer } = createNoaAgentTools(request.context, { displayName: request.displayName });
   const page = `Current page: pathname=${request.context.pathname}, section=${request.context.section}. If the user asks where they are, which page this is, or what they are looking at, answer from this. It is about the ProjectWorkflow page, never about physical location.`;
-  const system = `${SYSTEM_PROMPT}\n${page}${request.displayName ? `\nThe user's display name is ${request.displayName}.` : ""}`;
+  const system = `${SYSTEM_PROMPT}\n${page}${request.displayName ? `\nThe user's display name is ${request.displayName}.\nWhen you list recorded activity (own or team), always write the person's name. For the signed-in user write their display name followed by (you), for example: ${request.displayName} (you) created quotation QN-0006-001. Never write only 'you' for the signed-in user in activity lists. For other people write just their name.` : ""}`;
   try {
     const result = await generateText({
       model: provider === "openai" ? createOpenAI({ apiKey })(model) : createAnthropic({ apiKey })(model),
