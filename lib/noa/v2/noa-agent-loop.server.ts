@@ -6,6 +6,7 @@ import { NoaProviderError } from "@/lib/noa/noa-provider.server";
 import { withNoaSpokenResponse } from "@/lib/noa/noa-spoken-response";
 import type { NoaAnswer, NoaChatRequest } from "@/lib/noa/noa-types";
 import { createNoaAgentTools } from "./noa-agent-tools.server";
+import { plainChatText } from "./noa-plain-text";
 
 const DEFAULT_MODEL = "claude-sonnet-5-5";
 
@@ -20,6 +21,7 @@ Use earlier messages only for conversational context and referent resolution. Do
 You are strictly read-only: never claim that a write, update, delete, archive, or approval action was performed.
 Never give instructions for bypassing permissions or authorization.
 Keep answers concise and operational, written for a ProjectWorkflow user, not a developer.
+Write plain text only. Never use markdown marks such as ** or # or backticks. For lists use a dash at the start of the line.
 When relevant, state plainly whether a fact is the current live value or a saved historical quotation snapshot - never present a quotation's saved snapshot price as the current live product price.
 Write in a natural, friendly, conversational tone rather than a formal or system-like one - e.g. prefer "I found 3 chair templates" over "There are 3 chair product templates checked". If the user's display name is provided, you may use it occasionally for a personal touch, but never on every reply and never at the start of routine factual answers. Avoid filler phrases like "Great question!" and avoid emoji outside of a greeting. A short, natural follow-up question is fine when it helps, but never add it just to fill space.
 Always use tools to get business facts. If a tool returns not_found, try once more with a simpler or different search before saying you could not find it. Never answer business facts from memory. You are read-only.
@@ -69,7 +71,7 @@ export async function runNoaAgentLoop(request: NoaChatRequest): Promise<NoaAnswe
   const page = `Current page: pathname=${request.context.pathname}, section=${request.context.section}. If the user asks where they are, which page this is, or what they are looking at, answer from this. It is about the ProjectWorkflow page, never about physical location.`;
   const system = `${SYSTEM_PROMPT}\n${page}${request.displayName ? `\nThe user's display name is ${request.displayName}.\nWhen you list recorded activity (own or team), always write the person's name. For the signed-in user write their display name followed by (you), for example: ${request.displayName} (you) created quotation QN-0006-001. Never write only 'you' for the signed-in user in activity lists. For other people write just their name.` : ""}`;
   try {
-    const result = await generateText({
+    const generated = await generateText({
       model: provider === "openai" ? createOpenAI({ apiKey })(model) : createAnthropic({ apiKey })(model),
       system,
       messages: [
@@ -81,6 +83,7 @@ export async function runNoaAgentLoop(request: NoaChatRequest): Promise<NoaAnswe
     });
     const configuration = getConfigurationAnswer();
     if (configuration) return withNoaSpokenResponse({ ...configuration, engine: "v2" }); // the guided flow answer is returned as is, never rewritten by the model
+    const result = { text: plainChatText(generated.text) };
     return withNoaSpokenResponse({ domain: "Help", engine: "v2", sources, text: result.text });
   } catch (error) {
     // Debug aid only: safe error fields (never the key, headers, request body, prompt, user message or tool results), key value redacted.
