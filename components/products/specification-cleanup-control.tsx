@@ -1,16 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { runSpecificationCleanup } from "@/app/products/templates/specification-cleanup-actions";
-import { chunkDimensionTargets } from "@/lib/products/dimension-shortening";
 import { isWordSubset } from "@/lib/products/ai-clean-text-checks";
 import type { ProductTemplateDraft } from "@/lib/products/product-template-draft";
-import { acceptableSpecificationPatches, applySpecificationPatches, buildSpecificationAccessoryNames, buildSpecificationTargets, specificationFingerprint, undoSpecificationPatches, type SpecificationReviewEntry, type SpecificationUndoEntry } from "@/lib/products/specification-cleanup";
+import { acceptableSpecificationPatches, applySpecificationPatches, buildSpecificationAccessoryNames, buildSpecificationTargets, chunkSpecificationTargets, runInBatches, SPECIFICATION_CLEANUP_PARALLEL, specificationFingerprint, undoSpecificationPatches, type SpecificationReviewEntry, type SpecificationSuggestion, type SpecificationUndoEntry } from "@/lib/products/specification-cleanup";
 
 type Review = { fingerprint: string; entries: SpecificationReviewEntry[]; accessoryNames: string[]; message: string };
 
 export function SpecificationCleanupControl({ draft, onApply }: { draft: ProductTemplateDraft; onApply: (draft: ProductTemplateDraft) => void }) {
   const [pending, setPending] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const runRef = useRef(0);
   const [review, setReview] = useState<Review | null>(null);
   const [undo, setUndo] = useState<SpecificationUndoEntry[]>([]);
   const [undoMessage, setUndoMessage] = useState("");
@@ -21,20 +22,28 @@ export function SpecificationCleanupControl({ draft, onApply }: { draft: Product
   const stale = Boolean(review && review.fingerprint !== fingerprint);
 
   const generate = async () => {
-    setPending(true); setReview(null); setUndoMessage("");
-    const requestFingerprint = fingerprint, accessoryNames = buildSpecificationAccessoryNames(draft), texts = new Map(targets.map((target) => [target.targetId, target.text])), entries: SpecificationReviewEntry[] = [];
-    let message = "";
-    try {
-      for (const chunk of chunkDimensionTargets(targets)) {
+    const runId = ++runRef.current;
+    setPending(true); setReview(null); setUndoMessage(""); setProgress({ done: 0, total: targets.length });
+    const requestFingerprint = fingerprint, accessoryNames = buildSpecificationAccessoryNames(draft), texts = new Map(targets.map((target) => [target.targetId, target.text]));
+    type Outcome = { ok: true; suggestions: SpecificationSuggestion[] } | { ok: false; message: string };
+    const outcomes = await runInBatches(chunkSpecificationTargets(targets), SPECIFICATION_CLEANUP_PARALLEL, async (chunk): Promise<Outcome> => {
+      let outcome: Outcome;
+      try {
         const response = await runSpecificationCleanup({ items: chunk.map((target) => ({ targetId: target.targetId, text: target.text, mode: target.mode })), accessoryNames });
-        if (!response.ok) { message = response.message; break; }
-        entries.push(...response.suggestions.map((item) => ({ targetId: item.targetId, original: texts.get(item.targetId) ?? "", value: item.specification, selected: true })));
-      }
-    } catch { message = "The request to the server failed. Try again."; }
+        outcome = response.ok ? { ok: true, suggestions: response.suggestions } : { ok: false, message: response.message };
+      } catch { outcome = { ok: false, message: "The request to the server failed. Try again." }; }
+      if (runRef.current === runId) setProgress((current) => current && { ...current, done: Math.min(current.total, current.done + chunk.length) });
+      return outcome;
+    }, () => runRef.current !== runId);
+    if (runRef.current !== runId) return; // cancelled or replaced by a newer run
+    const entries: SpecificationReviewEntry[] = outcomes.flatMap((outcome) => outcome?.ok ? outcome.suggestions.map((item) => ({ targetId: item.targetId, original: texts.get(item.targetId) ?? "", value: item.specification, selected: true })) : []);
+    const failed = outcomes.filter((outcome) => outcome && !outcome.ok);
+    let message = failed.length ? `${(failed[0] as { message: string }).message} ${failed.length} of ${outcomes.length} batches did not finish; the others are shown.` : "";
     if (!message && !entries.length) message = "No specification could be cleaned safely.";
     setReview({ fingerprint: requestFingerprint, entries, accessoryNames, message });
-    setPending(false);
+    setPending(false); setProgress(null);
   };
+  const cancel = () => { runRef.current += 1; setPending(false); setProgress(null); };
   const edit = (targetId: string, patch: Partial<SpecificationReviewEntry>) => setReview((current) => current && { ...current, entries: current.entries.map((entry) => entry.targetId === targetId ? { ...entry, ...patch } : entry) });
   const accept = (all: boolean) => {
     if (!review || stale) return;
@@ -50,7 +59,8 @@ export function SpecificationCleanupControl({ draft, onApply }: { draft: Product
   };
 
   if (!review) return <div className="flex flex-wrap items-center gap-2">
-    <button type="button" disabled={pending || !targets.length} onClick={() => void generate()} className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-50">{pending ? "Cleaning specifications..." : "Clean specification with AI"}</button>
+    <button type="button" disabled={pending || !targets.length} onClick={() => void generate()} className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-50">{pending ? (progress ? `Checking ${progress.done} of ${progress.total} rows...` : "Cleaning specifications...") : "Clean specification with AI"}</button>
+    {pending ? <button type="button" onClick={cancel} className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold text-zinc-700">Cancel</button> : null}
     {!targets.length && !pending ? <span className="text-xs text-zinc-500">No specifications to clean.</span> : null}
     {undo.length ? <button type="button" onClick={undoAll} className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold text-zinc-700">Undo cleaning ({undo.length})</button> : null}
     {undoMessage ? <p className="text-xs text-zinc-600">{undoMessage}</p> : null}
