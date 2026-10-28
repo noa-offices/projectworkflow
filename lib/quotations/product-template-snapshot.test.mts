@@ -188,3 +188,28 @@ test("the general specification builder also excludes commercial availability no
   });
   assert.equal(withoutOrigin, "Executive desk.");
 });
+
+test("without brand and origin the assembled specification has no brand line; base, fragments and accessories keep their order", () => {
+  const out = buildCompanyStyleProductSpecification({
+    accessorySnapshots: [{ item_name: "Monitor Arm", specification: null }, { item_name: "Cable Tray", specification: null }],
+    linkedProductSnapshots: [],
+    selectedOptionSnapshots: [],
+    template: { default_specification: "Executive desk.", description: null },
+  });
+  assert.equal(out, "Executive desk, Monitor Arm and Cable Tray.");
+  assert.ok(!out?.includes("–") && !out?.includes("\n"), "one line, no brand and country line");
+});
+
+test("new quotation lines no longer pass brand and origin into the specification builder (Product Library and guided configuration)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const callBlock = (file: string) => {
+    const source = readFileSync(file, "utf8");
+    const start = source.indexOf("buildCompanyStyleProductSpecification({", source.indexOf("const companyStyleSpecification"));
+    assert.ok(start > 0, `${file}: builder call found`);
+    return source.slice(start, source.indexOf("});", start));
+  };
+  for (const file of ["components/quotations/product-library-selector.tsx", "lib/products/product-configuration-state.ts", "app/quotations/actions.ts"]) {
+    const block = callBlock(file);
+    assert.ok(!/\bbrand:/.test(block) && !/\borigin:/.test(block), `${file} must not pass brand or origin`);
+  }
+});

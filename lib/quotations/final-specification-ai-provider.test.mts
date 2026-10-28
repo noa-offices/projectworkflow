@@ -69,7 +69,7 @@ test("prompt returns only the specification body while preserving selected facts
     "do not begin with it",
     "Do not include dimensions, size, width, depth, height, diameter, or dimension formatting",
     "quotation/builder layout displays the product/model name and dimension line separately",
-    "Keep actually selected technical features, finishes, accessories, options, and configuration facts",
+    "Keep actually selected technical features, accessories, options, and configuration facts",
     "do not remove important selected facts because name and dimensions are excluded",
     "Do not mention price, currency, discount",
     "supplier codes, model codes, internal codes",
@@ -88,4 +88,43 @@ test("missing configuration and malformed responses fail safely", async () => {
   await withProvider(async () => completed({ specificationSuggestion: 7 }), async () => {
     await assert.rejects(improveFinalSpecificationWithProvider(request), /invalid result/);
   });
+});
+
+test("the prompt carries the house style guide and no longer asks for finishes, brand or country", async () => {
+  let prompt = "";
+  await withProvider(async (_url, init) => {
+    prompt = String((JSON.parse(String(init?.body)) as { instructions?: unknown }).instructions);
+    return completed({ specificationSuggestion: null });
+  }, async () => { await improveFinalSpecificationWithProvider(request); });
+  const { FINAL_SPECIFICATION_STYLE_GUIDE } = await import("./final-specification-style");
+  assert.ok(prompt.includes(FINAL_SPECIFICATION_STYLE_GUIDE), "style guide is part of the system instructions");
+  assert.doesNotMatch(prompt, /Include supplied selected finish\/material/);
+  assert.doesNotMatch(prompt, /technical features, finishes/);
+  assert.doesNotMatch(prompt, /brand\/origin fact may be preserved/);
+  assert.match(prompt, /Never write the brand, country/);
+});
+
+test("the prompt has the Improve block by default and the Shorten block in shorten mode", async () => {
+  const prompts: string[] = [];
+  await withProvider(async (_url, init) => {
+    prompts.push(String((JSON.parse(String(init?.body)) as { instructions?: unknown }).instructions));
+    return completed({ specificationSuggestion: null });
+  }, async () => {
+    await improveFinalSpecificationWithProvider(request);
+    await improveFinalSpecificationWithProvider({ ...request, mode: "shorten" });
+  });
+  assert.match(prompts[0], /MODE: IMPROVE/); assert.doesNotMatch(prompts[0], /MODE: SHORTEN/);
+  assert.match(prompts[1], /MODE: SHORTEN[\s\S]*Never remove a selected accessory[\s\S]*Never add a fact[\s\S]*Never change a number or size/);
+  assert.doesNotMatch(prompts[1], /MODE: IMPROVE/);
+});
+
+test("the Shorten block asks for about 25% fewer words, and the rules say colour-only accessories are not written", async () => {
+  let shorten = "";
+  await withProvider(async (_url, init) => {
+    shorten = String((JSON.parse(String(init?.body)) as { instructions?: unknown }).instructions);
+    return completed({ specificationSuggestion: null });
+  }, async () => { await improveFinalSpecificationWithProvider({ ...request, mode: "shorten" }); });
+  assert.match(shorten, /about 25% fewer words, without removing a selected feature or number/);
+  assert.match(shorten, /Do not write accessories that are only a colour or finish \(for example "Black Plastic Parts"\)/);
+  assert.match(shorten, /Colour words stay allowed inside a feature name such as "black soft double castors"/);
 });

@@ -169,7 +169,7 @@ test("Direct Modular uses resolved configuration text and refreshable dimension 
     "accessorySnapshots: usesDirectModularPricing ? [] : accessorySnapshots",
     "finalSpecificationEditedByTemplate",
     "generatedFinalSpecification",
-    "currentSpecification: finalSpecification",
+    "currentSpecification: specificationForAi(finalSpecification,",
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected Direct Modular generation behavior: ${expected}`));
 });
 
@@ -244,10 +244,9 @@ test("the deterministic Direct Modular specification receives brand/origin at th
     "usesDirectModularPricing && groupSelectionSummaryForAi",
     "`Selected Direct Modular group: ${groupSelectionSummaryForAi}`",
     "usesModularPricing ? modularDefaults.defaultSpecification : null,",
-    "brandNameById.get(template.brand_id)",
-    "`Brand: ${brandNameById.get(template.brand_id)}`",
-    "originSnapshot ? `Origin: ${originSnapshot}` : null,",
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected AI Improve context enrichment: ${expected}`));
+  // Brand and origin are no longer sent to the AI as facts (the saved brand_name_snapshot / origin_snapshot are unchanged).
+  ["`Brand: ${brandNameById.get(template.brand_id)}`", "originSnapshot ? `Origin: ${originSnapshot}` : null,"].forEach((removed) => assert.ok(!source.includes(removed), `Must not send to the AI: ${removed}`));
 });
 
 test("Module Diagram preview defaults to Fit", () => {

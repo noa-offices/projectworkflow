@@ -54,3 +54,15 @@ export function acceptedFinalSpecificationSuggestion(value: string) {
   const trimmed = value.trim();
   return trimmed && trimmed.length <= FINAL_SPECIFICATION_MAX_LENGTH ? trimmed : null;
 }
+
+const lineKey = (value: string) => value.toLowerCase().replace(/[–—-]+/g, "-").replace(/\s+/g, " ").trim();
+/**
+ * The copy of the specification text that is sent to the AI: without the "Dimension:" line and without a line that is only the
+ * selected brand, the origin, or "brand - origin". The on-screen and saved text are not changed by this.
+ */
+export function specificationForAi(text: string | null, { brand, origin }: { brand?: string | null; origin?: string | null }): string | null {
+  if (text === null) return null;
+  const brandKey = lineKey(brand ?? ""), originKey = lineKey(origin ?? "");
+  const blocked = new Set([brandKey, originKey, brandKey && originKey ? `${brandKey} - ${originKey}` : "", brandKey && originKey ? `${originKey} - ${brandKey}` : ""].filter(Boolean));
+  return text.split("\n").filter((line) => !/^\s*dimension\s*:/i.test(line) && !blocked.has(lineKey(line))).join("\n").trim();
+}
