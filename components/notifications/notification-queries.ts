@@ -1,5 +1,7 @@
 "use server";
 
+import { canManageInventory } from "@/lib/inventory/access";
+import { isInventoryNotification } from "@/lib/inventory/notification-presentation";
 import { requireInventoryUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -12,7 +14,7 @@ export type EnrichedNotification = NotificationRow & {
 export async function getRecentNotificationsWithSenders(
   limit = 10,
 ): Promise<{ ok: true; data: EnrichedNotification[] } | { ok: false; error: string }> {
-  const { user } = await requireInventoryUser();
+  const { user, profile } = await requireInventoryUser();
 
   // Session client for notifications — RLS SELECT policy allows reading own rows.
   const supabase = await createClient();
@@ -47,7 +49,8 @@ export async function getRecentNotificationsWithSenders(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const adminClient = adminResult.client as any;
 
-  const senderIds = [...new Set(rows.map((r) => r.sender_id))];
+  const visibleSender = (row: NotificationRow) => canManageInventory(profile?.role) || !isInventoryNotification(row) || row.sender_id === user.id;
+  const senderIds = [...new Set(rows.filter(visibleSender).map((r) => r.sender_id))];
 
   const { data: profiles } = await adminClient
     .from("profiles")
@@ -61,6 +64,6 @@ export async function getRecentNotificationsWithSenders(
 
   return {
     ok: true,
-    data: rows.map((r) => ({ ...r, sender_name: nameMap.get(r.sender_id) ?? null })),
+    data: rows.map((r) => ({ ...r, sender_name: visibleSender(r) ? nameMap.get(r.sender_id) ?? null : null })),
   };
 }

@@ -50,7 +50,7 @@ const shared = {
   '@/lib/inventory/photo-compress':photoCompression, '@/lib/inventory/delete-product':deletion, '@/lib/inventory/brands':brands, '@/lib/inventory/access':access, '@/lib/inventory/presentation':presentation,
   '@/lib/inventory/date-time':dateTime, '@/lib/inventory/profile':profile, '@/lib/inventory/attribution':attribution, '@/lib/inventory/types':types,
   '@/lib/inventory/product-request-submission':submission, '@/lib/inventory/action-validation':validation,
-  '@/lib/inventory/actions':{}, '@/lib/inventory/product-edit':productEdit, '@/lib/inventory/save-errors':saveErrors, '@/lib/inventory/request-presentation':requests, '@/lib/inventory/photo-upload':{},
+  '@/lib/inventory/actions':{}, '@/lib/inventory/request-history-actions':{}, '@/lib/inventory/product-edit':productEdit, '@/lib/inventory/save-errors':saveErrors, '@/lib/inventory/request-presentation':requests, '@/lib/inventory/photo-upload':{},
 };
 const html = (component:Component,props:Record<string,unknown>) => renderToStaticMarkup(React.createElement(component,props));
 
@@ -224,7 +224,7 @@ test('cards and detail put the stock reference directly below the name and omit 
     }
   }
   const requestsView=(await load('../../components/inventory/requests-view.tsx',{...shared,'@/lib/inventory/request-reads':{},'./product-image-gallery':{ProductImageGallery:stub},'./request-dialog':{RequestDialog:stub},'./product-request-form':{ProductRequestForm:stub}})).RequestsView;
-  const requestMarkup=html(requestsView,{products:[{...previewProductRequests[0],stock_ref:null,item_code:null,model_name:null}],movements:[],tab:'products',status:'pending_review',mine:false,userId:'viewer',role:'viewer',page:1,pageCount:1,total:1});
+  const requestMarkup=html(requestsView,{products:[{...previewProductRequests[0],stock_ref:null,item_code:null,model_name:null}],movements:[],tab:'products',status:'pending_review',mine:false,userId:previewProductRequests[0].submitted_by,role:'viewer',page:1,pageCount:1,total:1});
   assert.match(requestMarkup,/Ref assigned on approval/);assert.doesNotMatch(requestMarkup,/>null<|>undefined</);
 });
 
@@ -705,7 +705,7 @@ test('Movements rows and the product movement list both use the shared requested
   const movement={...previewMovementHistory[0],attribution:requested};
   const movements=(await load('../../components/inventory/movements-view.tsx',{...shared,'next/image':{__esModule:true,default:stub}})).MovementsView;
   const detail=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-image-gallery':{ProductImageGallery:stub},'./product-reservations':{ProductReservations:stub}})).ProductDetailView;
-  assert.match(html(detail,{product:{...previewProduct,recent_movements:[movement]},role:'viewer'}),new RegExp(line));
+  assert.match(html(detail,{product:{...previewProduct,recent_movements:[movement]},role:'admin_manager'}),new RegExp(line));
   assert.match(html(movements,{result:{items:[movement],total:1,page:1,page_count:1,page_size:24},state:movementHistory.parseMovementParams({}).state,role:'admin_manager'}),new RegExp(line));
 });
 
@@ -763,4 +763,23 @@ test('Movements shows a New items quick filter outside More filters, active stat
   assert.match(on,/<a[^>]*aria-pressed="true"[^>]*href="\/inventory\/movements\?q=chair"[^>]*>New items<\/a>|<a[^>]*href="\/inventory\/movements\?q=chair"[^>]*aria-pressed="true"[^>]*>New items<\/a>/);
   assert.match(on,/<input[^>]*type="hidden"[^>]*name="new"[^>]*value="1"|<input[^>]*name="new"[^>]*type="hidden"/,'form submits keep the filter');
   assert.match(on,/href="\/inventory\/movements\?q=chair&amp;new=1&amp;page=2"/,'next page keeps the filter');
+});
+
+
+test('request history controls and product movement privacy follow manager role', async()=>{
+  const dependencies={...shared,'@/lib/inventory/request-history-actions':{},'./product-image-gallery':{ProductImageGallery:stub},'./request-dialog':{RequestDialog:({children}: {children: React.ReactNode})=>React.createElement('div',null,children)},'./product-request-form':{ProductRequestForm:stub},'@/lib/inventory/request-reads':{}};
+  const view=(await load('../../components/inventory/requests-view.tsx',dependencies)).RequestsView;
+  const row={...previewProductRequests[0],request_status:'approved',cleared_at:'2026-10-26T04:56:00Z',clearer_display_name:'Alex Morgan'};
+  const props={status:'all',mine:false,userId:row.submitted_by,page:1,pageCount:1,total:1,tab:'products',products:[row],movements:[],clearedCount:1};
+  const normal=html(view,{...props,role:'viewer',cleared:true});
+  assert.match(normal,/My requests/); assert.doesNotMatch(normal,/Clear history|Show cleared|Restore|Alex Morgan/);
+  const other={...row,id:'other',item_name:'Someone else private item',submitted_by:'someone-else',cleared_at:null};
+  assert.doesNotMatch(html(view,{...props,products:[other],role:'viewer'}),/Someone else private item/);
+  const manager=html(view,{...props,role:'admin_manager',cleared:true,previewHistoryDialog:true});
+  assert.match(manager,/Clear history/); assert.match(manager,/Show cleared \(1\)/); assert.match(manager,/Restore/); assert.match(manager,/Hide 1 finished requests\?/); assert.match(manager,/Pending requests are not affected/); assert.match(manager,/26 Oct 2026, 08:56/);
+  const hidden=html(view,{...props,role:'admin_manager'}); assert.doesNotMatch(hidden,/Alex Morgan|>Cleared</);
+  const pending=html(view,{...props,status:'pending_review',role:'admin_manager'}); assert.match(pending,/href="[^"]*status=all[^"]*cleared=1[^"]*"[^>]*>Show cleared/);
+  const rejected=html(view,{...props,status:'rejected',role:'admin_manager'}); assert.match(rejected,/href="[^"]*status=rejected[^"]*cleared=1[^"]*"[^>]*>Show cleared/);
+  const productView=(await load('../../components/inventory/product-detail-view.tsx',{...shared,'./product-image-gallery':{ProductImageGallery:stub},'./product-reservations':{ProductReservations:stub}})).ProductDetailView;
+  assert.doesNotMatch(html(productView,{product:previewProduct,role:'viewer'}),/Recent movements|Recorded by/);
 });

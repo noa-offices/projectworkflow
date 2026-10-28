@@ -1,0 +1,40 @@
+# Task 20 database privacy audit
+
+| Surface | Result |
+| --- | --- |
+| `product_requests`, `movement_requests`, `movements` | SELECT now manager or own request, and manager-only movement history; write policies unchanged. Archived requests remain visible through RLS. |
+| `person_names`, `is_record_actor`, `search_people` | Names limited to self for non-managers; manager lookups retain activity restriction and include people recorded only as clearer. Search now manager-only. Actor helper has no API EXECUTE. |
+| `product_images`, `storage.objects` | Product-linked images remain visible, including product images retaining a request path. Request-linked image metadata and objects are limited to the requester or managers; own request paths remain accessible before metadata insertion. |
+| `get_product_delete_summary`, `delete_product_permanently` | Both require an active manager. |
+| Submit/review request functions, stock change, reservation create/release/fulfil | Submit routines validate role; review and stock/fulfil routines require manager; release checks manager or reservation creator. Existing behavior retained. `reserved_quantity` exposes aggregate stock reservation quantity only. |
+| Notification trigger functions and `public.notifications` | Triggers are not API-callable and decisions trigger only on UPDATE OF request_status. Recipient SELECT remains unchanged. Sender SELECT keeps the original active-account check and ordinary sent-list access (including Procurement Manager, Sales Designer and Sales Coordinator); only Inventory notifications require a manager. SQL uses the app path boundary (/inventory followed by /, ? or end, after trimming spaces), including NULL/non-Inventory path coverage. Clear/restore do not change request_status or send notifications. |
+| `public.audit_activity_log`, inventory activity triggers | Previously readable by all active users including a second permissive sales coordinator policy; a restrictive SELECT policy now limits inventory-prefixed records to managers. Other modules are unchanged. Activity triggers only log request status transitions, not clear/restore. |
+| Inventory photo, brand, stock reference, product mutation and activity helpers | Mutators validate manager or caller ownership/role; trigger/internal helpers do not expose request lists. No inventory list/overview/report views were found in the migrations. |
+| `inventory.reservations` | Existing SELECT exposes all reservation rows, including `created_by`, `released_by`, project labels and notes, to inventory viewers. Retained because sales users need reservation operations. Proposed separate change: expose aggregate reserved quantities to all viewers and own reservation rows to their creator, with managers retaining full access; first audit UI and workflows for dependencies. |
+
+The disposable PGlite harness executes the real inventory migrations with minimal auth/profile/storage bootstrap, actual role helpers and notification/activity definitions, including the latest stock-reference notification triggers. The before-apply SQL includes the exact migration in a transaction, runs assertions, and rolls back. The after-apply SQL rolls back all fixtures and mutations. Both scripts issue global clear/restore calls inside the rolled-back transaction, so use a maintenance window or disposable clone to avoid temporary row locks. Neither script applies a migration permanently. The SQL test fixture count assertions are scoped to fake IDs; RPC counts are lower bounds because real data may already exist.
+
+## App audit
+
+| Surface | Result |
+| --- | --- |
+| Requests (both tabs), request-photo server reads, product pending-request reads | Signed-in queries enforce submitted_by for non-managers, even for forged filters. Lists hide cleared rows by default and never allow non-managers to enable them. Total and pagination use the same filtered read. |
+| Request history actions | Active-manager check before creating the client; validated scope/age/UUID; exact read-only count before clear. Database repeats authorization. Clear/restore invalidate Requests, Overview, Products and product detail pages. |
+| Overview | Keeps stock/reservation aggregates. Pending request counts are scoped to self for non-managers; manager activity remains manager-only. It has no recent finished-request counts to adjust. |
+| Products list and detail | No movement read or rendered movement section for non-managers. Person lookup filters to self before the RPC and filters returned IDs again. Existing stock quantities and availability remain. |
+| Movements route, navigation and reports/exports | Existing server manager guards and redirect remain; movement link is manager-only. Excel/PDF routes use requireReportManager and signed-in queries. No separate CSV/request export reader was found. |
+| Notifications | Received queries already use recipient_id. Inventory sender-name enrichment now suppresses other people's names before/after admin lookup for non-managers; manager and unrelated-module name behavior stays unchanged. Database sender SELECT preserves active users' non-Inventory sent lists and manager behavior for both kinds; non-managers cannot read Inventory notifications sent to others. |
+| Profile and Warehouse Staff routing | Profile reads/updates only the signed-in user. Existing requireInventoryUser/warehouse routing guards are retained. |
+
+## Files and verification
+
+Application changes: app/inventory/requests/page.tsx; components/inventory/requests-view.tsx, request-history-dialog.tsx, product-detail-view.tsx; components/notifications/notification-queries.ts; lib/inventory/queries.ts, mapping.ts, types.ts, request-history.ts, request-history-actions.ts.
+Tests: lib/inventory/queries.test.mts, ui.test.mts, request-history.test.mts, request-history-actions.test.mts; components/notifications/notification-queries.test.mts; supabase/tests/inventory_privacy.test.mts, inventory_privacy.sql, inventory_privacy_TEST.sql.
+Preview/evidence: app/dev/inventory-preview/page.tsx and artifacts/inventory-privacy/. Preview data is synthetic; screenshots do not verify a live authenticated Supabase session.
+Migration to APPLY: supabase/migrations/20261030100000_inventory_privacy.sql. First run supabase/tests/inventory_privacy_TEST.sql (rollback only), then APPLY the migration, then optionally run supabase/tests/inventory_privacy.sql (after-apply rollback assertions). No live or permanent migration was applied during this task. Deploy the app changes together with the migration: the new list queries require the cleared columns.
+
+Verification covers local SQL through disposable PGlite with real inventory migrations and role/access helpers, app/helper/component tests, TypeScript and touched-file lint. Supabase's real Auth/Storage infrastructure and live PostgREST behavior were not exercised. Independent security review found and verified fixes for photo-policy bypasses, clear-only actor names and the Pending-to-All Show cleared transition.
+
+Final recorded checks: inventory plus touched notification suite 302/302 passed; after review fixes the SQL privacy test passed again and the updated UI suite passed 49/49. Final TypeScript noEmit and lint of changed TypeScript files passed. Eight preview screenshots cover manager dialog, manager cleared list, non-manager own list and non-manager product detail at 1440 and 390 px; navigation/privacy and no-horizontal-overflow assertions are captured in artifacts/inventory-privacy/assertions.json. The Movements link is absent in both non-manager request/detail screenshots.
+
+Decisions: individual Restore uses an additional manager-only restore_cleared_request RPC; Show cleared changes Pending to All so archived rows can appear; the Show cleared count is per selected request type. Clear and bulk restore affect matching finished requests across the chosen scope, independent of pagination. Supabase CLI was unavailable, so the migration filename follows this repository's timestamp sequence without a CLI generation step.

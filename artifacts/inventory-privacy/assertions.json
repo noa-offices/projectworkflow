@@ -1,0 +1,61 @@
+{
+  "disclaimer": "Synthetic preview data; no production data was used.",
+  "results": [
+    {
+      "width": 390,
+      "name": "manager-dialog",
+      "status": 200,
+      "url": "http://localhost:3020/dev/inventory-preview?frame=1&view=requests&role=admin_manager&dialog=clear&status=all",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "name": "manager-cleared",
+      "status": 200,
+      "url": "http://localhost:3020/dev/inventory-preview?frame=1&view=requests&role=admin_manager&cleared=1&status=all",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "name": "own-requests",
+      "status": 200,
+      "url": "http://localhost:3020/dev/inventory-preview?frame=1&view=requests&role=sales_coordinator&status=all",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "name": "product-detail",
+      "status": 200,
+      "url": "http://localhost:3020/dev/inventory-preview?frame=1&view=detail&role=sales_coordinator",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "name": "manager-dialog",
+      "status": 200,
+      "url": "http://localhost:3020/dev/inventory-preview?frame=1&view=requests&role=admin_manager&dialog=clear&status=all",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "name": "manager-cleared",
+      "status": 200,
+      "url": "http://localhost:3020/dev/inventory-preview?frame=1&view=requests&role=admin_manager&cleared=1&status=all",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "name": "own-requests",
+      "status": 200,
+      "url": "http://localhost:3020/dev/inventory-preview?frame=1&view=requests&role=sales_coordinator&status=all",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "name": "product-detail",
+      "status": 200,
+      "url": "http://localhost:3020/dev/inventory-preview?frame=1&view=detail&role=sales_coordinator",
+      "overflow": false
+    }
+  ]
+}
