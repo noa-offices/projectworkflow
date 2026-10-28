@@ -6,6 +6,8 @@ import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
 import { draftBaseModelGroupRows, draftUngroupedBaseModelRows } from "./base-model-draft-groups";
 import { LEGACY_WORKSTATION_GROUP_ID } from "./workstation-pricing-groups";
 
+import { productTemplateRowReferenceKey } from "./product-template-row-references";
+
 export type StagedReviewedRowImage<TFile = File> = { file: TFile; previewUrl: string; sourceKey: string; sourceRowId: string };
 export type PendingProductTemplateRowImage<TFile = File> = { file: TFile; previewUrl: string; pricingType: ProductTemplateGroupReferenceType; rowId: string };
 export type SmartReviewedPricingSubgroup = BaseModelPricingSubgroup;
@@ -100,4 +102,16 @@ export async function uploadPendingRowImagesAfterSave<TEntry, TIdentity>({ entri
     try { await upload(entry, identity); } catch { failed += 1; }
   }
   return { attempted, failed };
+}
+
+/** Read-only saved picture for a review row. Only "matrix:<groupId>" (finish_category) and "modular:<groupId>" (modular) are mapped; any other source key finds nothing. */
+export function savedPictureForReviewRow<T>(references: Readonly<Record<string, T>>, sourceKey: string, rowId: string): T | null {
+  const separator = sourceKey.indexOf(":");
+  const prefix = sourceKey.slice(0, separator), groupId = sourceKey.slice(separator + 1);
+  const pricingType = prefix === "matrix" ? "finish_category" : prefix === "modular" ? "modular" : null;
+  return separator > 0 && pricingType && groupId && rowId ? references[productTemplateRowReferenceKey(pricingType, groupId, rowId)] ?? null : null;
+}
+/** A staged (pasted or cropped) picture always wins over the saved one. */
+export function displayedReviewRowPicture(staged: { previewUrl: string } | null, saved: { previewUrl: string | null } | null): string | null {
+  return staged?.previewUrl ?? saved?.previewUrl ?? null;
 }
