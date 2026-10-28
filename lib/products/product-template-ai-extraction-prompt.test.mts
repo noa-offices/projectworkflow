@@ -4087,3 +4087,26 @@ test("Accessories: confidence above 0.90 requires every listed commercial valida
     "If any one fails or remains uncertain, confidence must be <= 0.90.",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
 });
+
+test("every extraction focus carries the dimension and specification text rules, without new fields", () => {
+  for (const focus of extractionPromptFocuses) {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    for (const expected of [
+      "DIMENSION RULE",
+      "W:<width> D:<depth> H:<height> mm",
+      "Order is always W, D, H.",
+      "W:520/680",
+      "H:1130-1250",
+      "Use only numbers that are in the source. Never calculate or guess. If a value is missing, leave that part out.",
+      "Round products: write Ø<diameter> H:<height> mm.",
+      "If the source gives no overall W, D and H, keep the source dimension text as it is. Do not shorten it.",
+      "SPECIFICATION RULE (seating products only)",
+      "Apply this rule ONLY to seating products (office chairs, task chairs, visitor chairs, stools and similar seating).",
+      "For all other products (desks, tables, storage, screens, accessories, etc.) do not use this rule. Keep the existing specification behavior, including facts marked as included.",
+      "Maximum 2 short sentences.",
+      "product type, backrest type/height, seat finish, mechanism",
+      "castors, column, base, plastic parts, feet",
+    ]) assert.ok(prompt.includes(expected), `${focus}: missing "${expected}"`);
+    assert.ok(!prompt.includes("dimension_raw") && !prompt.includes("specification_raw"), `${focus}: no new raw fields`);
+  }
+});
