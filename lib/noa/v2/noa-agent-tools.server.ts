@@ -3,6 +3,7 @@ import { z } from "zod";
 import { fetchNoaAttentionCapability } from "@/lib/noa/noa-attention-capability.server";
 import { isNoaRouteDiagnosticsEnabled } from "@/lib/noa/noa-intent-router";
 import { fetchNoaClientCapability } from "@/lib/noa/noa-client-capability.server";
+import { fetchNoaInventoryCapability, INVENTORY_LOCATIONS, INVENTORY_REPORTS } from "@/lib/noa/noa-inventory-capability.server";
 import { fetchNoaInsightsCapability } from "@/lib/noa/noa-insights-capability.server";
 import { fetchNoaPriceCapability } from "@/lib/noa/noa-price-capability.server";
 import { runNoaOrchestrator } from "@/lib/noa/noa-orchestrator";
@@ -58,6 +59,8 @@ export const PRODUCT_MESSAGES = { list: (term: string) => `show all ${term}`, co
 export const PRODUCT_DETAIL_MESSAGE = "give me the product information";
 export const PRICE_SINGLE_MESSAGE = "give me the product price";
 export const PRICE_MESSAGES = { status_summary: (term: string) => `summarize ${term} price status` } as const;
+// Inventory takes typed options (never message text). The term / category rules run in execute and again in the capability; no cost or price is ever returned.
+export const INVENTORY_TEXT_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N} .\-&'/#]{0,79}$/u; // letters, digits, spaces and . - & ' / #, 80 characters at most
 const debugToolCall = (tool: string, request: string, message: string) => {
   if (isNoaRouteDiagnosticsEnabled(process.env.NODE_ENV, process.env.NOA_DEBUG_ROUTING)) console.info("[NOA_V2_TOOL]", JSON.stringify({ tool, request, message }));
 };
@@ -185,6 +188,18 @@ export function createNoaAgentTools(context: NoaPageContext, options: { displayN
           return refuse("The order number is missing, not allowed for this report, or not valid. Use an order number like PW-2024-001.");
         }
         return collect(await fetchNoaProcurementCapability(report === "order_detail" ? `order details for ${orderNumber}` : PROCUREMENT_MESSAGES[report], context));
+      },
+    }),
+    getInventoryInfo: tool({
+      description: `Get Inventory stock (read-only, never prices or costs). report values: list = active items (optional term, location or category); count = how many items match (item records, not units); item_stock = the stock of one item (needs term: its name, stock reference or item code); low_stock = items at or below their low-stock level; by_location = items with stock in one location (needs location); by_category = items in one category (needs category). location is one of warehouse, dubai_showroom, abudhabi_showroom, mockup, temporary_out. term and category are plain text, 80 characters at most. Warehouse, showroom, mockup and temporary-out quantities are separate; sold is cumulative and not part of live stock. Inventory prices and costs are not available in NOA: if asked, do not call this tool; say it is not available.`,
+      inputSchema: z.object({ report: z.enum(INVENTORY_REPORTS), term: z.string().optional(), location: z.enum(INVENTORY_LOCATIONS).optional(), category: z.string().optional() }),
+      execute: async ({ report, term: rawTerm, location, category: rawCategory }) => {
+        const term = rawTerm?.trim(), category = rawCategory?.trim();
+        if ((term !== undefined && !INVENTORY_TEXT_PATTERN.test(term)) || (category !== undefined && !INVENTORY_TEXT_PATTERN.test(category))) {
+          return refuse("The search text is not valid. Use letters, digits, spaces and basic punctuation, 80 characters at most.");
+        }
+        debugToolCall("getInventoryInfo", report, "inventory options");
+        return collect(await fetchNoaInventoryCapability({ report, ...(term !== undefined ? { term } : {}), ...(location ? { location } : {}), ...(category !== undefined ? { category } : {}) }, context));
       },
     }),
     configureProduct: tool({

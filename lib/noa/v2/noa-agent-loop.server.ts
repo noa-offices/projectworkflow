@@ -30,7 +30,8 @@ Only state what a tool result actually covers. If the result says it checked 'yo
 Never calculate, sum, convert or estimate numbers yourself. Only repeat numbers and currencies exactly as they appear in a tool result.
 For greetings and small talk, reply briefly and do not use any tool.
 If a tool says the user is not authorized or has no access, tell the user plainly that they do not have access to that information. Do not try other tools to get around it.
-When the user asks for the price of a specific product, or wants to configure a product, use configureProduct. Products are configurable, so there is usually no single price. Use getProductPrice only for price-check status questions. Never guess or calculate a price yourself.`;
+When the user asks for the price of a specific product, or wants to configure a product, use configureProduct. Products are configurable, so there is usually no single price. Use getProductPrice only for price-check status questions. Never guess or calculate a price yourself.
+For Inventory stock questions (how many in stock, where an item is, low stock) use getInventoryInfo. NOA never states prices or costs of inventory items; if asked, say it is not available.`;
 
 type V2Provider = "openai" | "anthropic";
 

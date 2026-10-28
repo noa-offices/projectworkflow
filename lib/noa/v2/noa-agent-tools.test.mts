@@ -16,6 +16,8 @@ mock.module("@/lib/noa/noa-user-activity-capability.server", { namedExports: { f
 mock.module("@/lib/noa/noa-client-capability.server", { namedExports: { fetchNoaClientCapability: record } });
 mock.module("@/lib/noa/noa-project-capability.server", { namedExports: { fetchNoaProjectCapability: record } });
 mock.module("@/lib/noa/noa-procurement-capability.server", { namedExports: { fetchNoaProcurementCapability: record } });
+const inventoryCalls: unknown[] = [];
+mock.module("@/lib/noa/noa-inventory-capability.server", { namedExports: { INVENTORY_REPORTS: ["list", "count", "item_stock", "low_stock", "by_location", "by_category"], INVENTORY_LOCATIONS: ["warehouse", "dubai_showroom", "abudhabi_showroom", "mockup", "temporary_out"], fetchNoaInventoryCapability: async (options: unknown) => { inventoryCalls.push(options); return ok(); } } });
 const insightMessages: string[] = [];
 const insightOptions: unknown[] = [];
 mock.module("@/lib/noa/noa-insights-capability.server", { namedExports: { fetchNoaInsightsCapability: async (message: string, _context?: unknown, options?: unknown) => { insightMessages.push(message); insightOptions.push(options); return ok(); } } });
@@ -24,10 +26,10 @@ const configurationFixture = { domain: "Product", sources: [], text: "Which fini
 mock.module("@/lib/noa/noa-orchestrator", { namedExports: { runNoaOrchestrator: async (request: unknown) => { orchestratorRequests.push(request); return configurationFixture; } } });
 const { createNoaAgentTools, PRODUCT_MESSAGES, PRICE_MESSAGES, PRODUCT_DETAIL_MESSAGE, PRICE_SINGLE_MESSAGE } = await import("./noa-agent-tools.server");
 
-test("NOA v2 exposes exactly 11 read-only tools", async () => {
+test("NOA v2 exposes exactly 12 read-only tools", async () => {
   const { tools, sources } = createNoaAgentTools({ pathname: "", section: "other" });
   const names = Object.keys(tools);
-  assert.deepEqual(names.sort(), ["configureProduct", "getAttentionItems", "getClientInfo", "getInsights", "getProcurementInfo", "getProductPrice", "getProjectInfo", "getQuotation", "getTeamActivity", "searchProducts", "searchQuotations"]);
+  assert.deepEqual(names.sort(), ["configureProduct", "getAttentionItems", "getClientInfo", "getInsights", "getInventoryInfo", "getProcurementInfo", "getProductPrice", "getProjectInfo", "getQuotation", "getTeamActivity", "searchProducts", "searchQuotations"]);
   for (const name of names) assert.doesNotMatch(name, /create|update|delete|archive/i);
   await (tools.searchProducts as unknown as { execute: (i: { request: string; term: string }, o: unknown) => Promise<unknown> }).execute({ request: "list", term: "chairs" }, {});
   assert.equal(sources.length, 1, "sources are collected from successful results");
@@ -100,6 +102,19 @@ test("no tool schema sent to the model contains pattern, length, format or union
   };
   for (const [name, definition] of Object.entries(tools)) walk(z.toJSONSchema((definition as unknown as { inputSchema: z.ZodType }).inputSchema, { io: "input" }), name);
   assert.deepEqual(found, []);
+});
+
+test("getInventoryInfo passes typed options and rejects bad text in execute, before the capability", async () => {
+  const { tools } = createNoaAgentTools({ pathname: "", section: "other" });
+  const inventory = tools.getInventoryInfo as unknown as Closed;
+  inventoryCalls.length = 0;
+  await inventory.execute({ report: "by_location", location: "mockup", term: "  chair " }, {});
+  assert.deepEqual(inventoryCalls, [{ report: "by_location", location: "mockup", term: "chair" }]);
+  assert.equal(inventory.inputSchema.safeParse({ report: "cost" }).success, false);
+  assert.equal(inventory.inputSchema.safeParse({ report: "list", location: "sold" }).success, false);
+  for (const term of ["100%", "a_b", "x".repeat(81), "", "a,b", "(x)"]) assert.equal(((await inventory.execute({ report: "list", term }, {})) as { ok: boolean }).ok, false, term);
+  assert.equal(((await inventory.execute({ report: "list", category: "x".repeat(81) }, {})) as { ok: boolean }).ok, false);
+  assert.equal(inventoryCalls.length, 1, "invalid input never reaches the capability");
 });
 
 // The real classifiers are private to the old capability files (server-only, not exported), and old files stay untouched, so these mirror
