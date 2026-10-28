@@ -80,7 +80,10 @@ export async function runOpenAiProvider(request: AiProviderRequest): Promise<AiP
     });
 
     if (!response.ok) {
-      throw new AiProviderError("OpenAI request failed.", "provider_failed");
+      // Log only the status and, for request/schema problems (400, 404, 422), OpenAI's short error message. Never the key or the request.
+      const detail = [400, 404, 422].includes(response.status) ? await response.json().then((body: { error?: { message?: unknown } }) => String(body?.error?.message ?? "").slice(0, 300), () => "") : "";
+      console.error("AI PROVIDER ERROR", { provider: "openai", status: response.status, ...(detail ? { detail } : {}) });
+      throw new AiProviderError(`OpenAI request failed (status ${response.status}).`, "provider_failed");
     }
 
     const text = outputText(await response.json());
