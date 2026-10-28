@@ -21,7 +21,7 @@ test("sends strict-schema requests with the accessory list to the existing speci
   answer = async () => ({ text: JSON.stringify({ results: [{ targetId: "a", specification: "Swivel chair." }, { targetId: "b", specification: "Melamine top" }] }) });
   assert.deepEqual(await cleanSpecificationsWithProvider(items, names), [{ targetId: "a", specification: "Swivel chair." }, { targetId: "b", specification: "Melamine top" }]);
   assert.deepEqual(resolved, ["specification_enrichment"]);
-  assert.equal(requests[0].timeoutMs, 45_000);
+  assert.equal(requests[0].timeoutMs, 90_000);
   assert.deepEqual(requests[0].userContent, { accessoryNames: names, items });
   assert.deepEqual((requests[0].userContent.items as { mode: string }[]).map((item) => item.mode), ["seating", "accessory_only"], "each input row carries its mode");
   for (const expected of ["at most 2 short sentences", "ONLY words that are in the original", "return null", "accessory list", 'Mode "seating"', 'Mode "accessory_only"', "including facts marked as included"]) assert.ok(requests[0].systemInstructions.includes(expected), expected);
@@ -59,4 +59,11 @@ test("failures give plain reasons; the log has no request text", async () => {
     await assert.rejects(cleanSpecificationsWithProvider([], names), (error: ProviderError) => error.kind === "provider_failed");
   } finally { console.error = original; }
   assert.doesNotMatch(JSON.stringify(logged), /black plastic parts|Swivel chair/i);
+});
+
+test("a call with more than 6 rows is refused before any AI request", async () => {
+  requests.length = 0;
+  const many = Array.from({ length: 7 }, (_, i) => ({ targetId: `t${i}`, text: "x", mode: "seating" as const }));
+  await assert.rejects(cleanSpecificationsWithProvider(many, names), (error: ProviderError) => error.kind === "provider_failed");
+  assert.equal(requests.length, 0);
 });

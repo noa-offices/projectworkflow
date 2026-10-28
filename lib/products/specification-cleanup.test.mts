@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ProductTemplateDraft } from "./product-template-draft";
 import { flattenBatchSpecificationTargets } from "./specification-enrichment-batch";
-import { acceptableSpecificationPatches, applySpecificationPatches, buildSpecificationAccessoryNames, buildSpecificationTargets, parseSpecificationCleanupResult, specificationFingerprint, undoSpecificationPatches, validateSpecificationResults } from "./specification-cleanup";
+import { SPECIFICATION_CLEANUP_BATCH_SIZE, chunkSpecificationTargets, runInBatches, acceptableSpecificationPatches, applySpecificationPatches, buildSpecificationAccessoryNames, buildSpecificationTargets, parseSpecificationCleanupResult, specificationFingerprint, undoSpecificationPatches, validateSpecificationResults } from "./specification-cleanup";
 
 const SPEC = "Swivel chair with medium-high mesh backrest, coloured mesh design included, seat upholstered. Autolift mechanism. Armrests optional. Standard equipment: black plastic parts, polyamide chair column, hard double castors; delivered knocked down in box.";
 const DESK = "Melamine top, cable tray included, modesty panel";
@@ -104,4 +104,36 @@ test("the provider answer must be exactly one result per requested id", () => {
   assert.equal(parseSpecificationCleanupResult([{ targetId: "a", specification: 5 }, { targetId: "b", specification: null }], ["a", "b"]), null);
   assert.equal(parseSpecificationCleanupResult([{ targetId: "a", specification: "x", more: 1 }, { targetId: "b", specification: null }], ["a", "b"]), null);
   assert.equal(parseSpecificationCleanupResult("nope", ["a"]), null);
+});
+
+// ---- speed: small batches, a few at the same time ----
+test("40 rows make 7 batches of at most 6, in order", () => {
+  const rows = Array.from({ length: 40 }, (_, i) => ({ targetId: `t${i}`, label: "x", text: "y", mode: "seating" as const }));
+  const batches = chunkSpecificationTargets(rows);
+  assert.equal(SPECIFICATION_CLEANUP_BATCH_SIZE, 6);
+  assert.deepEqual(batches.map((b) => b.length), [6, 6, 6, 6, 6, 6, 4]);
+  assert.deepEqual(batches.flat().map((r) => r.targetId), rows.map((r) => r.targetId));
+  assert.deepEqual(chunkSpecificationTargets([]), []);
+});
+test("batches run at most 3 at a time and the results stay in batch order even when they finish out of order", async () => {
+  let active = 0, peak = 0;
+  const delays = [30, 5, 20, 1, 10, 15, 2];
+  const results = await runInBatches(delays, 3, async (delay, index) => {
+    active += 1; peak = Math.max(peak, active);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    active -= 1;
+    return index;
+  });
+  assert.deepEqual(results, [0, 1, 2, 3, 4, 5, 6]);
+  assert.equal(peak, 3);
+});
+test("one failed batch keeps the results of the others", async () => {
+  const results = await runInBatches([1, 2, 3, 4], 3, async (value) => (value === 3 ? { ok: false as const, message: "AI service error 429." } : { ok: true as const, value }));
+  assert.deepEqual(results.map((r) => r?.ok), [true, true, false, true]);
+});
+test("cancelling stops new batches from starting", async () => {
+  let started = 0, cancelled = false;
+  const results = await runInBatches([1, 2, 3, 4, 5, 6], 2, async (value) => { started += 1; if (value === 2) cancelled = true; await new Promise((resolve) => setTimeout(resolve, 5)); return value; }, () => cancelled);
+  assert.ok(started < 6, `started ${started}`);
+  assert.equal(results.filter((r) => r !== undefined).length, started);
 });

@@ -75,3 +75,22 @@ export function undoSpecificationPatches(draft: ProductTemplateDraft, entries: S
   });
   return { draft: next, restored: done.size, kept: entries.length - done.size };
 }
+
+// ---- speed: small batches (same size as the specification enrichment helper), a few at the same time ----
+export const SPECIFICATION_CLEANUP_BATCH_SIZE = 6;
+export const SPECIFICATION_CLEANUP_PARALLEL = 3;
+export function chunkSpecificationTargets<T>(items: T[]): T[][] {
+  return Array.from({ length: Math.ceil(items.length / SPECIFICATION_CLEANUP_BATCH_SIZE) }, (_, index) => items.slice(index * SPECIFICATION_CLEANUP_BATCH_SIZE, (index + 1) * SPECIFICATION_CLEANUP_BATCH_SIZE));
+}
+/** Runs the batches with at most `limit` at the same time. Results keep the batch order; a batch that was never started stays undefined (after cancel). `run` should not throw. */
+export async function runInBatches<B, R>(batches: readonly B[], limit: number, run: (batch: B, index: number) => Promise<R>, cancelled: () => boolean = () => false): Promise<(R | undefined)[]> {
+  const results: (R | undefined)[] = new Array(batches.length).fill(undefined);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, batches.length) }, async () => {
+    while (next < batches.length && !cancelled()) {
+      const index = next++;
+      results[index] = await run(batches[index], index);
+    }
+  }));
+  return results;
+}
