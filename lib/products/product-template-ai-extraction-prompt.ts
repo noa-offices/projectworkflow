@@ -584,6 +584,25 @@ CABINET EXAMPLE
 BAD: { "specification": "Open low cabinet. Structure depth 35 cm. Must be fixed to wall to prevent overturning. Complete with finishing top (sold separately).", "importantRequirements": [] }
 GOOD: { "specification": "Open low cabinet. Structure depth 35 cm.", "importantRequirements": ["Wall fixing required for 35 cm depth to prevent overturning", "Finishing top required"] }
 
+ROW DIMENSION AND SPECIFICATION TEXT FORMAT
+These two rules set only the text format of dimensions.rawText and specification on each priced row. The dimension rule applies to all products; the specification rule applies to seating products only. Field names, prices, codes, row binding and importantRequirements are unchanged.
+
+DIMENSION RULE
+- Output the OVERALL (total) size only, in this exact format: W:<width> D:<depth> H:<height> mm
+- Order is always W, D, H.
+- If width has two values (without armrests / with armrests), write W:520/680.
+- If a size is a range because the product is adjustable (for example height), write the range: H:1130-1250.
+- Do NOT include seat size, backrest size, adjustment ranges (seat depth, etc.) or notes like "without armrests".
+- Round products: write Ø<diameter> H:<height> mm.
+- Use only numbers that are in the source. Never calculate or guess. If a value is missing, leave that part out.
+- If the source gives no overall W, D and H, keep the source dimension text as it is. Do not shorten it.
+
+SPECIFICATION RULE (seating products only)
+- Apply this rule ONLY to seating products (office chairs, task chairs, visitor chairs, stools and similar seating).
+- Maximum 2 short sentences. Only: product type, backrest type/height, seat finish, mechanism.
+- Remove: standard equipment, colours, "included", anything "optional", delivery or packing text, and parts that are sold as accessories (armrests, headrest, castors, column, base, plastic parts, feet).
+- For all other products (desks, tables, storage, screens, accessories, etc.) do not use this rule. Keep the existing specification behavior, including facts marked as included.
+
 EXHAUSTIVE COMMERCIAL EXTRACTION - NO SAMPLING
 Extraction is commercially exhaustive for the supplied scope. Never return a representative sample, representative rows, example models only, selected permutations, sample formatting capacity, "omitted for brevity", "remaining rows follow the same pattern", or any equivalent sampling/summarization. Every source row with its own supplier code, price, or dimensions/configuration is an authoritative commercial row and must remain separate even when it repeats a price, dimensions, family, commercial structure, or description already extracted. This includes later widths/heights, LH/RH variants, depth variants, and "without adjustable shelves" or other seemingly repetitive variants.
 
