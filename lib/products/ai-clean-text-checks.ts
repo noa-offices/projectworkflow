@@ -106,7 +106,7 @@ export function accessoryNamesFromSavedAccessoryPricing(accessoryPricing: unknow
   return collector.names();
 }
 
-const SEATING_WORDS = new Set(["chair", "chairs", "armchair", "armchairs", "stool", "stools", "seating", "swivel", "visitor"]);
+const SEATING_WORDS = new Set(["chair", "chairs", "armchair", "armchairs", "stool", "stools", "seating", "swivel", "visitor", "sofa", "sofas", "lounge", "lounger", "pouf", "poufs", "ottoman", "ottomans", "bench", "benches", "banquette", "armless"]);
 // Chair parts and other furniture are not seating rows, even inside a chair group.
 const NOT_SEATING_WORDS = new Set(["mat", "mats", "castor", "castors", "caster", "casters", "armrest", "armrests", "headrest", "headrests", "desk", "desks", "table", "tables", "screen", "screens", "cabinet", "cabinets"]);
 

@@ -56,8 +56,8 @@ export function acceptableDimensionPatches(entries: DimensionReviewEntry[]): Dim
 
 // Same ids as the specification helper (checked by a test), so one row has one id everywhere.
 const id = (value: string) => encodeURIComponent(value);
-type Row = { id: string; dimensions: { rawText: string | null } | null };
-function mapRows(draft: ProductTemplateDraft, change: (row: Row, targetId: string) => Row): ProductTemplateDraft {
+export type Row = { id: string; dimensions: { rawText: string | null } | null };
+export function mapRows(draft: ProductTemplateDraft, change: (row: Row, targetId: string) => Row): ProductTemplateDraft {
   const map = <T extends Row>(rows: T[], targetId: (rowId: string) => string) => rows.map((row) => change(row, targetId(row.id)) as T);
   return {
     ...draft,

@@ -98,3 +98,14 @@ test("seating gate: seating words are true, everything else and unknown text is 
   assert.equal(isSeatingRow({}), false);
   assert.equal(isSeatingRow({ displayName: null, groupLabel: null, category: null }), false);
 });
+
+test("seating gate: soft seating words count; exclusion words still win", () => {
+  assert.equal(isSeatingRow({ displayName: "Lounge Sofa 2-seater" }), true);
+  assert.equal(isSeatingRow({ displayName: "Pouf" }), true);
+  for (const name of ["Ottoman", "Bench", "Banquette", "Armless lounger", "Soft seating system", "Sofas"]) assert.equal(isSeatingRow({ displayName: name }), true, name);
+  assert.equal(isSeatingRow({ displayName: "Desk 1600" }), false);
+  assert.equal(isSeatingRow({ displayName: "Screen" }), false);
+  assert.equal(isSeatingRow({ displayName: "Bench desk" }), false);
+  assert.equal(isSeatingRow({ displayName: "Lounge table" }), false);
+  assert.equal(isSeatingRow({ displayName: "Workbench" }), false, "whole words only");
+});

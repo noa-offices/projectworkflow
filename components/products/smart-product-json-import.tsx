@@ -11,6 +11,7 @@ import { SourceQaPanel } from "@/components/products/source-qa-panel";
 import { SpecificationEnrichmentControl } from "@/components/products/specification-enrichment-control";
 import { BatchSpecificationEnrichmentControl } from "@/components/products/batch-specification-enrichment-control";
 import { DimensionShorteningControl } from "@/components/products/dimension-shortening-control";
+import { SpecificationCleanupControl } from "@/components/products/specification-cleanup-control";
 import { parseSmartProductJsonImport, type SmartProductJsonImportResult } from "@/lib/products/smart-product-json-import";
 import { smartSetupSpecificationPreview } from "@/lib/products/smart-setup-specification-preview";
 import { SYNTAX_REPAIR_LABELS } from "@/lib/products/import-guardian-syntax-repair";
@@ -1005,6 +1006,7 @@ function SmartProductReviewBody({ draft, focus, originalImportedJsonSources, ima
     {draft.linkedFamilySuggestions.length ? section({ title: "Linked Family Suggestions", children: <div className="space-y-3">{draft.linkedFamilySuggestions.map((item, index) => <div key={item.id} className="grid gap-3 rounded-md border border-zinc-200 p-3 md:grid-cols-2"><TextField label="Template name" value={item.templateName} onChange={(value) => onChange({ ...draft, linkedFamilySuggestions: draft.linkedFamilySuggestions.map((entry, entryIndex) => entryIndex === index ? { ...entry, templateName: nullableText(value) } : entry) })} /><TextField label="Template code" value={item.templateCode} onChange={(value) => onChange({ ...draft, linkedFamilySuggestions: draft.linkedFamilySuggestions.map((entry, entryIndex) => entryIndex === index ? { ...entry, templateCode: nullableText(value) } : entry) })} /><PriceField label="Default quantity" value={item.defaultQuantity} onChange={(defaultQuantity) => onChange({ ...draft, linkedFamilySuggestions: draft.linkedFamilySuggestions.map((entry, entryIndex) => entryIndex === index ? { ...entry, defaultQuantity } : entry) })} /><TextField multiline label="Notes" value={item.notes} onChange={(value) => onChange({ ...draft, linkedFamilySuggestions: draft.linkedFamilySuggestions.map((entry, entryIndex) => entryIndex === index ? { ...entry, notes: nullableText(value) } : entry) })} /></div>)}</div> }) : null}
     <BatchSpecificationEnrichmentControl draft={draft} originalImportedJsonSources={originalImportedJsonSources} onApply={onChange} />
     <DimensionShorteningControl draft={draft} onApply={onChange} />
+    <SpecificationCleanupControl draft={draft} onApply={onChange} />
   </div>;
 }
 
