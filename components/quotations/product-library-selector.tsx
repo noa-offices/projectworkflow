@@ -62,6 +62,7 @@ import { filterCompatibleBaseModelGroups, unionStructuralSupportCompatibleTarget
 import { defaultProductAccessoryQuantities, evaluateProductAccessorySelection } from "@/lib/quotations/product-accessory-configuration";
 import { accessoryOptionLabel } from "@/lib/quotations/accessory-option-label";
 import { flattenWorkstationPricingRows, workstationPricingGroups } from "@/lib/products/workstation-pricing-groups";
+import { variantOptionLabel } from "@/lib/products/variant-option-label";
 import { productTemplateRowReferenceKey, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import { missingExchangeRateCurrencies, roundSourceAmount } from "@/lib/quotations/source-price-components";
@@ -3304,11 +3305,7 @@ export function ProductLibrarySelector({
                               >
                                 {categoryRows.map((row, index) => (
                                   <option key={row.id ?? index} value={row.id ?? `category-${index}`}>
-                                    {pricingOptionLabel({
-                                      currency: row.currency ?? template.currency,
-                                      dimension: row.dimension,
-                                      displayName: pricingDisplayName(row),
-                                    })}
+                                    {variantOptionLabel({ code: row.supplier_price_list_code, name: pricingDisplayName(row) || row.variant_name || "" })}
                                   </option>
                                 ))}
                               </select>
