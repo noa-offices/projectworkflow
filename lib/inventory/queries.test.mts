@@ -154,6 +154,8 @@ test('type counts share every list filter except selected item type and sort', a
 
 test('request images use the signed-in client, are batched and never query costs', async () => {
   reset('warehouse_staff');
+  fixtures.product_requests.forEach(row => { row.submitted_by = "self"; });
+  fixtures.movement_requests.forEach(row => { row.submitted_by = "self"; });
   fixtures.product_images = fixtures.product_images.map(image => ({...image, product_id:null,product_request_id:'r1'}));
   const images = await queries.getProductRequestImages('r1');
   assert.equal(images.length, 3);
@@ -164,6 +166,8 @@ test('request images use the signed-in client, are batched and never query costs
 });
 test('pending product movement requests respect product/status filters and RLS names', async () => {
   reset();
+  fixtures.product_requests.forEach(row => { row.submitted_by = "self"; });
+  fixtures.movement_requests.forEach(row => { row.submitted_by = "self"; });
   fixtures.movement_requests.push({...fixtures.movement_requests[0],id:'reviewed',request_status:'approved'});
   const result = await queries.getPendingProductMovementRequests('p1');
   assert.equal(result.length, 1);
@@ -172,6 +176,8 @@ test('pending product movement requests respect product/status filters and RLS n
 });
 test('approved request photos follow the approved product after photos are relinked', async () => {
   reset();
+  fixtures.product_requests.forEach(row => { row.submitted_by = "self"; });
+  fixtures.movement_requests.forEach(row => { row.submitted_by = "self"; });
   fixtures.product_requests[0].request_status = 'approved';
   const images = await queries.getProductRequestImages('r1');
   assert.equal(images.length, 3);
@@ -189,6 +195,8 @@ test("out-of-range product pages preserve a specific error for URL recovery", as
 test("six non-manager roles never query cost tables or receive cost fields", async () => {
   for (const nextRole of ["procurement_manager", "sales_designer", "sales_coordinator", "designer", "viewer", "warehouse_staff"]) {
     reset(nextRole);
+  fixtures.product_requests.forEach(row => { row.submitted_by = "self"; });
+  fixtures.movement_requests.forEach(row => { row.submitted_by = "self"; });
     const detail = await queries.getProduct("p1");
     const products = await queries.listProducts();
     const requests = await queries.listProductRequests();
@@ -200,7 +208,7 @@ test("six non-manager roles never query cost tables or receive cost fields", asy
       for (const key of Object.keys(costs).concat("costs")) assert.equal(key in row, false, `${nextRole}: ${key}`);
     }
     assert.equal(calls.some(call => call.table.includes("cost")), false, nextRole);
-    assert.equal(requests.items[0].submitted_by, "hidden");
+    assert.equal(requests.items[0].submitted_by, "self");
     assert.equal(requests.items[0].submitter_display_name, null);
     assert.equal(requests.items[0].approved_product?.item_name, "Chair");
     const serialized = JSON.stringify([detail, products, requests, movementRequests, movements]);
@@ -252,7 +260,9 @@ test("each public query authenticates before creating its client and refuses unk
   }
 });
 test("overview reads past API row limits and reports accurate quantities and counts", async () => {
-  reset(); cap = 2;
+  reset();
+  fixtures.product_requests.forEach(row => { row.submitted_by = "self"; });
+  fixtures.movement_requests.forEach(row => { row.submitted_by = "self"; }); cap = 2;
   fixtures.products = Array.from({ length: 5 }, (_, i) => ({ ...product, id: `p${i}` }));
   const overview = await queries.getInventoryOverview();
   assert.equal(overview.product_count, 5);
@@ -264,6 +274,8 @@ test("overview reads past API row limits and reports accurate quantities and cou
 });
 test("related rows are read in batches and RLS-hidden profile names stay null", async () => {
   reset();
+  fixtures.product_requests.forEach(row => { row.submitted_by = "self"; });
+  fixtures.movement_requests.forEach(row => { row.submitted_by = "self"; });
   assert.equal((await queries.listCategories())[0].name, "Seating");
   assert.deepEqual(await queries.listActiveBrands(), [{ id: "b1", name: "Brand" }]);
   const requests = await queries.listMovementRequests({ request_type: "hold" });
@@ -328,6 +340,8 @@ test('reservation read failures never turn into available stock', async () => {
 });
 test('generated stock refs remain searchable and nullable request and product identifiers survive reads',async()=>{
   reset();
+  fixtures.product_requests.forEach(row => { row.submitted_by = "self"; });
+  fixtures.movement_requests.forEach(row => { row.submitted_by = "self"; });
   fixtures.products=[{...product,item_code:null,model_name:null,stock_ref:'02-0001'}];
   fixtures.product_requests=[{...fixtures.product_requests[0],stock_ref:null,item_code:null,model_name:null}];
   const result=await queries.listProducts({search:'02-0001'});
@@ -553,19 +567,20 @@ test('a manager adding directly has no request, so the creator is shown alone', 
   assert.equal(detail?.recent_movements[0].attribution?.creator_name,'Junais KP');
 });
 
-test('every Inventory role gets names through person_names, never from public.profiles', async () => {
+test('only managers receive movement actor names, and no role reads profiles directly', async () => {
   for (const nextRole of ["system_owner", "admin_manager", "procurement_manager", "sales_designer", "sales_coordinator", "designer", "viewer", "warehouse_staff"]) {
     reset(nextRole);
     fixtures.profiles = [{ id: "hidden", full_name: "Junais KP", email: "never@example.com" }];
     const detail = await queries.getProduct("p1");
-    assert.equal(detail?.recent_movements[0].actor_display_name, "Junais KP", nextRole);
+    if (nextRole === 'system_owner' || nextRole === 'admin_manager') assert.equal(detail?.recent_movements[0].actor_display_name,"Junais KP");
+    else {assert.deepEqual(detail?.recent_movements,[]);assert.ok(!JSON.stringify(detail).includes('Junais KP'));}
     assert.equal(calls.filter(call => call.table === "profiles").length, 0, nextRole);
     assert.ok(!JSON.stringify(detail).includes("never@example.com"), nextRole);
   }
 });
 
 test('names fall back to null only for people the function does not return or who have no name', async () => {
-  reset("viewer");
+  reset("admin_manager");
   fixtures.profiles = [{ id: "hidden", full_name: null }];
   assert.equal((await queries.getProduct("p1"))?.recent_movements[0].actor_display_name, null);
   fixtures.profiles = [{ id: "hidden", full_name: "Junais KP", no_activity: true }];
@@ -587,7 +602,7 @@ test('person search works for a non-owner manager through search_people with the
 });
 
 test('a name lookup failure is an error, not a silent Team member', async () => {
-  reset("viewer"); fixtures.profiles = [{ id: "hidden", full_name: "Junais KP" }]; failTable = "person_names";
+  reset("admin_manager"); fixtures.profiles = [{ id: "hidden", full_name: "Junais KP" }]; failTable = "person_names";
   await assert.rejects(() => queries.getProduct("p1"), /Unable to read inventory data/);
 });
 
@@ -617,4 +632,30 @@ test('the New items filter returns only the stock-in movements made when an item
   reset('admin_manager');
   fixtures.movements = [{ id: 'm3', product_id: 'p1', action_type: 'sale', reference_type: 'manual', reference_id: null, created_by: 'u1', created_at: '2026-10-23T00:00:00Z' }];
   assert.equal((await queries.listMovements({ new_items: true, action_type: 'sale' })).total, 0);
+});
+
+
+test('non-managers read only own visible requests and never query product movement history', async () => {
+  for (const nextRole of ['procurement_manager','sales_designer','sales_coordinator','designer','viewer','warehouse_staff']) {
+    reset(nextRole);
+    fixtures.product_requests!.push({...fixtures.product_requests![0],id:'own',submitted_by:'self'});
+    fixtures.movement_requests!.push({...fixtures.movement_requests![0],id:'own-m',submitted_by:'self'});
+    assert.deepEqual((await queries.listProductRequests({submitted_by:'hidden'})).items.map(row=>row.id), ['own']);
+    assert.deepEqual((await queries.listMovementRequests({submitted_by:'hidden'})).items.map(row=>row.id), ['own-m']);
+    const detail = await queries.getProduct('p1');
+    assert.equal(detail?.recent_movements.length,0);
+    assert.equal(callsTo('movements').length,0);
+    assert.equal(callsTo('product_requests')[0].url.searchParams.get('cleared_at'),'is.null');
+    assert.equal(callsTo('movement_requests')[0].url.searchParams.get('cleared_at'),'is.null');
+  }
+});
+
+test('manager request list hides cleared rows by default and can include them explicitly', async () => {
+  reset('system_owner');
+  fixtures.product_requests!.push({...fixtures.product_requests![0],id:'cleared',request_status:'approved',cleared_at:'2026-01-01T00:00:00Z'});
+  assert.equal((await queries.listProductRequests()).total,1);
+  assert.equal((await queries.listProductRequests({include_cleared:true})).total,2);
+  reset('viewer');
+  await queries.listProductRequests({include_cleared:true});
+  assert.equal(callsTo('product_requests')[0].url.searchParams.get('cleared_at'),'is.null');
 });

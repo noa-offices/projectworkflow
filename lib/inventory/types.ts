@@ -108,7 +108,12 @@ export interface InventoryProductSummary {
   item_name: string;
   model_name: string | null;
 }
-export interface InventoryProductRequestRow extends ProductIdentity {
+export interface RequestArchiveFields {
+  cleared_at?: string | null;
+  cleared_by?: string | null;
+  clearer_display_name?: string | null;
+}
+export interface InventoryProductRequestRow extends ProductIdentity, RequestArchiveFields {
   initial_stock: Partial<Record<Exclude<InventoryLocation, 'sold'>, number>> | null;
   requested_status: ProductStatus;
   request_status: RequestStatus;
@@ -183,7 +188,7 @@ export interface InventoryReservationRow {
   released_by: string | null; released_at: string | null; release_note: string | null; fulfilled_movement_id: string | null;
 }
 export interface InventoryReservation extends InventoryReservationRow { creator_display_name: string | null; product?: InventoryProductSummary }
-export interface InventoryMovementRequestRow {
+export interface InventoryMovementRequestRow extends RequestArchiveFields {
   project_id: string | null; project_label: string | null; reference_note: string | null;
   expires_at: string | null; approved_reservation_id: string | null;
   id: string; product_id: string; request_type: RequestType;
@@ -245,6 +250,7 @@ export interface ProductFilters {
   active?: boolean | "all"; sort?: ProductSort;
 }
 export interface RequestFilters {
+  include_cleared?: boolean;
   search?: string;
   request_status?: RequestStatus; submitted_by?: string; request_type?: RequestType; product_id?: string;
   page?: number;

@@ -81,7 +81,7 @@ async function names(client: Client, products: { brand_id: string | null; local_
   });
 }
 // Names come only from these two functions (SECURITY DEFINER, can_view() check, id + full_name only, only people who appear in
-// Inventory records). public.profiles is never read for names here, so every Inventory role sees the same names.
+// Inventory records). public.profiles is never read for names here. Non-managers receive only their own name.
 type PersonRpc<Name extends string, Row> = { Row: Row; Result: Row[]; RelationName: Name; Relationships: null };
 function personNames(client: Client, part: string[]) {
   return client.schema("inventory").rpc<"person_names", { p_ids: string[] }, PersonRpc<"person_names", { id: string; full_name: string | null }>>("person_names", { p_ids: part }, { get: true });
@@ -90,11 +90,12 @@ function personSearch(client: Client, term: string) {
   return client.schema("inventory").rpc<"search_people", { term: string }, PersonRpc<"search_people", { id: string }>>("search_people", { term }, { get: true });
 }
 async function displayNames(client: Client, userIds: (string | null)[]) {
-  const unique = ids(userIds);
+  const { user, profile } = await requireInventoryUser();
+  const unique = ids(userIds).filter(id => canManageInventory(profile?.role) || id === user.id);
   if (!unique.length) return new Map<string, string | null>();
   const data = await inChunks(unique, part => personNames(client, part).then(rows));
   // People with no Inventory activity, or no name, are absent or null and show as "Team member".
-  return new Map(data.map(row => [row.id, row.full_name]));
+  return new Map(data.filter(row => unique.includes(row.id)).map(row => [row.id, row.full_name]));
 }
 async function productSummaries(client: Client, productIds: (string | null)[]) {
   const unique = ids(productIds);
@@ -185,12 +186,12 @@ function emptyPage<T>(page: number): InventoryPage<T> { return pageResult<T>([],
 
 /** Active products only. Sold is a cumulative bucket, excluded from live quantity. */
 export async function getInventoryOverview(): Promise<InventoryOverview> {
-  const { profile } = await requireInventoryUser();
+  const { user, profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
   const [stock, productRequests, movementRequests] = await Promise.all([
     allRows<StockRow & { id: string }>((from, to) => client.schema("inventory").from("products").select(["id",...STOCK_COLUMNS].join(","), { count: "exact" }).eq("is_active", true).order("id").range(from, to).returns<(StockRow & { id: string })[]>()),
-    client.schema("inventory").from("product_requests").select("id", { count: "exact", head: true }).eq("request_status", "pending_review"),
-    client.schema("inventory").from("movement_requests").select("id", { count: "exact", head: true }).eq("request_status", "pending_review"),
+    (canManageInventory(profile?.role) ? client.schema("inventory").from("product_requests").select("id", { count: "exact", head: true }).eq("request_status", "pending_review").is("cleared_at", null) : client.schema("inventory").from("product_requests").select("id", { count: "exact", head: true }).eq("request_status", "pending_review").is("cleared_at", null).eq("submitted_by", user.id)),
+    (canManageInventory(profile?.role) ? client.schema("inventory").from("movement_requests").select("id", { count: "exact", head: true }).eq("request_status", "pending_review").is("cleared_at", null) : client.schema("inventory").from("movement_requests").select("id", { count: "exact", head: true }).eq("request_status", "pending_review").is("cleared_at", null).eq("submitted_by", user.id)),
   ]);
   const reservations = await activeReservations(client, stock.map(row => row.id));
   return { reserved_quantity: reservations.reduce((sum,row) => sum + row.quantity,0), reserved_product_count: new Set(reservations.map(row => row.product_id)).size, ...summarizeStock(stock), pending_product_requests: total(productRequests), pending_movement_requests: total(movementRequests) };
@@ -277,7 +278,7 @@ export async function getProduct(id: string): Promise<InventoryProductDetail | n
   const [labels, costs, imageRows, movementRows, reservationRows] = await Promise.all([
     names(client, [product]), costRows(client, canSeeCosts(profile?.role), "product_costs", [id]),
     client.schema("inventory").from("product_images").select(IMAGE_COLUMNS.join(",")).eq("product_id", id).order("sort_order").order("id").limit(3).returns<InventoryImageRow[]>().then(rows),
-    client.schema("inventory").from("movements").select(MOVEMENT_COLUMNS.join(",")).eq("product_id", id).order("created_at", { ascending: false }).order("id").limit(10).returns<InventoryMovementRow[]>().then(rows),
+    canManageInventory(profile?.role) ? client.schema("inventory").from("movements").select(MOVEMENT_COLUMNS.join(",")).eq("product_id", id).order("created_at", { ascending: false }).order("id").limit(10).returns<InventoryMovementRow[]>().then(rows) : [],
     activeReservations(client, [id]),
   ]);
   const people = await displayNames(client,reservationRows.map(row => row.created_by));
@@ -302,10 +303,11 @@ export async function listActiveBrands(): Promise<InventoryBrand[]> {
 }
 
 export async function listProductRequests(filters: ProductRequestFilters = {}): Promise<InventoryPage<InventoryProductRequest>> {
-  const { profile } = await requireInventoryUser();
+  const { user, profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
-  const plan = requestFilters(filters), productPlan = buildProductFilters({ ...filters, search: lookupText(filters.search) ?? undefined }), range = pagination(filters.page);
+  const plan = requestFilters(canManageInventory(profile?.role) ? filters : { ...filters, submitted_by: user.id }), productPlan = buildProductFilters({ ...filters, search: lookupText(filters.search) ?? undefined }), range = pagination(filters.page);
   let query = client.schema("inventory").from("product_requests").select(PRODUCT_REQUEST_COLUMNS.join(","), { count: "exact" });
+  if (!canManageInventory(profile?.role) || !filters.include_cleared) query = query.is("cleared_at", null);
   for (const key of ["request_status", "submitted_by"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
   if (productPlan.brand_id === "none") query = query.is("brand_id",null).is("local_brand_id",null);
   else if (productPlan.brand_id?.startsWith("local:")) query = query.eq("local_brand_id",productPlan.brand_id.slice(6));
@@ -318,18 +320,19 @@ export async function listProductRequests(filters: ProductRequestFilters = {}): 
   if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
   const requests = rows(response);
   const [labels, people, costs, products] = await Promise.all([
-    names(client, requests), displayNames(client, requests.flatMap(row => [row.submitted_by, row.reviewed_by])),
+    names(client, requests), displayNames(client, requests.flatMap(row => [row.submitted_by, row.reviewed_by, row.cleared_by ?? null])),
     costRows(client, canSeeCosts(profile?.role), "product_request_costs", requests.map(row => row.id)),
     productSummaries(client, requests.map(row => row.approved_product_id)),
   ]);
-  return pageResult(requests.map(row => ({ ...pick(row, PRODUCT_REQUEST_COLUMNS), ...labels(row), submitter_display_name: people.get(row.submitted_by) ?? null, reviewer_display_name: row.reviewed_by ? people.get(row.reviewed_by) ?? null : null, approved_product: row.approved_product_id ? products.get(row.approved_product_id) ?? null : null, ...(costs.has(row.id) ? { costs: costs.get(row.id)! } : {}) })), total(response), range.page, range.page_size);
+  return pageResult(requests.map(row => ({ ...pick(row, PRODUCT_REQUEST_COLUMNS), clearer_display_name: row.cleared_by ? people.get(row.cleared_by) ?? null : null, ...labels(row), submitter_display_name: people.get(row.submitted_by) ?? null, reviewer_display_name: row.reviewed_by ? people.get(row.reviewed_by) ?? null : null, approved_product: row.approved_product_id ? products.get(row.approved_product_id) ?? null : null, ...(costs.has(row.id) ? { costs: costs.get(row.id)! } : {}) })), total(response), range.page, range.page_size);
 }
 
 export async function listMovementRequests(filters: RequestFilters = {}): Promise<InventoryPage<InventoryMovementRequest>> {
-  const { profile } = await requireInventoryUser();
+  const { user, profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
-  const plan = requestFilters(filters), range = pagination(filters.page);
+  const plan = requestFilters(canManageInventory(profile?.role) ? filters : { ...filters, submitted_by: user.id }), range = pagination(filters.page);
   let query = client.schema("inventory").from("movement_requests").select(MOVEMENT_REQUEST_COLUMNS.join(","), { count: "exact" });
+  if (!canManageInventory(profile?.role) || !filters.include_cleared) query = query.is("cleared_at", null);
   for (const key of ["request_status", "submitted_by", "request_type", "product_id"] as const) if (plan[key] !== null) query = query.eq(key, plan[key]);
   if (plan.search) {
     const [productIds, personIds] = await Promise.all([matchingProductIds(client, filters.search?.trim().slice(0,100) || null), matchingPersonIds(client, profile?.role, plan.search)]);
@@ -340,8 +343,8 @@ export async function listMovementRequests(filters: RequestFilters = {}): Promis
   const response = await query.order("submitted_at", { ascending: false }).order("id").range(range.from, range.to).returns<InventoryMovementRequestRow[]>();
   if (response.status === 416 && response.error?.code === "PGRST103") throw new InventoryPageRangeError();
   const requests = rows(response);
-  const [products, people] = await Promise.all([productSummaries(client, requests.map(row => row.product_id)), displayNames(client, requests.flatMap(row => [row.submitted_by, row.reviewed_by]))]);
-  return pageResult(requests.map(row => ({ ...pick(row, MOVEMENT_REQUEST_COLUMNS), product: products.get(row.product_id) ?? null, submitter_display_name: people.get(row.submitted_by) ?? null, reviewer_display_name: row.reviewed_by ? people.get(row.reviewed_by) ?? null : null })), total(response), range.page, range.page_size);
+  const [products, people] = await Promise.all([productSummaries(client, requests.map(row => row.product_id)), displayNames(client, requests.flatMap(row => [row.submitted_by, row.reviewed_by, row.cleared_by ?? null]))]);
+  return pageResult(requests.map(row => ({ ...pick(row, MOVEMENT_REQUEST_COLUMNS), clearer_display_name: row.cleared_by ? people.get(row.cleared_by) ?? null : null, product: products.get(row.product_id) ?? null, submitter_display_name: people.get(row.submitted_by) ?? null, reviewer_display_name: row.reviewed_by ? people.get(row.reviewed_by) ?? null : null })), total(response), range.page, range.page_size);
 }
 
 type MovementQuery = ReturnType<ReturnType<ReturnType<Client["schema"]>["from"]>["select"]>;
@@ -461,9 +464,11 @@ export async function listCategoryOverview(): Promise<InventoryCategoryOverview[
 }
 
 export async function getProductRequestImages(requestId: string): Promise<InventoryImage[]> {
-  const { profile } = await requireInventoryUser();
+  const { user, profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
-  const request = rows(await client.schema("inventory").from("product_requests").select("request_status,approved_product_id").eq("id", requestId).limit(1).returns<{request_status:string;approved_product_id:string|null}[]>())[0];
+  let query = client.schema("inventory").from("product_requests").select("request_status,approved_product_id").eq("id", requestId);
+  if (!canManageInventory(profile?.role)) query = query.eq("submitted_by", user.id);
+  const request = rows(await query.limit(1).returns<{request_status:string;approved_product_id:string|null}[]>())[0];
   if (!request) return [];
   // Approval relinks request photos to the resulting product.
   const productId = request.request_status === "approved" ? request.approved_product_id : null;
@@ -472,9 +477,13 @@ export async function getProductRequestImages(requestId: string): Promise<Invent
 }
 
 export async function getPendingProductMovementRequests(productId: string): Promise<InventoryMovementRequest[]> {
-  const { profile } = await requireInventoryUser();
+  const { user, profile } = await requireInventoryUser();
   const client = await inventoryClient(profile?.role);
-  const requests = await allRows<InventoryMovementRequestRow>((from, to) => client.schema("inventory").from("movement_requests").select(MOVEMENT_REQUEST_COLUMNS.join(","), { count: "exact" }).eq("product_id", productId).eq("request_status", "pending_review").order("submitted_at", { ascending: false }).order("id").range(from, to).returns<InventoryMovementRequestRow[]>());
+  const requests = await allRows<InventoryMovementRequestRow>((from, to) => {
+    let query = client.schema("inventory").from("movement_requests").select(MOVEMENT_REQUEST_COLUMNS.join(","), { count: "exact" }).eq("product_id", productId).eq("request_status", "pending_review").is("cleared_at", null);
+    if (!canManageInventory(profile?.role)) query = query.eq("submitted_by", user.id);
+    return query.order("submitted_at", { ascending: false }).order("id").range(from, to).returns<InventoryMovementRequestRow[]>();
+  });
   const [people,products] = await Promise.all([displayNames(client, requests.flatMap(row => [row.submitted_by, row.reviewed_by])),productSummaries(client,requests.map(row=>row.product_id))]);
   return requests.map(row => ({ ...pick(row, MOVEMENT_REQUEST_COLUMNS), product: products.get(row.product_id) ?? null, submitter_display_name: people.get(row.submitted_by) ?? null, reviewer_display_name: row.reviewed_by ? people.get(row.reviewed_by) ?? null : null }));
 }

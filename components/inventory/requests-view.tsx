@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { ClipboardList, Plus, Search } from "lucide-react";
 import { canManageInventory, canSubmitAddTake } from "@/lib/inventory/access";
 import { reviewMovementRequest, reviewProductRequest } from "@/lib/inventory/actions";
-import { inventoryIdentifier, dimensionLabel, formatInventoryDate, formatInventoryNumber, inventoryLabel, orderedProductImages } from "@/lib/inventory/presentation";
+import { inventoryIdentifier, dimensionLabel, formatInventoryDate, formatInventoryNumber, inventoryLabel, inventoryPersonName, orderedProductImages } from "@/lib/inventory/presentation";
 import { requestPeopleLine } from "@/lib/inventory/attribution";
 import { reviewRequestPayload } from "@/lib/inventory/request-presentation";
 import { loadProductRequestImages } from "@/lib/inventory/request-reads";
@@ -15,12 +15,14 @@ import { ProductImageGallery } from "./product-image-gallery";
 import { EmptyState, Pager, chipClass } from "./inventory-ui";
 import { RequestDialog } from "./request-dialog";
 import { ProductRequestForm } from './product-request-form';
+import { RequestHistoryDialog } from "./request-history-dialog";
+import { restoreClearedRequests } from "@/lib/inventory/request-history-actions";
 import { saveFailureMessage } from "@/lib/inventory/save-errors";
 
 type Request = InventoryProductRequest | InventoryMovementRequest;
 type Tab = "products" | "movements";
 type Status = "pending_review" | "approved" | "rejected" | "all";
-type Props = { q?: string; products: InventoryProductRequest[]; movements: InventoryMovementRequest[]; tab: Tab; status: Status; mine: boolean; userId: string; role: string | null; page: number; pageCount: number; total: number; preview?: boolean; previewImages?: InventoryImage[]; brands?: InventoryBrand[]; categories?: InventoryCategoryNode[] };
+type Props = { q?: string; products: InventoryProductRequest[]; movements: InventoryMovementRequest[]; tab: Tab; status: Status; mine: boolean; userId: string; role: string | null; page: number; pageCount: number; total: number; preview?: boolean; previewImages?: InventoryImage[]; brands?: InventoryBrand[]; categories?: InventoryCategoryNode[]; cleared?: boolean; clearedCount?: number; previewHistoryDialog?: boolean; previewHistoryCount?: number };
 const controlBase = "inline-flex min-h-11 items-center justify-center rounded-lg border font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:opacity-50";
 const buttonBase = `${controlBase} px-4 py-2.5 text-sm`;
 const button = `${buttonBase} border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50`;
@@ -51,7 +53,7 @@ function ReservationRequestDetails({request}: {request:Request}) {
   </div>;
 }
 
-function RequestDetails({ request, preview, previewImages, onClose }: { request: Request; preview: boolean; previewImages?: InventoryImage[]; onClose: () => void }) {
+function RequestDetails({ request, preview, previewImages, onClose, manager }: { request: Request; preview: boolean; previewImages?: InventoryImage[]; onClose: () => void; manager: boolean }) {
   const product = isProduct(request) ? request : null;
   const movement = isProduct(request) ? null : request;
   const [images, setImages] = useState<InventoryImage[] | null>(product && preview ? previewImages ?? [] : null);
@@ -71,7 +73,7 @@ function RequestDetails({ request, preview, previewImages, onClose }: { request:
       <div><h3 className="text-lg font-semibold text-zinc-950 [overflow-wrap:anywhere]">{requestName(request)}</h3><p className="mt-1 text-sm text-zinc-500 [overflow-wrap:anywhere]">{requestIdentifier(request)}</p><div className="mt-3 flex flex-wrap gap-2"><StatusBadge status={request.request_status} /><span className="rounded-full bg-zinc-100 px-3 py-1 text-sm font-semibold text-zinc-700">{product ? "Add item" : inventoryLabel((request as InventoryMovementRequest).request_type)}</span></div></div>
       {product ? images ? <ProductImageGallery images={orderedProductImages(images)} productName={product.item_name} /> : error ? <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900"><p>{error}</p><button type="button" className={`${button} mt-3`} onClick={() => { setError(""); setAttempt(value => value + 1); }}>Retry photos</button></div> : <p role="status" className="text-sm text-zinc-500">Loading photos…</p> : null}
       <dl className="grid min-w-0 grid-cols-2 gap-4">
-        <Field label="Quantity">{formatInventoryNumber(request.quantity)}</Field><Field label={request.request_status === "approved" ? "People" : "Submitted by"}>{requestPeopleLine(request)}</Field>
+        <Field label="Quantity">{formatInventoryNumber(request.quantity)}</Field>{manager && <Field label={request.request_status === "approved" ? "People" : "Submitted by"}>{requestPeopleLine(request)}</Field>}
         <Field label="Submitted">{formatInventoryDate(request.submitted_at)}</Field>
         {product ? <>{product.brand_name && <Field label="Brand">{product.brand_name}</Field>}<Field label="Category">{product.custom_category_name || product.category_name}</Field><Field label="Subcategory">{product.subcategory_name}</Field><Field label="Stock ref">{product.approved_product?.stock_ref || product.stock_ref || "Ref assigned on approval"}</Field>{product.model_name?.trim() && <Field label="Model">{product.model_name}</Field>}<Field label="Item type">{inventoryLabel(product.item_type)}</Field><Field label="Requested status">{inventoryLabel(product.requested_status)}</Field><Field label="Condition">{inventoryLabel(product.condition)}</Field><Field label="Source">{inventoryLabel(product.source)}</Field><Field label="Dimensions (L × W × H)">{dimensionLabel(product)}</Field></> : <>{movement?.product?.brand_name && <Field label="Brand">{movement.product.brand_name}</Field>}{movement?.product?.item_code?.trim() && <Field label="Item code">{movement.product.item_code}</Field>}{movement?.product?.stock_ref && <Field label="Stock ref">{movement.product.stock_ref}</Field>}{movement?.product?.model_name?.trim() && <Field label="Model">{movement.product.model_name}</Field>}</>}
       </dl>
@@ -141,23 +143,36 @@ export function RequestsView(props: Props) {
   const [review, setReview] = useState<{ request: Request; decision: "approved" | "rejected" } | null>(null);
   const [message, setMessage] = useState("");
   const manager = canManageInventory(role);
-  function href(patch: Partial<{ tab: Tab; status: Status; mine: boolean; page: number; q: string }> = {}) {
-    const next = { tab, status, mine, q, page: 1, ...patch };
+  const cleared = manager && !!props.cleared;
+  const [historyDialog, setHistoryDialog] = useState<"clear" | "restore" | null>(manager && props.previewHistoryDialog ? "clear" : null);
+  const [restoring, setRestoring] = useState<string | null>(null);
+  async function restore(request: Request) {
+    setRestoring(request.id); setMessage("");
+    try {
+      if (preview) { setMessage("Request restored."); return; }
+      const result = await restoreClearedRequests({kind: isProduct(request) ? "product" : "movement", id: request.id});
+      if (!result.ok) { setMessage(result.error); return; }
+      setMessage(`${result.count} requests restored.`); router.refresh();
+    } catch { setMessage("Could not restore the request. Please try again."); } finally { setRestoring(null); }
+  }
+  function href(patch: Partial<{ tab: Tab; status: Status; mine: boolean; page: number; q: string; cleared: boolean }> = {}) {
+    const next = { tab, status, mine, q, cleared, page: 1, ...patch };
     const query = new URLSearchParams(preview ? `view=requests&frame=1&role=${encodeURIComponent(role ?? '')}` : "");
     query.set("tab", next.tab); query.set("status", next.status);
     if (next.mine) query.set("mine", "1");
+    if (next.cleared && manager) query.set("cleared", "1");
     if (next.q) query.set("q", next.q);
     if (next.page > 1) query.set("page", String(next.page));
     return `${preview ? "/dev/inventory-preview" : "/inventory/requests"}?${query}`;
   }
-  const requests: Request[] = tab === "products" ? products : movements;
+  const requests: Request[] = (tab === "products" ? products : movements).filter(request => (manager || request.submitted_by === userId) && (!request.cleared_at || cleared));
   return <div className="min-w-0 space-y-4">
-    <header className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-semibold tracking-tight text-zinc-950">Requests</h1><p className="mt-1 text-sm text-zinc-500">Track new items and stock requests.</p></div>{manager || canSubmitAddTake(role) ? <Link href={preview ? `/dev/inventory-preview?view=new-product&frame=1&role=${encodeURIComponent(role ?? "")}` : "/inventory/requests/new-product"} className={primary}><Plus className="mr-2 h-4 w-4" aria-hidden="true" />Add item</Link> : null}</header>
+    <header className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-semibold tracking-tight text-zinc-950">{manager ? "Requests" : "My requests"}</h1><p className="mt-1 text-sm text-zinc-500">{manager ? "Track new items and stock requests." : "Track your new item and stock requests."}</p></div>{manager || canSubmitAddTake(role) ? <Link href={preview ? `/dev/inventory-preview?view=new-product&frame=1&role=${encodeURIComponent(role ?? "")}` : "/inventory/requests/new-product"} className={primary}><Plus className="mr-2 h-4 w-4" aria-hidden="true" />Add item</Link> : null}</header>
     {message ? <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950">{message}</p> : null}
     <nav aria-label="Request types" className="grid grid-cols-2 gap-1 rounded-lg border border-zinc-200 bg-white p-1">{(["products", "movements"] as const).map(value => <Link key={value} href={href({ tab: value })} aria-current={tab === value ? "page" : undefined} className={`${controlBase} border-transparent px-2 py-2.5 text-center text-sm ${tab === value ? "bg-emerald-50 text-emerald-900 hover:bg-emerald-100" : "bg-white text-zinc-700 hover:bg-zinc-50"}`}>{value === "products" ? "Product requests" : "Movement requests"}</Link>)}</nav>
     <form method="get" action={preview ? "/dev/inventory-preview" : "/inventory/requests"} role="search" aria-label="Search requests" className="min-w-0 space-y-1">
       {preview ? <><input type="hidden" name="view" value="requests" /><input type="hidden" name="frame" value="1" /><input type="hidden" name="role" value={role ?? ""} /></> : null}
-      <input type="hidden" name="tab" value={tab} /><input type="hidden" name="status" value={status} />{mine ? <input type="hidden" name="mine" value="1" /> : null}
+      <input type="hidden" name="tab" value={tab} /><input type="hidden" name="status" value={status} />{mine ? <input type="hidden" name="mine" value="1" /> : null}{cleared ? <input type="hidden" name="cleared" value="1" /> : null}
       <div className="flex min-w-0 items-center gap-1 rounded-lg border border-zinc-300 bg-white pl-3 focus-within:border-emerald-700 focus-within:ring-2 focus-within:ring-emerald-100">
         <label htmlFor="request-search" className="sr-only">Search requests</label>
         <input id="request-search" type="search" inputMode="search" enterKeyHint="search" name="q" defaultValue={q} maxLength={100} placeholder="Search requests" aria-describedby="request-search-help" className="min-h-11 w-0 min-w-0 flex-1 bg-transparent text-base outline-none" />
@@ -168,7 +183,8 @@ export function RequestsView(props: Props) {
     </form>
     <section aria-label="Filter requests" className="space-y-2">
       <nav aria-label="Request status" className="grid grid-cols-4 gap-1 rounded-lg border border-zinc-200 bg-white p-1">{(["pending_review", "approved", "rejected", "all"] as const).map(value => <Link key={value} href={href({ status: value })} aria-current={status === value ? "page" : undefined} className={`${controlBase} border-transparent px-1 py-2 text-sm ${status === value ? "bg-emerald-900 text-white" : "bg-white text-zinc-700 hover:bg-zinc-50"}`}>{statusLabel(value)}</Link>)}</nav>
-      <Link href={href({ mine: !mine })} aria-current={mine ? "page" : undefined} className={chipClass(mine)}><span aria-hidden="true" className="font-bold">{mine ? "✓" : "+"}</span>My requests</Link>
+      {manager && <div className="flex flex-wrap gap-2"><button type="button" className={button} onClick={() => setHistoryDialog("clear")}>Clear history</button><Link href={href({cleared: !cleared, ...(!cleared && status === "pending_review" ? {status: "all"} : {})})} aria-current={cleared ? "page" : undefined} className={chipClass(cleared)}>Show cleared ({props.clearedCount ?? 0})</Link>{cleared && (props.clearedCount ?? 0) > 0 && <button type="button" className={button} onClick={() => setHistoryDialog("restore")}>Restore all cleared</button>}</div>}
+      {manager && <Link href={href({ mine: !mine })} aria-current={mine ? "page" : undefined} className={chipClass(mine)}><span aria-hidden="true" className="font-bold">{mine ? "✓" : "+"}</span>My requests</Link>}
     </section>
     <p className="text-sm text-zinc-500">{formatInventoryNumber(total)} {total === 1 ? "request" : "requests"}{mine ? " submitted by you" : ""}</p>
     {requests.length ? <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">{requests.map(request => {
@@ -179,14 +195,16 @@ export function RequestsView(props: Props) {
         <p className="mt-1 text-sm text-zinc-500 [overflow-wrap:anywhere]">{requestIdentifier(request)}</p>
         <p className="mt-3 text-sm font-semibold text-zinc-900">{formatInventoryNumber(request.quantity)} units</p><div className="mt-1"><RequestLocations request={request} /></div><ReservationRequestDetails request={request} />
         {request.note ? <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-zinc-600 [overflow-wrap:anywhere]">{request.note}</p> : null}
-        <div className="mt-4 border-t border-zinc-100 pt-3"><p className="text-sm text-zinc-700 [overflow-wrap:anywhere]">{requestPeopleLine(request)}{own ? <span className="ml-2 rounded-full bg-emerald-50 px-2 py-1 text-sm font-semibold text-emerald-900">Your request</span> : null}</p><p className="mt-1 text-sm leading-5 text-zinc-500"><time dateTime={request.submitted_at}>{formatInventoryDate(request.submitted_at)}</time></p></div>
+        <div className="mt-4 border-t border-zinc-100 pt-3"><p className="text-sm text-zinc-700 [overflow-wrap:anywhere]">{manager ? requestPeopleLine(request) : "Your request"}{own && manager ? <span className="ml-2 rounded-full bg-emerald-50 px-2 py-1 text-sm font-semibold text-emerald-900">Your request</span> : null}</p><p className="mt-1 text-sm leading-5 text-zinc-500"><time dateTime={request.submitted_at}>{formatInventoryDate(request.submitted_at)}</time></p></div>
+        {manager && request.cleared_at && <div className="mt-3 text-sm text-zinc-600"><span className="rounded-full bg-zinc-100 px-2 py-1 font-semibold text-zinc-700">Cleared</span><p className="mt-2">Cleared by {inventoryPersonName(request.clearer_display_name)} - <time dateTime={request.cleared_at}>{formatInventoryDate(request.cleared_at)}</time></p><button type="button" className={`${button} mt-2`} disabled={restoring !== null} onClick={() => void restore(request)}>Restore</button></div>}
         {request.reviewed_at || request.request_status !== "pending_review" ? <div className="mt-3 rounded-lg bg-zinc-50 p-3"><p className="text-sm font-semibold text-zinc-700">Review note</p><p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600 [overflow-wrap:anywhere]">{request.review_note || "No review note recorded."}</p></div> : null}
         <button type="button" className={`${button} mt-4 w-full`} onClick={() => setDetails(request)}>View details</button>
         {manager && request.request_status === "pending_review" ? <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" className={primary} onClick={() => { setMessage(""); setReview({ request, decision: "approved" }); }}>{isProduct(request) ? 'Review and approve' : 'Approve'}</button><button type="button" className={`${button} text-red-700`} onClick={() => { setMessage(""); setReview({ request, decision: "rejected" }); }}>Reject</button></div> : null}
       </article>;
     })}</div> : <EmptyState icon={<ClipboardList size={32} aria-hidden="true" />} title="No requests found" text={q ? "Nothing matches your search." : "No requests with these filters."} action={{ href: href({ status: "all", mine: false, q: "" }), label: "Show all requests" }} />}
     {pageCount > 1 ? <Pager label="Request pages" page={page} pageCount={pageCount} previousHref={page > 1 ? href({ page: page - 1 }) : null} nextHref={page < pageCount ? href({ page: page + 1 }) : null} /> : null}
-    {details ? <RequestDetails request={details} preview={preview} previewImages={props.previewImages} onClose={() => setDetails(null)} /> : null}
+    {historyDialog && manager && <RequestHistoryDialog mode={historyDialog} preview={preview || !!props.previewHistoryDialog} previewCount={props.previewHistoryCount ?? props.clearedCount ?? 0} onClose={() => setHistoryDialog(null)} onSuccess={text => { setHistoryDialog(null); setMessage(text); if (!preview) router.refresh(); }} />}
+    {details ? <RequestDetails request={details} manager={manager} preview={preview} previewImages={props.previewImages} onClose={() => setDetails(null)} /> : null}
     {review ? isProduct(review.request) && review.decision === 'approved' ? <ProductReviewDialog request={review.request} props={props} onClose={() => setReview(null)} onSuccess={text => {setReview(null);setMessage(text);if (!preview) router.refresh();}} /> : <ReviewDialog request={review.request} decision={review.decision} preview={preview} onClose={() => setReview(null)} onSuccess={text => { setReview(null); setMessage(text); if (!preview) router.refresh(); }} /> : null}
   </div>;
 }

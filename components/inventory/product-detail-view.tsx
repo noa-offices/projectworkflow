@@ -116,7 +116,7 @@ export function ProductDetailView({ product, productsHref = "/inventory/products
         </section>
       ) : null}
 
-      <section aria-labelledby="movements-heading" className={cardClass}>
+      {canUseManagerMovements(role) ? <section aria-labelledby="movements-heading" className={cardClass}>
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-2"><h2 id="movements-heading" className="text-base font-semibold text-zinc-950">Recent movements</h2>
           {canUseManagerMovements(role) ? <Link href={preview ? `/dev/inventory-preview?view=movements&frame=1&role=${encodeURIComponent(role ?? "")}&product=${product.id}` : `/inventory/movements?product=${product.id}`} className="inline-flex min-h-11 items-center text-sm font-semibold text-emerald-900 underline underline-offset-4">All movements for this product</Link> : null}</div>
         {product.recent_movements.length ? (
@@ -140,7 +140,7 @@ export function ProductDetailView({ product, productsHref = "/inventory/products
             ))}
           </ol>
         ) : <p className="mt-3 text-sm text-zinc-500">No stock movements recorded.</p>}
-      </section>
+      </section> : null}
     </div>
   );
 }
