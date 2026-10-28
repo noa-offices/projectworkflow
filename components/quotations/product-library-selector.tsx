@@ -62,7 +62,7 @@ import { filterCompatibleBaseModelGroups, unionStructuralSupportCompatibleTarget
 import { defaultProductAccessoryQuantities, evaluateProductAccessorySelection } from "@/lib/quotations/product-accessory-configuration";
 import { accessoryOptionLabel } from "@/lib/quotations/accessory-option-label";
 import { flattenWorkstationPricingRows, workstationPricingGroups } from "@/lib/products/workstation-pricing-groups";
-import { productTemplateRowReferenceKey, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
+import { productTemplateRowReferenceKey, selectedRowReferencePreview, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import { missingExchangeRateCurrencies, roundSourceAmount } from "@/lib/quotations/source-price-components";
 import { buildFinalSpecificationRequest } from "@/lib/quotations/final-specification-ai-selection";
@@ -1366,7 +1366,7 @@ export function ProductLibrarySelector({
     let active = true;
     void Promise.all([listProductTemplateRowReferences(selectedTemplateId), listProductTemplateSubgroupReferences(selectedTemplateId)]).then(([rowReferences, subgroupReferences]) => {
       if (active) { setLoadedRowReferences({ templateId: selectedTemplateId, images: Object.fromEntries(rowReferences.map((reference) => [productTemplateRowReferenceKey(reference.pricingType, reference.groupId, reference.rowId), reference])) }); setLoadedSubgroupReferences({ templateId: selectedTemplateId, images: Object.fromEntries(subgroupReferences.map((reference) => [baseModelSubgroupReferenceKey(reference.pricingType, reference.groupId, reference.subgroupId), reference])) }); }
-    }).catch(() => { if (active) { setLoadedRowReferences({ templateId: selectedTemplateId, images: {} }); setLoadedSubgroupReferences({ templateId: selectedTemplateId, images: {} }); } });
+    }).catch((error) => { console.error("PRODUCT LIBRARY ROW REFERENCES LOAD ERROR", error); if (active) { setLoadedRowReferences({ templateId: selectedTemplateId, images: {} }); setLoadedSubgroupReferences({ templateId: selectedTemplateId, images: {} }); } });
     return () => { active = false; };
   }, [selectedTemplateId]);
   const finishBrands: FinishMaterialBrand[] = brands;
@@ -1769,15 +1769,15 @@ export function ProductLibrarySelector({
                     ? variantGroups.find((group) => group.items.some((row) => row.id === selectedVariantRow.id)) ?? null
                     : null;
                   const selectedVariantSubgroup = selectedVariantRow?.id && selectedVariantGroup ? baseModelPricingSubgroupForRow(selectedVariantGroup, selectedVariantRow.id) : null;
-                  const selectedVariantReference = selectedVariantRow?.id && selectedVariantGroup?.id
-                    ? rowReferenceImages[productTemplateRowReferenceKey("base_model", selectedVariantGroup.id, selectedVariantRow.id)] ?? (selectedVariantSubgroup ? subgroupReferenceImages[baseModelSubgroupReferenceKey("base_model", selectedVariantGroup.id, selectedVariantSubgroup.id)] : null)
-                    : null;
+                  const selectedVariantReference = selectedRowReferencePreview(rowReferenceImages, "base_model", selectedVariantGroup?.id, selectedVariantRow?.id, () => selectedVariantGroup?.id && selectedVariantSubgroup ? subgroupReferenceImages[baseModelSubgroupReferenceKey("base_model", selectedVariantGroup.id, selectedVariantSubgroup.id)] : null);
                   const selectedCategoryRow =
                     usesCategoryPricing
                       ? categoryRows.find((row) => row.id === selectedCategoryRows[template.id]) ??
                         categoryRows[0] ??
                         null
                       : null;
+                  // Standard Finish groups save their row pictures as "finish_category" (modular groups use "modular", not shown in this box).
+                  const selectedCategoryReference = selectedRowReferencePreview(rowReferenceImages, "finish_category", selectedCategoryGroup?.id, selectedCategoryRow?.id);
                   // Matrix Modular category choices must come only from the actual matrix modular rows'
                   // own price columns, never from the template-wide category list (which may include
                   // unrelated Category/Matrix groups). This stays correct even if some modular groups
@@ -3328,7 +3328,12 @@ export function ProductLibrarySelector({
                               </select>
                             </label>
                             {selectedCategoryRow ? (
-                              <div className="md:col-span-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                              <div className="md:col-span-2 flex gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                                {selectedCategoryReference?.previewUrl ? <div className="shrink-0"><button type="button" onClick={() => setDiagramPreview({ label: "Product diagram", templateId: template.id, title: pricingDisplayName(selectedCategoryRow) || selectedCategoryRow.variant_name || templateSelectionName(template), url: selectedCategoryReference.previewUrl! })} className="block cursor-zoom-in rounded-md transition hover:opacity-80" aria-label="View larger product diagram">
+                                  {/* eslint-disable-next-line @next/next/no-img-element -- resolved private preview URL */}
+                                  <img src={selectedCategoryReference.previewUrl} alt="Model reference" className="h-16 w-16 rounded-md border border-zinc-200 bg-white object-contain" loading="lazy" />
+                                </button><button type="button" onClick={() => setDiagramPreview({ label: "Product diagram", templateId: template.id, title: pricingDisplayName(selectedCategoryRow) || selectedCategoryRow.variant_name || templateSelectionName(template), url: selectedCategoryReference.previewUrl! })} className="mt-1 text-[10px] font-semibold text-emerald-900 hover:text-emerald-700">View larger</button></div> : null}
+                                <div className="min-w-0">
                                 <p className="text-xs font-semibold text-zinc-900">
                                   {pricingDisplayName(selectedCategoryRow) || selectedCategoryRow.variant_name}
                                 </p>
@@ -3345,6 +3350,7 @@ export function ProductLibrarySelector({
                                 <InternalMetaLine label="Group" value={selectedCategoryGroup?.group_name ?? null} />
                                 <InternalMetaLine label="Specification" value={selectedCategoryRow.specification} />
                                 <ImportantRequirementsBlock requirements={selectedCategoryRow.importantRequirements} />
+                                </div>
                               </div>
                             ) : null}
                           </div>

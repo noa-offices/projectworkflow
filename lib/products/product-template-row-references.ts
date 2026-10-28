@@ -13,6 +13,12 @@ export function productTemplateRowReferencePath(templateId: string, pricingType:
   return `product-template-row-references/${templateId}/${pricingType}/${groupId}/${rowId}/${referenceId}.${extension}`;
 }
 
+/** The saved picture of the selected row: its own picture for the given pricing type, else the optional fallback (for example a subgroup picture). */
+export function selectedRowReferencePreview<T, F = T>(references: Readonly<Record<string, T>>, pricingType: ProductTemplateGroupReferenceType, groupId: string | null | undefined, rowId: string | null | undefined, fallback?: () => F | null | undefined): T | F | null {
+  if (!groupId || !rowId) return null;
+  return references[productTemplateRowReferenceKey(pricingType, groupId, rowId)] ?? fallback?.() ?? null;
+}
+
 type PricingGroup = { id?: unknown; items?: unknown };
 function groups(value: unknown): PricingGroup[] { return Array.isArray(value) ? value.filter((entry): entry is PricingGroup => typeof entry === "object" && entry !== null) : []; }
 function contains(groupsValue: unknown, groupId: string, rowId: string) {
