@@ -35,10 +35,13 @@ create policy task20_inventory_activity_manager_only on public.audit_activity_lo
 as restrictive for select to authenticated
 using (entity_type not like 'inventory\_%' escape '\' or inventory.can_manage());
 
--- Senders who are managers retain their sent-notification read status view.
+-- Keep ordinary sent lists for active accounts; only Inventory sender reads require a manager.
+-- Match isInventoryNotification: trim the path, then require /inventory followed by /, ? or end.
 drop policy if exists "Senders can select notifications they sent" on public.notifications;
 create policy "Senders can select notifications they sent" on public.notifications for select to authenticated
-using (sender_id = (select auth.uid()) and inventory.can_manage());
+using (sender_id = (select auth.uid())
+ and public.current_account_status() = 'active'::public.account_status
+ and (inventory.can_manage() or btrim(coalesce(order_no,'')) !~ '^/inventory(/|[?]|$)'));
 
 alter table inventory.product_requests
  add column cleared_at timestamptz,
@@ -121,7 +124,6 @@ grant execute on function inventory.restore_cleared_requests(text) to authentica
 grant execute on function inventory.restore_cleared_request(text,uuid) to authenticated;
 
 -- Task 20 after-apply contract: all fixtures and changes roll back.
-
 create function pg_temp.check_true(ok boolean, msg text) returns void language plpgsql as $$ begin if ok is distinct from true then raise exception 'Assertion failed: %',msg; end if; end $$;
 create function pg_temp.expect_error(cmd text, state text) returns void language plpgsql as $$ begin begin execute cmd; exception when others then if sqlstate=state then return; end if; raise; end; raise exception 'Expected SQLSTATE %', state; end $$;
 create function pg_temp.act_as(uid text) returns void language plpgsql as $$ begin execute 'reset role'; perform set_config('request.jwt.claim.sub',uid,true); execute 'set local role authenticated'; end $$;
@@ -267,17 +269,46 @@ select pg_temp.check_true(exists(select from inventory.product_images where id='
 select pg_temp.act_as('97000000-0000-0000-0000-000000000002');
 select pg_temp.check_true((select count(*) from storage.objects where name like 'requests/97200000-0000-0000-0000-000000000001/%' or name like 'requests/97200000-0000-0000-0000-000000000006/%')=4,'manager sees all objects');
 reset role;
--- Recipient policy remains intact; managers retain sender visibility, other senders do not.
-insert into public.notifications(recipient_id,sender_id,body) values
- ('97000000-0000-0000-0000-000000000004','97000000-0000-0000-0000-000000000003','Task20 sender privacy'),
- ('97000000-0000-0000-0000-000000000004','97000000-0000-0000-0000-000000000002','Task20 manager sender');
-select pg_temp.act_as('97000000-0000-0000-0000-000000000003');
-select pg_temp.check_true(not exists(select from public.notifications where body='Task20 sender privacy'),'nonmanager sender cannot see another recipient');
-select pg_temp.act_as('97000000-0000-0000-0000-000000000004');
-select pg_temp.check_true((select count(*) from public.notifications where body in ('Task20 sender privacy','Task20 manager sender'))=2,'recipient sees own notifications');
-select pg_temp.act_as('97000000-0000-0000-0000-000000000002');
-select pg_temp.check_true(exists(select from public.notifications where body='Task20 manager sender'),'manager retains sender access');
-reset role;
+-- Only Inventory sender reads are manager-only. Other sent lists keep the active-account rule.
+select set_config('request.jwt.claim.sub','',true);
+insert into public.notifications(id,recipient_id,sender_id,body,order_no)
+select ('97900000-0000-0000-0000-'||lpad((n*10+k)::text,12,'0'))::uuid,
+ '97000000-0000-0000-0000-000000000001',
+ ('97000000-0000-0000-0000-'||lpad(n::text,12,'0'))::uuid,
+ 'Task20 sent privacy '||n||'/'||k,
+ (array['/projects/orders/task20',null,'/inventory/requests?tab=products','/inventory','/inventory?tab=movements','/inventory-other',' /inventory/requests '])[k]
+from unnest(array[2,3,4,5,9,10]) n cross join generate_series(1,7) k;
+insert into public.notifications(recipient_id,sender_id,body,order_no)
+select ('97000000-0000-0000-0000-'||lpad(n::text,12,'0'))::uuid,
+ '97000000-0000-0000-0000-000000000002','Task20 received privacy '||n||'/'||k,
+ (array['/projects/orders/task20','/inventory/requests'])[k]
+from generate_series(3,5) n cross join generate_series(1,2) k;
+do $$ declare n int; uid text; begin
+ for n in select unnest(array[2,3,4,5,9,10]) loop
+  uid := '97000000-0000-0000-0000-'||lpad(n::text,12,'0');
+  perform pg_temp.act_as(uid);
+  if n between 3 and 5 then
+   perform pg_temp.check_true((select count(*) from public.notifications where recipient_id=uid::uuid and body like 'Task20 received privacy %')=2,'recipient reads both kinds role '||n);
+   perform pg_temp.check_true((select count(*) from public.notifications where sender_id=uid::uuid and body like 'Task20 sent privacy %' and (order_no is null or order_no in ('/projects/orders/task20','/inventory-other')))=3,'ordinary sent notifications preserved role '||n);
+   perform pg_temp.check_true(not exists(select from public.notifications where sender_id=uid::uuid and body like 'Task20 sent privacy %' and btrim(coalesce(order_no,'')) ~ '^/inventory(/|[?]|$)'),'Inventory sent notifications hidden role '||n);
+   perform pg_temp.check_true(not exists(select from public.notifications where sender_id=uid::uuid and recipient_id<>uid::uuid and order_no like '/inventory/requests%'),'generated request notifications hidden from sender role '||n);
+  elsif n=2 then
+   perform pg_temp.check_true((select count(*) from public.notifications where sender_id=uid::uuid and body like 'Task20 sent privacy %')=7,'manager retains both sent notification kinds');
+  else
+   perform pg_temp.check_true(not exists(select from public.notifications where body like 'Task20 sent privacy %'),'inactive sender sees no notifications role '||n);
+  end if;
+ end loop;
+ perform pg_temp.act_as('97000000-0000-0000-0000-000000000001');
+ perform pg_temp.check_true((select count(*) from public.notifications where body like 'Task20 sent privacy %')=42,'recipient reads own Inventory and ordinary notifications');
+ execute 'reset role';
+ -- Disabled recipients must also see nothing, even through the unchanged recipient policy.
+ insert into public.notifications(recipient_id,sender_id,body,order_no) values
+ ('97000000-0000-0000-0000-000000000009','97000000-0000-0000-0000-000000000002','Task20 disabled recipient ordinary',null),
+ ('97000000-0000-0000-0000-000000000009','97000000-0000-0000-0000-000000000002','Task20 disabled recipient Inventory','/inventory/requests');
+ perform pg_temp.act_as('97000000-0000-0000-0000-000000000009');
+ perform pg_temp.check_true(not exists(select from public.notifications where body like 'Task20 disabled recipient %'),'disabled recipient sees no notifications');
+ execute 'reset role';
+end $$;
 select set_config('request.jwt.claim.sub','',true);
 select 'ALL TASK 20 TESTS PASSED' as result;
 rollback;

@@ -33,10 +33,13 @@ create policy task20_inventory_activity_manager_only on public.audit_activity_lo
 as restrictive for select to authenticated
 using (entity_type not like 'inventory\_%' escape '\' or inventory.can_manage());
 
--- Senders who are managers retain their sent-notification read status view.
+-- Keep ordinary sent lists for active accounts; only Inventory sender reads require a manager.
+-- Match isInventoryNotification: trim the path, then require /inventory followed by /, ? or end.
 drop policy if exists "Senders can select notifications they sent" on public.notifications;
 create policy "Senders can select notifications they sent" on public.notifications for select to authenticated
-using (sender_id = (select auth.uid()) and inventory.can_manage());
+using (sender_id = (select auth.uid())
+ and public.current_account_status() = 'active'::public.account_status
+ and (inventory.can_manage() or btrim(coalesce(order_no,'')) !~ '^/inventory(/|[?]|$)'));
 
 alter table inventory.product_requests
  add column cleared_at timestamptz,
