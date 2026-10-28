@@ -3040,10 +3040,10 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
                           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                             <div>
                               <h3 className="text-sm font-semibold uppercase text-zinc-500">
-                                Detailed Price Updates
+                                Manual Price Changes
                               </h3>
                               <p className="mt-1 text-sm leading-6 text-zinc-500">
-                                Manual source price changes for components, options, and pricing rows. Future quotations use these source values.
+                                Change one price by hand, with a note and price history. Use this when there is no supplier price list. Future quotations use the new price. Old quotations do not change.
                               </p>
                             </div>
                             <span className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700">
