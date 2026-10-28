@@ -66,7 +66,8 @@ import { variantOptionLabel } from "@/lib/products/variant-option-label";
 import { productTemplateRowReferenceKey, selectedRowReferencePreview, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import { missingExchangeRateCurrencies, roundSourceAmount } from "@/lib/quotations/source-price-components";
-import { buildFinalSpecificationRequest } from "@/lib/quotations/final-specification-ai-selection";
+import { keepDimensionLine } from "@/lib/quotations/final-specification-ai-check";
+import { buildFinalSpecificationRequest, specificationForAi } from "@/lib/quotations/final-specification-ai-selection";
 import {
   buildCompanyStyleProductSpecification,
   buildDirectModularDimensionSuggestion,
@@ -2512,8 +2513,6 @@ export function ProductLibrarySelector({
                     : null;
                   const companyStyleSpecification = buildCompanyStyleProductSpecification({
                     accessorySnapshots: usesDirectModularPricing ? [] : accessorySnapshots,
-                    brand: brandNameById.get(template.brand_id) ?? null,
-                    origin: originSnapshot,
                     linkedProductSnapshots,
                     primarySpecification:
                       (usesWorkstationFlow ? configuredSpecification : null) ??
@@ -2917,16 +2916,11 @@ export function ProductLibrarySelector({
                         ].filter(Boolean).join(" / ") || null
                       : pricingDisplayName(selectedCategoryRow) || pricingDisplayName(selectedVariantRow) || null;
                   const finalSpecificationAiRequest = buildFinalSpecificationRequest({
-                    currentSpecification: finalSpecification,
+                    currentSpecification: specificationForAi(finalSpecification, { brand: brandNameById.get(template.brand_id), origin: originSnapshot }),
                     productName: template.template_name,
                     selectedModel: selectedModelLabel,
                     selectedDimensions: localDimension,
-                    finishes: [
-                      ...selectedFinishSummary.map((label) => ({ label, selected: true })),
-                      ...(usesCategoryPricing || usesModularPricing
-                        ? [{ label: selectedFabricCategory, selected: true }]
-                        : []),
-                    ],
+                    finishes: [],
                     options: selectedOptionSnapshots.map((option) => ({ label: option.label, selected: true })),
                     accessories: [
                       ...selectedPricingAccessories.map((line) => ({ label: line.accessory.item_name, quantity: line.qty })),
@@ -2958,10 +2952,6 @@ export function ProductLibrarySelector({
                         ? `Selected Direct Modular group: ${groupSelectionSummaryForAi}`
                         : null,
                       usesModularPricing ? modularDefaults.defaultSpecification : null,
-                      brandNameById.get(template.brand_id)
-                        ? `Brand: ${brandNameById.get(template.brand_id)}`
-                        : null,
-                      originSnapshot ? `Origin: ${originSnapshot}` : null,
                     ],
                   });
                   const sourceTotalsList = Array.from(originalCurrencyTotals.entries())
@@ -4859,11 +4849,16 @@ export function ProductLibrarySelector({
                                     </p>
                                   )}
                                   <FinalSpecificationAiControl
+                                    check={{
+                                      brand: brandNameById.get(template.brand_id),
+                                      origin: originSnapshot,
+                                      finishTerms: selectedFinishes.flatMap((finish) => [finish.finish_code, finish.finish_name]).filter((term): term is string => Boolean(term)),
+                                    }}
                                     request={finalSpecificationAiRequest}
                                     onUseSuggestion={(specification) => {
                                       setFinalSpecifications((current) => ({
                                         ...current,
-                                        [template.id]: specification,
+                                        [template.id]: keepDimensionLine(finalSpecification ?? null, specification),
                                       }));
                                       setFinalSpecificationEditedByTemplate((current) => ({
                                         ...current,

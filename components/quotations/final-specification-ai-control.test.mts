@@ -16,7 +16,7 @@ test("preview is editable and does not auto-apply", () => {
 test("Use Suggestion reuses the existing final specification state only", () => {
   assert.match(selectorSource, /<FinalSpecificationAiControl/);
   assert.match(selectorSource, /setFinalSpecifications/);
-  assert.match(selectorSource, /\[template\.id\]: specification/);
+  assert.match(selectorSource, /\[template\.id\]: keepDimensionLine\(finalSpecification \?\? null, specification\)/);
   assert.doesNotMatch(source, /unit_price|discount|quantity|currency|selectedOptions/);
 });
 

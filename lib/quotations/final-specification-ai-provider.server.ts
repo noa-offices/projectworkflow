@@ -3,6 +3,8 @@ import "server-only";
 import { runAiProvider } from "../ai/provider-router.server";
 import { resolveAiAgentRuntimeConfig } from "../ai/resolve-agent-runtime-config.server";
 import { AiProviderError } from "../ai/types";
+import { finalSpecificationMode } from "./final-specification-ai-check";
+import { FINAL_SPECIFICATION_STYLE_GUIDE } from "./final-specification-style";
 import {
   parseFinalSpecificationResult,
   type FinalSpecificationRequest,
@@ -23,13 +25,18 @@ export class FinalSpecificationProviderError extends Error {
 
 const instructions = `Create a concise, professional, quotation-ready final product specification from the user's actual selected configuration. Use only supplied selected facts.
 
-Preserve every selected technical fact. Include supplied selected finish/material, accessory, option, companion, and configuration facts. Do not invent, infer, remove, or replace selected features. Do not describe possible alternatives or unselected availability. Do not write "available with", "optional", "can be supplied with", or "without" unless the supplied selected configuration genuinely requires that fact.
+Preserve every selected technical fact. Include supplied selected accessory, option, companion, and configuration facts. Do not invent, infer, remove, or replace selected features. Do not describe possible alternatives or unselected availability. Do not write "available with", "optional", "can be supplied with", or "without" unless the supplied selected configuration genuinely requires that fact.
 
-FINAL SPECIFICATION STYLE: Return only the configured product-description/specification body. Do not repeat the product, template, or model name, and do not begin with it. Do not include dimensions, size, width, depth, height, diameter, or dimension formatting. The quotation/builder layout displays the product/model name and dimension line separately. Keep actually selected technical features, finishes, accessories, options, and configuration facts; do not remove important selected facts because name and dimensions are excluded. Avoid unnecessary repetition. Keep wording concise, professional, and quotation-ready.
+FINAL SPECIFICATION STYLE: Return only the configured product-description/specification body. Do not repeat the product, template, or model name, and do not begin with it. Do not include dimensions, size, width, depth, height, diameter, or dimension formatting. The quotation/builder layout displays the product/model name and dimension line separately. Keep actually selected technical features, accessories, options, and configuration facts; do not remove important selected facts because name and dimensions are excluded. Avoid unnecessary repetition. Keep wording concise, professional, and quotation-ready.
 
 Do not mention price, currency, discount, supplier codes, model codes, internal codes, AI, JSON, QA, or internal workflow. Do not add marketing claims or unsupported material properties. Return specificationSuggestion null when the selected context is insufficient for a safe improvement.
 
-Write the resulting furniture product, not the internal configuration model: use natural furniture/quotation terminology instead of software-style phrasing. Consolidate repeated modules and repeated identical dimensions into concise composition wording instead of listing them again. Mention a selected accessory, option, or finish only when it is actually supplied as selected; never mention an unselected one. Do not include stock or commercial availability/status notes (for example wording about limited stock or supplies running out). Do not invent materials, finishes, dimensions, accessories, quantities, origin, or product features beyond the supplied selected facts; a supplied brand/origin fact may be preserved verbatim but never invented.`;
+Write the resulting furniture product, not the internal configuration model: use natural furniture/quotation terminology instead of software-style phrasing. Consolidate repeated modules and repeated identical dimensions into concise composition wording instead of listing them again. Mention a selected accessory or option only when it is actually supplied as selected; never mention an unselected one. Never write the brand, country of origin, category, colour names, finish names or finish codes. Do not include stock or commercial availability/status notes (for example wording about limited stock or supplies running out). Do not invent materials, finishes, dimensions, accessories, quantities, or product features beyond the supplied selected facts.`;
+
+const MODE_INSTRUCTIONS = {
+  improve: "MODE: IMPROVE. Rewrite the specification in the house style below, using only the supplied selected facts.",
+  shorten: "MODE: SHORTEN. Keep the same facts with about 25% fewer words, without removing a selected feature or number: remove filler words and join only items of the same group (for example castors and base). Never remove a selected accessory. Never add a fact. Never change a number or size.",
+} as const;
 
 const schema = {
   type: "object",
@@ -46,7 +53,11 @@ export async function improveFinalSpecificationWithProvider(
   const runtime = await resolveAiAgentRuntimeConfig("final_specification");
   if (!runtime.enabled || !runtime.apiKeyConfigured) throw new FinalSpecificationProviderError("Final specification AI is not configured.", "not_configured");
   try {
-    const response = await runAiProvider({ provider: runtime.provider, model: runtime.model, responseSchema: { name: "final_specification", schema }, systemInstructions: instructions, timeoutMs: TIMEOUT_MS, userContent: request });
+    const response = await runAiProvider({ provider: runtime.provider, model: runtime.model, responseSchema: { name: "final_specification", schema }, systemInstructions: `${instructions}
+
+${MODE_INSTRUCTIONS[finalSpecificationMode(request)]}
+
+${FINAL_SPECIFICATION_STYLE_GUIDE}`, timeoutMs: TIMEOUT_MS, userContent: request });
     const result = parseFinalSpecificationResult(JSON.parse(response.text));
     if (!result) throw new FinalSpecificationProviderError("Final specification returned an invalid result.");
     return result;

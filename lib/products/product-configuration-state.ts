@@ -989,9 +989,7 @@ export function resolveProductConfigurationState(
 
   const companyStyleSpecification = buildCompanyStyleProductSpecification({
     accessorySnapshots,
-    brand: template.brandName,
     linkedProductSnapshots: [],
-    origin: template.origin,
     primarySpecification,
     selectedOptionSnapshots: [],
     selectedWorkstationVariant: resolvedWorkstationVariantRow

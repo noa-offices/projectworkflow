@@ -1,6 +1,10 @@
 export const FINAL_SPECIFICATION_MAX_LENGTH = 1500;
 
+export type FinalSpecificationMode = "improve" | "shorten";
+
 export type FinalSpecificationRequest = {
+  /** Omitted means "improve", so older callers keep working. */
+  mode?: FinalSpecificationMode;
   currentSpecification: string | null;
   productName: string;
   selectedModel: string | null;
@@ -21,6 +25,7 @@ export type FinalSpecificationActionResult =
   | { ok: false; code: "invalid_request" | "not_configured" | "provider_failed"; message: string };
 
 const requestKeys = new Set([
+  "mode",
   "currentSpecification",
   "productName",
   "selectedModel",
@@ -66,6 +71,8 @@ export function parseFinalSpecificationRequest(value: unknown): FinalSpecificati
   const selectedAccessoryLabels = textList(value.selectedAccessoryLabels, 120, 300);
   const selectedCompanionLabels = textList(value.selectedCompanionLabels, 120, 300);
   const selectedRowFacts = textList(value.selectedRowFacts, 120, 1500);
+  const mode = value.mode;
+  if (mode !== undefined && mode !== "improve" && mode !== "shorten") return null;
 
   if (
     currentSpecification === undefined || !productName || selectedModel === undefined ||
@@ -74,6 +81,7 @@ export function parseFinalSpecificationRequest(value: unknown): FinalSpecificati
   ) return null;
 
   return {
+    ...(mode ? { mode } : {}),
     currentSpecification,
     productName,
     selectedModel,
