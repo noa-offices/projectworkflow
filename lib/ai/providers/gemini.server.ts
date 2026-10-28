@@ -41,7 +41,12 @@ export async function runGeminiProvider(request: AiProviderRequest): Promise<AiP
     // validates against that ORIGINAL schema/shape.
     const geminiSchema = translateSchemaForGemini(request.responseSchema.schema);
     const response = await fetch(`${GEMINI_GENERATE_CONTENT_ENDPOINT}/${encodeURIComponent(request.model)}:generateContent?key=${encodeURIComponent(apiKey)}`, { method: "POST", signal: controller.signal, headers: { "content-type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: request.systemInstructions }] }, contents: [{ role: "user", parts: contentParts(request) }], generationConfig: { responseMimeType: "application/json", responseSchema: geminiSchema } }) });
-    if (!response.ok) throw new AiProviderError("Gemini request failed.", "provider_failed");
+    if (!response.ok) {
+      // Log only the status and, for request / quota / server problems, Google's short error message. Never the key (it is in the URL) or the request.
+      const detail = [400, 403, 404, 429].includes(response.status) || response.status >= 500 ? await response.json().then((body: { error?: { message?: unknown } }) => String(body?.error?.message ?? "").slice(0, 300), () => "") : "";
+      console.error("AI PROVIDER ERROR", { provider: "gemini", status: response.status, ...(detail ? { detail } : {}) });
+      throw new AiProviderError(`Gemini request failed (status ${response.status}).`, "provider_failed");
+    }
     const json = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
     const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new AiProviderError("Gemini returned invalid structured output.", "provider_failed");

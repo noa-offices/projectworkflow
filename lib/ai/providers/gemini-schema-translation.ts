@@ -98,6 +98,24 @@ function translateProperty(name: string, property: JsonSchemaProperty): JsonSche
   return translated;
 }
 
+// One extra, narrow shape: an array whose items are a flat object (for example { results: [{ targetId, text }] }). The items
+// are translated like root properties; minItems / maxItems and other array keywords are dropped from the wire schema (callers
+// check counts in code). Anything deeper still fails closed.
+function translateArrayOfFlatObjects(name: string, property: JsonSchemaProperty): JsonSchemaProperty {
+  const items = property.items as JsonSchemaObject | undefined;
+  if (!items || items.type !== "object" || !items.properties) {
+    throw new GeminiSchemaTranslationError(`Gemini schema translation: unsupported array items for "${name}".`);
+  }
+  const itemProperties: Record<string, JsonSchemaProperty> = {};
+  for (const [itemName, itemProperty] of Object.entries(items.properties)) {
+    if (itemProperty.type === "object" || itemProperty.type === "array") {
+      throw new GeminiSchemaTranslationError(`Gemini schema translation: nested "${itemProperty.type}" properties are not supported ("${name}.${itemName}").`);
+    }
+    itemProperties[itemName] = translateProperty(itemName, itemProperty);
+  }
+  return { type: "array", items: { type: "object", properties: itemProperties, required: items.required } };
+}
+
 // Fails closed (I7.1 PART 9) on anything this flat, one-level translator wasn't built for -
 // nested objects/arrays, a schema with no `properties`, or a multi-type union this module doesn't
 // recognize - rather than silently dropping or reinterpreting it.
@@ -108,7 +126,11 @@ export function translateSchemaForGemini(schema: object): GeminiWireSchema {
   }
   const properties: Record<string, JsonSchemaProperty> = {};
   for (const [name, property] of Object.entries(source.properties)) {
-    if (property.type === "object" || property.type === "array") {
+    if (property.type === "array") {
+      properties[name] = translateArrayOfFlatObjects(name, property);
+      continue;
+    }
+    if (property.type === "object") {
       throw new GeminiSchemaTranslationError(`Gemini schema translation: nested "${property.type}" properties are not supported ("${name}").`);
     }
     properties[name] = translateProperty(name, property);

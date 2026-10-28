@@ -192,3 +192,10 @@ test("the translation module itself is pure - no server-only, no network, no Sup
   assert.ok(!codeOnly.includes("fetch("));
   assert.ok(!/supabase|createClient|requireActiveUser/i.test(codeOnly));
 });
+
+test("an array of flat objects is translated (nullable + no additionalProperties / min / max); deeper nesting still fails closed", () => {
+  const wire = translateSchemaForGemini({ type: "object", additionalProperties: false, required: ["results"], properties: { results: { type: "array", minItems: 1, maxItems: 20, items: { type: "object", additionalProperties: false, required: ["id", "value"], properties: { id: { type: "string" }, value: { type: ["string", "null"], maxLength: 5 } } } } } });
+  assert.deepEqual(wire, { type: "object", required: ["results"], properties: { results: { type: "array", items: { type: "object", required: ["id", "value"], properties: { id: { type: "string" }, value: { type: "string", nullable: true, maxLength: 5 } } } } } });
+  assert.throws(() => translateSchemaForGemini({ type: "object", properties: { r: { type: "array", items: { type: "string" } } } }), GeminiSchemaTranslationError);
+  assert.throws(() => translateSchemaForGemini({ type: "object", properties: { r: { type: "array", items: { type: "object", properties: { deep: { type: "array", items: { type: "object", properties: {} } } } } } } }), GeminiSchemaTranslationError);
+});
