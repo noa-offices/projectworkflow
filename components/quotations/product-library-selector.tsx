@@ -4425,16 +4425,16 @@ export function ProductLibrarySelector({
                                 </div>
                               ) : null}
                               {selectedFinishSummary.length ? (
-                                <div className="space-y-2">
-                                  <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">
-                                    Materials / Finishes
-                                  </p>
-                                  <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-5 text-zinc-700">
+                                <details className="space-y-2">
+                                  <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-wide text-zinc-500">
+                                    Materials / Finishes ({selectedFinishSummary.length} selected)
+                                  </summary>
+                                  <div className="mt-2 rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-5 text-zinc-700">
                                     {selectedFinishSummary.map((line) => (
                                       <p key={line}>{line}</p>
                                     ))}
                                   </div>
-                                </div>
+                                </details>
                               ) : null}
                             </div>
                             <div className="grid gap-1">
