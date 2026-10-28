@@ -51,3 +51,32 @@ export function groupMaterialsByGroup<T extends GroupableMaterial>(materials: re
     return { groupId, total: items.length, selected: sections.reduce((sum, section) => sum + section.selected, 0), sections };
   });
 }
+
+/** Adds a row for every section material that is not selected yet. Rows come from buildRow, the same builder a single tile pick uses. Never duplicates, never mutates. */
+export function selectAllInSection<R, M extends { id: string }>(selectedRows: readonly R[], sectionMaterials: readonly M[], buildRow: (material: M, rowIndex: number) => R, isRowForMaterial: (row: R, material: M) => boolean): R[] {
+  const rows = [...selectedRows];
+  for (const material of sectionMaterials) {
+    if (!rows.some((row) => isRowForMaterial(row, material))) rows.push(buildRow(material, rows.length));
+  }
+  return rows;
+}
+/** Removes only the rows that belong to the section's materials. */
+export function clearSection<R, M extends { id: string }>(selectedRows: readonly R[], sectionMaterials: readonly M[], isRowForMaterial: (row: R, material: M) => boolean): R[] {
+  return selectedRows.filter((row) => !sectionMaterials.some((material) => isRowForMaterial(row, material)));
+}
+export function isSectionFull<T extends GroupableMaterial>(section: MaterialSection<T>, selectedIds: ReadonlySet<string>): boolean {
+  return section.materials.length > 0 && section.materials.every((material) => selectedIds.has(material.id));
+}
+/** Single materials (in sections that are not full) and full sections, from sections built with the current selection. */
+export function selectionSummary<T extends GroupableMaterial>(sections: readonly MaterialSection<T>[]): { singles: number; fullSections: number } {
+  let singles = 0, fullSections = 0;
+  for (const section of sections) {
+    if (section.total > 0 && section.selected === section.total) fullSections += 1;
+    else singles += section.selected;
+  }
+  return { singles, fullSections };
+}
+export function formatSelectionSummary({ singles, fullSections }: { singles: number; fullSections: number }): string {
+  const parts = [singles ? `${singles} ${singles === 1 ? "material" : "materials"}` : "", fullSections ? `${fullSections} full ${fullSections === 1 ? "section" : "sections"}` : ""].filter(Boolean);
+  return parts.length ? `${parts.join(" + ")} selected` : "Nothing selected";
+}

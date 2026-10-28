@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ClipboardEvent, ChangeEvent } from "react";
 import { FinishImagePreview } from "@/components/quotations/finish-image-uploader";
 import { materialDisplayCategory } from "@/lib/products/material-classification";
-import { groupMaterialsByGroup, groupMaterialsIntoSections } from "@/lib/quotations/finish-material-groups";
+import { clearSection, formatSelectionSummary, groupMaterialsByGroup, groupMaterialsIntoSections, selectAllInSection, selectionSummary } from "@/lib/quotations/finish-material-groups";
 import { uploadQuotationFinishImage } from "@/lib/quotation-image-upload";
 
 export type FinishSelectionEditorRow = {
@@ -393,7 +393,9 @@ function MaterialSections({
   groupLabel,
   isMaterialSelected,
   materials,
+  onClear,
   onSelect,
+  onSelectAll,
   onToggle,
   open,
   scope,
@@ -405,7 +407,9 @@ function MaterialSections({
   groupLabel: string;
   isMaterialSelected?: (material: FinishMaterial) => boolean;
   materials: FinishMaterial[];
+  onClear: (materials: FinishMaterial[]) => void;
   onSelect: (material: FinishMaterial) => void;
+  onSelectAll: (materials: FinishMaterial[]) => void;
   onToggle: (key: string) => void;
   open: ReadonlySet<string>;
   scope: string;
@@ -419,7 +423,8 @@ function MaterialSections({
 
         return (
           <section key={key} className="border border-zinc-200 bg-white">
-            <button type="button" aria-expanded={isOpen} onClick={() => onToggle(key)} className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left hover:bg-zinc-50">
+            <div className="flex items-center justify-between gap-2 px-2 py-1.5 hover:bg-zinc-50">
+            <button type="button" aria-expanded={isOpen} onClick={() => onToggle(key)} className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left">
               <span className="flex items-center gap-2">
                 <span aria-hidden="true" className="text-[10px] text-zinc-500">{isOpen ? "\u25BC" : "\u25B6"}</span>
                 <span className="text-[11px] font-bold uppercase text-zinc-700">{cleanCategoryLabel(section.label)}</span>
@@ -429,6 +434,11 @@ function MaterialSections({
                 {section.selected > 0 ? <span className="border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-emerald-800">{section.selected} selected</span> : null}
               </span>
             </button>
+            <span className="flex shrink-0 items-center gap-2 text-[10px] font-semibold">
+              <button type="button" disabled={section.selected === section.total} onClick={() => onSelectAll(section.materials)} className="text-emerald-900 hover:text-emerald-700 disabled:opacity-40">Select all</button>
+              {section.selected > 0 ? <button type="button" onClick={() => onClear(section.materials)} className="text-red-700 hover:text-red-600">Clear</button> : null}
+            </span>
+            </div>
             {isOpen ? (
               <div className="grid gap-2 border-t border-zinc-200 p-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
                 {section.materials.map((material) => (
@@ -794,6 +804,27 @@ export function FinishSelectionsEditor({
     toggleMaterialSelection({ material, sourceScope: "library" });
   }
 
+  // Select all / Clear reuse the same row builder and the same "is this material selected" rule as a single tile pick.
+  function rowIsForMaterial(link: ProductTemplateMaterialGroupLink | undefined, finish: DraftFinish, material: FinishMaterial) {
+    const resolvedLink = link ?? linkedGroupForMaterial(material.material_group_id);
+    return finish.brand_material_id === material.id && (resolvedLink ? finishMatchesLink(finish, resolvedLink) : finish.material_group_id === material.material_group_id);
+  }
+
+  function selectManyMaterials(list: FinishMaterial[], link: ProductTemplateMaterialGroupLink | undefined, sourceScope: "linked" | "library") {
+    setFinishes((current) =>
+      selectAllInSection(
+        current,
+        list,
+        (material, rowIndex) => materialDraft({ link: link ?? linkedGroupForMaterial(material.material_group_id), material, rowIndex, sourceScope }),
+        (finish, material) => rowIsForMaterial(link, finish, material),
+      ),
+    );
+  }
+
+  function clearManyMaterials(list: FinishMaterial[], link: ProductTemplateMaterialGroupLink | undefined) {
+    setFinishes((current) => clearSection(current, list, (finish, material) => rowIsForMaterial(link, finish, material)));
+  }
+
   return (
     <fieldset className="border border-zinc-300 bg-white p-3">
       <div className="flex items-center justify-between gap-3">
@@ -931,6 +962,9 @@ export function FinishSelectionsEditor({
             <button type="button" onClick={() => setOpenSections(new Set(linkedGroups.flatMap((link) => groupMaterialsIntoSections(linkedGroupMaterials(link), new Set<string>()).map((section) => `linked:${link.id}|${section.key}`))))} className="text-xs font-semibold text-emerald-900 hover:text-emerald-700">Expand all</button>
             <button type="button" onClick={() => setOpenSections(new Set())} className="text-xs font-semibold text-emerald-900 hover:text-emerald-700">Collapse all</button>
           </div>
+          <p className="text-xs font-semibold text-zinc-600">
+            {formatSelectionSummary(selectionSummary(linkedGroups.flatMap((link) => groupMaterialsIntoSections(linkedGroupMaterials(link), new Set(finishes.filter((finish) => finishMatchesLink(finish, link)).map((finish) => finish.brand_material_id).filter((value): value is string => Boolean(value)))))))}
+          </p>
           {!linkedGroups.length ? (
             <div className="border border-dashed border-zinc-300 bg-zinc-50 px-3 py-4 text-center text-xs text-zinc-500">
               No recommended material groups linked to this product. Use Browse Material Library or Add Custom Finish.
@@ -964,9 +998,13 @@ export function FinishSelectionsEditor({
                       <span>Quote {link.show_in_quotation ? "Yes" : "No"}</span>
                     </div>
                   </div>
-                  <span className="border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-bold text-zinc-500">
-                    {selectedCountLabel(selectedCount)}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button type="button" disabled={!groupMaterials.length} onClick={() => selectManyMaterials(groupMaterials, link, "linked")} className="text-[11px] font-semibold text-emerald-900 hover:text-emerald-700 disabled:opacity-40">Select all</button>
+                    {selectedCount > 0 ? <button type="button" onClick={() => clearManyMaterials(groupMaterials, link)} className="text-[11px] font-semibold text-red-700 hover:text-red-600">Clear</button> : null}
+                    <span className="border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-bold text-zinc-500">
+                      {selectedCountLabel(selectedCount)}
+                    </span>
+                  </div>
                 </div>
                 {groupMaterials.length ? (
                   <MaterialSections
@@ -979,7 +1017,9 @@ export function FinishSelectionsEditor({
                     groupLabel={label}
                     isMaterialSelected={(material) => selectedMaterialIds.has(material.id)}
                     materials={groupMaterials}
+                    onClear={(list) => clearManyMaterials(list, link)}
                     onSelect={(material) => selectLinkedMaterial(link, material)}
+                    onSelectAll={(list) => selectManyMaterials(list, link, "linked")}
                     onToggle={toggleSection}
                     open={openSections}
                     scope={`linked:${link.id}`}
@@ -1041,22 +1081,33 @@ export function FinishSelectionsEditor({
             <button type="button" onClick={() => setOpenSections(new Set())} className="text-xs font-semibold text-emerald-900 hover:text-emerald-700">Collapse all</button>
           </div>
 
+          <p className="text-xs font-semibold text-zinc-600">{formatSelectionSummary(selectionSummary(groupMaterialsByGroup(filteredLibraryMaterials, selectedLibraryIds).flatMap((node) => node.sections)))}</p>
+
           {Array.from(new Set(filteredLibraryMaterials.map((material) => material.material_group_id))).map((groupId) => {
             const group = groupsById.get(groupId);
             const groupMaterials = filteredLibraryMaterials.filter((material) => material.material_group_id === groupId);
+            const groupSelectedCount = groupMaterials.filter((material) => selectedLibraryIds.has(material.id)).length;
 
             return (
               <section key={groupId} className="border border-zinc-200 bg-zinc-50 p-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <h4 className="text-sm font-bold text-zinc-900">{group?.group_name ?? "Material group"}</h4>
-                  <span className="border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-bold text-zinc-500">{groupMaterials.length}</span>
+                  <div className="flex items-center gap-2">
+                    <button type="button" disabled={groupSelectedCount === groupMaterials.length} onClick={() => selectManyMaterials(groupMaterials, undefined, "library")} className="text-[11px] font-semibold text-emerald-900 hover:text-emerald-700 disabled:opacity-40">Select all</button>
+                    {groupSelectedCount > 0 ? <button type="button" onClick={() => clearManyMaterials(groupMaterials, undefined)} className="text-[11px] font-semibold text-red-700 hover:text-red-600">Clear</button> : null}
+                    <span className="border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-bold text-zinc-500">{groupMaterials.length}</span>
+                  </div>
                 </div>
                 <MaterialSections
                   brandsById={brandsById}
                   forceOpen={Boolean(librarySearch.trim())}
+                  getActionLabel={(material) => (selectedLibraryIds.has(material.id) ? "SELECTED" : "SELECT")}
                   groupLabel={group?.group_name ?? "Material group"}
+                  isMaterialSelected={(material) => selectedLibraryIds.has(material.id)}
                   materials={groupMaterials}
+                  onClear={(list) => clearManyMaterials(list, undefined)}
                   onSelect={selectLibraryMaterial}
+                  onSelectAll={(list) => selectManyMaterials(list, undefined, "library")}
                   onToggle={toggleSection}
                   open={openSections}
                   scope={`library:${groupId}`}
