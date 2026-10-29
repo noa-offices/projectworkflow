@@ -3,6 +3,7 @@ import { draftModularColumns, draftModularRows, type ProductTemplateDraft } from
 import { classifyDraftPriceMatrix } from "./product-template-draft-pricing-routing";
 import type { DraftPriceMatrixRoute } from "./product-template-draft-pricing-routing";
 import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
+import { baseModelGroupToOptionGroup, optionGroupConversionFingerprint, optionGroupToBaseModelRows, smartRouteConversionCheck, smartRouteConversionDestination } from "./smart-product-route-conversion";
 import { baseModelGroupRouteKey, draftBaseModelGroupIds, draftBaseModelGroupLabel, draftBaseModelGroupRows, draftUngroupedBaseModelRows } from "./base-model-draft-groups";
 
 export const SMART_REVIEW_DESTINATIONS = ["base_model", "workstation", "category_matrix", "modular", "accessory", "skip"] as const;
@@ -22,8 +23,29 @@ export type SmartReviewRoute = {
   destination: SmartReviewDestination;
   supportedDestinations: SmartReviewDestination[];
   accessory?: SmartReviewAccessoryConfiguration;
+  /** Set when an option group is routed to Base / Model: the reviewed source state. Any later change to the source invalidates the conversion. */
+  conversionFingerprint?: string;
 };
 export type SmartSetupReviewRoutingPlan = { routes: SmartReviewRoute[] };
+
+/** Manual destination change. Offers the one conversion a source shape allows only when its eligibility check passes. */
+export function smartRouteWithDestination(draft: ProductTemplateDraft, route: SmartReviewRoute, destination: SmartReviewDestination): SmartReviewRoute {
+  const { conversionFingerprint: _previous, ...rest } = route;
+  const next: SmartReviewRoute = { ...rest, destination };
+  if (route.sourceKind === "option" && destination === "base_model") {
+    const group = draft.optionGroups.find((item) => item.id === route.sourceId);
+    if (group) next.conversionFingerprint = optionGroupConversionFingerprint(group);
+  }
+  if (destination === "accessory" && !next.accessory) next.accessory = { role: "accessory", selection: route.sourceKind === "base_model_group" ? "optional_exactly_one" : "optional_multiple", rules: [] };
+  return next;
+}
+
+/** Why a route cannot currently use `destination`, or null when it can (natively supported or an eligible conversion). */
+export function smartRouteDestinationBlockReason(draft: ProductTemplateDraft, route: SmartReviewRoute, destination: SmartReviewDestination): string | null {
+  if (route.supportedDestinations.includes(destination)) return null;
+  const check = smartRouteConversionCheck(draft, route, destination);
+  return check.ok ? null : check.reason;
+}
 
 export function reorderSmartSetupReviewRoutes(plan: SmartSetupReviewRoutingPlan, key: string, direction: "up" | "down") {
   const index = plan.routes.findIndex((route) => route.key === key);
@@ -177,17 +199,24 @@ export function validateSmartSetupReviewRouting(draft: ProductTemplateDraft, pla
       const kind = destination === "base_model" ? "base_model" : destination === "category_matrix" ? "price_matrix" : null;
       return kind ? matrix.rows.map((row) => accessoryApplicabilityTargetKey({ kind, group_id: matrix.id, row_id: row.id })) : [];
     }),
+    ...draft.optionGroups.flatMap((group) => plan.routes.find((route) => route.key === `option:${group.id}`)?.destination === "base_model"
+      ? group.items.map((item) => accessoryApplicabilityTargetKey({ kind: "base_model", group_id: group.id, row_id: item.id }))
+      : []),
     ...draft.pricing.modularGroups.flatMap((group) => plan.routes.find((route) => route.key === `modular:${group.id}`)?.destination === "modular"
       ? draftModularRows(group).map((row) => accessoryApplicabilityTargetKey({ kind: "modular", group_id: group.id, row_id: row.id }))
       : []),
   ]);
   plan.routes.forEach((route) => {
-    if (!route.supportedDestinations.includes(route.destination)) errors.push(`${route.sourceName} cannot be applied to the selected destination.`);
+    if (!route.supportedDestinations.includes(route.destination)) {
+      const check = smartRouteConversionCheck(draft, route, route.destination, route.sourceKind === "option" ? route.conversionFingerprint ?? null : undefined);
+      if (!check.ok) errors.push(`${route.sourceName} cannot be applied to the selected destination: ${check.reason}`);
+    }
     if (route.destination !== "skip" && !route.groupName.trim()) errors.push(`${route.sourceName} requires a destination group name.`);
     if (route.destination !== "accessory") return;
     if (!route.accessory) errors.push(`${route.sourceName} requires Accessory / Configuration settings.`);
     const itemIds = new Set(route.sourceKind === "option"
       ? draft.optionGroups.find((group) => group.id === route.sourceId)?.items.map((item) => item.id) ?? []
+      : route.sourceKind === "base_model_group" ? draftBaseModelGroupRows(draft.pricing, route.sourceId).map((row) => row.id)
       : draft.pricing.priceMatrices.find((matrix) => matrix.id === route.sourceId)?.rows.map((row) => row.id) ?? []);
     const ruleKeys = new Set<string>();
     route.accessory?.rules.forEach((rule) => {
@@ -253,6 +282,14 @@ function orderedNativeGroupRows<T extends { groupId?: string }>(rows: T[], plan:
 
 export function draftForSmartSetupReviewApply(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan): ProductTemplateDraft {
   const route = (key: string) => plan.routes.find((item) => item.key === key);
+  // Converted routes are revalidated here so a direct Apply can never bypass the review gate or ship a lossy shape.
+  const converted = plan.routes.filter((item) => item.destination !== "skip" && !item.supportedDestinations.includes(item.destination) && item.destination === smartRouteConversionDestination(item));
+  converted.forEach((item) => {
+    const check = smartRouteConversionCheck(draft, item, item.destination, item.sourceKind === "option" ? item.conversionFingerprint ?? null : undefined);
+    if (!check.ok) throw new Error(`${item.sourceName} cannot be applied to the selected destination: ${check.reason}`);
+  });
+  const convertedRows = converted.flatMap((item) => item.sourceKind === "option" ? optionGroupToBaseModelRows(draft.optionGroups.find((group) => group.id === item.sourceId)!, item.groupName.trim() || item.sourceName) : []);
+  const convertedGroups = converted.flatMap((item) => item.sourceKind === "base_model_group" ? [baseModelGroupToOptionGroup(draft, item.sourceId, item.groupName.trim() || item.sourceName)] : []);
   const ordered = <T extends { id: string }>(items: T[], sourceKind: SmartReviewRoute["sourceKind"]) => plan.routes.filter((item) => item.sourceKind === sourceKind).flatMap((item) => items.find((entry) => entry.id === item.sourceId) ?? []);
   return {
     ...draft,
@@ -263,10 +300,10 @@ export function draftForSmartSetupReviewApply(draft: ProductTemplateDraft, plan:
         if (!row.groupId) return route("base_model:rows")?.destination === "base_model" ? [row] : [];
         const groupRoute = route(baseModelGroupRouteKey(row.groupId));
         return groupRoute?.destination === "base_model" ? [{ ...row, groupLabel: groupRoute.groupName.trim() || row.groupLabel || row.groupId }] : [];
-      }), plan),
+      }), plan).concat(convertedRows),
       priceMatrices: ordered(draft.pricing.priceMatrices, "matrix").map((matrix) => ({ ...matrix, label: route(`matrix:${matrix.id}`)?.groupName ?? matrix.label })),
       modularGroups: ordered(draft.pricing.modularGroups, "modular").filter((group) => route(`modular:${group.id}`)?.destination === "modular").map((group) => ({ ...group, label: route(`modular:${group.id}`)?.groupName ?? group.label })),
     },
-    optionGroups: ordered(draft.optionGroups, "option").filter((group) => route(`option:${group.id}`)?.destination === "accessory").map((group) => ({ ...group, label: route(`option:${group.id}`)?.groupName ?? group.label })),
+    optionGroups: ordered(draft.optionGroups, "option").filter((group) => route(`option:${group.id}`)?.destination === "accessory").map((group) => ({ ...group, label: route(`option:${group.id}`)?.groupName ?? group.label })).concat(convertedGroups),
   };
 }

@@ -1,5 +1,6 @@
 import type { ProductTemplateDraft, ProductTemplateDraftMatrixRow, ProductTemplateDraftOptionGroup, ProductTemplateDraftPricedRow } from "./product-template-draft";
 import type { AccessoryItemRole, AccessoryModelApplicabilityRule, StructuralSupportCompatibleTarget } from "./accessory-conditional-configuration";
+import { baseModelGroupRouteKey } from "./base-model-draft-groups";
 import { directMatrixRowPrice, routeDraftPriceMatrices } from "./product-template-draft-pricing-routing";
 import { smartReviewMatrixOverrides, smartReviewRuleTarget, smartReviewSelectionContract, type SmartReviewRule, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 
@@ -85,7 +86,8 @@ export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft, r
   const warnings: string[] = [];
   const errors: string[] = [];
   const optionGroups: AccessoryGroup[] = draft.optionGroups.flatMap((group, groupIndex) => {
-    const reviewedRoute = reviewedPlan?.routes.find((route) => route.key === `option:${group.id}`);
+    // A Base / Model group converted to Accessory by Smart Setup keeps its base_model_group route key.
+    const reviewedRoute = reviewedPlan?.routes.find((route) => route.key === `option:${group.id}`) ?? reviewedPlan?.routes.find((route) => route.key === baseModelGroupRouteKey(group.id) && route.destination === "accessory");
     if (reviewedPlan && reviewedRoute?.destination !== "accessory") return [];
     // A group with a reviewed accessory route has already been explicitly confirmed for Accessory
     // Pricing by Smart Setup Review, and the mapped configuration below comes from the reviewed
