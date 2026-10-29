@@ -40,6 +40,11 @@ const gradeText = (value: string) => clean(value.replace(/\s*[([].*$/, ""));
 // 2c. spec lines (composition, weight, wear tests) are never titles or names; the digits-only form is for headings only.
 const specText = /%|g\/r?m|gr\/m|martindale/i;
 const specHeading = /%|g\/r?m|gr\/m|martindale|^[\d.,\s]+(?:gr?|kg|cm|mm|m)?$|polyester.*\d|\d.*polyester/i;
+// Supplier labels such as "COD. AR 02 ARGENTO / SILVER": the "COD." marker is not part of the code, applicability notes are not names,
+// and "Italian / English" (spaced slash, exactly two parts) is a bilingual name. Anything else is left as written.
+const codeMarker = /^(?:cod(?:ice)?|code)\.?:?\s+(?=(?:[A-Za-z]{1,4}[ -]?)?\d)/i;
+const usageNote = /^(?:per|for|solo|only|uso|use|used|applicable|applicabile|suitable|adatto|see|vedi|note|nota)\s/i;
+const slashPair = (value: string) => { const parts = value.split(/\s+\/\s+/).map(clean).filter(Boolean); return parts.length === 2 && !/\/\s*$/.test(value) ? parts : null; };
 export function tidyLabelName(value: string, mode: LabelOptions["tidyNames"]) {
   if (mode === "as-written") return value;
   const lowered = value.replace(/\p{L}+/gu, (word) => mode === "title-case" || word === word.toUpperCase() ? word.toLowerCase() : word);
@@ -47,7 +52,7 @@ export function tidyLabelName(value: string, mode: LabelOptions["tidyNames"]) {
 }
 export function parseLabel(lines: TextLine[], styleId: LabelStyleId, options: Partial<LabelOptions> = {}) {
   const opts = { ...defaultLabelOptions, ...options };
-  const text = lines.map((line) => clean(line.str)).filter((s) => s && !ignore.test(s) && !specText.test(s) && !/^(PANTONE|RAL)\b/i.test(s));
+  const text = lines.map((line) => clean(line.str).replace(codeMarker, "")).filter((s) => s && !ignore.test(s) && !specText.test(s) && !/^(PANTONE|RAL)\b/i.test(s)).filter((s, at) => at === 0 || !usageNote.test(s));
   const altCode = text.find((s) => /^\([^)]+\)$/.test(s))?.slice(1, -1).trim() || "";
   const useful = text.filter((s) => !/^\([^)]+\)$/.test(s));
   let code = "", main = "", english = "", other = "";
@@ -55,13 +60,15 @@ export function parseLabel(lines: TextLine[], styleId: LabelStyleId, options: Pa
     const at = useful.findIndex((s) => wholeCode.test(s) || dashedName.test(s));
     const remaining = [...useful];
     if (at >= 0) { const match = dashedName.exec(useful[at]); code = match?.[1] || useful[at]; remaining.splice(at, 1, ...(match ? [match[2]] : [])); }
-    const names = remaining.filter((s) => !s.includes("|"));
+    const names = remaining.filter((s) => !s.includes("|") && !(at >= 0 && slashPair(s)));
     main = names.join(" ");
     const translated = remaining.find((s) => s.includes("|"))?.split("|").map(clean);
     english = translated?.[0] || ""; other = translated?.slice(1).join(" | ") || "";
+    const bilingual = !translated && at >= 0 ? remaining.map(slashPair).find(Boolean) : null;
+    if (bilingual) { main = [...names, bilingual[0]].join(" "); english = bilingual[1]; }
   } else if (styleId === "code-name-one-line") {
     const match = codeName.exec(useful[0] || "");
-    if (match) { code = match[1]; main = [match[2].replace(/^[-–—]\s*/, ""), ...useful.slice(1)].join(" "); }
+    if (match) { code = match[1]; main = [match[2].replace(/^[-–—]\s*/, ""), ...useful.slice(1)].join(" "); const pair = slashPair(main); if (pair) { main = pair[0]; english = pair[1]; } }
   } else if (styleId === "name-then-code") {
     const at = useful.findLastIndex((s) => wholeCode.test(s));
     if (at > 0) { code = useful[at]; main = useful.slice(0, at).join(" "); }

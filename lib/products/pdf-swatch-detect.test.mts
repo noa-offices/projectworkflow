@@ -144,3 +144,53 @@ test("spread page: left titles split the whole page into strips (Era / Manhattan
   assert.ok(result.every((item) => item.grade === "Fabric group 1"));
   assert.ok(result.filter((item) => byRow(item) < 400 && item.box.x > 0.5).length === 6); // both halves of the spread
 });
+
+// Supplier finish labels ("COD. 07 NOCE CLASSICO / CLASSIC WALNUT"): code and English name per swatch.
+const supplier = (values: string[], style: LabelStyleId, tidyNames: "title-case" | "capitalise-first" = "title-case") => parseLabel(lines(values), style, { tidyNames });
+const cases: Array<[string[], LabelStyleId, string, string]> = [
+  [["COD. 07 NOCE CLASSICO / CLASSIC WALNUT"], "code-name-one-line", "07", "Classic Walnut"],
+  [["COD. 12 OLMO GREY / GREY ELM"], "code-name-one-line", "12", "Grey Elm"],
+  [["COD. 10 NERO / BLACK"], "code-name-one-line", "10", "Black"],
+  [["COD. AR 02 ARGENTO / SILVER"], "code-name-one-line", "AR 02", "Silver"],
+  [["COD. CP 01 CIPRIA / POWDER PINK"], "code-name-one-line", "CP 01", "Powder Pink"],
+  [["COD. RS 02 ROSSO GRANATO / GARNET RED"], "code-name-one-line", "RS 02", "Garnet Red"],
+  [["522 GRIGIO PERLA / LIGHT GREY"], "code-name-one-line", "522", "Light Grey"],
+  [["522 - Grigio perla / Light grey"], "code-name-one-line", "522", "Light Grey"],
+  [["522 - Grigio perla / Light grey"], "code-then-name", "522", "Light Grey"],
+  [["COD. 07", "NOCE CLASSICO / CLASSIC WALNUT"], "code-then-name", "07", "Classic Walnut"],
+  [["COD. AR 02", "ARGENTO / SILVER"], "code-then-name", "AR 02", "Silver"],
+  [["COD. 07 NOCE CLASSICO /", "CLASSIC WALNUT"], "code-name-one-line", "07", "Classic Walnut"],
+];
+for (const [values, style, code, english] of cases) test(`supplier label ${style}: ${values.join(" | ")}`, () => {
+  const parsed = supplier(values, style);
+  assert.equal(parsed.code, code); assert.equal(parsed.nameEnglish, english);
+});
+test("supplier label: Italian name kept as primary, default tidy, leading zeros and case preserved", () => {
+  const parsed = supplier(["COD. 07 NOCE CLASSICO / CLASSIC WALNUT"], "code-name-one-line", "capitalise-first");
+  assert.equal(parsed.code, "07"); assert.equal(parsed.nameMain, "Noce classico"); assert.equal(parsed.nameEnglish, "Classic walnut");
+  assert.equal(supplier(["cod. ab 02 argento / silver"], "code-name-one-line").code, "ab 02");
+});
+test("supplier label: English-only name has no invented English split; missing code or name stays empty", () => {
+  const english = supplier(["COD. 12 GREY ELM"], "code-name-one-line");
+  assert.equal(english.code, "12"); assert.equal(english.nameMain, "Grey Elm"); assert.equal(english.nameEnglish, "");
+  const noCode = supplier(["NOCE CLASSICO / CLASSIC WALNUT"], "code-name-one-line");
+  assert.equal(noCode.code, ""); assert.equal(noCode.nameEnglish, "");
+  const noName = supplier(["COD. 07"], "code-name-one-line");
+  assert.equal(noName.code, ""); assert.equal(noName.nameMain, "");
+  const threeParts = supplier(["COD. 07 A / B / C"], "code-name-one-line");
+  assert.equal(threeParts.nameEnglish, ""); // ambiguous: not split
+});
+test("supplier label: applicability and spec text never become names", () => {
+  const parsed = supplier(["COD. 07 NOCE CLASSICO / CLASSIC WALNUT", "Per cassetti e ante", "For drawers and doors", "Use with Collection X"], "code-name-one-line");
+  assert.equal(parsed.code, "07"); assert.equal(parsed.nameEnglish, "Classic Walnut"); assert.equal(parsed.nameMain, "Noce Classico");
+  const split = supplier(["COD. 07", "NOCE CLASSICO / CLASSIC WALNUT", "Solo per top", "Note: see catalogue"], "code-then-name");
+  assert.equal(split.code, "07"); assert.equal(split.nameEnglish, "Classic Walnut");
+});
+test("supplier labels: each swatch on a page keeps its own code and name, auto style, missing label stays empty", () => {
+  const labelsAt = (x: number, values: string[]) => values.map((str, j) => text(str, x, 170 + j * 13, 10, 150));
+  const result = detectSwatchPage({ pageWidth: 1000, pageHeight: 800,
+    images: [100, 300, 500, 700].map((x) => ({ x, y: 100, w: 120, h: 60 })),
+    text: [...labelsAt(100, ["COD. 07 NOCE CLASSICO / CLASSIC WALNUT"]), ...labelsAt(300, ["COD. AR 02 ARGENTO / SILVER", "Per collezione Alfa"]), ...labelsAt(700, ["COD. 10 NERO / BLACK"])] }, "auto", { tidyNames: "title-case" });
+  assert.deepEqual(result.swatches.map((item) => item.code), ["07", "AR 02", "", "10"]);
+  assert.deepEqual(result.swatches.map((item) => item.nameEnglish), ["Classic Walnut", "Silver", "", "Black"]);
+});
