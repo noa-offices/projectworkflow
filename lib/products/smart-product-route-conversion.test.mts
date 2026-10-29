@@ -4,6 +4,7 @@ import test from "node:test";
 import { normalizeProductTemplateDraft, type ProductTemplateDraft } from "./product-template-draft.js";
 import { mapDraftBaseModelPricing } from "./product-template-draft-base-model-adapter.js";
 import { mapDraftOptionGroupsToAccessories } from "./product-template-draft-accessory-adapter.js";
+import { smartReviewCardPlacement } from "./smart-product-review-routing.js";
 import { optionItemReviewFingerprint } from "./smart-product-route-conversion.js";
 import { createSmartSetupReviewRouting, draftForSmartSetupReviewApply, smartRouteDestinationBlockReason, smartRouteWithDestination, validateSmartSetupReviewRouting, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing.js";
 
@@ -121,4 +122,30 @@ test("saved structures: panel base row, cabinet accessory items, combined pricin
   assert.equal(baseItems[0].price! + accessoryItems[1].price!, 1229);
   assert.deepEqual(applied.optionGroups.find((group) => group.id === "jera-required-final-side-panel-set"), draft.optionGroups[2]);
   assert.deepEqual(applied.pricing.baseModelRows.filter((row) => row.groupId === "jera-low-medium-cabinets"), draft.pricing.baseModelRows.filter((row) => row.groupId === "jera-low-medium-cabinets"));
+});
+
+test("review cards are placed by the selected destination, once, and return when switched back", () => {
+  const draft = confirmPanel(load());
+  const placements = (plan: SmartSetupReviewRoutingPlan) => plan.routes.flatMap((item) => item.sourceKind === "base_model_group" || item.sourceKind === "option" ? [[item.key, smartReviewCardPlacement(item.sourceKind, item.destination)] as const] : []);
+  const original = createSmartSetupReviewRouting(draft);
+  assert.equal(smartReviewCardPlacement("base_model_group", route(original, CABINETS).destination), "system");
+  assert.equal(smartReviewCardPlacement("option", route(original, PANEL).destination), "accessories");
+  const converted = convert(draft, original);
+  const map = Object.fromEntries(placements(converted));
+  assert.equal(map[CABINETS], "accessories");
+  assert.equal(map[PANEL], "system");
+  assert.equal(map["option:jera-required-final-side-panel-set"], "accessories");
+  assert.equal(map["base_model_group:jera-low-medium-cabinets"], "system");
+  assert.equal(placements(converted).length, placements(original).length, "no card is dropped or duplicated");
+  const back = { routes: converted.routes.map((item) => item.key === PANEL ? { ...item, destination: "accessory" as const } : item.key === CABINETS ? { ...item, destination: "base_model" as const } : item) };
+  assert.deepEqual(Object.fromEntries(placements(back)), Object.fromEntries(placements(original)));
+  assert.equal(smartReviewCardPlacement("base_model_group", "skip"), "system");
+  assert.equal(smartReviewCardPlacement("option", "skip"), "accessories");
+  assert.equal(route(converted, PANEL).conversionFingerprint, smartRouteWithDestination(draft, route(original, PANEL), "base_model").conversionFingerprint, "route data and review state are untouched by placement");
+});
+
+test("expanded review renders both groups through placement-driven lists, not the source loops", () => {
+  const source = readFileSync("components/products/smart-product-json-import.tsx", "utf8");
+  assert.ok(source.includes('smartReviewCardPlacement("base_model_group"') && source.includes('smartReviewCardPlacement("option"'));
+  assert.ok(source.includes('systemEntries.map((entry)') && source.includes('accessoryEntries.map((entry)'));
 });

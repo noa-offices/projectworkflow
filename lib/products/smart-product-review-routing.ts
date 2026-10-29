@@ -40,6 +40,12 @@ export function smartRouteWithDestination(draft: ProductTemplateDraft, route: Sm
   return next;
 }
 
+/** Outer review section for a group card: the user-selected destination wins over the original source classification. Skipped routes stay where their source put them. */
+export function smartReviewCardPlacement(sourceKind: "base_model_group" | "option", destination: SmartReviewDestination | undefined): "system" | "accessories" {
+  if (sourceKind === "base_model_group") return destination === "accessory" ? "accessories" : "system";
+  return destination === "base_model" ? "system" : "accessories";
+}
+
 /** Why a route cannot currently use `destination`, or null when it can (natively supported or an eligible conversion). */
 export function smartRouteDestinationBlockReason(draft: ProductTemplateDraft, route: SmartReviewRoute, destination: SmartReviewDestination): string | null {
   if (route.supportedDestinations.includes(destination)) return null;
