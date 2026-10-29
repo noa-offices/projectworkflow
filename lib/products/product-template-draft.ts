@@ -218,6 +218,8 @@ export type ProductTemplateDraftCategoryPricedOptionItem = ProductTemplateDraftO
   unavailablePriceCategoryIds?: string[];
   reviewStatus?: ProductTemplateDraftReviewStatus;
   reviewReason?: string;
+  /** Smart Setup only: fingerprint of the item at the moment "Confirm Applicable" was clicked, so a later edit can be detected. Stripped before Apply. */
+  reviewConfirmedFingerprint?: string;
   /**
    * Structural Support -> Compatible Main Product targeting. Only meaningful when
    * role === "structural_support"; normalization preserves it on any item for

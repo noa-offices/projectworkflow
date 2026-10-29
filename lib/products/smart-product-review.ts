@@ -424,6 +424,7 @@ export function stripAccessoryReviewMetadata(draft: ProductTemplateDraft): Produ
         const stripped = { ...item };
         delete stripped.reviewStatus;
         delete stripped.reviewReason;
+        delete stripped.reviewConfirmedFingerprint;
         return stripped;
       }),
     })),

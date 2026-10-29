@@ -4,6 +4,7 @@ import test from "node:test";
 import { normalizeProductTemplateDraft, type ProductTemplateDraft } from "./product-template-draft.js";
 import { mapDraftBaseModelPricing } from "./product-template-draft-base-model-adapter.js";
 import { mapDraftOptionGroupsToAccessories } from "./product-template-draft-accessory-adapter.js";
+import { optionItemReviewFingerprint } from "./smart-product-route-conversion.js";
 import { createSmartSetupReviewRouting, draftForSmartSetupReviewApply, smartRouteDestinationBlockReason, smartRouteWithDestination, validateSmartSetupReviewRouting, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing.js";
 
 const load = (): ProductTemplateDraft => {
@@ -95,4 +96,29 @@ test("unsupported shapes stay blocked with a reason", () => {
   const collision = confirmPanel(load()); collision.optionGroups[0].id = "jera-suspended-cabinets";
   assert.match(reason(collision, "option:jera-suspended-cabinets", "base_model"), /same group id/);
   assert.match(reason(load(), "base_model_group:jera-totem-cabinets", "category_matrix"), /not supported/);
+});
+
+test("confirmation is bound to the acknowledged item state", () => {
+  const draft = load(); const item = draft.optionGroups[0].items[0];
+  item.reviewStatus = "confirmed"; item.reviewConfirmedFingerprint = optionItemReviewFingerprint(item);
+  const plan = route(createSmartSetupReviewRouting(draft), PANEL);
+  assert.equal(smartRouteDestinationBlockReason(draft, plan, "base_model"), null);
+  item.price = 999;
+  assert.match(smartRouteDestinationBlockReason(draft, plan, "base_model") ?? "", /changed after it was confirmed/);
+  const forced = { routes: [{ ...plan, destination: "base_model" as const }] };
+  assert.equal(validateSmartSetupReviewRouting(draft, forced).valid, false);
+  assert.throws(() => draftForSmartSetupReviewApply(draft, forced), /changed after it was confirmed/);
+});
+
+test("saved structures: panel base row, cabinet accessory items, combined pricing and unchanged companions", () => {
+  const draft = confirmPanel(load()); const plan = convert(draft, createSmartSetupReviewRouting(draft));
+  const applied = draftForSmartSetupReviewApply(draft, plan);
+  const baseItems = mapDraftBaseModelPricing(applied).groups.find((group) => group.id === "jera-vertical-composition-panel")!.items;
+  assert.deepEqual(baseItems.map((item) => [item.id, item.supplier_price_list_code, item.price, item.currency]), [["jera-159-983", "159 983", 702, "EUR"]]);
+  const accessoryItems = mapDraftOptionGroupsToAccessories(applied, plan).groups.find((group) => group.id === "jera-suspended-cabinets")!.items;
+  assert.deepEqual(accessoryItems.map((item) => [item.id, item.supplier_price_list_code, item.price, item.currency]), [["jera-159-976", "159 976", 353, "EUR"], ["jera-159-980", "159 980", 527, "EUR"]]);
+  assert.equal(baseItems[0].price! + accessoryItems[0].price!, 1055, "panel + cabinet");
+  assert.equal(baseItems[0].price! + accessoryItems[1].price!, 1229);
+  assert.deepEqual(applied.optionGroups.find((group) => group.id === "jera-required-final-side-panel-set"), draft.optionGroups[2]);
+  assert.deepEqual(applied.pricing.baseModelRows.filter((row) => row.groupId === "jera-low-medium-cabinets"), draft.pricing.baseModelRows.filter((row) => row.groupId === "jera-low-medium-cabinets"));
 });

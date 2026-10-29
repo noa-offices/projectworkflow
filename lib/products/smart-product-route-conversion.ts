@@ -28,6 +28,11 @@ function dependentTargets(draft: ProductTemplateDraft): Target[] {
   ]);
 }
 
+/** What a reviewer acknowledged for one item: everything except the review bookkeeping itself. */
+export function optionItemReviewFingerprint(item: ProductTemplateDraftOptionGroup["items"][number]) {
+  return JSON.stringify(omit(item, ["reviewStatus", "reviewReason", "reviewConfirmedFingerprint"]));
+}
+
 /** Changes whenever anything the reviewer saw (items, prices, codes, review state, selection) changes. */
 export function optionGroupConversionFingerprint(group: ProductTemplateDraftOptionGroup) {
   return JSON.stringify({ selection: group.selection, items: group.items });
@@ -45,6 +50,7 @@ export function optionGroupToBaseModelCheck(draft: ProductTemplateDraft, groupId
   if (group.items.some((item) => Object.keys(item.prices ?? {}).length || item.unavailablePriceCategoryIds?.length)) return blocked(`${name} has per-category prices, which Base / Model Pricing cannot represent.`);
   if (group.items.some((item) => item.compatibleTargets?.length)) return blocked(`${name} has compatible-target metadata, which Base / Model Pricing cannot represent.`);
   if (group.items.some((item) => item.reviewStatus === "needs_review")) return blocked(`${name} has items marked Needs Review. Confirm each item first; confirmation is your acknowledgement, not manufacturer verification.`);
+  if (group.items.some((item) => item.reviewConfirmedFingerprint !== undefined && item.reviewConfirmedFingerprint !== optionItemReviewFingerprint(item))) return blocked(`${name} has an item that changed after it was confirmed. Confirm it again (or restore it) before converting.`);
   if (groupId === LEGACY_BASE_MODEL_GROUP_ID || draftBaseModelGroupIds(draft.pricing).includes(groupId)) return blocked(`${name} uses the same group id as an existing Base / Model group.`);
   const rowIds = new Set(draft.pricing.baseModelRows.map((row) => row.id));
   if (group.items.some((item) => rowIds.has(item.id))) return blocked(`${name} has an item id that already exists in Base / Model Pricing.`);
@@ -71,10 +77,14 @@ export function smartRouteConversionCheck(draft: ProductTemplateDraft, route: Pi
   return route.sourceKind === "option" ? optionGroupToBaseModelCheck(draft, route.sourceId, expectedFingerprint) : baseModelGroupToOptionGroupCheck(draft, route.sourceId);
 }
 
+const omit = <T extends object>(value: T, keys: readonly string[]) => Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key)));
+const OPTION_ONLY_FIELDS = ["role", "prices", "unavailablePriceCategoryIds", "compatibleTargets", "reviewStatus", "reviewReason", "reviewConfirmedFingerprint"] as const;
+const BASE_MODEL_ONLY_FIELDS = ["groupId", "groupLabel", "groupIsActive", "role"] as const;
+
 /** Shared priced fields move untouched; only option-only review metadata is removed (it never reaches saved templates). */
 export function optionGroupToBaseModelRows(group: ProductTemplateDraftOptionGroup, groupLabel: string): ProductTemplateDraftBaseModelRow[] {
   return group.items.map((item) => {
-    const { role: _role, prices: _prices, unavailablePriceCategoryIds: _unavailable, compatibleTargets: _targets, reviewStatus: _status, reviewReason: _reason, ...shared } = item;
+    const shared = omit(item, OPTION_ONLY_FIELDS) as Omit<typeof item, typeof OPTION_ONLY_FIELDS[number]>;
     return { ...shared, groupId: group.id, groupLabel, ...(group.isActive === false ? { groupIsActive: false } : {}) };
   });
 }
@@ -86,6 +96,6 @@ export function baseModelGroupToOptionGroup(draft: ProductTemplateDraft, groupId
     label,
     ...(rows.every((row) => row.groupIsActive === false) ? { isActive: false } : {}),
     selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] },
-    items: rows.map((row) => { const { groupId: _groupId, groupLabel: _groupLabel, groupIsActive: _groupIsActive, role: _role, ...shared } = row; return shared; }),
+    items: rows.map((row) => omit(row, BASE_MODEL_ONLY_FIELDS) as ProductTemplateDraftOptionGroup["items"][number]),
   };
 }
