@@ -1,0 +1,636 @@
+{
+ "version": 1,
+ "template": {
+  "templateName": "JERA — Storage Cabinets",
+  "templateCode": null,
+  "itemCode": null,
+  "internalSelectionName": "JERA Storage Cabinets",
+  "description": null,
+  "specification": null,
+  "origin": null,
+  "supplierName": null,
+  "dimensions": null,
+  "supplierCodes": [],
+  "referenceCodes": []
+ },
+ "defaultCurrency": "EUR",
+ "pricing": {
+  "workstationRows": [],
+  "baseModelRows": [
+   {
+    "id": "jera-159-965",
+    "label": "Totem Cabinet H223.4 cm — Reversible Door",
+    "displayName": "Totem Cabinet H223.4 cm — Reversible Door",
+    "dimensions": {
+     "width": 70,
+     "depth": 48.5,
+     "height": 223.4,
+     "diameter": null,
+     "unit": "cm",
+     "rawText": "L.70 x p.48.5 x H.223.4"
+    },
+    "currency": "EUR",
+    "price": 1538.0,
+    "specification": "JERA totem cabinet, W70 × D48.5 × H223.4 cm, blind door mountable on either right or left side.",
+    "importantRequirements": [],
+    "supplierCodes": [
+     "159 965"
+    ],
+    "referenceCodes": [],
+    "groupId": "jera-totem-cabinets",
+    "groupLabel": "JERA Totem Cabinets"
+   },
+   {
+    "id": "jera-159-966",
+    "label": "Totem Cabinet H223.4 cm — Reversible Door and 2 Drawers",
+    "displayName": "Totem Cabinet H223.4 cm — Reversible Door and 2 Drawers",
+    "dimensions": {
+     "width": 70,
+     "depth": 48.5,
+     "height": 223.4,
+     "diameter": null,
+     "unit": "cm",
+     "rawText": "L.70 x p.48.5 x H.223.4"
+    },
+    "currency": "EUR",
+    "price": 1805.0,
+    "specification": "JERA totem cabinet, W70 × D48.5 × H223.4 cm, blind door mountable on either right or left side with two drawers.",
+    "importantRequirements": [],
+    "supplierCodes": [
+     "159 966"
+    ],
+    "referenceCodes": [],
+    "groupId": "jera-totem-cabinets",
+    "groupLabel": "JERA Totem Cabinets"
+   },
+   {
+    "id": "jera-159-968",
+    "label": "Totem Cabinet H261.8 cm — Reversible Door",
+    "displayName": "Totem Cabinet H261.8 cm — Reversible Door",
+    "dimensions": {
+     "width": 70,
+     "depth": 48.5,
+     "height": 261.8,
+     "diameter": null,
+     "unit": "cm",
+     "rawText": "L.70 x p.48.5 x H.261.8"
+    },
+    "currency": "EUR",
+    "price": 1800.0,
+    "specification": "JERA totem cabinet, W70 × D48.5 × H261.8 cm, blind door mountable on either right or left side.",
+    "importantRequirements": [],
+    "supplierCodes": [
+     "159 968"
+    ],
+    "referenceCodes": [],
+    "groupId": "jera-totem-cabinets",
+    "groupLabel": "JERA Totem Cabinets"
+   },
+   {
+    "id": "jera-159-969",
+    "label": "Totem Cabinet H261.8 cm — Reversible Door and 2 Drawers",
+    "displayName": "Totem Cabinet H261.8 cm — Reversible Door and 2 Drawers",
+    "dimensions": {
+     "width": 70,
+     "depth": 48.5,
+     "height": 261.8,
+     "diameter": null,
+     "unit": "cm",
+     "rawText": "L.70 x p.48.5 x H.261.8"
+    },
+    "currency": "EUR",
+    "price": 2064.0,
+    "specification": "JERA totem cabinet, W70 × D48.5 × H261.8 cm, blind door mountable on either right or left side with two drawers.",
+    "importantRequirements": [],
+    "supplierCodes": [
+     "159 969"
+    ],
+    "referenceCodes": [],
+    "groupId": "jera-totem-cabinets",
+    "groupLabel": "JERA Totem Cabinets"
+   },
+   {
+    "id": "jera-159-976",
+    "label": "Suspended Cabinet — 1 Reversible Blind Door",
+    "displayName": "Suspended Cabinet — 1 Reversible Blind Door",
+    "dimensions": {
+     "width": 45,
+     "depth": 40,
+     "height": 62.7,
+     "diameter": null,
+     "unit": "cm",
+     "rawText": "L.45 x p.40 x H.62.7"
+    },
+    "currency": "EUR",
+    "price": 353.0,
+    "specification": "JERA suspended cabinet, W45 × D40 × H62.7 cm, one soft-close blind door mountable left or right.",
+    "importantRequirements": [],
+    "supplierCodes": [
+     "159 976"
+    ],
+    "referenceCodes": [],
+    "groupId": "jera-suspended-cabinets",
+    "groupLabel": "JERA Suspended Cabinets"
+   },
+   {
+    "id": "jera-159-980",
+    "label": "Suspended Cabinet — 2 Blind Doors",
+    "displayName": "Suspended Cabinet — 2 Blind Doors",
+    "dimensions": {
+     "width": 90,
+     "depth": 40,
+     "height": 62.7,
+     "diameter": null,
+     "unit": "cm",
+     "rawText": "L.90 x p.40 x H.62.7"
+    },
+    "currency": "EUR",
+    "price": 527.0,
+    "specification": "JERA suspended cabinet, W90 × D40 × H62.7 cm, two soft-close blind doors.",
+    "importantRequirements": [],
+    "supplierCodes": [
+     "159 980"
+    ],
+    "referenceCodes": [],
+    "groupId": "jera-suspended-cabinets",
+    "groupLabel": "JERA Suspended Cabinets"
+   },
+   {
+    "id": "jera-159-985",
+    "label": "Low Cabinet — 1 Blind Door — RH",
+    "displayName": "Low Cabinet — 1 Blind Door — RH",
+    "dimensions": {
+     "width": 45,
+     "depth": 46.3,
+     "height": 81.5,
+     "diameter": null,
+     "unit": "cm",
+     "rawText": "L.45 x p.46.3 x H.81.5"
+    },
+    "currency": "EUR",
+    "price": 233.0,
+    "specification": "JERA low cabinet, W45 × D46.3 × H81.5 cm, 1 soft-close blind door with lock, RH opening.",
+    "importantRequirements": [
+     "Cabinet composition must be completed with an appropriate separately priced finishing top and a set of two final side panels."
+    ],
+    "supplierCodes": [
+     "159 985"
+    ],
+    "referenceCodes": [],
+    "groupId": "jera-low-medium-cabinets",
+    "groupLabel": "JERA Low & Medium Cabinets"
+   },
+   {
+    "id": "jera-159-986",
+    "label": "Low Cabinet — 1 Blind Door — LH",
+    "displayName": "Low Cabinet — 1 Blind Door — LH",
+    "dimensions": {
+     "width": 45,
+     "depth": 46.3,
+     "height": 81.5,
+     "diameter": null,
+     "unit": "cm",
+     "rawText": "L.45 x p.46.3 x H.81.5"
+    },
+    "currency": "EUR",
+    "price": 233.0,
+    "specification": "JERA low cabinet, W45 × D46.3 × H81.5 cm, 1 soft-close blind door with lock, LH opening.",
+    "importantRequirements": [
+     "Cabinet composition must be completed with an appropriate separately priced finishing top and a set of two final side panels."
+    ],
+    "supplierCodes": [
+     "159 986"
+    ],
+    "referenceCodes": [],
+    "groupId": "jera-low-medium-cabinets",
+    "groupLabel": "JERA Low & Medium Cabinets"
+   },
+   {
+    "id": "jera-159-987",
+    "label": "Low Cabinet — 2 Blind Doors",
+    "displayName": "Low Cabinet — 2 Blind Doors",
+    "dimensions": {
+     "width": 90,
+     "depth": 46.3,
+     "height": 81.5,
+     "diameter": null,
+     "unit": "cm",
+     "rawText": "L.90 x p.46.3 x H.81.5"
+    },
+    "currency": "EUR",
+    "price": 378.0,
+    "specification": "JERA low cabinet, W90 × D46.3 × H81.5 cm, 2 soft-close blind doors with lock.",
+    "importantRequirements": [
+     "Cabinet composition must be completed with an appropriate separately priced finishing top and a set of two final side panels."
+    ],
+    "supplierCodes": [
+     "159 987"
+    ],
+    "referenceCodes": [],
+    "groupId": "jera-low-medium-cabinets",
+    "groupLabel": "JERA Low & Medium Cabinets"
+   },
+   {
+    "id": "jera-159-988",
+    "label": "Medium Cabinet — 1 Blind Door — RH",
+    "displayName": "Medium Cabinet — 1 Blind Door — RH",
+    "dimensions": {
+     "width": 45,
+     "depth": 46.3,
+     "height": 158.3,
+     "diameter": null,
+     "unit": "cm",
+     "rawText": "L.45 x p.46.3 x H.158.3"
+    },
+    "currency": "EUR",
+    "price": 395.0,
+    "specification": "JERA medium cabinet, W45 × D46.3 × H158.3 cm, 1 soft-close blind door with lock, RH opening.",
+    "importantRequirements": [
+     "Cabinet composition must be completed with an appropriate separately priced finishing top and a set of two final side panels."
+    ],
+    "supplierCodes": [
+     "159 988"
+    ],
+    "referenceCodes": [],
+    "groupId": "jera-low-medium-cabinets",
+    "groupLabel": "JERA Low & Medium Cabinets"
+   },
+   {
+    "id": "jera-159-989",
+    "label": "Medium Cabinet — 1 Blind Door — LH",
+    "displayName": "Medium Cabinet — 1 Blind Door — LH",
+    "dimensions": {
+     "width": 45,
+     "depth": 46.3,
+     "height": 158.3,
+     "diameter": null,
+     "unit": "cm",
+     "rawText": "L.45 x p.46.3 x H.158.3"
+    },
+    "currency": "EUR",
+    "price": 395.0,
+    "specification": "JERA medium cabinet, W45 × D46.3 × H158.3 cm, 1 soft-close blind door with lock, LH opening.",
+    "importantRequirements": [
+     "Cabinet composition must be completed with an appropriate separately priced finishing top and a set of two final side panels."
+    ],
+    "supplierCodes": [
+     "159 989"
+    ],
+    "referenceCodes": [],
+    "groupId": "jera-low-medium-cabinets",
+    "groupLabel": "JERA Low & Medium Cabinets"
+   },
+   {
+    "id": "jera-159-990",
+    "label": "Medium Cabinet — 2 Blind Doors",
+    "displayName": "Medium Cabinet — 2 Blind Doors",
+    "dimensions": {
+     "width": 90,
+     "depth": 46.3,
+     "height": 158.3,
+     "diameter": null,
+     "unit": "cm",
+     "rawText": "L.90 x p.46.3 x H.158.3"
+    },
+    "currency": "EUR",
+    "price": 690.0,
+    "specification": "JERA medium cabinet, W90 × D46.3 × H158.3 cm, 2 soft-close blind doors with lock.",
+    "importantRequirements": [
+     "Cabinet composition must be completed with an appropriate separately priced finishing top and a set of two final side panels."
+    ],
+    "supplierCodes": [
+     "159 990"
+    ],
+    "referenceCodes": [],
+    "groupId": "jera-low-medium-cabinets",
+    "groupLabel": "JERA Low & Medium Cabinets"
+   }
+  ],
+  "priceMatrices": [],
+  "modularGroups": []
+ },
+ "optionGroups": [
+  {
+   "id": "jera-vertical-composition-panel",
+   "label": "Vertical Composition Panel",
+   "selection": {
+    "mode": "choose_multiple",
+    "minSelections": 0,
+    "maxSelections": null,
+    "defaultItemIds": []
+   },
+   "items": [
+    {
+     "id": "jera-159-983",
+     "label": "Upholstered Vertical Panel",
+     "displayName": "Upholstered Vertical Panel",
+     "dimensions": {
+      "width": 9,
+      "depth": 50,
+      "height": 220,
+      "diameter": null,
+      "unit": "cm",
+      "rawText": "thickness 9 x depth 50 x H220 cm"
+     },
+     "currency": "EUR",
+     "price": 702.0,
+     "specification": "JERA upholstered vertical panel for compositions, 9 cm thick, 50 cm deep and 220 cm high.",
+     "importantRequirements": [],
+     "supplierCodes": [
+      "159 983"
+     ],
+     "referenceCodes": [],
+     "reviewStatus": "needs_review",
+     "reviewReason": "Illustrated as a composition component but exact cabinet-to-panel applicability and quantities are not stated."
+    }
+   ]
+  },
+  {
+   "id": "jera-required-finishing-tops-—-review-width",
+   "label": "Required Finishing Tops — Review Width",
+   "selection": {
+    "mode": "required_choose_at_least_one",
+    "minSelections": 1,
+    "maxSelections": null,
+    "defaultItemIds": []
+   },
+   "items": [
+    {
+     "id": "jera-159-991",
+     "label": "Finishing Top — W55 cm",
+     "displayName": "Finishing Top — W55 cm",
+     "dimensions": {
+      "width": 55,
+      "depth": 51.6,
+      "height": 5,
+      "diameter": null,
+      "unit": "cm",
+      "rawText": "L.55 x p.51,6 x H.5"
+     },
+     "currency": "EUR",
+     "price": 146.0,
+     "specification": "JERA finishing cabinet top, W55 × D51.6 × H5 cm.",
+     "importantRequirements": [],
+     "supplierCodes": [
+      "159 991"
+     ],
+     "referenceCodes": [],
+     "reviewStatus": "needs_review",
+     "reviewReason": "Top is required for cabinet compositions, but correct width depends on unverified composition layout."
+    },
+    {
+     "id": "jera-159-992",
+     "label": "Finishing Top — W100 cm",
+     "displayName": "Finishing Top — W100 cm",
+     "dimensions": {
+      "width": 100,
+      "depth": 51.6,
+      "height": 5,
+      "diameter": null,
+      "unit": "cm",
+      "rawText": "L.100 x p.51,6 x H.5"
+     },
+     "currency": "EUR",
+     "price": 255.0,
+     "specification": "JERA finishing cabinet top, W100 × D51.6 × H5 cm.",
+     "importantRequirements": [],
+     "supplierCodes": [
+      "159 992"
+     ],
+     "referenceCodes": [],
+     "reviewStatus": "needs_review",
+     "reviewReason": "Top is required for cabinet compositions, but correct width depends on unverified composition layout."
+    },
+    {
+     "id": "jera-159-993",
+     "label": "Finishing Top — W145 cm",
+     "displayName": "Finishing Top — W145 cm",
+     "dimensions": {
+      "width": 145,
+      "depth": 51.6,
+      "height": 5,
+      "diameter": null,
+      "unit": "cm",
+      "rawText": "L.145 x p.51,6 x H.5"
+     },
+     "currency": "EUR",
+     "price": 363.0,
+     "specification": "JERA finishing cabinet top, W145 × D51.6 × H5 cm.",
+     "importantRequirements": [],
+     "supplierCodes": [
+      "159 993"
+     ],
+     "referenceCodes": [],
+     "reviewStatus": "needs_review",
+     "reviewReason": "Top is required for cabinet compositions, but correct width depends on unverified composition layout."
+    },
+    {
+     "id": "jera-159-994",
+     "label": "Finishing Top — W190 cm",
+     "displayName": "Finishing Top — W190 cm",
+     "dimensions": {
+      "width": 190,
+      "depth": 51.6,
+      "height": 5,
+      "diameter": null,
+      "unit": "cm",
+      "rawText": "L.190 x p.51,6 x H.5"
+     },
+     "currency": "EUR",
+     "price": 465.0,
+     "specification": "JERA finishing cabinet top, W190 × D51.6 × H5 cm.",
+     "importantRequirements": [],
+     "supplierCodes": [
+      "159 994"
+     ],
+     "referenceCodes": [],
+     "reviewStatus": "needs_review",
+     "reviewReason": "Top is required for cabinet compositions, but correct width depends on unverified composition layout."
+    },
+    {
+     "id": "jera-159-995",
+     "label": "Finishing Top — W235 cm",
+     "displayName": "Finishing Top — W235 cm",
+     "dimensions": {
+      "width": 235,
+      "depth": 51.6,
+      "height": 5,
+      "diameter": null,
+      "unit": "cm",
+      "rawText": "L.235 x p.51,6 x H.5"
+     },
+     "currency": "EUR",
+     "price": 552.0,
+     "specification": "JERA finishing cabinet top, W235 × D51.6 × H5 cm.",
+     "importantRequirements": [],
+     "supplierCodes": [
+      "159 995"
+     ],
+     "referenceCodes": [],
+     "reviewStatus": "needs_review",
+     "reviewReason": "Top is required for cabinet compositions, but correct width depends on unverified composition layout."
+    },
+    {
+     "id": "jera-159-996",
+     "label": "Finishing Top — W280 cm",
+     "displayName": "Finishing Top — W280 cm",
+     "dimensions": {
+      "width": 280,
+      "depth": 51.6,
+      "height": 5,
+      "diameter": null,
+      "unit": "cm",
+      "rawText": "L.280 x p.51,6 x H.5"
+     },
+     "currency": "EUR",
+     "price": 633.0,
+     "specification": "JERA finishing cabinet top, W280 × D51.6 × H5 cm.",
+     "importantRequirements": [],
+     "supplierCodes": [
+      "159 996"
+     ],
+     "referenceCodes": [],
+     "reviewStatus": "needs_review",
+     "reviewReason": "Top is required for cabinet compositions, but correct width depends on unverified composition layout."
+    }
+   ]
+  },
+  {
+   "id": "jera-required-final-side-panel-set",
+   "label": "Required Final Side Panel Set",
+   "selection": {
+    "mode": "required_choose_at_least_one",
+    "minSelections": 1,
+    "maxSelections": null,
+    "defaultItemIds": []
+   },
+   "items": [
+    {
+     "id": "jera-159-997",
+     "label": "Set of 2 Final Side Panels — H83.5 cm",
+     "displayName": "Set of 2 Final Side Panels — H83.5 cm",
+     "dimensions": {
+      "width": 5,
+      "depth": 51.6,
+      "height": 83.5,
+      "diameter": null,
+      "unit": "cm",
+      "rawText": "thickness 5 x depth 51,6 x H83.5 cm"
+     },
+     "currency": "EUR",
+     "price": 565.0,
+     "specification": "Set of two JERA final side panels for low cabinets.",
+     "importantRequirements": [],
+     "supplierCodes": [
+      "159 997"
+     ],
+     "referenceCodes": []
+    },
+    {
+     "id": "jera-159-998",
+     "label": "Set of 2 Final Side Panels — H160.3 cm",
+     "displayName": "Set of 2 Final Side Panels — H160.3 cm",
+     "dimensions": {
+      "width": 5,
+      "depth": 51.6,
+      "height": 160.3,
+      "diameter": null,
+      "unit": "cm",
+      "rawText": "thickness 5 x depth 51,6 x H160.3 cm"
+     },
+     "currency": "EUR",
+     "price": 1009.0,
+     "specification": "Set of two JERA final side panels for medium cabinets.",
+     "importantRequirements": [],
+     "supplierCodes": [
+      "159 998"
+     ],
+     "referenceCodes": []
+    }
+   ],
+   "conditionalConfiguration": {
+    "role": "companion",
+    "selection": "exactly_one",
+    "applicability": [
+     {
+      "target": {
+       "kind": "base_model",
+       "group_id": "jera-low-medium-cabinets",
+       "row_id": "jera-159-985"
+      },
+      "required": true,
+      "visible": true,
+      "allowed_item_ids": [
+       "jera-159-997"
+      ]
+     },
+     {
+      "target": {
+       "kind": "base_model",
+       "group_id": "jera-low-medium-cabinets",
+       "row_id": "jera-159-986"
+      },
+      "required": true,
+      "visible": true,
+      "allowed_item_ids": [
+       "jera-159-997"
+      ]
+     },
+     {
+      "target": {
+       "kind": "base_model",
+       "group_id": "jera-low-medium-cabinets",
+       "row_id": "jera-159-987"
+      },
+      "required": true,
+      "visible": true,
+      "allowed_item_ids": [
+       "jera-159-997"
+      ]
+     },
+     {
+      "target": {
+       "kind": "base_model",
+       "group_id": "jera-low-medium-cabinets",
+       "row_id": "jera-159-988"
+      },
+      "required": true,
+      "visible": true,
+      "allowed_item_ids": [
+       "jera-159-998"
+      ]
+     },
+     {
+      "target": {
+       "kind": "base_model",
+       "group_id": "jera-low-medium-cabinets",
+       "row_id": "jera-159-989"
+      },
+      "required": true,
+      "visible": true,
+      "allowed_item_ids": [
+       "jera-159-998"
+      ]
+     },
+     {
+      "target": {
+       "kind": "base_model",
+       "group_id": "jera-low-medium-cabinets",
+       "row_id": "jera-159-990"
+      },
+      "required": true,
+      "visible": true,
+      "allowed_item_ids": [
+       "jera-159-998"
+      ]
+     }
+    ]
+   }
+  }
+ ],
+ "materialSuggestions": [],
+ "linkedFamilySuggestions": [],
+ "extractionWarnings": [],
+ "confidence": 0.82,
+ "sources": []
+}
