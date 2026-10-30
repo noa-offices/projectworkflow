@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { SupplierCoverageAction } from "./supplier-coverage-popup";
 import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import { listProductTemplateRowReferences } from "@/app/products/templates/row-reference-actions";
@@ -503,7 +503,7 @@ function PriceCheckBadge({
   return (
     <span className={compact ? "mt-1 block" : "grid gap-1"}>
       <span className={badgeClass} title={supplierPresentation?.detail}>{health.label}</span>
-      {!compact ? supplierPresentation?.actionHref ? <Link href={supplierPresentation.actionHref} className="block text-[11px] font-medium text-emerald-800 underline">{supplierPresentation.detail}</Link> : <span className="block text-[11px] font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : null}
+      {!compact ? supplierPresentation?.actionHref ? <SupplierCoverageAction brandId={template.brand_id} templateId={template.id} templateName={templateSelectionName(template)} detail={supplierPresentation.detail} /> : <span className="block text-[11px] font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : null}
     </span>
   );
 }
@@ -4435,6 +4435,8 @@ export function ProductLibrarySelector({
                                   <p className="max-w-52 text-[11px] leading-4 text-amber-700">
                                     Please verify source price before finalizing quotation.
                                   </p>
+                                  {/* Legacy manual price actions apply only to brands with no Supplier price list (no supplier presentation). */}
+                                  {!template.supplier_family_price_presentation ? (
                                   <div className="mt-2 flex flex-wrap gap-2">
                                     <button
                                       type="button"
@@ -4479,6 +4481,7 @@ export function ProductLibrarySelector({
                                       {isTemplateActionPending ? "Saving..." : "Mark as Checked"}
                                     </button>
                                   </div>
+                                  ) : null}
                                   {templateActionMessageById[template.id] ? (
                                     <p className="max-w-64 text-[11px] leading-4 text-red-700">
                                       {templateActionMessageById[template.id]}
