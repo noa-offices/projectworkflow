@@ -1,6 +1,7 @@
 "use client";
 
 import { SupplierCoverageAction } from "./supplier-coverage-popup";
+import { SupplierPriceLinesAction } from "./supplier-price-lines-popup";
 import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import { listProductTemplateRowReferences } from "@/app/products/templates/row-reference-actions";
@@ -504,6 +505,7 @@ function PriceCheckBadge({
     <span className={compact ? "mt-1 block" : "grid gap-1"}>
       <span className={badgeClass} title={supplierPresentation?.detail}>{health.label}</span>
       {!compact ? supplierPresentation?.actionHref ? <SupplierCoverageAction brandId={template.brand_id} templateId={template.id} templateName={templateSelectionName(template)} detail={supplierPresentation.detail} /> : <span className="block text-[11px] font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : null}
+      {!compact && supplierPresentation && !supplierPresentation.actionHref ? <SupplierPriceLinesAction templateId={template.id} templateName={templateSelectionName(template)} /> : null}
     </span>
   );
 }

@@ -8,7 +8,7 @@ import { supplierCoverageDefinitions, supplierCoveragePopupAccess } from "./supp
 
 // One role check per page load, shared by every badge. A failed check reads as "not allowed".
 let accessPromise: Promise<boolean> | null = null;
-function useCoverageAccess() {
+export function useCoverageAccess() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
   useEffect(() => {
     let cancelled = false;
