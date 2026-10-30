@@ -13,7 +13,7 @@ const states: Partial<Record<string, PriceLineState>> = {
   needs_dimension_mapping: "needs_mapping", ambiguous: "ambiguous", baseline_drift: "ambiguous", shared: "shared",
 };
 export const priceLineStateLabels: Record<PriceLineState, string> = {
-  same: "Same", changed: "Changed", not_in_supplier_list: "Not in Supplier list", needs_mapping: "Needs mapping", ambiguous: "Ambiguous", shared: "Shared",
+  same: "Same", changed: "Changed", not_in_supplier_list: "Not in supplier list", needs_mapping: "Needs mapping", ambiguous: "Unclear match", shared: "Shared",
 };
 
 /**
@@ -38,4 +38,25 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string): { li
   }
   lines.sort((a, b) => a.code.localeCompare(b.code) || a.field.localeCompare(b.field) || a.key.localeCompare(b.key));
   return { lines: lines.slice(0, priceLineLimit), truncated: lines.length > priceLineLimit };
+}
+
+export type PriceLineFilter = "all" | "attention" | "same";
+export type PriceLineSummary = { same: number; changed: number; needsMapping: number; other: number };
+
+export function summarizePriceLines(lines: PriceLine[]): PriceLineSummary {
+  const summary: PriceLineSummary = { same: 0, changed: 0, needsMapping: 0, other: 0 };
+  for (const line of lines) {
+    if (line.state === "same") summary.same++;
+    else if (line.state === "changed") summary.changed++;
+    else if (line.state === "needs_mapping") summary.needsMapping++;
+    else summary.other++;
+  }
+  return summary;
+}
+
+const attentionOrder: Record<PriceLineState, number> = { needs_mapping: 0, changed: 1, ambiguous: 2, not_in_supplier_list: 3, shared: 4, same: 5 };
+/** Lines that need a look first, then the rest. The incoming (code) order is kept inside each group. */
+export function filterAndOrderPriceLines(lines: PriceLine[], filter: PriceLineFilter): PriceLine[] {
+  const kept = lines.filter((line) => filter === "all" || (filter === "same" ? line.state === "same" : line.state !== "same"));
+  return kept.map((line, index) => ({ line, index })).sort((a, b) => attentionOrder[a.line.state] - attentionOrder[b.line.state] || a.index - b.index).map((item) => item.line);
 }

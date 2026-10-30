@@ -42,3 +42,19 @@ test("the action is role-checked, read-only and the button is for allowed roles 
   const selector = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
   assert.match(selector, /!compact && supplierPresentation && !supplierPresentation\.actionHref \? <SupplierPriceLinesAction/);
 });
+
+test("summary counts and attention-first filtering keep the code order inside each group", async () => {
+  const { summarizePriceLines, filterAndOrderPriceLines } = await import("./supplier-price-lines");
+  const line = (code: string, state: import("./supplier-price-lines").PriceLineState) => ({ key: code, code, field: "", ourPrice: 1, ourCurrency: "AED", supplierPrice: 1, supplierCurrency: "AED", difference: 0, state });
+  const lines = [line("A", "same"), line("B", "changed"), line("C", "same"), line("D", "needs_mapping"), line("E", "shared"), line("F", "not_in_supplier_list")];
+  assert.deepEqual(summarizePriceLines(lines), { same: 2, changed: 1, needsMapping: 1, other: 2 });
+  assert.deepEqual(filterAndOrderPriceLines(lines, "all").map((item) => item.code), ["D", "B", "F", "E", "A", "C"]);
+  assert.deepEqual(filterAndOrderPriceLines(lines, "attention").map((item) => item.code), ["D", "B", "F", "E"]);
+  assert.deepEqual(filterAndOrderPriceLines(lines, "same").map((item) => item.code), ["A", "C"]);
+});
+
+test("the popup keeps the read-only note, filters, sticky header and plain column names", () => {
+  const popup = readFileSync("components/quotations/supplier-price-lines-popup.tsx", "utf8");
+  for (const text of ["Read only. Nothing is saved here.", "Needs attention", "sticky top-0", "Your price", "Supplier price", "Difference", "Status", "sm:w-[min(1180px,96vw)]"]) assert.ok(popup.includes(text), text);
+  assert.doesNotMatch(popup, /router|window\.location|<Link|supplierWrite/);
+});
