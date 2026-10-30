@@ -4435,6 +4435,8 @@ export function ProductLibrarySelector({
                                   <p className="max-w-52 text-[11px] leading-4 text-amber-700">
                                     Please verify source price before finalizing quotation.
                                   </p>
+                                  {/* Legacy manual price actions apply only to brands with no Supplier price list (no supplier presentation). */}
+                                  {!template.supplier_family_price_presentation ? (
                                   <div className="mt-2 flex flex-wrap gap-2">
                                     <button
                                       type="button"
@@ -4479,6 +4481,7 @@ export function ProductLibrarySelector({
                                       {isTemplateActionPending ? "Saving..." : "Mark as Checked"}
                                     </button>
                                   </div>
+                                  ) : null}
                                   {templateActionMessageById[template.id] ? (
                                     <p className="max-w-64 text-[11px] leading-4 text-red-700">
                                       {templateActionMessageById[template.id]}

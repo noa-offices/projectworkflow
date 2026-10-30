@@ -42,3 +42,15 @@ test("the popup uses the existing action, stays in place and the badge no longer
   assert.match(selector, /<SupplierCoverageAction brandId=\{template\.brand_id\} templateId=\{template\.id\}/);
   assert.doesNotMatch(selector, /<Link href=\{supplierPresentation\.actionHref\}/);
 });
+
+test("legacy price buttons are hidden for supplier-driven products and kept for legacy brands", () => {
+  const selector = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  const guarded = selector.match(/\{!template\.supplier_family_price_presentation \? \(\s*<div className="mt-2 flex flex-wrap gap-2">([\s\S]*?)<\/div>\s*\) : null\}/);
+  assert.ok(guarded, "the legacy button row must be guarded by the supplier presentation");
+  assert.match(guarded[1], /Check \/ Update Price/);
+  assert.match(guarded[1], /Mark as Checked/);
+  // The warning text stays outside the guard, and the outer condition for legacy brands is unchanged.
+  const warning = selector.indexOf("Please verify source price before finalizing quotation.");
+  assert.ok(warning > 0 && warning < selector.indexOf("{!template.supplier_family_price_presentation ? ("));
+  assert.match(selector, /\(!template\.supplier_family_price_presentation \|\| Boolean\(template\.supplier_family_price_presentation\.actionHref\)\) && priceCheckState\(template\)\.tone === "warning"/);
+});
