@@ -1253,6 +1253,9 @@ export function ProductLibrarySelector({
   const [expandedDirectModularRow, setExpandedDirectModularRow] = useState<string | null>(null);
   const [configuredDimensions, setConfiguredDimensions] = useState<Record<string, string>>({});
   const [configuredDimensionEditedByTemplate, setConfiguredDimensionEditedByTemplate] = useState<Record<string, boolean>>({});
+  const [quotationBrands, setQuotationBrands] = useState<Record<string, string>>({});
+  const [quotationOrigins, setQuotationOrigins] = useState<Record<string, string>>({});
+  const [dimensionBeforeEditing, setDimensionBeforeEditing] = useState<{ templateId: string; value: string | undefined } | null>(null);
   const [configuredSpecifications, setConfiguredSpecifications] = useState<Record<string, string>>({});
   const [finalSpecifications, setFinalSpecifications] = useState<Record<string, string>>({});
   const [finalSpecificationEditedByTemplate, setFinalSpecificationEditedByTemplate] = useState<Record<string, boolean>>({});
@@ -1899,10 +1902,8 @@ export function ProductLibrarySelector({
                     : null;
                   const hasConfiguredDimensionOverride = Boolean(configuredDimensionEditedByTemplate[template.id]);
                   const configuredDimension = usesModularPricing
-                    ? hasConfiguredDimensionOverride
-                      ? configuredDimensions[template.id] ?? ""
-                      : suggestedDirectModularDimension ?? configuredDimensions[template.id] ?? modularDefaults.defaultDimension ?? ""
-                    : configuredDimensions[template.id] ?? selectedSizeRow?.default_dimension ?? selectedSizeRow?.label ?? "";
+                    ? suggestedDirectModularDimension ?? modularDefaults.defaultDimension ?? ""
+                    : selectedSizeRow?.default_dimension ?? selectedSizeRow?.label ?? "";
                   const configuredSpecification = usesWorkstationFlow || usesModularPricing
                     ? configuredSpecifications[template.id] ??
                       (usesWorkstationFlow
@@ -2486,6 +2487,8 @@ export function ProductLibrarySelector({
                     template.origin,
                     brandOriginById.get(template.brand_id) ?? null,
                   );
+                  const quotationBrand = quotationBrands[template.id]?.trim() || brandNameById.get(template.brand_id) || null;
+                  const quotationOrigin = quotationOrigins[template.id]?.trim() || originSnapshot;
                   const supplierNameSnapshot = template.supplier_name ?? null;
                   const modularCompositionSpecification = usesModularPricing
                     ? buildModularCompositionSpecification({
@@ -2557,10 +2560,8 @@ export function ProductLibrarySelector({
                     selectedVariantDimension: selectedVariantRow?.dimension,
                     selectedWorkstationVariantDimension: selectedWorkstationVariantRow?.dimension ?? null,
                   });
-                  const generatedFinalSpecification = [
-                    localSpecification || null,
-                    localDimension ? `Dimension: ${localDimension}` : null,
-                  ].filter(Boolean).join("\n");
+                  const generatedFinalSpecification = localSpecification || "";
+                  const quotationDimension = hasConfiguredDimensionOverride ? configuredDimensions[template.id]?.trim() || localDimension : localDimension;
                   const finalSpecificationWasEdited = Boolean(finalSpecificationEditedByTemplate[template.id]);
                   const finalSpecification = resolveFinalProductSpecification({
                     editedSpecification: finalSpecifications[template.id],
@@ -2748,7 +2749,7 @@ export function ProductLibrarySelector({
                     manual_serial: null,
                     item_code_snapshot: template.item_code ?? template.template_code,
                     item_name_snapshot: template.template_name,
-                    brand_name_snapshot: brandNameById.get(template.brand_id) ?? null,
+                    brand_name_snapshot: quotationBrand,
                     category_name_snapshot: [mainCategory, subCategory].filter(Boolean).join(" / ") || null,
                     specified_image_url_snapshot: null,
                     proposed_image_url_snapshot: localSelectedImagePath || null,
@@ -2767,8 +2768,8 @@ export function ProductLibrarySelector({
                         ? (selectedModularItems.length ? `${selectedModularItems.length} modular items` : null)
                         : selectedCategoryRow?.variant_name || selectedVariantRow?.variant_name || null,
                     finish_snapshot: finishSnapshotValue(selectedFinishes),
-                    size_snapshot: localDimension,
-                    origin_snapshot: originSnapshot,
+                    size_snapshot: quotationDimension,
+                    origin_snapshot: quotationOrigin,
                     warranty_snapshot: null,
                     supplier_name_snapshot: supplierNameSnapshot,
                     supplier_notes_snapshot: null,
@@ -3207,15 +3208,6 @@ export function ProductLibrarySelector({
                                 onChange={(event) => setConfiguredSpecifications((current) => ({ ...current, [template.id]: event.target.value }))}
                                 rows={4}
                                 className="mt-1 w-full border border-zinc-300 bg-white px-2 py-2 text-xs outline-none focus:border-emerald-800"
-                              />
-                            </label>
-                            <label className="block">
-                              <span className="text-[10px] font-bold uppercase text-zinc-500">Configured Dimension</span>
-                              <input
-                                value={configuredDimension}
-                                onChange={(event) => setConfiguredDimensions((current) => ({ ...current, [template.id]: event.target.value }))}
-                                placeholder="e.g. 240x120x75 cmH"
-                                className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                               />
                             </label>
                           </div>
@@ -4783,23 +4775,6 @@ export function ProductLibrarySelector({
                         </div>
                               <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
                                 <p className="font-bold uppercase text-zinc-500">Final Details</p>
-                                {usesModularPricing ? <label className="block">
-                                  <span className="text-[10px] font-bold uppercase text-zinc-500">Configured Dimension</span>
-                                  <input
-                                    value={configuredDimension}
-                                    onChange={(event) => {
-                                      const value = event.target.value;
-                                      setConfiguredDimensionEditedByTemplate((current) => ({ ...current, [template.id]: Boolean(value.trim()) }));
-                                      setConfiguredDimensions((current) => {
-                                        if (value.trim()) return { ...current, [template.id]: value };
-                                        const { [template.id]: _discarded, ...remaining } = current;
-                                        return remaining;
-                                      });
-                                    }}
-                                    placeholder="e.g. 540x70x78 cmH"
-                                    className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-                                  />
-                                </label> : null}
                                 <p className="font-bold uppercase text-zinc-500">Final Specification</p>
                                 <div className="space-y-1 rounded-lg border border-zinc-200 bg-white p-3">
                                   <p className="font-semibold text-zinc-950">{templateSelectionName(template)}</p>
@@ -4867,6 +4842,19 @@ export function ProductLibrarySelector({
                                     }}
                                   />
                                 </div>
+                                <label className="block">
+                                  <span className="text-[10px] font-bold uppercase text-zinc-500">Dimensions</span>
+                                  <input value={configuredDimensions[template.id] ?? localDimension ?? ""} onFocus={() => setDimensionBeforeEditing({ templateId: template.id, value: configuredDimensionEditedByTemplate[template.id] ? configuredDimensions[template.id] : undefined })} onChange={(event) => { setConfiguredDimensions((current) => ({ ...current, [template.id]: event.target.value })); setConfiguredDimensionEditedByTemplate((current) => ({ ...current, [template.id]: true })); }} onBlur={() => { const previous = dimensionBeforeEditing; setConfiguredDimensions((current) => { if (current[template.id]?.trim()) return current; const next = { ...current }; if (previous?.templateId === template.id && previous.value?.trim()) next[template.id] = previous.value; else delete next[template.id]; return next; }); }} placeholder="e.g. 240x120x75 cmH" className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                                  <button type="button" onClick={() => { setConfiguredDimensions((current) => { const next = { ...current }; delete next[template.id]; return next; }); setConfiguredDimensionEditedByTemplate((current) => ({ ...current, [template.id]: false })); }} className="mt-1 font-semibold text-emerald-900">Reset to product default</button>
+                                </label>
+                                <label className="block">
+                                  <span className="text-[10px] font-bold uppercase text-zinc-500">Brand</span>
+                                  <input value={quotationBrands[template.id] ?? brandNameById.get(template.brand_id) ?? ""} onChange={(event) => setQuotationBrands((current) => ({ ...current, [template.id]: event.target.value }))} onBlur={() => setQuotationBrands((current) => current[template.id]?.trim() ? current : { ...current, [template.id]: brandNameById.get(template.brand_id) ?? "" })} className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                                </label>
+                                <label className="block">
+                                  <span className="text-[10px] font-bold uppercase text-zinc-500">Country of Origin</span>
+                                  <input value={quotationOrigins[template.id] ?? originSnapshot ?? ""} onChange={(event) => setQuotationOrigins((current) => ({ ...current, [template.id]: event.target.value }))} onBlur={() => setQuotationOrigins((current) => current[template.id]?.trim() ? current : { ...current, [template.id]: originSnapshot ?? "" })} className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                                </label>
                               </div>
                             <div className="sticky bottom-0 -mx-4 -mb-4 mt-1 border-t border-zinc-200 bg-white px-4 py-4">
                               {isLocalMode ? (
@@ -4906,6 +4894,9 @@ export function ProductLibrarySelector({
                               </p>
                             </div>
                           </div>
+                          <input type="hidden" name="quotation_brand_override" value={quotationBrand ?? ""} />
+                          <input type="hidden" name="quotation_origin_override" value={quotationOrigin ?? ""} />
+                          <input type="hidden" name="quotation_dimension_override" value={hasConfiguredDimensionOverride ? configuredDimensions[template.id]?.trim() || "" : ""} />
                           <input type="hidden" name="quotation_id" value={quotationId} />
                           <input type="hidden" name="section_id" value={sectionId} />
                           <input type="hidden" name="template_id" value={template.id} />

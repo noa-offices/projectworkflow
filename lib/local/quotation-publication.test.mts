@@ -15,6 +15,13 @@ test("old current workspace round trips unchanged through actual IndexedDB", asy
   await saveWorkspaceDocument(old);
   assert.deepEqual(await getWorkspaceDocument(quotationId), old);
 });
+test("quotation detail overrides survive IndexedDB save and reload", async () => {
+  const w = oldWorkspace();
+  const edited = { ...w, items: w.items.map((item) => ({ ...item, specification_snapshot: "Oak top; seat height 40?50 cm", size_snapshot: "160 x 80 cm", brand_name_snapshot: "Custom brand", origin_snapshot: "Italy" })) };
+  await saveWorkspaceDocument(edited);
+  const restored = await getWorkspaceDocument(quotationId);
+  assert.deepEqual(restored?.items[0], edited.items[0]);
+});
 test("refresh semantics retain existing draft key, DB version and both stores", async () => {
   const db = quotationWorkspaceDb();
   assert.equal(db.name, "projectworkflow-quotation-workspaces");

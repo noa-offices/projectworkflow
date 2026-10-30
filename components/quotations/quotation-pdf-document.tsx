@@ -10,6 +10,7 @@ import { formatQuotationMoney, quotationMoneyCell } from "@/lib/quotation-pricin
 import {
   formatBrandOriginSupplier,
   specificationWithoutDuplicateCode,
+  specificationWithoutDuplicateDimension,
 } from "@/lib/quotations/format-quotation-row";
 import {
   DEFAULT_QUOTATION_NOTES,
@@ -652,7 +653,7 @@ function SpecificationBlock({
   const title = item.item_name_snapshot ?? item.model_snapshot ?? "Custom item";
   const cleanedSpecification = specificationWithoutDuplicateCode({
     code: item.item_code_snapshot,
-    specification: item.specification_snapshot,
+    specification: specificationWithoutDuplicateDimension(item.specification_snapshot, item.size_snapshot),
   });
   const detailRows = [
     settings.model && item.model_snapshot && item.model_snapshot.trim().toLowerCase() !== title.trim().toLowerCase()
