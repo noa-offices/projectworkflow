@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import { listProductTemplateRowReferences } from "@/app/products/templates/row-reference-actions";
@@ -160,7 +161,9 @@ export type ProductLibraryTemplate = {
     label: string;
     tone: "success" | "info" | "warning" | "danger" | "neutral";
     detail: string;
+    actionHref?: string;
   };
+  supplier_family_price_load_state?: "loaded" | "unavailable";
   // True until the (streamed) supplier status has arrived; shows a neutral placeholder instead of the legacy label.
   supplier_family_price_loading?: boolean;
 };
@@ -479,6 +482,9 @@ function PriceCheckBadge({
       </span>
     );
   }
+  if (template.supplier_family_price_load_state === "unavailable") {
+    return <span className={compact ? "mt-1 block" : "grid gap-1"}><span title="Reload the page to try again" className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-bold text-zinc-700">Supplier price status unavailable</span>{!compact ? <span className="block text-[11px] font-medium text-zinc-500">Reload the page to try again</span> : null}</span>;
+  }
   const status = priceCheckState(template);
   // Same state as before, in plain words. Selecting a Product is never blocked by its health.
   const legacyHealth = friendlyPriceHealth(status, template.latest_brand_price_list_update, "quotation");
@@ -496,8 +502,8 @@ function PriceCheckBadge({
 
   return (
     <span className={compact ? "mt-1 block" : "grid gap-1"}>
-      <span className={badgeClass}>{health.label}</span>
-      {!compact ? <span className="block text-[11px] font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : null}
+      <span className={badgeClass} title={supplierPresentation?.detail}>{health.label}</span>
+      {!compact ? supplierPresentation?.actionHref ? <Link href={supplierPresentation.actionHref} className="block text-[11px] font-medium text-emerald-800 underline">{supplierPresentation.detail}</Link> : <span className="block text-[11px] font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : null}
     </span>
   );
 }
@@ -4424,7 +4430,7 @@ export function ProductLibrarySelector({
                                 {formatQuotationMoney(previewCurrency, effectiveQuoteUnitPrice)}
                               </p>
                               <PriceCheckBadge template={template} />
-                              {!template.supplier_family_price_loading && !template.supplier_family_price_presentation && priceCheckState(template).tone === "warning" ? (
+                              {!template.supplier_family_price_loading && (!template.supplier_family_price_presentation || Boolean(template.supplier_family_price_presentation.actionHref)) && priceCheckState(template).tone === "warning" ? (
                                 <>
                                   <p className="max-w-52 text-[11px] leading-4 text-amber-700">
                                     Please verify source price before finalizing quotation.

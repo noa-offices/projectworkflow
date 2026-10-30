@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { mapSupplierReads, supplierBusinessDate, supplierFamilyReviewFacts, readProductPages } from "./supplier-price-repository";
+import { mapSupplierReads, supplierBusinessDate, supplierFamilyReviewFacts, readProductPages, resolveApplicableSupplierSourceVersion } from "./supplier-price-repository";
 import {
   resolveSupplierFamilyPriceStatus,
   type SupplierFamilyPriceStatus,
@@ -37,6 +37,8 @@ export async function loadSupplierFamilyPriceStatusMap(client: SupabaseClient, f
     const definition = definitionsById.get(family.definition_id);
     return definition && selectedIds.has(family.template_id) ? [{ templateId: family.template_id, definitionId: definition.id, definitionName: definition.name, versions: versionsByDefinition.get(definition.id) ?? [] }] : [];
   });
-  const statuses = resolveSupplierFamilyPriceStatus({ businessDate: supplierBusinessDate(), families: families.map((family) => ({ templateId: family.id, brandId: family.brand_id })), responsibilities, facts: factsByBrand.flatMap(([, facts]) => facts) });
-  return new Map(statuses.map((status) => [status.familyId, status]));
+  const businessDate = supplierBusinessDate();
+  const brandsWithCurrentSource = new Set(definitions.filter((definition) => resolveApplicableSupplierSourceVersion(versionsByDefinition.get(definition.id) ?? [], businessDate)).map((definition) => definition.brand_id));
+  const statuses = resolveSupplierFamilyPriceStatus({ businessDate, families: families.map((family) => ({ templateId: family.id, brandId: family.brand_id })), responsibilities, facts: factsByBrand.flatMap(([, facts]) => facts) });
+  return new Map(statuses.map((status) => [status.familyId, { ...status, brandHasCurrentSource: brandsWithCurrentSource.has(status.brandId) }]));
 }

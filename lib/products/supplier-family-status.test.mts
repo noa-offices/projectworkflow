@@ -186,3 +186,25 @@ test("shared presentation keeps every Supplier status distinct and gives an upco
   assert.match(supplierFamilyStatusPresentation(partial).detail, /17 \/ 20 checked · 3 excluded/);
   assert.match(supplierFamilyStatusPresentation(noList).detail, /New price list effective 1 Nov 2026/);
 });
+
+
+test("uncovered family with a current brand source presents an actionable status", () => {
+  const legacy = one([], []);
+  const presentation = supplierFamilyStatusPresentation({ ...legacy, brandHasCurrentSource: true });
+  assert.equal(presentation.label, "Not covered by a Supplier price list");
+  assert.equal(presentation.tone, "neutral");
+  assert.equal(presentation.detail, "Add this product to a Supplier price list");
+  assert.equal(presentation.actionHref, "/products/price-updates/supplier-sources?brand=brand");
+});
+
+test("open targets are included in the needs attention detail", () => {
+  const status = one([responsibility([v("v1")])], [openFact({ unresolvedTargets: 2 })]);
+  assert.match(supplierFamilyStatusPresentation(status).detail, /Needs attention \(2 open\)/);
+});
+
+
+test("legacy status without a current brand source stays unchanged", () => {
+  const legacy = one([], []);
+  assert.deepEqual(supplierFamilyStatusPresentation({ ...legacy, brandHasCurrentSource: false }), supplierFamilyStatusPresentation(legacy));
+  assert.equal(supplierFamilyStatusPresentation(legacy).actionHref, undefined);
+});

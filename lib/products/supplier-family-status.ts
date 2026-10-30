@@ -17,6 +17,7 @@ export type SupplierResponsibilityInput = { templateId: string; definitionId: st
 export type SupplierFamilyPriceStatus = {
   familyId: string;
   brandId: string;
+  brandHasCurrentSource?: boolean;
   status: SupplierFamilyPriceStatusKey;
   label: string;
   source?: { definitionId: string; definitionName: string; sourceId: string; title: string; effectiveFrom: string | null };
@@ -30,6 +31,7 @@ export type SupplierFamilyStatusPresentation = {
   label: string;
   tone: "success" | "info" | "warning" | "danger" | "neutral";
   detail: string;
+  actionHref?: string;
 };
 export type SupplierBrandPriceState = "needs_attention" | "partially_checked" | "update_available" | "in_review" | "ready_to_complete" | "current" | "legacy_manual";
 export type SupplierBrandPriceStatus = {
@@ -104,6 +106,9 @@ function supplierStatusDate(value: string) {
 
 /** Shared, consumer-safe wording and colour for a resolved Supplier Family status. */
 export function supplierFamilyStatusPresentation(status: SupplierFamilyPriceStatus): SupplierFamilyStatusPresentation {
+  if (status.status === "legacy_manual" && status.brandHasCurrentSource) {
+    return { label: "Not covered by a Supplier price list", tone: "neutral", detail: "Add this product to a Supplier price list", actionHref: `/products/price-updates/supplier-sources?brand=${encodeURIComponent(status.brandId)}` };
+  }
   const tone = status.status === "price_checked" ? "success"
     : status.status === "needs_attention" ? "danger"
       : status.status === "in_review" || status.status === "ready_to_complete" ? "info"
@@ -118,7 +123,7 @@ export function supplierFamilyStatusPresentation(status: SupplierFamilyPriceStat
   const upcoming = status.upcoming?.effectiveFrom
     ? `New price list effective ${supplierStatusDate(status.upcoming.effectiveFrom)}`
     : null;
-  return { label: status.label, tone, detail: [progressDetail, upcoming].filter(Boolean).join(" · ") };
+  return { label: status.label, tone, detail: [progressDetail, status.status === "needs_attention" && status.progress ? `Needs attention (${status.progress.unresolved} open)` : null, upcoming].filter(Boolean).join(" · ") };
 }
 
 /**
