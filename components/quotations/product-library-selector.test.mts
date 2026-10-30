@@ -448,3 +448,21 @@ test("structural support is separated ahead of main selection and option-item co
   assert.ok(source.indexOf("<StructuralSupportFields") < source.indexOf("{usesVariantPricing ?"));
   assert.ok(source.includes('item.role !== "structural_support" && item.role !== "companion"'));
 });
+
+
+test("Final Details separates quotation dimensions and metadata while retaining Improve safeguards", () => {
+  const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  const details = source.split(">Final Details</p>")[1].split('<div className="sticky bottom-0')[0];
+  assert.match(source, /const generatedFinalSpecification = localSpecification \|\| ""/);
+  assert.match(source, /hasConfiguredDimensionOverride \? configuredDimensions\[template.id\]\?\.trim\(\) \|\| localDimension : localDimension/);
+  assert.match(details, /configuredDimensions\[template.id\] \?\? localDimension/);
+  assert.match(details, /dimensionBeforeEditing/);
+  assert.match(details, /previous.value\?\.trim\(\)/);
+  assert.match(details, /Reset to product default/);
+  assert.match(details, /Brand<\/span>/);
+  assert.match(details, /Country of Origin<\/span>/);
+  assert.match(source, /currentSpecification: specificationForAi\(finalSpecification/);
+  assert.match(details, /keepDimensionLine\(finalSpecification \?\? null, specification\)/);
+  assert.match(details, /check=\{\{/);
+  assert.equal((details.match(/>Dimensions<\/span>/g) ?? []).length, 1);
+});

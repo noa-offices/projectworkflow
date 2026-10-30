@@ -12,6 +12,7 @@ import {
 import {
   formatBrandOriginSupplier,
   specificationWithoutDuplicateCode,
+  specificationWithoutDuplicateDimension,
 } from "@/lib/quotations/format-quotation-row";
 import {
   documentSetupRecord,
@@ -1395,7 +1396,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
       const cleanedDescription = specificationVisibility.showDescriptionSpecification
         ? specificationWithoutDuplicateCode({
             code: item.item_code_snapshot,
-            specification: item.specification_snapshot,
+            specification: specificationVisibility.showDimensions ? specificationWithoutDuplicateDimension(item.specification_snapshot, item.size_snapshot) : item.specification_snapshot,
           })
         : null;
       const chunks = cleanedDescription

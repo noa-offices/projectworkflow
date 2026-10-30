@@ -79,3 +79,12 @@ export function specificationWithoutDuplicateCode({
   const cleaned = remainingLines.join("\n").trim();
   return cleaned || null;
 }
+
+/** Hide only the legacy trailing line that exactly repeats the separately displayed size. */
+export function specificationWithoutDuplicateDimension(specification: string | null | undefined, dimension: string | null | undefined) {
+  if (!specification || !dimension?.trim()) return specification ?? null;
+  const lines = specification.split(/\r?\n/);
+  const last = lines[lines.length - 1].trim();
+  if (last !== `Dimension: ${dimension.trim()}`) return specification;
+  return lines.slice(0, -1).join("\n").trimEnd() || null;
+}
