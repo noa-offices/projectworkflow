@@ -1691,13 +1691,12 @@ export function LocalQuotationBuilder({
   productTemplates: ProductLibraryTemplate[];
   projectName: string;
   // Streamed from the server so the page does not wait for the supplier price status; only a picker badge uses it.
-  supplierPresentationsPromise?: Promise<Record<string, NonNullable<ProductLibraryTemplate["supplier_family_price_presentation"]>>>;
+  supplierPresentationsPromise?: Promise<Record<string, NonNullable<ProductLibraryTemplate["supplier_family_price_presentation"]> | null>>;
   templateMaterialGroupItems: ProductTemplateMaterialGroupItemLink[];
   templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
-  const [supplierPresentations, setSupplierPresentations] = useState<Record<string, NonNullable<ProductLibraryTemplate["supplier_family_price_presentation"]>> | null>(
-    supplierPresentationsPromise ? null : {},
-  );
+  const [supplierPresentations, setSupplierPresentations] = useState<Record<string, NonNullable<ProductLibraryTemplate["supplier_family_price_presentation"]> | null> | null>(null);
+  const [supplierLoadState, setSupplierLoadState] = useState<"loading" | "loaded" | "unavailable">(supplierPresentationsPromise ? "loading" : "unavailable");
   useEffect(() => {
     if (!supplierPresentationsPromise) return;
     let cancelled = false;
@@ -1705,9 +1704,9 @@ export function LocalQuotationBuilder({
     void (async () => {
       try {
         const value = await supplierPresentationsPromise;
-        if (!cancelled) setSupplierPresentations(value);
+        if (!cancelled) { setSupplierPresentations(value); setSupplierLoadState("loaded"); }
       } catch {
-        if (!cancelled) setSupplierPresentations({});
+        if (!cancelled) setSupplierLoadState("unavailable");
       }
     })();
     return () => { cancelled = true; };
@@ -1715,10 +1714,11 @@ export function LocalQuotationBuilder({
   const productTemplates = useMemo(
     () => baseProductTemplates.map((template) => ({
       ...template,
-      supplier_family_price_presentation: supplierPresentations?.[template.id],
-      supplier_family_price_loading: supplierPresentations === null,
+      supplier_family_price_presentation: supplierPresentations?.[template.id] ?? undefined,
+      supplier_family_price_loading: supplierLoadState === "loading",
+      supplier_family_price_load_state: supplierLoadState === "loaded" && supplierPresentations && Object.hasOwn(supplierPresentations, template.id) ? "loaded" as const : "unavailable" as const,
     })),
-    [baseProductTemplates, supplierPresentations],
+    [baseProductTemplates, supplierPresentations, supplierLoadState],
   );
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [historyPast, setHistoryPast] = useState<LocalQuotationWorkspace[]>([]);

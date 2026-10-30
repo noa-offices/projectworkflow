@@ -174,3 +174,17 @@ test("parallel batch facts retain completed, excluded and open target outcomes",
   // Untargeted matches are filtered server-side and never read.
   assert.ok(f.reads.filter((read) => read.table === "supplier_price_matches").every((read) => read.filters.some(([key]) => key === "__targeted")));
 });
+
+
+test("brand source availability uses already loaded versions for uncovered newly created families", async () => {
+  const f = fixture({
+    supplier_source_definitions: [{ id: "d1", brand_id: "b1", name: "Furniture", is_active: true }, { id: "d2", brand_id: "b2", name: "Chairs", is_active: true }],
+    supplier_source_definition_families: [],
+    supplier_source_versions: [{ id: "v1", definition_id: "d1", title: "List", status: "imported", effective_from: "2020-01-01", created_at: "2020-01-01" }],
+  });
+  const statuses = await loadSupplierFamilyPriceStatusMap(f.client, [{ id: "new", brand_id: "b1" }, { id: "other", brand_id: "b2" }]);
+  assert.equal(statuses.get("new")?.status, "legacy_manual");
+  assert.equal(statuses.get("new")?.brandHasCurrentSource, true);
+  assert.equal(statuses.get("other")?.brandHasCurrentSource, false);
+  assert.equal(f.reads.filter((read) => read.table === "supplier_source_versions").length, 1);
+});

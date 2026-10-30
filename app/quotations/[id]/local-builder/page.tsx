@@ -234,9 +234,9 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
   const brandById = new Map((productBrands ?? []).map((brand) => [brand.id, brand]));
   // Started now, not awaited: it only feeds a picker badge, so the builder streams it in when ready.
   const supplierPresentationsPromise = loadSupplierFamilyPriceStatusMap(supabase, productTemplates ?? []).then((statusByTemplate) => {
-    const presentations: Record<string, ReturnType<typeof supplierFamilyStatusPresentation>> = {};
+    const presentations: Record<string, ReturnType<typeof supplierFamilyStatusPresentation> | null> = {};
     for (const [templateId, supplierStatus] of statusByTemplate) {
-      if (supplierStatus.status !== "legacy_manual") presentations[templateId] = supplierFamilyStatusPresentation(supplierStatus);
+      presentations[templateId] = supplierStatus.status === "legacy_manual" && !supplierStatus.brandHasCurrentSource ? null : supplierFamilyStatusPresentation(supplierStatus);
     }
     return presentations;
   });
