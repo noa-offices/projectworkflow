@@ -17,6 +17,7 @@ import {
 } from "@/components/quotations/finish-selections-editor";
 import { canManageProductLibrary as canUseProductLibrary, requireActiveUser } from "@/lib/auth";
 import { loadSupplierFamilyPriceStatusMap } from "@/lib/products/supplier-family-price-status-loader";
+import { settleSupplierPresentations } from "@/lib/products/supplier-presentation-timeout";
 import { readProductPages } from "@/lib/products/supplier-price-repository";
 import { supplierFamilyStatusPresentation } from "@/lib/products/supplier-family-status";
 import { formatProjectReferenceDisplay } from "@/lib/project-reference";
@@ -232,14 +233,14 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
     updatesByBrand.set(update.brand_id, [...(updatesByBrand.get(update.brand_id) ?? []), update]);
   }
   const brandById = new Map((productBrands ?? []).map((brand) => [brand.id, brand]));
-  // Started now, not awaited: it only feeds a picker badge, so the builder streams it in when ready.
-  const supplierPresentationsPromise = loadSupplierFamilyPriceStatusMap(supabase, productTemplates ?? []).then((statusByTemplate) => {
+  // Start the bounded read alongside the remaining page work.
+  const supplierPresentationResult = settleSupplierPresentations(loadSupplierFamilyPriceStatusMap(supabase, productTemplates ?? []).then((statusByTemplate) => {
     const presentations: Record<string, ReturnType<typeof supplierFamilyStatusPresentation> | null> = {};
     for (const [templateId, supplierStatus] of statusByTemplate) {
       presentations[templateId] = supplierStatus.status === "legacy_manual" && !supplierStatus.brandHasCurrentSource ? null : supplierFamilyStatusPresentation(supplierStatus);
     }
     return presentations;
-  });
+  }));
 
   const productTemplatesWithPriceChecks = (productTemplates ?? []).map((template) => {
     return {
@@ -319,6 +320,8 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
     items: items ?? [],
   }), { baseVersion });
 
+  const { supplierPresentations, supplierLoadState } = await supplierPresentationResult;
+
   return (
     <>
       <OpportunityQuotationLinkSync />
@@ -344,7 +347,8 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
         productComponents={productComponents ?? []}
         productLinkedFamilies={linkedFamilies ?? []}
         productTemplates={productTemplatesWithPriceChecks}
-        supplierPresentationsPromise={supplierPresentationsPromise}
+        supplierPresentations={supplierPresentations}
+        supplierLoadState={supplierLoadState}
         projectName={
           resolvedDocumentSetup.header.reference ||
           formatProjectReferenceDisplay(project) ||

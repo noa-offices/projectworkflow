@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { settleSupplierPresentations } from "./supplier-presentation-timeout";
 
 test("Product Management and Local Builder load one shared Supplier Family status map", () => {
   const management = readFileSync("app/products/templates/page.tsx", "utf8");
@@ -20,16 +21,28 @@ test("Product Library renders the shared presentation without changing legacy wa
 });
 
 
-test("local supplier failures and missing statuses cannot fall through to legacy wording", () => {
+test("local builder accepts plain status values and fails closed when absent", () => {
   const local = readFileSync("components/quotations/local-quotation-builder.tsx", "utf8");
-  const selector = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
-  assert.match(local, /supplierPresentationsPromise \? "loading" : "unavailable"/);
-  assert.match(local, /catch \{\s*if \(!cancelled\) setSupplierLoadState\("unavailable"\)/);
-  assert.match(local, /Object\.hasOwn\(supplierPresentations, template.id\) \? "loaded" as const : "unavailable" as const/);
-  assert.match(selector, /supplier_family_price_load_state === "unavailable"/);
-  assert.match(selector, /Supplier price status unavailable/);
-  assert.match(selector, /Reload the page to try again/);
-  assert.match(selector, /supplier_family_price_load_state\?: "loaded" \| "unavailable"/);
+  const page = readFileSync("app/quotations/[id]/local-builder/page.tsx", "utf8");
+  assert.doesNotMatch(local, /supplierPresentationsPromise/);
+  assert.doesNotMatch(page, /supplierPresentationsPromise=/);
+  assert.match(local, /supplierLoadState = "unavailable"/);
+  assert.match(local, /Object\.hasOwn\(supplierPresentations, template.id\)/);
+  assert.match(page, /settleSupplierPresentations/);
+});
+
+test("a timeout or rejected load gives unavailable without an unhandled late rejection", async () => {
+  assert.deepEqual(await settleSupplierPresentations(Promise.reject(new Error("offline")), 10), { supplierPresentations: null, supplierLoadState: "unavailable" });
+  let rejectLater!: (error: Error) => void;
+  const late = new Promise<Record<string, null>>((_, reject) => { rejectLater = reject; });
+  assert.deepEqual(await settleSupplierPresentations(late, 1), { supplierPresentations: null, supplierLoadState: "unavailable" });
+  rejectLater(new Error("late failure"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
+test("a successful load returns plain loaded presentations unchanged", async () => {
+  const record = { legacy: null, covered: { label: "Price checked" }, uncovered: { label: "Not covered by a Supplier price list" } };
+  assert.deepEqual(await settleSupplierPresentations(Promise.resolve(record), 100), { supplierPresentations: record, supplierLoadState: "loaded" });
 });
 
 test("legacy-only quotation builder supplies no supplier status and keeps its legacy path", () => {

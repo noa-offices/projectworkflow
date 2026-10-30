@@ -1674,7 +1674,8 @@ export function LocalQuotationBuilder({
   productLinkedFamilies,
   productTemplates: baseProductTemplates,
   projectName,
-  supplierPresentationsPromise,
+  supplierPresentations = null,
+  supplierLoadState = "unavailable",
   templateMaterialGroupItems,
   templateMaterialGroups,
 }: {
@@ -1690,32 +1691,15 @@ export function LocalQuotationBuilder({
   productLinkedFamilies: ProductLibraryLinkedFamily[];
   productTemplates: ProductLibraryTemplate[];
   projectName: string;
-  // Streamed from the server so the page does not wait for the supplier price status; only a picker badge uses it.
-  supplierPresentationsPromise?: Promise<Record<string, NonNullable<ProductLibraryTemplate["supplier_family_price_presentation"]> | null>>;
+  supplierPresentations?: Record<string, NonNullable<ProductLibraryTemplate["supplier_family_price_presentation"]> | null> | null;
+  supplierLoadState?: "loaded" | "unavailable";
   templateMaterialGroupItems: ProductTemplateMaterialGroupItemLink[];
   templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
-  const [supplierPresentations, setSupplierPresentations] = useState<Record<string, NonNullable<ProductLibraryTemplate["supplier_family_price_presentation"]> | null> | null>(null);
-  const [supplierLoadState, setSupplierLoadState] = useState<"loading" | "loaded" | "unavailable">(supplierPresentationsPromise ? "loading" : "unavailable");
-  useEffect(() => {
-    if (!supplierPresentationsPromise) return;
-    let cancelled = false;
-    // A streamed server promise can be a bare thenable whose .then() returns nothing, so await it instead of chaining.
-    void (async () => {
-      try {
-        const value = await supplierPresentationsPromise;
-        if (!cancelled) { setSupplierPresentations(value); setSupplierLoadState("loaded"); }
-      } catch {
-        if (!cancelled) setSupplierLoadState("unavailable");
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [supplierPresentationsPromise]);
   const productTemplates = useMemo(
     () => baseProductTemplates.map((template) => ({
       ...template,
       supplier_family_price_presentation: supplierPresentations?.[template.id] ?? undefined,
-      supplier_family_price_loading: supplierLoadState === "loading",
       supplier_family_price_load_state: supplierLoadState === "loaded" && supplierPresentations && Object.hasOwn(supplierPresentations, template.id) ? "loaded" as const : "unavailable" as const,
     })),
     [baseProductTemplates, supplierPresentations, supplierLoadState],
