@@ -17,6 +17,8 @@ const stepNames = ["Upload sample", "Map columns", "Price settings", "Test impor
 export type CodeStructure = "simple" | "article_finish" | "matrix";
 export type FormatChoices = {
   fullCode: string; articleCode: string; price: string; category: string; description: string;
+  /** Optional Supplier family and sub-family columns; off by default. */
+  series?: string; subfamily?: string;
   currency: "AED" | "EUR" | "USD"; basis: Exclude<PriceBasis, "unknown">; structure: CodeStructure; articleLength: number; finishLength: number;
 };
 const issueWords: Record<string, string> = {
@@ -38,6 +40,7 @@ export function buildImportProfile(choices: FormatChoices): SupplierProfile {
   }
   if (choices.category && choices.structure !== "simple") profile.category_column = choices.category;
   if (choices.description) profile.description_column = choices.description;
+  if (choices.series) { profile.series_column = choices.series; if (choices.subfamily) profile.subfamily_column = choices.subfamily; }
   assertSupplierProfile(profile);
   return profile;
 }
@@ -62,9 +65,9 @@ export function SupplierImportFormatWizard({ brandName, brandId, approver, doneH
   const set = <K extends keyof FormatChoices>(key: K, value: FormatChoices[K]) => setChoices((current) => ({ ...current, [key]: value }));
   async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); } catch (error) { setMessage(error instanceof Error ? error.message : "Something went wrong."); } finally { setBusy(false); } }
   if (!approver) return <section className={`${card} p-4 text-sm`}><h3 className="text-base font-semibold text-zinc-950">Set up import profile</h3><p className="mt-1">An approver sets up import profiles for a Brand.</p></section>;
-  const column = (label: string, key: "fullCode" | "articleCode" | "price" | "category" | "description", required: boolean, help?: string) =>
+  const column = (label: string, key: "fullCode" | "articleCode" | "price" | "category" | "description" | "series" | "subfamily", required: boolean, help?: string) =>
     <div key={key} className="grid items-center gap-2 py-2 sm:grid-cols-[15rem_1fr]"><label htmlFor={`map-${key}`} className="text-sm font-medium text-zinc-800">{label}{required ? "" : " (optional)"}{help ? <span className="block text-xs font-normal text-zinc-500">{help}</span> : null}</label>
-      <select id={`map-${key}`} value={choices[key]} onChange={(event) => set(key, event.target.value)} required={required} className={input}><option value="">{required ? "Choose column" : "Not used"}</option>{headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></div>;
+      <select id={`map-${key}`} value={choices[key] ?? ""} onChange={(event) => set(key, event.target.value)} required={required} className={input}><option value="">{required ? "Choose column" : "Not used"}</option>{headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></div>;
   const ready = choices.fullCode && choices.price && (choices.structure !== "matrix" || choices.category) && (choices.structure !== "article_finish" || (choices.articleLength > 0 && choices.finishLength > 0));
   return <section className={`${card} space-y-4 p-4`} aria-label="Import profile setup">
     <ol className="flex flex-wrap items-center gap-2 text-xs font-semibold" aria-label="Setup steps">{stepNames.map((name, index) => { const number = index + 1; const state = number < step ? "done" : number === step ? "current" : "todo";
@@ -81,7 +84,7 @@ export function SupplierImportFormatWizard({ brandName, brandId, approver, doneH
       <button type="button" disabled={busy || !rows.length} className={primary} onClick={() => setStep(2)}>Next: choose columns</button></div> : null}
     {step === 2 ? <div className="space-y-3"><div className="divide-y divide-zinc-100 rounded-md border border-zinc-200 px-3"><div className="grid gap-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 sm:grid-cols-[15rem_1fr]"><span>Purpose</span><span>Source column</span></div>
       {column("Full Supplier code", "fullCode", true)}{column("Product / article code", "articleCode", false, "Used when the code is an article plus a finish.")}
-      {column("Price", "price", true)}{column("Category / upholstery / dimension", "category", false)}{column("Description", "description", false)}</div>
+      {column("Price", "price", true)}{column("Category / upholstery / dimension", "category", false)}{column("Description", "description", false)}{column("Supplier family column", "series", false, "Keeps the family with each price line")}{choices.series ? column("Supplier sub-family column", "subfamily", false) : null}</div>
       <div className="flex gap-2"><button type="button" className={button} onClick={() => setStep(1)}>Back</button><button type="button" disabled={!choices.fullCode || !choices.price} className={primary} onClick={() => setStep(3)}>Next: price settings</button></div></div> : null}
     {step === 3 ? <div className="space-y-3"><div className="grid gap-3 sm:grid-cols-2">
       <label className="grid gap-1 text-xs"><span className="font-medium">Currency</span><select value={choices.currency} onChange={(event) => set("currency", event.target.value as FormatChoices["currency"])} className={input}>{["AED", "EUR", "USD"].map((code) => <option key={code}>{code}</option>)}</select></label>

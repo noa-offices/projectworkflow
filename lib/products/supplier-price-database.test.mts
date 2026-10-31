@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import { normalizeSupplierRows, supplierImportChunks } from "./supplier-price-import.js";
+import { commercialSupplierIdentities, normalizeSupplierRows, supplierImportChunks } from "./supplier-price-import.js";
 import { brandPriceTargets } from "./supplier-price-targets.js";
 import { matchSupplierPrices } from "./supplier-price-matching.js";
 import type { RawSupplierRow, SourceIdentity, SupplierProfile } from "./supplier-price-contracts.js";
@@ -264,5 +264,84 @@ test("forward migration preserves imported snapshots and privileges; same-file n
     assert.deepEqual(await snapshot(), oldSnapshot);
     const pricesAfter = (await db.query("select row_to_json(t) data from product_templates t union all select row_to_json(c) from product_components c union all select row_to_json(b) from brands b union all select row_to_json(q) from quotations q union all select row_to_json(u) from brand_price_list_updates u")).rows;
     assert.deepEqual(pricesAfter, pricesBefore);
+  } finally { await db.close(); }
+});
+
+const seriesMigration = await readFile(new URL("../../supabase/migrations/20261101100000_supplier_series_import.sql", import.meta.url), "utf8");
+const seriesConfig: SupplierProfile = { full_code_column: "CODE", strategy: "exact", currency: "EUR", basis: "unknown", category_column: "CAT", series_column: "FAM", subfamily_column: "SUB", price_columns: [{ column: "PRICE", price_field: "unit_price" }] };
+const seriesRows: RawSupplierRow[] = [
+  { code: "521234", price: 57, cat: "", fam: "AIM", sub: "AIM" }, { code: "521234", price: 58, cat: "", fam: "EVERY", sub: "Silver" }, { code: "521234", price: 57, cat: "", fam: "Goal-Air", sub: "Goal-Air" },
+  { code: "521234", price: 58, cat: "", fam: "EVERY", sub: "Plain" }, { code: "777001", price: 10, cat: "SG3", fam: "EVERY", sub: "Silver" }, { code: "777001", price: 12, cat: "SG3", fam: "EVERY", sub: "Silver" },
+  { code: "888001", price: 5, cat: "", fam: "", sub: "" },
+].map((v, index) => ({ unit_key: `s${index}`, sheet: "S", row_number: index + 2, values: { CODE: v.code, PRICE: v.price, CAT: v.cat, FAM: v.fam, SUB: v.sub } }));
+async function importAndRead(db: PGlite, config: SupplierProfile, raw: RawSupplierRow[], how: "operation" | "step", hash: string) {
+  const p = await write(db, "profile", { brand_id: brand, title: `Series ${hash}`, config });
+  const s = await write(db, "source", { profile_id: p.id, expected_profile: config, title: `Series ${hash}`, filename: "s.xlsx", source_type: "xlsx", file_hash: hash.repeat(64).slice(0, 64), expected_rows: raw.length, expected_cells: raw.length, expected_chunks: 1 });
+  await write(db, "chunk", { source_id: s.id, chunk_index: 0, rows: raw, cells: normalizeSupplierRows(raw, config) });
+  if (how === "operation") await write(db, "finalize_source", { source_id: s.id });
+  else await db.query("select public.supplier_finalize_source_step($1, 1000)", [s.id]);
+  return (await db.query<{ data: SourceIdentity & { evidence?: Array<Record<string, unknown>> } }>("select data from supplier_source_identities where source_id=$1 order by key", [s.id])).rows.map((r) => r.data);
+}
+// PostgreSQL writes ["a", "b"] with spaces, TypeScript ["a","b"]; compare the parsed key (this spacing difference predates the series change).
+const comparable = (items: SourceIdentity[]) => items.map((item) => ({ key: JSON.stringify(JSON.parse(item.key)), dimension: item.dimension, raw_dimension: item.raw_dimension, price: item.price, finishes: item.finishes, issues: [...item.issues].sort() })).sort((a, b) => a.key.localeCompare(b.key));
+
+test("series import: both SQL finalize paths agree with the TypeScript identities and keep raw_dimension plain", async () => {
+  const db = await fixture(); try {
+    await db.exec(seriesMigration);
+    const expected = comparable(commercialSupplierIdentities(normalizeSupplierRows(seriesRows, seriesConfig), seriesConfig));
+    const viaOperation = await importAndRead(db, seriesConfig, seriesRows, "operation", "a");
+    const viaStep = await importAndRead(db, seriesConfig, seriesRows, "step", "b");
+    assert.deepEqual(comparable(viaOperation), expected);
+    assert.deepEqual(comparable(viaStep), expected);
+    // Every case: 521234 gives AIM, EVERY (two sub-families) and Goal-Air identities; none is a conflict. A real in-family conflict is flagged.
+    const code521234 = viaOperation.filter((item) => item.code === "521234");
+    assert.equal(code521234.length, 4);
+    assert.ok(code521234.every((item) => !item.issues.includes("conflicting_source_prices")));
+    assert.ok(viaOperation.every((item) => JSON.parse(item.key).length === 3));
+    const conflict = viaOperation.find((item) => item.code === "777001")!;
+    assert.deepEqual([conflict.price, conflict.issues, conflict.raw_dimension], [null, ["conflicting_source_prices"], "SG3"]);
+    assert.equal(viaOperation.find((item) => item.code === "888001")!.dimension, "", "a row without a family keeps today's dimension");
+    // Stored rows keep the family columns, and evidence shows the labels.
+    const evidence = code521234.flatMap((item) => item.evidence ?? []);
+    assert.ok(evidence.some((item) => item.family_label === "EVERY" && item.subfamily_label === "Silver"));
+    assert.ok((await db.query<{ n: number }>("select count(*)::int n from supplier_source_rows where raw_extras ? 'FAM' and raw_extras ? 'SUB'")).rows[0].n >= seriesRows.length);
+  } finally { await db.close(); }
+});
+
+test("series import: a profile without the settings gives identical stored identities before and after the migration", async () => {
+  const before = await fixture(); const after = await fixture(); try {
+    await after.exec(seriesMigration);
+    const lasConfig: SupplierProfile = { full_code_column: "CODE", article_code_column: "NOME_FILE", strategy: "article_plus_finish", article_length: 6, finish_length: 3, currency: "EUR", basis: "unknown", price_columns: [{ column: "PRICE", price_field: "unit_price" }] };
+    const raw = [144, 145, 146].map((finish, index) => ({ unit_key: `l${index}`, sheet: "Source", row_number: index + 2, values: { CODE: `111001${finish}`, NOME_FILE: "111001", PRICE: index === 2 ? 190 : 152 } }));
+    const one = await importAndRead(before, lasConfig, raw, "operation", "c");
+    const two = await importAndRead(after, lasConfig, raw, "operation", "c");
+    assert.deepEqual(two, one);
+    const plainRows = seriesRows.map((item) => ({ ...item, values: { CODE: item.values.CODE, PRICE: item.values.PRICE, CAT: item.values.CAT } }));
+    const plainConfig: SupplierProfile = { full_code_column: "CODE", strategy: "exact", currency: "EUR", basis: "unknown", category_column: "CAT", price_columns: [{ column: "PRICE", price_field: "unit_price" }] };
+    assert.deepEqual(await importAndRead(after, plainConfig, plainRows, "step", "d"), await importAndRead(before, plainConfig, plainRows, "step", "d"));
+  } finally { await before.close(); await after.close(); }
+});
+
+test("series migration is guarded: it does not apply twice", async () => {
+  const db = await fixture(); try {
+    await db.exec(seriesMigration);
+    await assert.rejects(db.exec(seriesMigration), /already exists|differs from the expected body/);
+  } finally { await db.close(); }
+});
+
+test("series import: the rollback TEST file and the assertions file pass on a PGlite replica and leave nothing behind", async () => {
+  const contract = await readFile(new URL("../../supabase/tests/supplier_series_import.sql", import.meta.url), "utf8");
+  const combined = await readFile(new URL("../../supabase/tests/supplier_series_import_TEST.sql", import.meta.url), "utf8");
+  const migrationBody = seriesMigration.replace(/^begin;\s*/i, "").replace(/commit;\s*$/i, "").trim();
+  assert.ok(combined.includes(migrationBody), "TEST contains the exact migration body");
+  assert.ok(combined.includes(contract.slice(contract.search(/begin;\s*/i)).replace(/^begin;\s*/i, "").replace(/select 'PASS[\s\S]*$/, "").trim()), "TEST contains the exact assertions");
+  assert.doesNotMatch(combined, /commit;/i);
+  const db = await fixture(); try {
+    // The replica's minimal tables get the few columns the assertions use; production already has them.
+    await db.exec("create table auth.users(id uuid primary key,email text); alter table profiles add column email text, add column full_name text, add column role text, add column account_status text; alter table brands add column name text;");
+    const results = await db.exec(combined);
+    assert.match(String((results.at(-1)?.rows[0] as { result?: string } | undefined)?.result), /^PASS: supplier series import checks completed and rolled back$/);
+    assert.equal((await db.query<{ n: number }>("select count(*)::int n from supplier_source_identities")).rows[0].n, 0, "rolled back");
+    assert.equal((await db.query<{ n: string | null }>("select to_regprocedure('public.supplier_plain_dimension(text)')::text n")).rows[0].n, null, "migration rolled back");
   } finally { await db.close(); }
 });

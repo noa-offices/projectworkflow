@@ -8,6 +8,8 @@ export type WizardPriceColumn = { column: string; label: string };
 export type WizardPriceMode = "single" | "multiple";
 export type WizardMapping = {
   fullCode: string; articleCode: string; description: string; category: string;
+  /** Optional Supplier family and sub-family columns; off by default. */
+  series?: string; subfamily?: string;
   priceColumns: WizardPriceColumn[];
   currency: "AED" | "EUR" | "USD"; basis: Exclude<PriceBasis, "unknown">;
   structure: "simple" | "article_finish"; articleLength: number; finishLength: number;
@@ -70,6 +72,7 @@ export function profileFromMapping(mapping: WizardMapping): SupplierProfile {
     profile.article_length = mapping.articleLength; profile.finish_length = mapping.finishLength; profile.validated_article_fallback = true;
   }
   if (mapping.category) profile.category_column = mapping.category;
+  if (mapping.series) { profile.series_column = mapping.series; if (mapping.subfamily) profile.subfamily_column = mapping.subfamily; }
   if (mapping.description) profile.description_column = mapping.description;
   assertSupplierProfile(profile);
   return profile;
@@ -78,7 +81,7 @@ export function profileFromMapping(mapping: WizardMapping): SupplierProfile {
 /** Reverse of profileFromMapping, so a saved profile can be shown, reviewed and changed. */
 export function mappingFromProfile(profile: SupplierProfile): WizardMapping {
   return {
-    fullCode: profile.full_code_column, articleCode: profile.article_code_column ?? "", description: profile.description_column ?? "", category: profile.category_column ?? "",
+    fullCode: profile.full_code_column, articleCode: profile.article_code_column ?? "", description: profile.description_column ?? "", category: profile.category_column ?? "", series: profile.series_column ?? "", subfamily: profile.subfamily_column ?? "",
     priceColumns: profile.price_columns.map((item) => ({ column: item.column, label: item.dimension ?? "" })),
     currency: profile.currency, basis: profile.basis === "net" ? "net" : "list",
     structure: profile.strategy === "article_plus_finish" ? "article_finish" : "simple", articleLength: profile.article_length ?? 6, finishLength: profile.finish_length ?? 3,
@@ -86,7 +89,7 @@ export function mappingFromProfile(profile: SupplierProfile): WizardMapping {
 }
 
 export function profileRequiredColumns(profile: SupplierProfile) {
-  return [profile.full_code_column, ...profile.price_columns.map((item) => item.column), ...(profile.article_code_column ? [profile.article_code_column] : []), ...(profile.category_column ? [profile.category_column] : []), ...(profile.companion_note_column ? [profile.companion_note_column] : [])];
+  return [profile.full_code_column, ...profile.price_columns.map((item) => item.column), ...(profile.article_code_column ? [profile.article_code_column] : []), ...(profile.category_column ? [profile.category_column] : []), ...(profile.series_column ? [profile.series_column] : []), ...(profile.subfamily_column ? [profile.subfamily_column] : []), ...(profile.companion_note_column ? [profile.companion_note_column] : [])];
 }
 /** A saved import profile whose every required column exists in this file. Only a suggestion; never applied silently. */
 export function compatibleProfile(profiles: WizardProfileOption[], headers: string[]): WizardProfileOption | null {
