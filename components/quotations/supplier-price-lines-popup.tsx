@@ -139,7 +139,7 @@ type StatusListener = (templateId: string, presentation: SupplierFamilyStatusPre
 function CheckBar({ source, templateId, templateName, onDone, onStatus }: { source: Source; templateId: string; templateName: string; onDone: (message: string) => void; onStatus?: StatusListener }) {
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const verdict = evaluateTemplateCheck(source);
-  if (source.check?.valid) return <p className="mt-3 text-sm font-semibold text-emerald-900">Checked on {checkedDate(source.check.checkedAt)}</p>;
+  if (source.check?.valid) return <p className="mt-3 text-sm font-semibold text-emerald-900">Checked on {checkedDate(source.check.checkedAt)}{source.check.checkedByName ? ` by ${source.check.checkedByName}` : ""}</p>;
   if (!verdict.ok) return null;
   const confirm = async () => {
     if (busy) return;

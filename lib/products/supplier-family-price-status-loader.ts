@@ -42,6 +42,6 @@ export async function loadSupplierFamilyPriceStatusMap(client: SupabaseClient, f
   const businessDate = supplierBusinessDate();
   const brandsWithCurrentSource = new Set(definitions.filter((definition) => resolveApplicableSupplierSourceVersion(versionsByDefinition.get(definition.id) ?? [], businessDate)).map((definition) => definition.brand_id));
   const statuses = resolveSupplierFamilyPriceStatus({ businessDate, families: families.map((family) => ({ templateId: family.id, brandId: family.brand_id, pricingVersion: family.pricing_version === undefined || family.pricing_version === null ? null : String(family.pricing_version) })), responsibilities, facts: factsByBrand.flatMap(([, facts]) => facts),
-    checks: checkRows.map((row) => ({ templateId: row.template_id, sourceId: row.source_id, pricingVersion: String(row.pricing_version), checkedAt: row.checked_at })) });
+    checks: checkRows.map((row) => ({ templateId: row.template_id, sourceId: row.source_id, pricingVersion: String(row.pricing_version), checkedAt: row.checked_at, ...(row.checked_by_name?.trim() ? { checkedByName: row.checked_by_name.trim() } : {}) })) });
   return new Map(statuses.map((status) => [status.familyId, { ...status, brandHasCurrentSource: brandsWithCurrentSource.has(status.brandId) }]));
 }

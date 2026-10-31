@@ -418,3 +418,37 @@ test("template checks: the migration applies once and refuses a changed or alrea
     await assert.rejects(changed.exec(templateChecksMigration), /differs from the expected body/);
   } finally { await changed.close(); }
 });
+
+const checkedByNameMigration = await readFile(new URL("../../supabase/migrations/20261104100000_supplier_template_checks_checked_by_name.sql", import.meta.url), "utf8");
+
+test("template check names: the rollback TEST file and the assertions file pass on a PGlite replica and leave nothing behind", async () => {
+  const contract = await readFile(new URL("../../supabase/tests/supplier_template_checks_name.sql", import.meta.url), "utf8");
+  const combined = await readFile(new URL("../../supabase/tests/supplier_template_checks_name_TEST.sql", import.meta.url), "utf8");
+  const migrationBody = checkedByNameMigration.replace(/^begin;\s*/i, "").replace(/commit;\s*$/i, "").trim();
+  assert.ok(combined.includes(migrationBody), "TEST contains the exact migration body");
+  assert.ok(combined.includes(contract.slice(contract.search(/\bbegin;\s*/i)).replace(/^begin;\s*/i, "").replace(/select 'PASS[\s\S]*$/, "").trim()), "TEST contains the exact assertions");
+  assert.doesNotMatch(combined, /\bcommit;/i);
+  const db = await templateSeriesReplica(); try {
+    await db.exec(templateChecksMigration); // the per-product check migration is already applied in production
+    const results = await db.exec(combined);
+    assert.match(String((results.at(-1)?.rows[0] as { result?: string } | undefined)?.result), /^PASS: supplier template check name checks completed and rolled back$/);
+    assert.equal((await db.query<{ n: boolean }>("select pg_get_functiondef('public.supplier_template_checks_latest(uuid[])'::regprocedure) like '%checked_by_name%' n")).rows[0].n, false, "the migration was rolled back");
+  } finally { await db.close(); }
+});
+
+test("template check names: the migration applies once and refuses a changed function", async () => {
+  const db = await templateSeriesReplica(); try {
+    await db.exec(templateChecksMigration);
+    await db.exec(checkedByNameMigration);
+    assert.equal((await db.query<{ n: boolean }>("select pg_get_functiondef('public.supplier_template_checks_latest(uuid[])'::regprocedure) like '%checked_by_name%' n")).rows[0].n, true);
+    await assert.rejects(db.exec(checkedByNameMigration), /already patched/);
+  } finally { await db.close(); }
+  const changed = await templateSeriesReplica(); try {
+    await changed.exec(templateChecksMigration);
+    await changed.exec("create or replace function public.supplier_template_checks_latest(p_brand_ids uuid[]) returns jsonb language sql as $$ select '[]'::jsonb $$;");
+    await assert.rejects(changed.exec(checkedByNameMigration), /differs from the expected body/);
+  } finally { await changed.close(); }
+  const missing = await templateSeriesReplica(); try {
+    await assert.rejects(missing.exec(checkedByNameMigration), /apply the template checks migration first/);
+  } finally { await missing.close(); }
+});
