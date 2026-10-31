@@ -1,5 +1,5 @@
 import { assertSupplierProfile, type PriceBasis, type RawSupplierRow, type SupplierProfile } from "./supplier-price-contracts";
-import { normalizeSupplierRows } from "./supplier-price-import";
+import { normalizeSupplierRows, plainSupplierDimension, supplierDimensionFamily, supplierFamilyKey } from "./supplier-price-import";
 
 // Plain-language import setup. Everything here produces or reads the EXISTING import-profile shape (supplier_price_profiles.config);
 // there is no second import format and users never see or write that JSON.
@@ -97,15 +97,60 @@ export function compatibleProfile(profiles: WizardProfileOption[], headers: stri
   return profiles.find((profile) => profileRequiredColumns(profile.config).every((column) => have.has(column))) ?? null;
 }
 
-export type WizardPreviewRow = { code: string; dimension: string; tier: string; price: string };
+export type WizardPreviewRow = { code: string; dimension: string; tier: string; price: string; family?: string; subfamily?: string };
 const sizeLabel = (value: string) => value.replace(/\s*[x*]\s*/gi, " × ");
 /** Normalised rows from the same normalisation the real import uses, so users see what will be extracted. */
 export function previewImport(rows: RawSupplierRow[], profile: SupplierProfile, limit = 5): WizardPreviewRow[] {
   const cells = normalizeSupplierRows(rows.slice(0, 300), profile).filter((cell) => cell.price !== null && cell.code);
-  return cells.slice(0, limit).map((cell) => ({
-    code: cell.code, dimension: cell.dimension && /\d/.test(cell.dimension) ? sizeLabel(cell.dimension) : "—", tier: cell.dimension && !/\d/.test(cell.dimension) ? cell.dimension : "—",
-    price: `${profile.currency} ${cell.price!.toLocaleString("en-US", { maximumFractionDigits: 2 })}`,
-  }));
+  return cells.slice(0, limit).map((cell) => {
+    // A family-tagged dimension is shown as its plain category or tier; the family has its own column. Without a family column nothing changes.
+    const plain = plainSupplierDimension(cell.dimension), tagged = supplierDimensionFamily(cell.dimension);
+    return {
+      code: cell.code, dimension: plain && /\d/.test(plain) ? sizeLabel(plain) : "—", tier: plain && !/\d/.test(plain) ? plain : "—",
+      price: `${profile.currency} ${cell.price!.toLocaleString("en-US", { maximumFractionDigits: 2 })}`,
+      ...(profile.series_column ? { family: tagged?.family ?? "—" } : {}),
+      ...(profile.subfamily_column ? { subfamily: tagged?.subfamily || "—" } : {}),
+    };
+  });
+}
+
+// ---- Supplier families in the wizard (step 4). Pure helpers; the component only reads and saves through the existing server actions.
+export type FileFamily = { family: string; key: string; rows: number };
+export type SavedFamilyRow = { template_id: string; family: string; family_key: string };
+/** The distinct families in the uploaded rows (same rule as the identity builder: text only, trimmed, compared by key). First spelling wins. */
+export function familiesInRows(rows: RawSupplierRow[], column: string): FileFamily[] {
+  const found = new Map<string, FileFamily>();
+  for (const row of rows) {
+    const value = row.values[column];
+    const family = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+    if (!family) continue;
+    const key = supplierFamilyKey(family), item = found.get(key);
+    if (item) item.rows++; else found.set(key, { family, key, rows: 1 });
+  }
+  return [...found.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+/** What a product already has saved, limited to families this file actually contains. A saved family that is missing is never replaced by another. */
+export function initialFamilyChoices(saved: SavedFamilyRow[], file: FileFamily[]): Record<string, string[]> {
+  const inFile = new Set(file.map((item) => item.key)), choices: Record<string, string[]> = {};
+  for (const row of saved) if (inFile.has(row.family_key)) choices[row.template_id] = [...(choices[row.template_id] ?? []), row.family_key];
+  return choices;
+}
+/** Saved families of the chosen products that this file does not contain. */
+export function missingSavedFamilies(saved: SavedFamilyRow[], file: FileFamily[], templateIds: string[]): SavedFamilyRow[] {
+  const inFile = new Set(file.map((item) => item.key)), chosen = new Set(templateIds);
+  return saved.filter((row) => chosen.has(row.template_id) && !inFile.has(row.family_key));
+}
+/** The saves to make: only products the user ticked AND changed, and only when the chosen set differs from the saved one. */
+export function familySaves(selected: string[], edits: Record<string, string[]>, saved: SavedFamilyRow[], file: FileFamily[]): Array<{ templateId: string; families: string[] }> {
+  const result: Array<{ templateId: string; families: string[] }> = [];
+  for (const templateId of selected) {
+    const edit = edits[templateId];
+    if (!edit) continue;
+    const wanted = new Set(edit), current = new Set(saved.filter((row) => row.template_id === templateId).map((row) => row.family_key));
+    if (wanted.size === current.size && [...wanted].every((key) => current.has(key))) continue;
+    result.push({ templateId, families: file.filter((item) => wanted.has(item.key)).map((item) => item.family) });
+  }
+  return result;
 }
 
 export function suggestedImportTitle(brandName: string, now: Date = new Date()) {
