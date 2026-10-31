@@ -1,19 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { parseSupplierFile } from "@/lib/products/supplier-price-file";
 import { supplierImportChunks } from "@/lib/products/supplier-price-import";
 import { assertSupplierProfile, type RawSupplierRow, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import {
-  compatibleProfile, initialPriceSelection, mappingFromProfile, previewImport, profileFromMapping, profileRequiredColumns, suggestDefinition, suggestMapping,
-  type WizardDefinition, type WizardMapping, type WizardPriceMode, type WizardProfileOption,
+  compatibleProfile, familiesInRows, familySaves, initialFamilyChoices, initialPriceSelection, mappingFromProfile, missingSavedFamilies, previewImport, profileFromMapping, profileRequiredColumns, suggestDefinition, suggestMapping,
+  type SavedFamilyRow, type WizardDefinition, type WizardMapping, type WizardPriceMode, type WizardProfileOption,
 } from "@/lib/products/supplier-import-wizard";
 import {
   attachSupplierWorkingFile, cancelSupplierImport, compactSupplierSourceChunks, confirmSupplierCoverage, continueSupplierImportCleanup, createSupplierSource, createSupplierSourceDefinition,
-  archiveBlockingSupplierSource, describeSupplierImport, finalizeSupplierSource, prepareSupplierSourceReview, linkSupplierSourceDefinition, listIncompleteSupplierImports, saveSupplierProfile, supplierProfileForImport, supplierSourceUploadStatus, uploadSupplierChunk, validateSupplierReplacement, verifySupplierReplacement,
+  archiveBlockingSupplierSource, describeSupplierImport, finalizeSupplierSource, prepareSupplierSourceReview, linkSupplierSourceDefinition, listIncompleteSupplierImports, listSupplierTemplateFamilies, saveSupplierProfile, setSupplierTemplateFamilies, supplierProfileForImport, supplierSourceUploadStatus, uploadSupplierChunk, validateSupplierReplacement, verifySupplierReplacement,
 } from "@/app/products/price-updates/supplier-sources/actions";
 import { SupplierImportResult, type ReviewUiState } from "@/components/products/supplier-import-result";
 import { blockingSourceFromError, previewReplacement, replacementMismatchWarning, type ReplaceContext, type ReplacementVerdict } from "@/lib/products/supplier-replacement";
@@ -21,6 +21,7 @@ import { finalizeSupplierImport, resolveImportDefinition, runSupplierImportUploa
 import type { IncompleteSupplierImport } from "@/lib/products/supplier-import-cancel";
 
 // Normal import flow: Upload → Match columns → Details → Families → Review. Technical setup stays under Advanced import settings.
+const noSavedFamilies: SavedFamilyRow[] = [];
 const card = "rounded-lg border border-zinc-200 bg-white shadow-sm";
 const input = "h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
 const button = "inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800 disabled:opacity-50";
@@ -55,6 +56,21 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
   const createdDefinition = useRef<{ name: string; id: string } | null>(null);
   const refreshIncomplete = useCallback(() => listIncompleteSupplierImports(brandId).then(setIncomplete).catch(() => setIncomplete([])), [brandId]);
   useEffect(() => { if (approver) void refreshIncomplete(); }, [approver, refreshIncomplete]);
+  // Supplier families: the families in the chosen file, and what is already saved for the chosen price-list type. Reading only; saving happens in startReview.
+  const hasFamilyColumn = Boolean(mapping?.series);
+  const fileFamilies = useMemo(() => mapping?.series ? familiesInRows(rows, mapping.series) : [], [rows, mapping?.series]);
+  const [savedFamilies, setSavedFamilies] = useState<SavedFamilyRow[]>([]), [familyEdits, setFamilyEdits] = useState<Record<string, string[]>>({}), [familyNotice, setFamilyNotice] = useState("");
+  const loadSavedFor = approver && (step === 4 || step === 5) && hasFamilyColumn && definitionId && definitionId !== "new" ? definitionId : "";
+  useEffect(() => {
+    if (!loadSavedFor) return;
+    let cancelled = false;
+    listSupplierTemplateFamilies({ definitionId: loadSavedFor })
+      .then((saved) => { if (!cancelled) { setSavedFamilies(saved); setFamilyNotice(""); } })
+      .catch(() => { if (!cancelled) { setSavedFamilies([]); setFamilyNotice("The saved Supplier families could not be read. Nothing was changed."); } });
+    return () => { cancelled = true; };
+  }, [loadSavedFor]);
+  const activeSaved = loadSavedFor ? savedFamilies : noSavedFamilies;
+  const initialChoices = useMemo(() => initialFamilyChoices(activeSaved, fileFamilies), [activeSaved, fileFamilies]);
   const sha256 = async (chosen: File) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await chosen.arrayBuffer())), (byte) => byte.toString(16).padStart(2, "0")).join("");
   const uploadDeps = (chosen: File | null): SupplierUploadDeps => ({
     storeFile: async (path) => { if (!chosen) throw Error("Select the original file to upload it again."); const { error } = await createClient().storage.from("supplier-price-sources").upload(path, chosen, { upsert: false }); if (error && !("statusCode" in error && ["409", "400"].includes(String(error.statusCode)))) throw Error(error.message); },
@@ -122,7 +138,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       const parsed = await parseSupplierFile(chosen); if (!parsed.length) throw Error("The price list has no data rows.");
       const names = Object.keys(parsed[0].values), match = compatibleProfile(profiles, names);
       const initial = initialPriceSelection(names, match ? mappingFromProfile(match.config) : suggestMapping(names), Boolean(match));
-      setFile(chosen); setRows(parsed); setSaved(match); setUseSaved(false); setMapping(initial.mapping); setPriceMode(initial.mode); setMultiplePriceColumnsDetected(initial.multipleDetected);
+      setFile(chosen); setRows(parsed); setFamilyEdits({}); setSaved(match); setUseSaved(false); setMapping(initial.mapping); setPriceMode(initial.mode); setMultiplePriceColumnsDetected(initial.multipleDetected);
       const suggestion = suggestDefinition(definitions, match?.id ?? null);
       if (suggestion) chooseDefinition(suggestion.id); else { setDefinitionId(definitions.length ? "" : "new"); setSelected([]); }
     });
@@ -163,6 +179,8 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       }
       const before = new Set(definition?.familyIds ?? []);
       if (!withoutReview && coverageId && (definitionId === "new" || selected.length !== before.size || selected.some((id) => !before.has(id)))) await confirmSupplierCoverage(coverageId, selected);
+      // Families are saved only now: the database refuses a family for a product the definition does not cover yet.
+      if (!withoutReview && coverageId && hasFamilyColumn) await saveProductFamilies(coverageId);
       // Stage 1 is over only when the database says imported: describe the stored source and the resolver's verdict, then stage 2 (review) separately.
       const verdict = await describeSupplierImport(brandId, result.id);
       setReplaced({ ...verdict, existing: result.existing }); setImportedSourceId(result.id); setFile(null); setRows([]); setStep(1); router.refresh();
@@ -172,6 +190,17 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       }
       if (verdict.status !== "not_imported") await prepareReview(result.id);
     });
+  }
+  /** Saves the families the user chose, only for ticked products they changed. A failure is reported with its exact message; the import itself is already done. */
+  async function saveProductFamilies(definitionForFamilies: string) {
+    const changes = familySaves(selected, familyEdits, activeSaved, fileFamilies);
+    if (!changes.length) return;
+    try {
+      for (const change of changes) await setSupplierTemplateFamilies(definitionForFamilies, change.templateId, change.families);
+      setFamilyNotice(`Supplier families saved for ${changes.length} ${changes.length === 1 ? "product" : "products"}.`);
+    } catch (error) {
+      setFamilyNotice(`The price list is imported, but the Supplier families were not saved: ${error instanceof Error ? error.message : "Something went wrong."} Choose them again later.`);
+    }
   }
   /** Product price review is prepared after, and independently of, the import. A retry finds the existing review instead of creating another. */
   async function prepareReview(sourceId: string) {
@@ -193,6 +222,14 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       return { ...current, priceColumns: current.priceColumns.slice(0, 1).map((item) => ({ ...item, label: "" })) };
     });
   };
+  const showFamilyChoice = hasFamilyColumn && fileFamilies.length > 0;
+  const choiceFor = (templateId: string) => familyEdits[templateId] ?? initialChoices[templateId] ?? [];
+  const chooseFamily = (templateId: string, key: string, on: boolean) => setFamilyEdits((current) => {
+    const now = current[templateId] ?? initialChoices[templateId] ?? [];
+    return { ...current, [templateId]: on ? [...now.filter((item) => item !== key), key] : now.filter((item) => item !== key) };
+  });
+  const missingFamilies = showFamilyChoice ? missingSavedFamilies(activeSaved, fileFamilies, selected) : [];
+  const productName = (templateId: string) => families.find((item) => item.id === templateId)?.name ?? "this product";
   const mappingReady = Boolean(mapping?.fullCode && mapping.priceColumns.length && !profileError);
   const familiesReady = selected.length > 0 && (definitionId !== "new" || newName.trim() !== "") && definitionId !== "";
   const definitionReady = definitionId === "new" ? Boolean(newName.trim()) : Boolean(definition);
@@ -206,6 +243,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       return <li key={name} className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 ${state === "done" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : state === "current" ? "border-emerald-900 bg-emerald-900 text-white" : "border-zinc-200 text-zinc-500"}`} aria-current={state === "current" ? "step" : undefined}><span aria-hidden="true">{state === "done" ? "✓" : number}</span>{name}</li>; })}</ol>
     <div><h3 className="text-base font-semibold text-zinc-950">Import new price list</h3><p className="text-xs text-zinc-500">{brandName} · step {step} of 5.</p></div>
     <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>
+    {familyNotice ? <p role="status" className="text-sm text-amber-800">{familyNotice}</p> : null}
 
     {step === 1 ? <div className="space-y-3">
       <label className="grid gap-1 text-xs"><span className="font-medium">Price list file (Excel or CSV)</span><input type="file" accept=".xlsx,.csv,.json" className={input} disabled={busy} onChange={(event) => { const chosen = event.target.files?.[0]; if (chosen) readFile(chosen); }} /></label>
@@ -233,8 +271,8 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
           <label className="grid gap-1"><span className="font-medium">Article code length</span><input type="number" min={1} value={mapping.articleLength} onChange={(event) => set("articleLength", Number(event.target.value))} className={input} /></label>
           <label className="grid gap-1"><span className="font-medium">Finish code length</span><input type="number" min={1} value={mapping.finishLength} onChange={(event) => set("finishLength", Number(event.target.value))} className={input} /></label></> : null}</div></details>
       {profileError ? <p className="text-xs text-amber-800">{profileError}</p> : null}
-      {preview.length ? <div className="overflow-x-auto"><p className="mb-1 text-xs font-semibold text-zinc-600">What ProjectWorkflow will read</p><table className="w-full text-left text-xs" aria-label="Normalised preview"><thead><tr className="text-zinc-500"><th className="py-1 pr-3">Code</th><th className="pr-3">Dimension</th><th className="pr-3">Tier</th><th>Price</th></tr></thead>
-        <tbody>{preview.map((row, index) => <tr key={`${row.code}-${index}`} className="border-t border-zinc-100"><td className="py-1 pr-3 font-mono">{row.code}</td><td className="pr-3">{row.dimension}</td><td className="pr-3">{row.tier}</td><td className="tabular-nums">{row.price}</td></tr>)}</tbody></table></div>
+      {preview.length ? <div className="overflow-x-auto"><p className="mb-1 text-xs font-semibold text-zinc-600">What ProjectWorkflow will read</p><table className="w-full text-left text-xs" aria-label="Normalised preview"><thead><tr className="text-zinc-500"><th className="py-1 pr-3">Code</th><th className="pr-3">Dimension</th><th className="pr-3">Tier</th>{profile?.series_column ? <th className="pr-3">Family</th> : null}{profile?.subfamily_column ? <th className="pr-3">Sub-family</th> : null}<th>Price</th></tr></thead>
+        <tbody>{preview.map((row, index) => <tr key={`${row.code}-${index}`} className="border-t border-zinc-100"><td className="py-1 pr-3 font-mono">{row.code}</td><td className="pr-3">{row.dimension}</td><td className="pr-3">{row.tier}</td>{profile?.series_column ? <td className="pr-3">{row.family}</td> : null}{profile?.subfamily_column ? <td className="pr-3">{row.subfamily}</td> : null}<td className="tabular-nums">{row.price}</td></tr>)}</tbody></table></div>
         : mappingReady ? <p className="text-xs text-amber-800">No priced rows were found with these columns. Check the Supplier code and price columns.</p> : null}
       <div className="flex gap-2"><button type="button" className={button} onClick={() => setStep(1)}>Back</button><button type="button" className={primary} disabled={!mappingReady || !preview.length} onClick={() => setStep(3)}>Next: details</button></div>
     </div> : null}
@@ -254,8 +292,12 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       {definitionId === "new" ? <label className="grid gap-1 text-xs"><span className="font-medium">Name for this type of price list</span><input value={newName} onChange={(event) => setNewName(event.target.value)} className={input} placeholder="Furniture" /></label> : null}
       {definition && definition.familyIds.length ? <div className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950"><span>Previous coverage found: {definition.familyIds.length} {definition.familyIds.length === 1 ? "Family" : "Families"}</span>
         <button type="button" className={button} onClick={() => setSelected(definition.familyIds)}>Use previous Families</button></div> : null}
+      {missingFamilies.length ? <div role="alert" className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{missingFamilies.map((row) => <p key={`${row.template_id}-${row.family_key}`}><span className="font-semibold">Family {row.family} is not in this price list. Choose again.</span> Product: {productName(row.template_id)}.</p>)}</div> : null}
       <fieldset className="space-y-1"><legend className="text-sm font-medium text-zinc-800">Families covered by this price list</legend>
-        <ul className="grid gap-1 sm:grid-cols-2">{families.map((family) => <li key={family.id}><label className="flex items-center gap-2 rounded border border-zinc-100 px-2 py-1 text-sm"><input type="checkbox" className="accent-emerald-900" checked={selected.includes(family.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, family.id] : current.filter((id) => id !== family.id))} />{family.name}</label></li>)}</ul></fieldset>
+        <ul className="grid gap-1 sm:grid-cols-2">{families.map((family) => <li key={family.id} className={showFamilyChoice && selected.includes(family.id) ? "sm:col-span-2" : undefined}><label className="flex items-center gap-2 rounded border border-zinc-100 px-2 py-1 text-sm"><input type="checkbox" className="accent-emerald-900" checked={selected.includes(family.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, family.id] : current.filter((id) => id !== family.id))} />{family.name}</label>
+          {showFamilyChoice && selected.includes(family.id) ? <fieldset className="mt-1 space-y-1 rounded border border-emerald-100 bg-emerald-50/50 p-2"><legend className="px-1 text-xs font-semibold text-zinc-800">Supplier family for {family.name}</legend>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">{fileFamilies.map((item) => <label key={item.key} className="flex items-center gap-1.5 text-sm"><input type="checkbox" className="accent-emerald-900" checked={choiceFor(family.id).includes(item.key)} onChange={(event) => chooseFamily(family.id, item.key, event.target.checked)} />{item.family}</label>)}</div>
+            <p className="text-xs text-zinc-600">Choose one. Choose more only if this product is sold under more than one family. If you choose none, every family in the list is compared.</p></fieldset> : null}</li>)}</ul></fieldset>
       {conflictNotice}
       <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={busy} onClick={() => setStep(3)}>Back</button><button type="button" className={primary} disabled={busy || !familiesReady} onClick={() => setStep(5)}>Next: review</button>
         {noFamilies ? <button type="button" className={button} disabled={busy || !definitionReady || !profile || !file} onClick={() => void startReview(true)}>Finish import without review</button> : null}</div>
@@ -266,6 +308,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
     {step === 5 && mapping ? <div className="space-y-3"><dl className="grid gap-3 text-sm sm:grid-cols-2">
       {([["Brand", brandName], ["Price list", title], ["Effective from", effective || "Not set"], ["Currency", known && saved ? saved.config.currency : mapping.currency], ["Price basis", (known && saved ? saved.config.basis : mapping.basis) === "net" ? "Net" : "List"], ["Families", String(selected.length)], ["Rows detected", rows.length.toLocaleString("en-US")]] as const).map(([label, value]) =>
         <div key={label}><dt className="text-xs text-zinc-500">{label}</dt><dd className="font-semibold text-zinc-950">{value}</dd></div>)}</dl>
+      {showFamilyChoice && !replace ? <p className="text-sm text-zinc-800"><span className="text-xs text-zinc-500">Supplier families: </span>{selected.map((id) => ({ id, keys: choiceFor(id) })).filter((item) => item.keys.length).map((item) => `${productName(item.id)}: ${fileFamilies.filter((f) => item.keys.includes(f.key)).map((f) => f.family).join(", ")}`).join(" · ") || "none chosen"}. They are saved when you press the button below.</p> : null}
       {replace && file ? (() => { const proposedCurrency = known && saved ? saved.config.currency : mapping.currency, proposedBasis = known && saved ? saved.config.basis : mapping.basis; const preview = previewReplacement({ versions: replace.versions, current: replace.current, proposed: { effectiveFrom: effective, currency: proposedCurrency, basis: proposedBasis } });
         const profileColumns = (() => { const profileId = definitions.find((item) => item.id === replace.definitionId)?.profileId; const config = profiles.find((item) => item.id === profileId)?.config; return config ? profileRequiredColumns(config) : null; })();
         const mismatch = replacementMismatchWarning({ definitionName: replace.definitionName, requiredColumns: profileColumns, fileHeaders: headers });
