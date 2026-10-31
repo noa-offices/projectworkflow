@@ -1,10 +1,17 @@
-import type { PriceMatch } from "./supplier-price-contracts";
+import type { DurableBinding, PriceMatch, SourceIdentity } from "./supplier-price-contracts";
+import { comparisonCode, matchSupplierPrices } from "./supplier-price-matching";
 
 export type PriceLineState = "same" | "changed" | "not_in_supplier_list" | "needs_mapping" | "ambiguous" | "shared";
+/** Everything needed to save one alias mapping for a Needs-mapping line, plus what the line would become (computed in memory, no writes). */
+export type LineMapping = { code: string; priceField: string; sourceDimension: string; tierLabel: string; targetKey: string; pricingVersion: string; targetPrice: number | null; targetCurrency: string; preview: PriceLineState };
 export type PriceLine = {
   key: string; code: string; field: string; ourPrice: number | null; ourCurrency: string; supplierPrice: number | null; supplierCurrency: string | null;
   /** Supplier minus ours; only when both are known and in the same currency. */
   difference: number | null; state: PriceLineState;
+  /** Present only when this line can safely be mapped here (one target, one supplier tier, no saved mapping yet). */
+  mapping?: LineMapping;
+  /** Present when a saved, confirmed mapping (binding) of the Brand is what matches this line. */
+  binding?: { id: string; kind: string };
 };
 export const priceLineLimit = 500;
 
@@ -20,8 +27,14 @@ export const priceLineStateLabels: Record<PriceLineState, string> = {
  * This template's lines from matches computed over the whole source coverage (so a code shared with another product classifies
  * exactly as in a review). Read-only: it only reshapes matches. Lines are one per pricing target of this template.
  */
-export function buildPriceLines(matches: PriceMatch[], templateId: string): { lines: PriceLine[]; truncated: boolean } {
+export function buildPriceLines(matches: PriceMatch[], templateId: string, bindings: Array<Pick<DurableBinding, "id" | "code" | "price_field" | "source_dimension" | "kind" | "confirmed">> = []): { lines: PriceLine[]; truncated: boolean } {
   const lines: PriceLine[] = [];
+  const identity = (code: string, field: string, dimension: string) => JSON.stringify([comparisonCode(code), field, dimension]);
+  // Same rule as the matcher: two bindings for one identity are both ignored.
+  const grouped = new Map<string, typeof bindings>();
+  for (const binding of bindings.filter((item) => item.confirmed)) grouped.set(identity(binding.code, binding.price_field, binding.source_dimension), [...(grouped.get(identity(binding.code, binding.price_field, binding.source_dimension)) ?? []), binding]);
+  const tiersPerCode = new Map<string, number>();
+  for (const match of matches) if (match.source) { const key = JSON.stringify([comparisonCode(match.source.code), match.source.price_field]); tiersPerCode.set(key, (tiersPerCode.get(key) ?? 0) + 1); }
   for (const match of matches) {
     const state = states[match.classification];
     if (!state) continue; // unmatched, invalid or companion rows belong to the supplier list, not to a pricing target
@@ -29,7 +42,13 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string): { li
       if (target.template_id !== templateId) continue;
       const supplierPrice = match.source?.price ?? null;
       const sameCurrency = match.source ? match.source.currency === target.currency : false;
+      const saved = match.source ? grouped.get(identity(match.source.code, match.source.price_field, match.source.dimension)) : undefined;
+      const binding = saved?.length === 1 ? { id: saved[0].id, kind: saved[0].kind } : undefined;
+      const mappable = state === "needs_mapping" && !binding && match.source && match.source.price !== null && match.targets.length === 1
+        && tiersPerCode.get(JSON.stringify([comparisonCode(match.source.code), match.source.price_field])) === 1;
       lines.push({
+        ...(binding ? { binding } : {}),
+        ...(mappable && match.source ? { mapping: previewMapping(match.source, target) } : {}),
         key: `${match.key}|${target.key}`, code: target.raw_code || target.code, field: [target.label, target.dimension_label ?? target.dimension].filter(Boolean).join(" · "),
         ourPrice: target.price, ourCurrency: target.currency, supplierPrice, supplierCurrency: match.source?.currency ?? null,
         difference: supplierPrice !== null && target.price !== null && sameCurrency ? Math.round((supplierPrice - target.price) * 100) / 100 : null, state,
@@ -38,6 +57,13 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string): { li
   }
   lines.sort((a, b) => a.code.localeCompare(b.code) || a.field.localeCompare(b.field) || a.key.localeCompare(b.key));
   return { lines: lines.slice(0, priceLineLimit), truncated: lines.length > priceLineLimit };
+}
+
+/** In-memory preview: the real matcher with the proposed alias added. Never writes. */
+export function previewMapping(source: SourceIdentity, target: PriceMatch["targets"][number]): LineMapping {
+  const proposed: DurableBinding = { id: "preview", code: source.code, price_field: source.price_field, source_dimension: source.dimension, target_keys: [target.key], kind: "alias", confirmed: true };
+  const [result] = matchSupplierPrices([source], [target], [], [proposed]);
+  return { code: source.code, priceField: source.price_field, sourceDimension: source.dimension, tierLabel: source.raw_dimension ?? source.dimension, targetKey: target.key, pricingVersion: target.pricing_version, targetPrice: target.price, targetCurrency: target.currency, preview: states[result.classification] ?? "ambiguous" };
 }
 
 export type PriceLineFilter = "all" | "attention" | "same";
