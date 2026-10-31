@@ -4236,6 +4236,260 @@ export function ProductLibrarySelector({
                         ) : null}
                             </div>
                           </section>
+                          <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                                  Pricing and details
+                                </p>
+                              </div>
+                            </div>
+                            <div className="grid gap-4 lg:grid-cols-2">
+                              <div className="min-w-0 space-y-3">
+                                <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-600">Price</p>
+                        {hasMixedAccessoryCurrencies ? (
+                          <p className="text-xs leading-5 text-amber-700">
+                            Mixed-currency add-ons use the conversion rates below.
+                          </p>
+                        ) : null}
+                            {hasMixedLinkedProductCurrencies ? (
+                              <p className="text-xs leading-5 text-amber-700">
+                                Mixed-currency linked products use the conversion rates below.
+                              </p>
+                            ) : null}
+                            <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
+                              <p className="font-bold uppercase text-zinc-500">Source Currency Total</p>
+                              <p className="text-[10px] font-normal normal-case text-zinc-500">Exact configured unit in source currency, before conversion and quotation rounding.</p>
+                              {sourceTotalsList.map((line) => (
+                                <p key={line.currency}>
+                                  {line.currency} subtotal: {formatMoney(line.currency, line.amount)}
+                                </p>
+                              ))}
+                            </div>
+                            {nonAedCurrencies.length ? (
+                              <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left text-xs leading-5 text-amber-900">
+                                <p className="font-bold uppercase">
+                                  {usesWorkstationFlow ? "5. Currency conversion" : "Currency Conversion"}
+                                </p>
+                            {Array.from(originalCurrencyTotals.entries()).map(([currency, amount]) => (
+                              <p key={currency}>
+                                {currency} total: {formatMoney(currency, amount)}
+                              </p>
+                            ))}
+                            {nonAedCurrencies.map((currency) => (
+                              <label key={currency} className="block">
+                                <span className="text-[10px] font-bold uppercase">
+                                  {currency} to AED rate
+                                </span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="0.0001"
+                                  placeholder={currency === "USD" ? "3.67" : currency === "EUR" ? "4.10" : ""}
+                                  value={templateExchangeRates[currency] ?? ""}
+                                  onChange={(event) =>
+                                    setExchangeRates((current) => ({
+                                      ...current,
+                                      [template.id]: {
+                                        ...(current[template.id] ?? {}),
+                                        [currency]: event.target.value,
+                                      },
+                                    }))
+                                  }
+                                  className="mt-1 h-8 w-full border border-amber-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                />
+                              </label>
+                            ))}
+                            {missingExchangeRate ? (
+                              <p>Enter an exchange rate for {missingExchangeRateCurrencyList.join(", ")} to calculate the AED total.</p>
+                            ) : (
+                              <p className="font-semibold">
+                                Converted final: {formatQuotationMoney("AED", convertedPreviewTotal)}
+                              </p>
+                            )}
+                          </div>
+                        ) : null}
+                        <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
+                          <p className="font-bold uppercase text-zinc-500">
+                            {usesWorkstationFlow ? "6. Pricing / Discount" : "Pricing / Discount"}
+                          </p>
+                          <p>{missingExchangeRate ? "Quotation unit price: awaiting exchange rate" : "U.Price: " + formatQuotationMoney(previewCurrency, effectiveQuoteUnitPrice)}</p>
+                          {needsUpdatedPriceDecision ? (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                              <p className="font-semibold">
+                                Price updated. Apply updated price to this selected quotation item?
+                              </p>
+                              <p className="mt-1">
+                                Current quote price: {formatQuotationMoney(previewCurrency, previousQuotedPrice ?? effectiveQuoteUnitPrice)}
+                              </p>
+                              <p>
+                                Updated source price: {formatQuotationMoney(previewCurrency, pendingUpdatedPrice)}
+                              </p>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTemplatePriceOverrides((current) => ({
+                                      ...current,
+                                      [template.id]: undefined,
+                                    }));
+                                    setPendingPriceUpdateChoice(null);
+                                  }}
+                                  className="rounded-md border border-emerald-700 bg-emerald-900 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-800"
+                                >
+                                  Apply Updated Price
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTemplatePriceOverrides((current) => ({
+                                      ...current,
+                                      [template.id]: previousQuotedPrice ?? effectiveQuoteUnitPrice,
+                                    }));
+                                    setPendingPriceUpdateChoice(null);
+                                  }}
+                                  className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400"
+                                >
+                                  Keep Current Quote Price
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                          <label className="block">
+                            <span className="text-[10px] font-bold uppercase text-zinc-500">Discount Type</span>
+                            <select
+                              value={selectedDiscountType}
+                              onChange={(event) =>
+                                setDiscountTypes((current) => ({
+                                  ...current,
+                                  [template.id]: event.target.value,
+                                }))
+                              }
+                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                            >
+                              <option value="none">None</option>
+                              <option value="amount">Amount</option>
+                              <option value="percent">Percent</option>
+                            </select>
+                          </label>
+                          <label className="block">
+                            <span className="text-[10px] font-bold uppercase text-zinc-500">Discount</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={selectedDiscountType === "percent" ? 100 : undefined}
+                              step="0.01"
+                              disabled={selectedDiscountType === "none"}
+                              value={selectedDiscountType === "none" ? "" : discountValues[template.id] ?? ""}
+                              onChange={(event) =>
+                                setDiscountValues((current) => ({
+                                  ...current,
+                                  [template.id]: event.target.value,
+                                }))
+                              }
+                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100"
+                            />
+                          </label>
+                          <p>
+                            Discount: {selectedDiscountType === "percent" ? `${selectedDiscountValue}% / ` : ""}
+                            {formatQuotationMoney(previewCurrency, unitDiscountAmount)}
+                          </p>
+                          <p>Net Price: {formatQuotationMoney(previewCurrency, netPricePreview)}</p>
+                          <p>Net Total: {formatQuotationMoney(previewCurrency, netTotalPreview)}</p>
+                        </div>
+                              </div>
+                              <div className="min-w-0 space-y-3">
+                                <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-600">Product details</p>
+                              <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
+                                <label className="block">
+                                  <span className="text-[10px] font-bold uppercase text-zinc-500">Dimensions</span>
+                                  <input value={configuredDimensions[template.id] ?? localDimension ?? ""} onFocus={() => setDimensionBeforeEditing({ templateId: template.id, value: configuredDimensionEditedByTemplate[template.id] ? configuredDimensions[template.id] : undefined })} onChange={(event) => { setConfiguredDimensions((current) => ({ ...current, [template.id]: event.target.value })); setConfiguredDimensionEditedByTemplate((current) => ({ ...current, [template.id]: true })); }} onBlur={() => { const previous = dimensionBeforeEditing; setConfiguredDimensions((current) => { if (current[template.id]?.trim()) return current; const next = { ...current }; if (previous?.templateId === template.id && previous.value?.trim()) next[template.id] = previous.value; else delete next[template.id]; return next; }); }} placeholder="e.g. 240x120x75 cmH" className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                                  <button type="button" onClick={() => { setConfiguredDimensions((current) => { const next = { ...current }; delete next[template.id]; return next; }); setConfiguredDimensionEditedByTemplate((current) => ({ ...current, [template.id]: false })); }} className="mt-1 font-semibold text-emerald-900">Reset to product default</button>
+                                </label>
+                                <label className="block">
+                                  <span className="text-[10px] font-bold uppercase text-zinc-500">Brand</span>
+                                  <input value={quotationBrands[template.id] ?? brandNameById.get(template.brand_id) ?? ""} onChange={(event) => setQuotationBrands((current) => ({ ...current, [template.id]: event.target.value }))} onBlur={() => setQuotationBrands((current) => current[template.id]?.trim() ? current : { ...current, [template.id]: brandNameById.get(template.brand_id) ?? "" })} className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                                </label>
+                                <label className="block">
+                                  <span className="text-[10px] font-bold uppercase text-zinc-500">Country of Origin</span>
+                                  <input value={quotationOrigins[template.id] ?? originSnapshot ?? ""} onChange={(event) => setQuotationOrigins((current) => ({ ...current, [template.id]: event.target.value }))} onBlur={() => setQuotationOrigins((current) => current[template.id]?.trim() ? current : { ...current, [template.id]: originSnapshot ?? "" })} className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                                </label>
+                              </div>
+                              </div>
+                              <div className="min-w-0 lg:col-span-2">
+                              <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
+                                <p className="font-bold uppercase text-zinc-500">Final Details</p>
+                                <p className="font-bold uppercase text-zinc-500">Final Specification</p>
+                                <div className="space-y-1 rounded-lg border border-zinc-200 bg-white p-3">
+                                  <p className="font-semibold text-zinc-950">{templateSelectionName(template)}</p>
+                                  {template.internal_selection_name ? (
+                                    <p className="text-zinc-500">Quote name: {template.template_name}</p>
+                                  ) : null}
+                                  <textarea
+                                    name="final_specification_override"
+                                    value={finalSpecification ?? ""}
+                                    onChange={(event) => {
+                                      setFinalSpecifications((current) => ({
+                                        ...current,
+                                        [template.id]: event.target.value,
+                                      }));
+                                      setFinalSpecificationEditedByTemplate((current) => ({
+                                        ...current,
+                                        [template.id]: true,
+                                      }));
+                                    }}
+                                    placeholder="Enter final specification for this quotation item"
+                                    rows={8}
+                                    className="mt-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs leading-5 text-zinc-700 outline-none focus:border-emerald-800"
+                                  />
+                                  {finalSpecificationWasEdited ? (
+                                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-amber-700">
+                                      <p>Specification was manually edited. Review if selections changed.</p>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setFinalSpecifications((current) => ({
+                                            ...current,
+                                            [template.id]: generatedFinalSpecification,
+                                          }));
+                                          setFinalSpecificationEditedByTemplate((current) => ({
+                                            ...current,
+                                            [template.id]: false,
+                                          }));
+                                        }}
+                                        className="font-semibold text-emerald-900 transition hover:text-emerald-700"
+                                      >
+                                        Reset to generated specification
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <p className="text-[11px] text-zinc-500">
+                                      This only updates the current quotation item. Template specification stays unchanged.
+                                    </p>
+                                  )}
+                                  <FinalSpecificationAiControl
+                                    check={{
+                                      brand: brandNameById.get(template.brand_id),
+                                      origin: originSnapshot,
+                                      finishTerms: selectedFinishes.flatMap((finish) => [finish.finish_code, finish.finish_name]).filter((term): term is string => Boolean(term)),
+                                    }}
+                                    request={finalSpecificationAiRequest}
+                                    onUseSuggestion={(specification) => {
+                                      setFinalSpecifications((current) => ({
+                                        ...current,
+                                        [template.id]: keepDimensionLine(finalSpecification ?? null, specification),
+                                      }));
+                                      setFinalSpecificationEditedByTemplate((current) => ({
+                                        ...current,
+                                        [template.id]: true,
+                                      }));
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                              </div>
+                            </div>
+                          </section>
                         </div>
                         <aside className="xl:sticky xl:top-24 xl:self-start">
                           <div className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -4643,239 +4897,6 @@ export function ProductLibrarySelector({
                             Mixed-currency advanced options should be reviewed manually.
                           </p>
                         ) : null}
-                        {hasMixedAccessoryCurrencies ? (
-                          <p className="text-xs leading-5 text-amber-700">
-                            Mixed-currency add-ons use the conversion rates below.
-                          </p>
-                        ) : null}
-                            {hasMixedLinkedProductCurrencies ? (
-                              <p className="text-xs leading-5 text-amber-700">
-                                Mixed-currency linked products use the conversion rates below.
-                              </p>
-                            ) : null}
-                            <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
-                              <p className="font-bold uppercase text-zinc-500">Source Currency Total</p>
-                              <p className="text-[10px] font-normal normal-case text-zinc-500">Exact configured unit in source currency, before conversion and quotation rounding.</p>
-                              {sourceTotalsList.map((line) => (
-                                <p key={line.currency}>
-                                  {line.currency} subtotal: {formatMoney(line.currency, line.amount)}
-                                </p>
-                              ))}
-                            </div>
-                            {nonAedCurrencies.length ? (
-                              <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left text-xs leading-5 text-amber-900">
-                                <p className="font-bold uppercase">
-                                  {usesWorkstationFlow ? "5. Currency conversion" : "Currency Conversion"}
-                                </p>
-                            {Array.from(originalCurrencyTotals.entries()).map(([currency, amount]) => (
-                              <p key={currency}>
-                                {currency} total: {formatMoney(currency, amount)}
-                              </p>
-                            ))}
-                            {nonAedCurrencies.map((currency) => (
-                              <label key={currency} className="block">
-                                <span className="text-[10px] font-bold uppercase">
-                                  {currency} to AED rate
-                                </span>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  step="0.0001"
-                                  placeholder={currency === "USD" ? "3.67" : currency === "EUR" ? "4.10" : ""}
-                                  value={templateExchangeRates[currency] ?? ""}
-                                  onChange={(event) =>
-                                    setExchangeRates((current) => ({
-                                      ...current,
-                                      [template.id]: {
-                                        ...(current[template.id] ?? {}),
-                                        [currency]: event.target.value,
-                                      },
-                                    }))
-                                  }
-                                  className="mt-1 h-8 w-full border border-amber-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-                                />
-                              </label>
-                            ))}
-                            {missingExchangeRate ? (
-                              <p>Enter an exchange rate for {missingExchangeRateCurrencyList.join(", ")} to calculate the AED total.</p>
-                            ) : (
-                              <p className="font-semibold">
-                                Converted final: {formatQuotationMoney("AED", convertedPreviewTotal)}
-                              </p>
-                            )}
-                          </div>
-                        ) : null}
-                        <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
-                          <p className="font-bold uppercase text-zinc-500">
-                            {usesWorkstationFlow ? "6. Pricing / Discount" : "Pricing / Discount"}
-                          </p>
-                          <p>{missingExchangeRate ? "Quotation unit price: awaiting exchange rate" : "U.Price: " + formatQuotationMoney(previewCurrency, effectiveQuoteUnitPrice)}</p>
-                          {needsUpdatedPriceDecision ? (
-                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-                              <p className="font-semibold">
-                                Price updated. Apply updated price to this selected quotation item?
-                              </p>
-                              <p className="mt-1">
-                                Current quote price: {formatQuotationMoney(previewCurrency, previousQuotedPrice ?? effectiveQuoteUnitPrice)}
-                              </p>
-                              <p>
-                                Updated source price: {formatQuotationMoney(previewCurrency, pendingUpdatedPrice)}
-                              </p>
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTemplatePriceOverrides((current) => ({
-                                      ...current,
-                                      [template.id]: undefined,
-                                    }));
-                                    setPendingPriceUpdateChoice(null);
-                                  }}
-                                  className="rounded-md border border-emerald-700 bg-emerald-900 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-800"
-                                >
-                                  Apply Updated Price
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTemplatePriceOverrides((current) => ({
-                                      ...current,
-                                      [template.id]: previousQuotedPrice ?? effectiveQuoteUnitPrice,
-                                    }));
-                                    setPendingPriceUpdateChoice(null);
-                                  }}
-                                  className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400"
-                                >
-                                  Keep Current Quote Price
-                                </button>
-                              </div>
-                            </div>
-                          ) : null}
-                          <label className="block">
-                            <span className="text-[10px] font-bold uppercase text-zinc-500">Discount Type</span>
-                            <select
-                              value={selectedDiscountType}
-                              onChange={(event) =>
-                                setDiscountTypes((current) => ({
-                                  ...current,
-                                  [template.id]: event.target.value,
-                                }))
-                              }
-                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-                            >
-                              <option value="none">None</option>
-                              <option value="amount">Amount</option>
-                              <option value="percent">Percent</option>
-                            </select>
-                          </label>
-                          <label className="block">
-                            <span className="text-[10px] font-bold uppercase text-zinc-500">Discount</span>
-                            <input
-                              type="number"
-                              min={0}
-                              max={selectedDiscountType === "percent" ? 100 : undefined}
-                              step="0.01"
-                              disabled={selectedDiscountType === "none"}
-                              value={selectedDiscountType === "none" ? "" : discountValues[template.id] ?? ""}
-                              onChange={(event) =>
-                                setDiscountValues((current) => ({
-                                  ...current,
-                                  [template.id]: event.target.value,
-                                }))
-                              }
-                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100"
-                            />
-                          </label>
-                          <p>
-                            Discount: {selectedDiscountType === "percent" ? `${selectedDiscountValue}% / ` : ""}
-                            {formatQuotationMoney(previewCurrency, unitDiscountAmount)}
-                          </p>
-                          <p>Net Price: {formatQuotationMoney(previewCurrency, netPricePreview)}</p>
-                          <p>Net Total: {formatQuotationMoney(previewCurrency, netTotalPreview)}</p>
-                        </div>
-                              <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
-                                <p className="font-bold uppercase text-zinc-500">Final Details</p>
-                                <p className="font-bold uppercase text-zinc-500">Final Specification</p>
-                                <div className="space-y-1 rounded-lg border border-zinc-200 bg-white p-3">
-                                  <p className="font-semibold text-zinc-950">{templateSelectionName(template)}</p>
-                                  {template.internal_selection_name ? (
-                                    <p className="text-zinc-500">Quote name: {template.template_name}</p>
-                                  ) : null}
-                                  <textarea
-                                    name="final_specification_override"
-                                    value={finalSpecification ?? ""}
-                                    onChange={(event) => {
-                                      setFinalSpecifications((current) => ({
-                                        ...current,
-                                        [template.id]: event.target.value,
-                                      }));
-                                      setFinalSpecificationEditedByTemplate((current) => ({
-                                        ...current,
-                                        [template.id]: true,
-                                      }));
-                                    }}
-                                    placeholder="Enter final specification for this quotation item"
-                                    rows={8}
-                                    className="mt-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs leading-5 text-zinc-700 outline-none focus:border-emerald-800"
-                                  />
-                                  {finalSpecificationWasEdited ? (
-                                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-amber-700">
-                                      <p>Specification was manually edited. Review if selections changed.</p>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setFinalSpecifications((current) => ({
-                                            ...current,
-                                            [template.id]: generatedFinalSpecification,
-                                          }));
-                                          setFinalSpecificationEditedByTemplate((current) => ({
-                                            ...current,
-                                            [template.id]: false,
-                                          }));
-                                        }}
-                                        className="font-semibold text-emerald-900 transition hover:text-emerald-700"
-                                      >
-                                        Reset to generated specification
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <p className="text-[11px] text-zinc-500">
-                                      This only updates the current quotation item. Template specification stays unchanged.
-                                    </p>
-                                  )}
-                                  <FinalSpecificationAiControl
-                                    check={{
-                                      brand: brandNameById.get(template.brand_id),
-                                      origin: originSnapshot,
-                                      finishTerms: selectedFinishes.flatMap((finish) => [finish.finish_code, finish.finish_name]).filter((term): term is string => Boolean(term)),
-                                    }}
-                                    request={finalSpecificationAiRequest}
-                                    onUseSuggestion={(specification) => {
-                                      setFinalSpecifications((current) => ({
-                                        ...current,
-                                        [template.id]: keepDimensionLine(finalSpecification ?? null, specification),
-                                      }));
-                                      setFinalSpecificationEditedByTemplate((current) => ({
-                                        ...current,
-                                        [template.id]: true,
-                                      }));
-                                    }}
-                                  />
-                                </div>
-                                <label className="block">
-                                  <span className="text-[10px] font-bold uppercase text-zinc-500">Dimensions</span>
-                                  <input value={configuredDimensions[template.id] ?? localDimension ?? ""} onFocus={() => setDimensionBeforeEditing({ templateId: template.id, value: configuredDimensionEditedByTemplate[template.id] ? configuredDimensions[template.id] : undefined })} onChange={(event) => { setConfiguredDimensions((current) => ({ ...current, [template.id]: event.target.value })); setConfiguredDimensionEditedByTemplate((current) => ({ ...current, [template.id]: true })); }} onBlur={() => { const previous = dimensionBeforeEditing; setConfiguredDimensions((current) => { if (current[template.id]?.trim()) return current; const next = { ...current }; if (previous?.templateId === template.id && previous.value?.trim()) next[template.id] = previous.value; else delete next[template.id]; return next; }); }} placeholder="e.g. 240x120x75 cmH" className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
-                                  <button type="button" onClick={() => { setConfiguredDimensions((current) => { const next = { ...current }; delete next[template.id]; return next; }); setConfiguredDimensionEditedByTemplate((current) => ({ ...current, [template.id]: false })); }} className="mt-1 font-semibold text-emerald-900">Reset to product default</button>
-                                </label>
-                                <label className="block">
-                                  <span className="text-[10px] font-bold uppercase text-zinc-500">Brand</span>
-                                  <input value={quotationBrands[template.id] ?? brandNameById.get(template.brand_id) ?? ""} onChange={(event) => setQuotationBrands((current) => ({ ...current, [template.id]: event.target.value }))} onBlur={() => setQuotationBrands((current) => current[template.id]?.trim() ? current : { ...current, [template.id]: brandNameById.get(template.brand_id) ?? "" })} className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
-                                </label>
-                                <label className="block">
-                                  <span className="text-[10px] font-bold uppercase text-zinc-500">Country of Origin</span>
-                                  <input value={quotationOrigins[template.id] ?? originSnapshot ?? ""} onChange={(event) => setQuotationOrigins((current) => ({ ...current, [template.id]: event.target.value }))} onBlur={() => setQuotationOrigins((current) => current[template.id]?.trim() ? current : { ...current, [template.id]: originSnapshot ?? "" })} className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
-                                </label>
-                              </div>
                             <div className="sticky bottom-0 -mx-4 -mb-4 mt-1 border-t border-zinc-200 bg-white px-4 py-4">
                               {isLocalMode ? (
                                 <button

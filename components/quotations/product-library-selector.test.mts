@@ -452,7 +452,8 @@ test("structural support is separated ahead of main selection and option-item co
 
 test("Final Details separates quotation dimensions and metadata while retaining Improve safeguards", () => {
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
-  const details = source.split(">Final Details</p>")[1].split('<div className="sticky bottom-0')[0];
+  // Final Details, Dimensions, Brand and Country of Origin now live in the "Pricing and details" card (left column), before the right column.
+  const details = source.split("Pricing and details")[1].split('<aside className="xl:sticky xl:top-24 xl:self-start">')[0];
   assert.match(source, /const generatedFinalSpecification = localSpecification \|\| ""/);
   assert.match(source, /hasConfiguredDimensionOverride \? configuredDimensions\[template.id\]\?\.trim\(\) \|\| localDimension : localDimension/);
   assert.match(details, /configuredDimensions\[template.id\] \?\? localDimension/);
