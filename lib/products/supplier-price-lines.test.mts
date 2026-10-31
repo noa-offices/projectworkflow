@@ -47,10 +47,11 @@ test("summary counts and attention-first filtering keep the code order inside ea
   const { summarizePriceLines, filterAndOrderPriceLines } = await import("./supplier-price-lines");
   const line = (code: string, state: import("./supplier-price-lines").PriceLineState) => ({ key: code, code, field: "", ourPrice: 1, ourCurrency: "AED", supplierPrice: 1, supplierCurrency: "AED", difference: 0, state });
   const lines = [line("A", "same"), line("B", "changed"), line("C", "same"), line("D", "needs_mapping"), line("E", "shared"), line("F", "not_in_supplier_list")];
-  assert.deepEqual(summarizePriceLines(lines), { same: 2, changed: 1, needsMapping: 1, other: 2 });
-  assert.deepEqual(filterAndOrderPriceLines(lines, "all").map((item) => item.code), ["D", "B", "F", "E", "A", "C"]);
-  assert.deepEqual(filterAndOrderPriceLines(lines, "attention").map((item) => item.code), ["D", "B", "F", "E"]);
-  assert.deepEqual(filterAndOrderPriceLines(lines, "same").map((item) => item.code), ["A", "C"]);
+  // A confirmed shared line (E) is fine, like Same: it counts in Same, not in Other or Needs attention.
+  assert.deepEqual(summarizePriceLines(lines), { same: 3, changed: 1, needsMapping: 1, other: 1, shared: 1 });
+  assert.deepEqual(filterAndOrderPriceLines(lines, "all").map((item) => item.code), ["D", "B", "F", "A", "C", "E"]);
+  assert.deepEqual(filterAndOrderPriceLines(lines, "attention").map((item) => item.code), ["D", "B", "F"]);
+  assert.deepEqual(filterAndOrderPriceLines(lines, "same").map((item) => item.code), ["A", "C", "E"]);
 });
 
 test("the popup keeps the read-only note, filters, sticky header and plain column names", () => {
@@ -294,4 +295,37 @@ test("family bar in the popup: hidden without families, plain messages, one save
   assert.match(popup, /Choose a family first\./);
   const serverActions = readFileSync("app/products/price-updates/supplier-sources/actions.ts", "utf8");
   assert.match(serverActions.match(/export async function setSupplierTemplateFamilies[\s\S]*?\n\}/)?.[0] ?? "", /await approver\(\)/);
+});
+
+test("confirmed Shared lines count as OK: in Same, never in Needs attention; every other state is unchanged", async () => {
+  const { summarizePriceLines, filterAndOrderPriceLines } = await import("./supplier-price-lines");
+  const states = ["same", "shared", "shared", "changed", "needs_mapping", "ambiguous", "not_in_supplier_list"] as const;
+  const lines = states.map((state, index) => ({ key: `k${index}`, code: `C${index}`, field: "", ourPrice: 1, ourCurrency: "EUR", supplierPrice: 1, supplierCurrency: "EUR", difference: 0, state }));
+  assert.deepEqual(summarizePriceLines(lines), { same: 3, changed: 1, needsMapping: 1, other: 2, shared: 2 });
+  assert.deepEqual(filterAndOrderPriceLines(lines, "same").map((item) => item.state), ["same", "shared", "shared"]);
+  assert.deepEqual(filterAndOrderPriceLines(lines, "attention").map((item) => item.state), ["needs_mapping", "changed", "ambiguous", "not_in_supplier_list"], "Other stays in Needs attention as before");
+  assert.equal(filterAndOrderPriceLines(lines, "all").length, lines.length);
+  // Real lines: two confirmed shared lines end up in Same, with their badge state and their Remove mapping binding kept.
+  const targets = [scalarTarget("t1", "T1", 33), scalarTarget("t2", "T1", 33)];
+  const real = buildPriceLines(await realMatches([identity("s1", "159983", "", 33)], targets, [sharedBinding]), "T1", [sharedBinding]).lines;
+  assert.ok(real.length === 2 && real.every((line) => line.state === "shared" && line.binding?.id === "sb"));
+  assert.deepEqual(summarizePriceLines(real), { same: 2, changed: 0, needsMapping: 0, other: 0, shared: 2 });
+  assert.equal(filterAndOrderPriceLines(real, "attention").length, 0);
+  assert.equal(filterAndOrderPriceLines(real, "same").length, 2);
+  // An unconfirmed candidate (unclear line) is still Other and still needs attention.
+  const unclear = buildPriceLines(await realMatches([identity("s1", "159983", "", 33)], targets), "T1").lines;
+  assert.deepEqual(summarizePriceLines(unclear), { same: 0, changed: 0, needsMapping: 0, other: 2, shared: 0 });
+});
+
+test("the Same tile keeps its label and shows 'includes N shared' only when shared lines exist", async () => {
+  const { summarizePriceLines } = await import("./supplier-price-lines");
+  const plain = (state: "same" | "changed") => ({ key: state, code: state, field: "", ourPrice: 1, ourCurrency: "EUR", supplierPrice: 1, supplierCurrency: "EUR", difference: 0, state });
+  assert.equal(summarizePriceLines([plain("same"), plain("changed")]).shared, 0, "no shared lines, no note");
+  const popup = readFileSync("components/quotations/supplier-price-lines-popup.tsx", "utf8");
+  assert.match(popup, /\{ label: "Same", value: summary\.same, tone: "[^"]+", note: summary\.shared \? `includes \$\{summary\.shared\} shared` : "" \}/);
+  assert.equal((popup.match(/note: "" \}/g) ?? []).length, 3, "no other tile has a note");
+  assert.match(popup, /\{tile\.note \? <p className="text-\[11px\] text-zinc-500">\{tile\.note\}<\/p> : null\}/, "the grey note only renders when there is one");
+  // The badge and the Remove mapping button of a shared line are untouched.
+  assert.match(popup, /shared: "border-sky-200 bg-sky-50 text-sky-900"/);
+  assert.match(popup, /Remove mapping/);
 });

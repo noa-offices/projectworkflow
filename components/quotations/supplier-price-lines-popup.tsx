@@ -165,10 +165,10 @@ function SourceLines({ source, brandId, templateId, onDone }: { source: Source; 
   const shown = filterAndOrderPriceLines(source.lines, filter);
   const counts: Record<PriceLineFilter, number> = { all: source.lines.length, attention, same: summary.same };
   const tiles = [
-    { label: "Same", value: summary.same, tone: "border-emerald-200 bg-emerald-50 text-emerald-900" },
-    { label: "Changed", value: summary.changed, tone: "border-amber-300 bg-amber-100 text-amber-950" },
-    { label: "Needs mapping", value: summary.needsMapping, tone: "border-red-300 bg-red-100 text-red-900" },
-    { label: "Other", value: summary.other, tone: "border-zinc-300 bg-zinc-100 text-zinc-800" },
+    { label: "Same", value: summary.same, tone: "border-emerald-200 bg-emerald-50 text-emerald-900", note: summary.shared ? `includes ${summary.shared} shared` : "" },
+    { label: "Changed", value: summary.changed, tone: "border-amber-300 bg-amber-100 text-amber-950", note: "" },
+    { label: "Needs mapping", value: summary.needsMapping, tone: "border-red-300 bg-red-100 text-red-900", note: "" },
+    { label: "Other", value: summary.other, tone: "border-zinc-300 bg-zinc-100 text-zinc-800", note: "" },
   ];
   return (
     <section className="mb-8">
@@ -178,7 +178,7 @@ function SourceLines({ source, brandId, templateId, onDone }: { source: Source; 
       {source.lines.length === 0 ? <p className="mt-3 text-sm text-zinc-600">This price list has no lines for this product.</p> : (
         <>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {tiles.map((tile) => <div key={tile.label} className={`rounded-lg border px-3 py-2 ${tile.tone}`}><p className="text-xl font-bold leading-6">{tile.value}</p><p className="text-xs font-medium">{tile.label}</p></div>)}
+            {tiles.map((tile) => <div key={tile.label} className={`rounded-lg border px-3 py-2 ${tile.tone}`}><p className="text-xl font-bold leading-6">{tile.value}</p><p className="text-xs font-medium">{tile.label}</p>{tile.note ? <p className="text-[11px] text-zinc-500">{tile.note}</p> : null}</div>)}
           </div>
           <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Show lines">
             {filters.map((item) => <button key={item.key} type="button" aria-pressed={filter === item.key} onClick={() => setFilter(item.key)} className={`rounded-full border px-3 py-1 text-xs font-semibold ${filter === item.key ? "border-emerald-800 bg-emerald-800 text-white" : "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-500"}`}>{item.label} ({counts[item.key]})</button>)}
