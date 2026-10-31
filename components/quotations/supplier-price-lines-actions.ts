@@ -4,12 +4,20 @@ import { requireActiveUser } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import type { DurableBinding, PriceMatch } from "@/lib/products/supplier-price-contracts";
 import { buildPriceLines, type PriceLine } from "@/lib/products/supplier-price-lines";
-import { resolveApplicableSupplierSourceVersion, supplierBrandMatches, supplierBusinessDate, supplierRows } from "@/lib/products/supplier-price-repository";
+import { resolveApplicableSupplierSourceVersion, supplierBrandMatches, supplierBusinessDate, supplierListTemplateFamilies, supplierMissingTemplateFamilies, supplierRows, supplierSourceFamilies } from "@/lib/products/supplier-price-repository";
 import { findSourceReviewBatch } from "@/lib/products/supplier-replacement";
 import { createClient } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type PriceLinesResult = { brandId: string; sources: Array<{ definitionName: string; title: string; effectiveFrom: string | null; lines: PriceLine[]; truncated: boolean }> };
+export type PriceLinesFamilies = {
+  /** The families found in this price list, with how many identities carry each. Empty for lists without a family column. */
+  families: Array<{ family: string; key: string; count: number }>;
+  /** The families saved for this product in this price list type. */
+  chosen: Array<{ family: string; key: string }>;
+  /** Saved families that the current price list does not contain. */
+  missing: Array<{ family: string; key: string }>;
+};
+export type PriceLinesResult = { brandId: string; sources: Array<{ definitionId: string; definitionName: string; title: string; effectiveFrom: string | null; lines: PriceLine[]; truncated: boolean } & PriceLinesFamilies> };
 
 const applyLookupLimit = 40;
 /**
@@ -53,8 +61,15 @@ export async function supplierTemplatePriceLines(templateId: string): Promise<Pr
   for (const definition of definitions.filter((item) => covered.has(item.id))) {
     const current = resolveApplicableSupplierSourceVersion(versions.filter((version) => version.definition_id === definition.id), supplierBusinessDate());
     if (!current) continue;
+    // Read only. Matching already uses the saved families of this definition (supplierBrandMatches loads them and hands them to the matcher).
+    const [found, saved, absent] = await Promise.all([supplierSourceFamilies(client, current.id), supplierListTemplateFamilies(client, { definitionId: definition.id }), supplierMissingTemplateFamilies(client, definition.id, current.id)]);
+    const families = found.map((item) => ({ family: item.family, key: item.family_key, count: item.identity_count }));
+    const chosen = saved.filter((item) => item.template_id === templateId).map((item) => ({ family: item.family, key: item.family_key }));
+    const missing = absent.filter((item) => item.template_id === templateId).map((item) => ({ family: item.family, key: item.family_key }));
     const { matches } = await supplierBrandMatches(client, current.id);
-    sources.push({ definitionName: definition.name, title: current.title, effectiveFrom: current.effective_from, ...(await withApplyBatch(client, current.id, buildPriceLines(matches, templateId, bindings))) });
+    const familyRequired = families.length > 0 && chosen.length === 0;
+    sources.push({ definitionId: definition.id, definitionName: definition.name, title: current.title, effectiveFrom: current.effective_from, families, chosen, missing,
+      ...(await withApplyBatch(client, current.id, buildPriceLines(matches, templateId, bindings, { familyRequired }))) });
   }
   return { brandId: template.brand_id, sources };
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { applySupplierReviewedPrice, confirmSupplierBindings, removeSupplierBinding, saveSupplierDecision } from "@/app/products/price-updates/supplier-sources/actions";
+import { applySupplierReviewedPrice, confirmSupplierBindings, removeSupplierBinding, saveSupplierDecision, setSupplierTemplateFamilies } from "@/app/products/price-updates/supplier-sources/actions";
 import { filterAndOrderPriceLines, priceLineStateLabels, summarizePriceLines, type PriceLine, type PriceLineFilter, type PriceLineState } from "@/lib/products/supplier-price-lines";
 import { useCoverageAccess } from "./supplier-coverage-popup";
 import { supplierTemplatePriceLines, type PriceLinesResult } from "./supplier-price-lines-actions";
@@ -75,12 +75,62 @@ function ConfirmStep({ pending, busy, error, onCancel, onConfirm }: { pending: P
   );
 }
 
-function SourceLines({ source, brandId, onDone }: { source: PriceLinesResult["sources"][number]; brandId: string; onDone: (message: string) => void }) {
+type Source = PriceLinesResult["sources"][number];
+const searchFrom = 15;
+
+/**
+ * Which Supplier family or families this product belongs to, inside the popup. Only for price lists that have families.
+ * Nothing is saved until "Save family" is pressed; one save call, then the lines reload.
+ */
+function FamilyBar({ source, templateId, onDone }: { source: Source; templateId: string; onDone: (message: string) => void }) {
+  const [open, setOpen] = useState(false), [picked, setPicked] = useState<string[]>([]), [query, setQuery] = useState(""), [busy, setBusy] = useState(false), [error, setError] = useState("");
+  if (!source.families.length) return null;
+  const openPanel = () => {
+    const inList = new Set(source.families.map((item) => item.key));
+    const saved = source.chosen.filter((item) => inList.has(item.key)).map((item) => item.key);
+    // One family is selected for the user only when the list has exactly one. Otherwise they choose; nothing is guessed.
+    setPicked(saved.length ? saved : source.families.length === 1 ? [source.families[0].key] : []); setQuery(""); setError(""); setOpen(true);
+  };
+  const toggle = (key: string, on: boolean) => setPicked((current) => on ? [...current.filter((item) => item !== key), key] : current.filter((item) => item !== key));
+  const visible = source.families.length > searchFrom && query.trim() ? source.families.filter((item) => item.family.toLowerCase().includes(query.trim().toLowerCase())) : source.families;
+  const save = async () => {
+    if (busy || !picked.length) return;
+    setBusy(true); setError("");
+    try {
+      const names = source.families.filter((item) => picked.includes(item.key)).map((item) => item.family);
+      await setSupplierTemplateFamilies(source.definitionId, templateId, names);
+      onDone(`Family saved: ${names.join(", ")}.`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save the family. Nothing was changed."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-sm" aria-label="Supplier family">
+      {source.missing.map((item) => <p key={item.key} role="alert" className="mb-2 rounded-md border border-amber-300 bg-amber-50 p-2 font-semibold text-amber-950">This family is not in the new price list: {item.family}. Choose again.</p>)}
+      <div className="flex flex-wrap items-center gap-2">
+        {source.chosen.length === 0
+          ? <span className="text-zinc-800">No family chosen for this product. Choose a family to compare prices.</span>
+          : <><span className="text-xs font-semibold text-zinc-600">Family:</span>{source.chosen.map((item) => <span key={item.key} className="rounded-full border border-emerald-300 bg-white px-2 py-0.5 text-xs font-semibold text-emerald-900">{item.family}</span>)}</>}
+        {!open ? <button type="button" onClick={openPanel} className="rounded-md border border-emerald-700 bg-white px-3 py-1 text-xs font-semibold text-emerald-900">{source.chosen.length === 0 ? "Choose family" : "Change"}</button> : null}
+      </div>
+      {open ? <div className="mt-3 space-y-2">
+        <p className="text-xs text-zinc-700">Choose one family. Choose more only if this product really mixes parts from more than one family.</p>
+        {source.families.length > searchFrom ? <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search families" aria-label="Search families" className="h-8 w-full max-w-xs rounded-md border border-zinc-300 px-2 text-sm" /> : null}
+        <ul className="grid max-h-48 gap-1 overflow-auto sm:grid-cols-2">{visible.map((item) => <li key={item.key}><label className="flex items-center gap-2 rounded border border-zinc-100 bg-white px-2 py-1"><input type="checkbox" className="accent-emerald-900" checked={picked.includes(item.key)} onChange={(event) => toggle(item.key, event.target.checked)} />{item.family}</label></li>)}</ul>
+        {visible.length === 0 ? <p className="text-xs text-zinc-600">No family matches your search.</p> : null}
+        {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-900">{error}</p> : null}
+        <div className="flex gap-2"><button type="button" disabled={busy} onClick={() => setOpen(false)} className="rounded-md border border-zinc-300 bg-white px-3 py-1 text-xs font-semibold text-zinc-700">Cancel</button>
+          <button type="button" disabled={busy || !picked.length} onClick={() => void save()} className="rounded-md bg-emerald-800 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50">{busy ? "Saving…" : "Save family"}</button></div>
+      </div> : null}
+    </div>
+  );
+}
+
+function SourceLines({ source, brandId, templateId, onDone }: { source: Source; brandId: string; templateId: string; onDone: (message: string) => void }) {
   const [filter, setFilter] = useState<PriceLineFilter>("all");
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const hasActions = source.lines.some((line) => line.mapping || line.shared || line.binding || line.apply || line.applyHint);
+  const hasActions = source.lines.some((line) => line.mapping || line.shared || line.binding || line.apply || line.applyHint || line.familyHint);
   // Writes happen only here, from the confirm button. Each uses the existing Price Updates action (role re-checked on the server).
   const confirm = async () => {
     if (!pending || busy) return;
@@ -124,6 +174,7 @@ function SourceLines({ source, brandId, onDone }: { source: PriceLinesResult["so
     <section className="mb-8">
       <h4 className="text-sm font-semibold text-zinc-900">{source.definitionName} — {source.title}</h4>
       {source.effectiveFrom ? <p className="text-xs text-zinc-500">Price list valid from {source.effectiveFrom}</p> : null}
+      <FamilyBar source={source} templateId={templateId} onDone={onDone} />
       {source.lines.length === 0 ? <p className="mt-3 text-sm text-zinc-600">This price list has no lines for this product.</p> : (
         <>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -148,6 +199,7 @@ function SourceLines({ source, brandId, onDone }: { source: PriceLinesResult["so
                     <td className="px-3 py-2"><span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-bold ${badgeClass[line.state]}`}>{priceLineStateLabels[line.state]}</span></td>
                     {hasActions ? <td className="px-3 py-2">
                       {line.mapping ? <button type="button" onClick={() => { setError(""); setPending({ kind: "map", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Map this line</button> : null}
+                      {line.familyHint === "choose_family" ? <span className="block max-w-48 text-xs text-zinc-600">Choose a family first.</span> : null}
                       {line.shared ? <button type="button" onClick={() => { setError(""); setPending({ kind: "share", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Map as shared</button> : null}
                       {line.apply?.batchId ? <button type="button" onClick={() => { setError(""); setPending({ kind: "apply", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Use supplier price</button> : null}
                       {line.apply && !line.apply.batchId ? <span className="block max-w-48 text-xs text-zinc-600">Start the review for this price list first.</span> : null}
@@ -202,7 +254,7 @@ export function SupplierPriceLinesAction({ templateId, templateName }: { templat
               {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</p> : null}
               {result && result.sources.length === 0 ? <p className="text-sm text-zinc-600">No current Supplier price list covers this product yet, so there is nothing to show.</p> : null}
               {notice ? <p role="status" className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-900">{notice}</p> : null}
-              {result?.sources.map((source) => <SourceLines key={`${source.definitionName}|${source.title}`} source={source} brandId={result.brandId} onDone={load} />)}
+              {result?.sources.map((source) => <SourceLines key={`${source.definitionName}|${source.title}`} source={source} brandId={result.brandId} templateId={templateId} onDone={load} />)}
             </div>
           </div>
         </div>,

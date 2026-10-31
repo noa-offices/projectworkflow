@@ -95,7 +95,7 @@ test("wiring: matching loads the scope only for the matched source's definition;
     assert.match(body, /await approver\(\)/, name);
     assert.doesNotMatch(body, /supplierWrite|\.from\(/, name);
   }
-  for (const file of ["components/quotations/product-library-selector.tsx", "components/quotations/supplier-price-lines-popup.tsx", "components/quotations/supplier-coverage-popup.tsx"]) assert.doesNotMatch(readFileSync(file, "utf8"), /SupplierTemplateFamilies|template_series/, `no UI yet in ${file}`);
+  for (const file of ["components/quotations/product-library-selector.tsx", "components/quotations/supplier-coverage-popup.tsx"]) assert.doesNotMatch(readFileSync(file, "utf8"), /SupplierTemplateFamilies|template_series/, `no UI yet in ${file}`);
 });
 
 test("the migration: own table with deny-by-default access, role checks inside, anchor guard, no new classification", () => {
