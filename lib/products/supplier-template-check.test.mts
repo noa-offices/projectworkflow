@@ -114,8 +114,8 @@ test("the server action trusts only two ids, reads the version first, refuses un
   assert.doesNotMatch(action, /supplierWrite|saveSupplierDecision|applySupplierReviewedPrice|confirmSupplier|completeSupplier|\.update\(|\.insert\(|\.delete\(|\.rpc\(/);
   const lines = readFileSync("components/quotations/supplier-price-lines-actions.ts", "utf8");
   assert.match(lines, /sources\.push\(\{ definitionId: definition\.id, sourceId: current\.id,/);
-  // Backend only: no screen or popup uses it yet.
-  for (const file of ["components/quotations/supplier-price-lines-popup.tsx", "components/quotations/product-library-selector.tsx", "components/quotations/local-quotation-builder.tsx"]) assert.doesNotMatch(readFileSync(file, "utf8"), /markTemplateSupplierPriceChecked/, file);
+  // Only the Supplier price lines popup calls it (see supplier-template-check-ui.test.mts); the selector and the builder never do.
+  for (const file of ["components/quotations/product-library-selector.tsx", "components/quotations/local-quotation-builder.tsx"]) assert.doesNotMatch(readFileSync(file, "utf8"), /markTemplateSupplierPriceChecked/, file);
   const loader = readFileSync("lib/products/supplier-family-price-status-loader.ts", "utf8");
   assert.match(loader, /supplierLatestTemplateChecks\(client, brandIds\)/);
   assert.match(loader, /pricingVersion: family\.pricing_version === undefined \|\| family\.pricing_version === null \? null : String\(family\.pricing_version\)/);
