@@ -13,6 +13,7 @@ import { cancelIncompleteSupplierImport, continueIncompleteSupplierCleanup, supp
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
 import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierFamilyUnchangedMatchKeys, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
 
+import { supplierRemoveBinding } from "@/lib/products/supplier-price-repository";
 import { canManageSupplierCapacity, supplierCapacityReport, supplierDeletePreviousSource, supplierSourceStorage, supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierConfirmCoverage, supplierCreateSourceDefinition, supplierDeleteSourceDefinition, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierUpdateSourceDefinition } from "@/lib/products/supplier-price-repository";
 
 const workspacePath = "/products/price-updates/supplier-sources";
@@ -196,6 +197,12 @@ export async function supplierMappingTargets(brandId: string, query = "", from =
   const filtered = targets.filter((target) => !search || `${target.template_name} ${target.label} ${target.raw_code} ${target.dimension}`.toLowerCase().includes(search));
   // Manual picker search only; it never auto-maps or performs fuzzy matching.
   return { targets: filtered.slice(start, start + 100).map((target) => ({ key: target.key, label: `${target.template_name} / ${target.label} / ${target.raw_code} / ${target.dimension || "scalar"}`, price: target.price, currency: target.currency, pricing_version: target.pricing_version })), hasMore: filtered.length > start + 100 };
+}
+/** Undo for a saved mapping: deletes that one binding of the Brand. Later comparisons simply stop using it. */
+export async function removeSupplierBinding(brandId: string, bindingId: string) {
+  const { client } = await approver();
+  if (typeof brandId !== "string" || !brandId || typeof bindingId !== "string" || !bindingId) throw Error("Choose the mapping to remove.");
+  const result = await supplierRemoveBinding(client, brandId, bindingId); revalidatePath(workspacePath); return result;
 }
 export async function archiveSupplierDimension(id: string) {
   const { client } = await approver(); await supplierWrite(client, "archive_dimension", { id }); revalidatePath(workspacePath);

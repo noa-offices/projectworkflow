@@ -917,6 +917,10 @@ export async function supplierDeleteSourceDefinition(client: SupabaseClient, bra
 export async function supplierConfirmCoverage(client: SupabaseClient, definitionId: string, templateIds: string[]) {
   return supplierWrite(client, "definition_coverage", { definition_id: definitionId, template_ids: [...new Set(templateIds)] });
 }
+/** Removes one saved mapping of this Brand; the database re-checks the role, the Brand scope and writes the audit entry. */
+export async function supplierRemoveBinding(client: SupabaseClient, brandId: string, bindingId: string) {
+  return supplierWrite(client, "binding_remove", { id: bindingId, brand_id: brandId });
+}
 export async function supplierLinkSourceDefinition(client: SupabaseClient, sourceId: string, definitionId: string | null) {
   return supplierWrite(client, "source_definition", { source_id: sourceId, definition_id: definitionId });
 }
