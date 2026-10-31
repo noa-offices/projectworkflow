@@ -4,6 +4,8 @@ import { comparisonCode, matchSupplierPrices } from "./supplier-price-matching";
 export type PriceLineState = "same" | "changed" | "not_in_supplier_list" | "needs_mapping" | "ambiguous" | "shared";
 /** Everything needed to save one alias mapping for a Needs-mapping line, plus what the line would become (computed in memory, no writes). */
 export type LineMapping = { code: string; priceField: string; sourceDimension: string; tierLabel: string; targetKey: string; pricingVersion: string; targetPrice: number | null; targetCurrency: string; preview: PriceLineState };
+/** "Use supplier price" for one changed single-target line. batchId is filled in by the server only when an open review holds this exact line. */
+export type LineApply = { matchKey: string; targetKey: string; batchId: string | null };
 export type PriceLine = {
   key: string; code: string; field: string; ourPrice: number | null; ourCurrency: string; supplierPrice: number | null; supplierCurrency: string | null;
   /** Supplier minus ours; only when both are known and in the same currency. */
@@ -12,6 +14,9 @@ export type PriceLine = {
   mapping?: LineMapping;
   /** Present when a saved, confirmed mapping (binding) of the Brand is what matches this line. */
   binding?: { id: string; kind: string };
+  apply?: LineApply;
+  /** Why there is no button: the price is empty (set it by hand in Edit Template), or the open review no longer matches this line. */
+  applyHint?: "set_by_hand" | "old_review";
 };
 export const priceLineLimit = 500;
 
@@ -46,8 +51,14 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string, bindi
       const binding = saved?.length === 1 ? { id: saved[0].id, kind: saved[0].kind } : undefined;
       const mappable = state === "needs_mapping" && !binding && match.source && match.source.price !== null && match.targets.length === 1
         && tiersPerCode.get(JSON.stringify([comparisonCode(match.source.code), match.source.price_field])) === 1;
+      // One changed line with one target, a valid supplier price in the same currency. Shared, ambiguous and unmapped lines never qualify.
+      const applicable = state === "changed" && match.targets.length === 1 && match.source !== null && !match.source.issues.length
+        && match.source.price !== null && Number.isFinite(match.source.price) && match.source.price >= 0 && match.source.currency === target.currency;
       lines.push({
         ...(binding ? { binding } : {}),
+        // An empty price cannot be applied safely: the price writer only accepts a stored value that is exactly null, so it is set by hand.
+        ...(applicable && target.price !== null ? { apply: { matchKey: match.key, targetKey: target.key, batchId: null } } : {}),
+        ...(applicable && target.price === null ? { applyHint: "set_by_hand" as const } : {}),
         ...(mappable && match.source ? { mapping: previewMapping(match.source, target) } : {}),
         key: `${match.key}|${target.key}`, code: target.raw_code || target.code, field: [target.label, target.dimension_label ?? target.dimension].filter(Boolean).join(" · "),
         ourPrice: target.price, ourCurrency: target.currency, supplierPrice, supplierCurrency: match.source?.currency ?? null,

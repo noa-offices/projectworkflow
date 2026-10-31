@@ -2,12 +2,39 @@
 
 import { requireActiveUser } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
-import type { DurableBinding } from "@/lib/products/supplier-price-contracts";
+import type { DurableBinding, PriceMatch } from "@/lib/products/supplier-price-contracts";
 import { buildPriceLines, type PriceLine } from "@/lib/products/supplier-price-lines";
 import { resolveApplicableSupplierSourceVersion, supplierBrandMatches, supplierBusinessDate, supplierRows } from "@/lib/products/supplier-price-repository";
+import { findSourceReviewBatch } from "@/lib/products/supplier-replacement";
 import { createClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type PriceLinesResult = { brandId: string; sources: Array<{ definitionName: string; title: string; effectiveFrom: string | null; lines: PriceLine[]; truncated: boolean }> };
+
+const applyLookupLimit = 40;
+/**
+ * Read only. A changed line can use the supplier price only when the open review (status "review") of this source holds the same line:
+ * same key, still one target with the same product price, same supplier price. Otherwise there is no button.
+ */
+async function withApplyBatch(client: SupabaseClient, sourceId: string, built: { lines: PriceLine[]; truncated: boolean }) {
+  const eligible = built.lines.filter((line) => line.apply);
+  if (!eligible.length) return built;
+  const review = await findSourceReviewBatch(client, sourceId);
+  const batchId = review.state === "exists" && review.status === "review" ? review.batchId : null;
+  if (!batchId) return built;
+  const checked = new Map<string, boolean>();
+  await Promise.all(eligible.slice(0, applyLookupLimit).map(async (line) => {
+    const { data } = await client.from("supplier_price_matches").select("key,data").eq("batch_id", batchId).eq("key", line.apply!.matchKey).maybeSingle<{ key: string; data: PriceMatch }>();
+    const stored = data?.data;
+    checked.set(line.key, Boolean(stored && ["increased", "decreased", "changed"].includes(stored.classification) && stored.targets.length === 1 && stored.targets[0].key === line.apply!.targetKey
+      && stored.targets[0].price === line.ourPrice && stored.source?.price === line.supplierPrice));
+  }));
+  return { ...built, lines: built.lines.map((line) => {
+    if (!line.apply || !checked.has(line.key)) return line;
+    if (!checked.get(line.key)) return { ...line, apply: undefined, applyHint: "old_review" as const };
+    return { ...line, apply: { ...line.apply, batchId } };
+  }) };
+}
 
 /** Read-only: no batch, decision, binding or price is written (saving or removing a mapping uses the existing Price Updates actions). The role is checked again here. */
 export async function supplierTemplatePriceLines(templateId: string): Promise<PriceLinesResult> {
@@ -27,7 +54,7 @@ export async function supplierTemplatePriceLines(templateId: string): Promise<Pr
     const current = resolveApplicableSupplierSourceVersion(versions.filter((version) => version.definition_id === definition.id), supplierBusinessDate());
     if (!current) continue;
     const { matches } = await supplierBrandMatches(client, current.id);
-    sources.push({ definitionName: definition.name, title: current.title, effectiveFrom: current.effective_from, ...buildPriceLines(matches, templateId, bindings) });
+    sources.push({ definitionName: definition.name, title: current.title, effectiveFrom: current.effective_from, ...(await withApplyBatch(client, current.id, buildPriceLines(matches, templateId, bindings))) });
   }
   return { brandId: template.brand_id, sources };
 }
