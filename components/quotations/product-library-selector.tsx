@@ -35,6 +35,7 @@ import {
 } from "@/lib/quotations/image-preview-zoom";
 import { createLocalId, localNow, type LocalQuotationItem } from "@/lib/local/quotation-workspace";
 import { friendlyPriceHealth, productTemplatePriceCheckState } from "@/lib/product-price-check";
+import { keepSupplierStatus, newRecordSupplierStatus } from "@/lib/products/supplier-status-record";
 import {
   groupedStandardCategoryPricingRows,
   standardCategoryPriceColumns as groupedCategoryPriceColumns,
@@ -1419,8 +1420,9 @@ export function ProductLibrarySelector({
   });
 
   const updateTemplateRecord = (nextTemplate: ProductLibraryTemplate) => {
+    // The server's copy of a saved template has no Supplier status; keep the one this page computed.
     setTemplateRecords((current) =>
-      current.map((template) => (template.id === nextTemplate.id ? nextTemplate : template)),
+      current.map((template) => (template.id === nextTemplate.id ? keepSupplierStatus(nextTemplate, template) : template)),
     );
     setTemplateActionMessageById((current) => ({
       ...current,
@@ -1429,7 +1431,7 @@ export function ProductLibrarySelector({
   };
 
   const addTemplateRecord = (newTemplate: ProductLibraryTemplate) => {
-    setTemplateRecords((current) => [...current, newTemplate]);
+    setTemplateRecords((current) => [...current, newRecordSupplierStatus(newTemplate, current)]);
     setPricingAccessoryQuantities((current) => ({ ...current, [newTemplate.id]: defaultProductAccessoryQuantities(newTemplate.accessory_pricing) }));
   };
 
