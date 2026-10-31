@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { confirmSupplierBindings, removeSupplierBinding } from "@/app/products/price-updates/supplier-sources/actions";
+import { applySupplierReviewedPrice, confirmSupplierBindings, removeSupplierBinding, saveSupplierDecision } from "@/app/products/price-updates/supplier-sources/actions";
 import { filterAndOrderPriceLines, priceLineStateLabels, summarizePriceLines, type PriceLine, type PriceLineFilter, type PriceLineState } from "@/lib/products/supplier-price-lines";
 import { useCoverageAccess } from "./supplier-coverage-popup";
 import { supplierTemplatePriceLines, type PriceLinesResult } from "./supplier-price-lines-actions";
@@ -18,7 +18,7 @@ const badgeClass: Record<PriceLineState, string> = {
 };
 const filters: Array<{ key: PriceLineFilter; label: string }> = [{ key: "all", label: "All" }, { key: "attention", label: "Needs attention" }, { key: "same", label: "Same" }];
 
-type Pending = { kind: "map" | "remove"; line: PriceLine };
+type Pending = { kind: "map" | "remove" | "apply"; line: PriceLine };
 
 /** Plain-words confirm step. Nothing is saved until the confirm button is clicked. */
 function ConfirmStep({ pending, busy, error, onCancel, onConfirm }: { pending: Pending; busy: boolean; error: string; onCancel: () => void; onConfirm: () => void }) {
@@ -26,9 +26,20 @@ function ConfirmStep({ pending, busy, error, onCancel, onConfirm }: { pending: P
   const mapping = line.mapping;
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-950/50 p-4" onClick={(event) => event.stopPropagation()}>
-      <div role="dialog" aria-modal="true" aria-label={pending.kind === "map" ? "Map this line" : "Remove mapping"} className="w-[min(520px,96vw)] rounded-2xl border border-zinc-300 bg-white p-5 shadow-2xl">
-        <h4 className="text-base font-semibold text-zinc-950">{pending.kind === "map" ? "Map this line" : "Remove this mapping"}</h4>
-        {pending.kind === "map" && mapping ? (
+      <div role="dialog" aria-modal="true" aria-label={pending.kind === "map" ? "Map this line" : pending.kind === "apply" ? "Use supplier price" : "Remove mapping"} className="w-[min(520px,96vw)] rounded-2xl border border-zinc-300 bg-white p-5 shadow-2xl">
+        <h4 className="text-base font-semibold text-zinc-950">{pending.kind === "map" ? "Map this line" : pending.kind === "apply" ? "Use supplier price" : "Remove this mapping"}</h4>
+        {pending.kind === "apply" ? (
+          <>
+            <p className="mt-2 text-sm text-zinc-700">The product price will become the supplier price.</p>
+            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+              <dt className="text-zinc-500">Model code</dt><dd className="font-semibold text-zinc-900">{line.code}</dd>
+              <dt className="text-zinc-500">Price name</dt><dd className="font-semibold text-zinc-900">{line.field || "—"}</dd>
+              <dt className="text-zinc-500">Your price now</dt><dd className="font-semibold text-zinc-900">{money(line.ourPrice, line.ourCurrency)}</dd>
+              <dt className="text-zinc-500">Supplier price</dt><dd className="font-semibold text-zinc-900">{money(line.supplierPrice, line.supplierCurrency)}</dd>
+              <dt className="text-zinc-500">Difference</dt><dd className="font-semibold text-zinc-900">{line.difference === null ? "—" : `${line.difference > 0 ? "+" : ""}${line.difference.toLocaleString("en-US", { minimumFractionDigits: 2 })}`}</dd>
+            </dl>
+          </>
+        ) : pending.kind === "map" && mapping ? (
           <>
             <p className="mt-2 text-sm text-zinc-700">The supplier gives this price a tier name. Your product has one price only. Saving tells the system: this tier is your price.</p>
             <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
@@ -42,11 +53,11 @@ function ConfirmStep({ pending, busy, error, onCancel, onConfirm }: { pending: P
         ) : (
           <p className="mt-2 text-sm text-zinc-700">Code {line.code} will need mapping again. Prices are not changed.</p>
         )}
-        <p role="note" className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-amber-950">{pending.kind === "map" ? "This is saved for the whole brand and for future price lists." : "This is removed for the whole brand and for future price lists."}</p>
+        <p role="note" className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-amber-950">{pending.kind === "map" ? "This is saved for the whole brand and for future price lists." : pending.kind === "apply" ? "This changes the product price. Saved quotations do not change. The old price stays in the price history. There is no undo button; a price can be set back by hand." : "This is removed for the whole brand and for future price lists."}</p>
         {error ? <p role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</p> : null}
         <div className="mt-4 flex justify-end gap-2">
           <button type="button" disabled={busy} onClick={onCancel} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-semibold text-zinc-700">Cancel</button>
-          <button type="button" disabled={busy} onClick={onConfirm} className="rounded-md bg-emerald-800 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Saving…" : pending.kind === "map" ? "Save mapping" : "Remove mapping"}</button>
+          <button type="button" disabled={busy} onClick={onConfirm} className="rounded-md bg-emerald-800 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Saving…" : pending.kind === "map" ? "Save mapping" : pending.kind === "apply" ? "Use supplier price" : "Remove mapping"}</button>
         </div>
       </div>
     </div>
@@ -58,7 +69,7 @@ function SourceLines({ source, brandId, onDone }: { source: PriceLinesResult["so
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const hasActions = source.lines.some((line) => line.mapping || line.binding);
+  const hasActions = source.lines.some((line) => line.mapping || line.binding || line.apply || line.applyHint);
   // Writes happen only here, from the confirm button. Each uses the existing Price Updates action (role re-checked on the server).
   const confirm = async () => {
     if (!pending || busy) return;
@@ -68,6 +79,13 @@ function SourceLines({ source, brandId, onDone }: { source: PriceLinesResult["so
         const mapping = pending.line.mapping;
         await confirmSupplierBindings(brandId, [{ code: mapping.code, price_field: mapping.priceField, source_dimension: mapping.sourceDimension, kind: "alias", target_keys: [mapping.targetKey], expected_targets: [{ key: mapping.targetKey, pricing_version: mapping.pricingVersion, price: mapping.targetPrice, currency: mapping.targetCurrency }] }]);
         onDone(`Mapping saved for code ${mapping.code}.`);
+      } else if (pending.kind === "apply" && pending.line.apply?.batchId) {
+        const { batchId, matchKey } = pending.line.apply;
+        // The review mark first, then the price: the existing review code needs both, in this order.
+        await saveSupplierDecision(batchId, matchKey, "reviewed", "");
+        try { await applySupplierReviewedPrice(batchId, matchKey); }
+        catch (reason) { throw Error(`${reason instanceof Error ? reason.message : "Something went wrong."} The product price was not changed.`); }
+        onDone(`Product price changed for code ${pending.line.code}.`);
       } else if (pending.kind === "remove" && pending.line.binding) {
         await removeSupplierBinding(brandId, pending.line.binding.id);
         onDone(`Mapping removed for code ${pending.line.code}.`);
@@ -115,6 +133,10 @@ function SourceLines({ source, brandId, onDone }: { source: PriceLinesResult["so
                     <td className="px-3 py-2"><span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-bold ${badgeClass[line.state]}`}>{priceLineStateLabels[line.state]}</span></td>
                     {hasActions ? <td className="px-3 py-2">
                       {line.mapping ? <button type="button" onClick={() => { setError(""); setPending({ kind: "map", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Map this line</button> : null}
+                      {line.apply?.batchId ? <button type="button" onClick={() => { setError(""); setPending({ kind: "apply", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Use supplier price</button> : null}
+                      {line.apply && !line.apply.batchId ? <span className="block max-w-48 text-xs text-zinc-600">Start the review for this price list first.</span> : null}
+                      {line.applyHint === "set_by_hand" ? <span className="block max-w-48 text-xs text-zinc-600">This price is empty. Set it by hand in Edit Template.</span> : null}
+                      {line.applyHint === "old_review" ? <span className="block max-w-48 text-xs text-zinc-600">The review is out of date. Start a new review for this price list.</span> : null}
                       {line.binding ? <button type="button" onClick={() => { setError(""); setPending({ kind: "remove", line }); }} className="whitespace-nowrap text-xs font-semibold text-red-800 underline">Remove mapping</button> : null}
                     </td> : null}
                   </tr>

@@ -597,3 +597,34 @@ test("Confirm unchanged action is approver-only, takes only batchId plus matchKe
     assert.doesNotMatch(render({ matches: [{ ...match, targets: [match.targets[0], match.targets[0]] }] }), />Confirm unchanged</);
   } finally { await f.db.close(); }
 });
+
+test("one-line Apply from the popup against the real SQL: empty price forms, version conflict and basis mismatch", async () => {
+  const f = await fixture();
+  try {
+    const setVariant = async (price: Record<string, unknown>) => {
+      await f.db.exec("update product_templates set variant_pricing='[]',category_pricing='[]',desking_size_pricing='[]',accessory_pricing='[]'");
+      await f.db.query("update product_templates set variant_pricing=$1", [JSON.stringify([{ id: "group", items: [{ id: "row", supplier_price_list_code: "VAR", variant_name: "Variant", ...price }] }])]);
+      await f.compare("VAR");
+    };
+    const histories = async () => (await f.db.query<{ n: number }>("select count(*)::int n from product_template_detail_price_history")).rows[0].n;
+    // Changed price: written once, with the old value in the history.
+    await setVariant({ price: 100 }); await f.apply();
+    assert.deepEqual((await f.db.query("select old_price::int old_price,new_price::int new_price from product_template_detail_price_history")).rows, [{ old_price: 100, new_price: 110 }]);
+    // An empty price stored as exactly null can be applied; the old price is recorded as empty.
+    await setVariant({ price: null }); await f.apply();
+    assert.deepEqual((await f.db.query("select old_price,new_price::int new_price from product_template_detail_price_history where old_price is null")).rows, [{ old_price: null, new_price: 110 }]);
+    // An empty price stored as "" or missing cannot: the writer refuses before any write. That is why the popup offers no button for empty prices.
+    const before = await histories();
+    for (const price of [{ price: "" }, {}]) { await setVariant(price); const version = await f.version(); await assert.rejects(f.apply(), fresh); assert.equal(await f.version(), version); }
+    assert.equal(await histories(), before);
+    // Version conflict: the Product changed between the comparison and the write.
+    await setVariant({ price: 100 });
+    f.beforeRpc(async () => { await f.db.exec("update product_templates set currency='USD'"); });
+    await assert.rejects(f.apply(), fresh);
+    assert.equal(await histories(), before);
+    // Basis mismatch: the Brand's stored basis differs from the price list's.
+    await setVariant({ price: 100 }); await f.db.exec("update brands set stored_price_basis='net'");
+    await assert.rejects(f.apply(), /basis/i);
+    assert.equal(await histories(), before);
+  } finally { await f.db.close(); }
+});

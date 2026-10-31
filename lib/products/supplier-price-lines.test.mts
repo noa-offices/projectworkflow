@@ -95,7 +95,7 @@ test("a saved mapping is reported with its id, offers Remove only, and a duplica
 
 test("the popup saves or removes only from the confirm click, through the existing actions, with the brand-wide warning", () => {
   const popup = readFileSync("components/quotations/supplier-price-lines-popup.tsx", "utf8");
-  assert.match(popup, /import \{ confirmSupplierBindings, removeSupplierBinding \} from "@\/app\/products\/price-updates\/supplier-sources\/actions"/);
+  assert.match(popup, /import \{[^}]*confirmSupplierBindings[^}]*removeSupplierBinding[^}]*\} from "@\/app\/products\/price-updates\/supplier-sources\/actions"/);
   assert.equal((popup.match(/await confirmSupplierBindings\(/g) ?? []).length, 1);
   assert.equal((popup.match(/await removeSupplierBinding\(/g) ?? []).length, 1);
   assert.match(popup, /kind: "alias", target_keys: \[mapping\.targetKey\]/);
@@ -107,4 +107,59 @@ test("the popup saves or removes only from the confirm click, through the existi
   assert.doesNotMatch(popup.replace(confirm, ""), /confirmSupplierBindings\(|removeSupplierBinding\(/);
   const action = readFileSync("components/quotations/supplier-price-lines-actions.ts", "utf8");
   assert.doesNotMatch(action, /supplierWrite|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(|revalidatePath/);
+});
+
+const changedLines = async (ourPrice: number | null, supplierPrice = 110, extra: { supplierCurrency?: "EUR" | "AED" } = {}) => {
+  const sources = [identity("s1", "159983", "", supplierPrice, extra.supplierCurrency ?? "EUR")];
+  return buildPriceLines(await realMatches(sources, [{ ...scalarTarget("t1", "T1", 100), price: ourPrice }]), "T1").lines;
+};
+
+test("Use supplier price is offered only for one changed single-target line with a price", async () => {
+  const [lower] = await changedLines(100), [higher] = await changedLines(120);
+  assert.equal(lower.state, "changed");
+  assert.deepEqual(lower.apply, { matchKey: "s1", targetKey: "t1", batchId: null });
+  assert.equal(higher.state, "changed");
+  assert.ok(higher.apply);
+  const [same] = await changedLines(110);
+  assert.deepEqual([same.state, same.apply, same.applyHint], ["same", undefined, undefined]);
+});
+
+test("empty prices get a hint to set them by hand, never a button; other currencies, shared and unclear lines get neither", async () => {
+  const [empty] = await changedLines(null, 0);
+  assert.deepEqual([empty.state, empty.apply, empty.applyHint], ["changed", undefined, "set_by_hand"]);
+  const [currency] = await changedLines(100, 110, { supplierCurrency: "AED" });
+  assert.deepEqual([currency.state, currency.apply, currency.applyHint], ["changed", undefined, undefined]);
+  const twoTargets = [{ ...scalarTarget("t1", "T1", 33) }, { ...scalarTarget("t2", "T1", 33) }];
+  const unclear = buildPriceLines(await realMatches([identity("s1", "159983", "", 33)], twoTargets), "T1").lines;
+  assert.ok(unclear.length === 2 && unclear.every((line) => line.state === "ambiguous" && !line.apply && !line.applyHint));
+  const shared = { id: "b", code: "159983", price_field: "unit_price", source_dimension: "", target_keys: ["t1", "t2"], kind: "shared" as const, confirmed: true };
+  const sharedLines = buildPriceLines(await realMatches([identity("s1", "159983", "", 40)], twoTargets, [shared]), "T1", [shared]).lines;
+  assert.ok(sharedLines.length === 2 && sharedLines.every((line) => line.state === "shared" && !line.apply && !line.applyHint));
+});
+
+test("the lines action only reads: it attaches a batch only when the open review holds the same line", () => {
+  const action = readFileSync("components/quotations/supplier-price-lines-actions.ts", "utf8");
+  assert.match(action, /review\.status === "review"/);
+  assert.match(action, /\["increased", "decreased", "changed"\]\.includes\(stored\.classification\)/);
+  assert.match(action, /stored\.targets\[0\]\.key === line\.apply!\.targetKey/);
+  assert.match(action, /stored\.targets\[0\]\.price === line\.ourPrice && stored\.source\?\.price === line\.supplierPrice/);
+  assert.match(action, /applyHint: "old_review"/);
+  assert.doesNotMatch(action, /supplierWrite|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(|revalidatePath|saveSupplierDecision|applySupplierReviewedPrice/);
+});
+
+test("the popup writes a price only from the confirm click: review mark first, then the price, once each, with the plain warning", () => {
+  const popup = readFileSync("components/quotations/supplier-price-lines-popup.tsx", "utf8");
+  const confirm = popup.slice(popup.indexOf("const confirm = async"), popup.indexOf("} finally { setBusy(false); }"));
+  assert.equal((popup.match(/await saveSupplierDecision\(/g) ?? []).length, 1);
+  assert.equal((popup.match(/await applySupplierReviewedPrice\(/g) ?? []).length, 1);
+  assert.ok(confirm.indexOf('await saveSupplierDecision(batchId, matchKey, "reviewed", "")') > 0 && confirm.indexOf("await saveSupplierDecision(") < confirm.indexOf("await applySupplierReviewedPrice(batchId, matchKey)"), "the decision is saved before the price is applied");
+  assert.doesNotMatch(popup.replace(confirm, ""), /saveSupplierDecision\(|applySupplierReviewedPrice\(/, "no write outside confirm");
+  assert.match(popup, /The product price was not changed\./);
+  assert.match(popup, /This changes the product price\. Saved quotations do not change\. The old price stays in the price history\. There is no undo button; a price can be set back by hand\./);
+  assert.match(popup, /line\.apply\?\.batchId \? <button/);
+  assert.match(popup, /Start the review for this price list first\./);
+  assert.match(popup, /This price is empty\. Set it by hand in Edit Template\./);
+  assert.match(popup, /if \(allowed !== true\) return null/);
+  const actions = readFileSync("app/products/price-updates/supplier-sources/actions.ts", "utf8");
+  assert.match(actions.match(/export async function applySupplierReviewedPrice[\s\S]*?\n\}/)?.[0] ?? "", /await approver\(\)/);
 });
