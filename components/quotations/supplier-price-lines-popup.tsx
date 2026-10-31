@@ -292,7 +292,7 @@ export function SupplierPriceLinesAction({ templateId, templateName, onSupplierS
 
   return (
     <>
-      <button type="button" onClick={(event) => { event.stopPropagation(); load(); }} className="block text-left text-[11px] font-semibold text-emerald-800 underline">View price lines</button>
+      <button type="button" onClick={(event) => { event.stopPropagation(); load(); }} className="mt-2 inline-flex max-w-full items-center justify-center justify-self-start whitespace-normal break-words rounded-md px-3 py-1.5 text-center text-sm font-semibold transition border border-emerald-700 bg-white text-emerald-900 hover:bg-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800">View price lines</button>
       {open && typeof document !== "undefined" ? createPortal(
         <div className="fixed inset-0 z-[80] flex items-stretch justify-center bg-zinc-950/45 sm:items-center sm:px-4 sm:py-6" onClick={(event) => event.stopPropagation()}>
           <div role="dialog" aria-modal="true" aria-label="Supplier price lines" className="flex h-full w-full flex-col bg-white shadow-2xl sm:h-auto sm:max-h-[92vh] sm:w-[min(1180px,96vw)] sm:rounded-2xl sm:border sm:border-zinc-300">
