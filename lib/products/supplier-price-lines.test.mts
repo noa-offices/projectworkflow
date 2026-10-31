@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import type { PriceMatch, PriceTarget } from "./supplier-price-contracts";
+import type { PriceMatch, PriceTarget, SourceIdentity } from "./supplier-price-contracts";
 import { buildPriceLines, priceLineLimit } from "./supplier-price-lines";
 
 const target = (key: string, template_id: string, price: number | null, extra: Partial<PriceTarget> = {}) => ({ key, template_id, template_name: "T", brand_id: "b", architecture: "a", group_id: "g", row_id: "r", column_id: "c", dimension: "", price_field: "unit_price", physical_field: "unit_price", code: key, raw_code: key.toUpperCase(), price, currency: "AED", pricing_version: "1", label: "Base", ...extra }) as PriceTarget;
@@ -223,4 +223,75 @@ test("the wizard's family hint tells the truth about choosing none", () => {
   const wizard = readFileSync("components/products/supplier-import-wizard.tsx", "utf8");
   assert.match(wizard, /If you choose none, the lines show Needs mapping until you choose a family\./);
   assert.doesNotMatch(wizard, /every family in the list is compared/);
+});
+
+const taggedId = (key: string, family: string, price: number) => ({ ...identity(key, "159983", "", price), dimension: JSON.stringify(["", "series", family]) }) as SourceIdentity;
+const everyScope = (...families: string[]) => new Map([["T1", new Set(families)]]);
+const scopedMatches = async (sources: SourceIdentity[], targets: PriceTarget[], familyScope?: ReadonlyMap<string, ReadonlySet<string>>) => (await import("./supplier-price-matching")).matchSupplierPrices(sources, targets, [], [], familyScope);
+
+test("family bar guard: a family-tagged line cannot be mapped until the product has a saved family", async () => {
+  const sources = [taggedId("every", "EVERY", 58)];
+  const noScope = await scopedMatches(sources, [scalarTarget("t1", "T1", 58)]);
+  const open = buildPriceLines(noScope, "T1").lines;
+  assert.ok(open.length === 1 && open[0].state === "needs_mapping" && open[0].mapping, "today: a tagged line can be mapped");
+  const guarded = buildPriceLines(noScope, "T1", [], { familyRequired: true }).lines;
+  assert.ok(guarded.length === 1 && !guarded[0].mapping && !guarded[0].shared && guarded[0].familyHint === "choose_family", "no mapping button, hint instead");
+  assert.deepEqual(buildPriceLines(noScope, "T1", [], { familyRequired: false }).lines, open, "with a family chosen nothing is hidden");
+});
+
+test("family bar guard: shared mapping is hidden too, and lines without a family tag are never affected", async () => {
+  const targets = [scalarTarget("t1", "T1", 33), scalarTarget("t2", "T1", 33)];
+  const scoped = await scopedMatches([taggedId("every", "EVERY", 33)], targets, everyScope("every"));
+  assert.ok(buildPriceLines(scoped, "T1").lines.every((line) => line.shared), "a chosen family can map as shared");
+  const guarded = buildPriceLines(scoped, "T1", [], { familyRequired: true }).lines;
+  assert.ok(guarded.every((line) => !line.shared && line.familyHint === "choose_family"));
+  const untagged = await realMatches([identity("s1", "159983", "SG3", 13)], [{ ...scalarTarget("t1", "T1", 13), dimension: "SG3" }]);
+  assert.deepEqual(buildPriceLines(untagged, "T1", [], { familyRequired: true }).lines, buildPriceLines(untagged, "T1").lines, "brands and lines without families look exactly as before");
+  assert.deepEqual(buildPriceLines(untagged, "T1", [], {}).lines, buildPriceLines(untagged, "T1").lines);
+});
+
+test("family scope reaches the matcher: the saved family decides which supplier rows are this product's lines", async () => {
+  const sources = [taggedId("aim", "AIM", 57), taggedId("every", "EVERY", 58), taggedId("goal", "Goal-Air", 57)];
+  const lines = buildPriceLines(await scopedMatches(sources, [scalarTarget("t1", "T1", 58)], everyScope("every")), "T1").lines;
+  assert.deepEqual(lines.map((line) => [line.state, line.supplierPrice]), [["same", 58]]);
+  const repository = readFileSync("lib/products/supplier-price-repository.ts", "utf8");
+  assert.match(repository, /supplierFamilyScope\(client, source\.definition_id\)/);
+  assert.match(repository, /matchSupplierPrices\(identities\.map\(\(identity\) => withoutEvidence\(identity\.data\)\), targets, rules, bindings, familyScope\)/);
+  const action = readFileSync("components/quotations/supplier-price-lines-actions.ts", "utf8");
+  assert.match(action, /await supplierBrandMatches\(client, current\.id\)/);
+  assert.match(action, /const familyRequired = families\.length > 0 && chosen\.length === 0/);
+  assert.match(action, /buildPriceLines\(matches, templateId, bindings, \{ familyRequired \}\)/);
+});
+
+test("the lines action returns the families, the chosen set and the missing ones, read only, for approvers", () => {
+  const action = readFileSync("components/quotations/supplier-price-lines-actions.ts", "utf8");
+  assert.match(action, /supplierSourceFamilies\(client, current\.id\)/);
+  assert.match(action, /supplierListTemplateFamilies\(client, \{ definitionId: definition\.id \}\)/);
+  assert.match(action, /supplierMissingTemplateFamilies\(client, definition\.id, current\.id\)/);
+  assert.match(action, /item\.template_id === templateId/);
+  assert.match(action, /canApproveBrandPrices\(profile\?\.role, profile\?\.account_status\)/);
+  assert.doesNotMatch(action, /supplierSetTemplateFamilies|setSupplierTemplateFamilies|supplierWrite|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/);
+});
+
+test("family bar in the popup: hidden without families, plain messages, one save from the button, nothing on load", () => {
+  const popup = readFileSync("components/quotations/supplier-price-lines-popup.tsx", "utf8");
+  const bar = popup.slice(popup.indexOf("function FamilyBar"), popup.indexOf("function SourceLines"));
+  assert.match(bar, /if \(!source\.families\.length\) return null/, "hidden for brands like LAS");
+  assert.match(bar, /No family chosen for this product\. Choose a family to compare prices\./);
+  assert.match(bar, /"Choose family" : "Change"/);
+  assert.match(bar, /source\.chosen\.map\(\(item\) => <span key=\{item\.key\}[^>]*>\{item\.family\}<\/span>\)/, "chosen families as chips");
+  assert.match(bar, /Choose one family\. Choose more only if this product really mixes parts from more than one family\./);
+  assert.match(bar, /const searchFrom = 15|source\.families\.length > searchFrom/);
+  assert.match(popup, /const searchFrom = 15;/);
+  assert.match(bar, /source\.families\.length === 1 \? \[source\.families\[0\]\.key\] : \[\]/, "one is selected for the user only when the list has exactly one");
+  assert.match(bar, /This family is not in the new price list: \{item\.family\}\. Choose again\./);
+  assert.equal((popup.match(/await setSupplierTemplateFamilies\(/g) ?? []).length, 1, "one save call in the whole popup");
+  assert.match(bar, /await setSupplierTemplateFamilies\(source\.definitionId, templateId, names\)/);
+  const beforeSave = bar.slice(0, bar.indexOf("const save = async"));
+  assert.doesNotMatch(beforeSave, /setSupplierTemplateFamilies|useEffect/, "nothing is written when the bar opens or loads");
+  assert.match(bar, /disabled=\{busy \|\| !picked\.length\}/, "saving needs at least one family");
+  assert.match(popup, /if \(allowed !== true\) return null/, "same role check as the other popup actions");
+  assert.match(popup, /Choose a family first\./);
+  const serverActions = readFileSync("app/products/price-updates/supplier-sources/actions.ts", "utf8");
+  assert.match(serverActions.match(/export async function setSupplierTemplateFamilies[\s\S]*?\n\}/)?.[0] ?? "", /await approver\(\)/);
 });

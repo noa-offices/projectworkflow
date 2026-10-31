@@ -1,5 +1,6 @@
 import type { DurableBinding, PriceMatch, SourceIdentity } from "./supplier-price-contracts";
 import { comparisonCode, matchSupplierPrices, sharedBaselineDrift } from "./supplier-price-matching";
+import { supplierDimensionFamily } from "./supplier-price-import";
 
 export type PriceLineState = "same" | "changed" | "not_in_supplier_list" | "needs_mapping" | "ambiguous" | "shared";
 /** Everything needed to save one alias mapping for a Needs-mapping line, plus what the line would become (computed in memory, no writes). */
@@ -27,6 +28,8 @@ export type PriceLine = {
   shared?: LineShared;
   /** Why there is no button: the price is empty (set it by hand in Edit Template), or the open review no longer matches this line. */
   applyHint?: "set_by_hand" | "old_review";
+  /** The list has families, this product has none saved, and this line carries a family: mapping waits until a family is chosen. */
+  familyHint?: "choose_family";
 };
 export const priceLineLimit = 500;
 
@@ -42,7 +45,7 @@ export const priceLineStateLabels: Record<PriceLineState, string> = {
  * This template's lines from matches computed over the whole source coverage (so a code shared with another product classifies
  * exactly as in a review). Read-only: it only reshapes matches. Lines are one per pricing target of this template.
  */
-export function buildPriceLines(matches: PriceMatch[], templateId: string, bindings: Array<Pick<DurableBinding, "id" | "code" | "price_field" | "source_dimension" | "kind" | "confirmed">> = []): { lines: PriceLine[]; truncated: boolean } {
+export function buildPriceLines(matches: PriceMatch[], templateId: string, bindings: Array<Pick<DurableBinding, "id" | "code" | "price_field" | "source_dimension" | "kind" | "confirmed">> = [], options: { familyRequired?: boolean } = {}): { lines: PriceLine[]; truncated: boolean } {
   const lines: PriceLine[] = [];
   const identity = (code: string, field: string, dimension: string) => JSON.stringify([comparisonCode(code), field, dimension]);
   // Same rule as the matcher: two bindings for one identity are both ignored.
@@ -68,13 +71,17 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string, bindi
       const shareable = match.classification === "ambiguous" && match.candidate_shared === true && !binding && match.source !== null && !match.source.issues.length
         && match.source.price !== null && Number.isFinite(match.source.price) && match.source.price >= 0 && match.targets.length >= 2
         && !sharedBaselineDrift(match.targets) && match.targets.every((item) => item.currency === match.source!.currency);
+      // Without a saved family a family-tagged line cannot be mapped: the family decides which supplier rows belong to this product.
+      const waitsForFamily = Boolean(options.familyRequired && match.source && supplierDimensionFamily(match.source.dimension) !== null);
+      const offerMapping = Boolean(mappable) && !waitsForFamily, offerShared = shareable && !waitsForFamily;
       lines.push({
         ...(binding ? { binding } : {}),
-        ...(shareable && match.source ? { shared: previewShared(match.source, match.targets) } : {}),
+        ...(waitsForFamily && (mappable || shareable) ? { familyHint: "choose_family" as const } : {}),
+        ...(offerShared && match.source ? { shared: previewShared(match.source, match.targets) } : {}),
         // An empty price cannot be applied safely: the price writer only accepts a stored value that is exactly null, so it is set by hand.
         ...(applicable && target.price !== null ? { apply: { matchKey: match.key, targetKey: target.key, batchId: null } } : {}),
         ...(applicable && target.price === null ? { applyHint: "set_by_hand" as const } : {}),
-        ...(mappable && match.source ? { mapping: previewMapping(match.source, target) } : {}),
+        ...(offerMapping && match.source ? { mapping: previewMapping(match.source, target) } : {}),
         key: `${match.key}|${target.key}`, code: target.raw_code || target.code, field: [target.label, target.dimension_label ?? target.dimension].filter(Boolean).join(" · "),
         ourPrice: target.price, ourCurrency: target.currency, supplierPrice, supplierCurrency: match.source?.currency ?? null,
         difference: supplierPrice !== null && target.price !== null && sameCurrency ? Math.round((supplierPrice - target.price) * 100) / 100 : null, state,
