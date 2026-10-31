@@ -12,6 +12,9 @@ export type SupplierProfile = {
   currency: SupportedCurrency;
   basis: PriceBasis;
   category_column?: string;
+  /** Optional. A row's Supplier family (and sub-family) becomes part of its identity's dimension; see supplierSeriesDimension. */
+  series_column?: string;
+  subfamily_column?: string;
   description_column?: string;
   companion_note_column?: string;
   sheet_names?: string[];
@@ -25,7 +28,7 @@ export type SourceCell = {
   companion_note?: string;
 };
 /** Up to five representative rows that formed a finalised identity, in row-number order. Only stored values; nothing inferred. */
-export type SupplierIdentityEvidence = { row_number: number; sheet: string; full_supplier_code: string; article_code?: string; description?: string; finish_code?: string; category_label?: string; dimension_label?: string; raw_price?: unknown };
+export type SupplierIdentityEvidence = { row_number: number; sheet: string; full_supplier_code: string; article_code?: string; description?: string; finish_code?: string; category_label?: string; family_label?: string; subfamily_label?: string; dimension_label?: string; raw_price?: unknown };
 export type SourceIdentity = {
   raw_dimension?: string;
   /** Distinct source rows behind this identity and their compact evidence (set by finalize from Phase F1; absent on older identities). */
@@ -55,7 +58,10 @@ export function assertSupplierProfile(value: unknown): asserts value is Supplier
   if (!p || typeof p.full_code_column !== "string" || !p.full_code_column.trim() || !["exact", "article_plus_finish"].includes(p.strategy ?? "") || !["AED", "EUR", "USD"].includes(p.currency ?? "") || !["list", "net", "unknown"].includes(p.basis ?? "") || !Array.isArray(p.price_columns) || !p.price_columns.length || p.price_columns.length > 100) throw Error("Invalid import profile. Configure code columns, prices, currency and explicit basis.");
   if (p.price_columns.some((c) => !c || typeof c.column !== "string" || !c.column || !["unit_price", "default_price", "additional_price"].includes(c.price_field) || (c.dimension !== undefined && typeof c.dimension !== "string"))) throw Error("Invalid profile price columns.");
   if (new Set(p.price_columns.map((c) => c.column)).size !== p.price_columns.length) throw Error("Duplicate profile price column.");
-  for (const field of ["article_code_column", "category_column", "description_column", "companion_note_column"] as const) if (p[field] !== undefined && typeof p[field] !== "string") throw Error(`Invalid ${field}.`);
+  for (const field of ["article_code_column", "category_column", "description_column", "companion_note_column", "series_column", "subfamily_column"] as const) if (p[field] !== undefined && typeof p[field] !== "string") throw Error(`Invalid ${field}.`);
+  if (p.subfamily_column && !p.series_column) throw Error("A sub-family column needs a family column.");
+  if (p.series_column && p.series_column === p.subfamily_column) throw Error("Family and sub-family must be different columns.");
+  if (p.series_column && p.strategy === "article_plus_finish") throw Error("A family column cannot be combined with article + finish codes yet.");
   if (p.sheet_names !== undefined && (!Array.isArray(p.sheet_names) || !p.sheet_names.length || p.sheet_names.some((name) => typeof name !== "string" || !name.trim()) || new Set(p.sheet_names).size !== p.sheet_names.length)) throw Error("Sheet names must be unique non-empty text.");
   if (p.validated_article_fallback !== undefined && typeof p.validated_article_fallback !== "boolean") throw Error("Validated article fallback must be an explicit boolean.");
   if (p.strategy === "article_plus_finish" && (!Number.isInteger(p.article_length) || !Number.isInteger(p.finish_length) || p.article_length! < 1 || p.finish_length! < 1 || p.article_length! + p.finish_length! > 100)) throw Error("Article and finish lengths must be explicit positive integers.");

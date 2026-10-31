@@ -180,7 +180,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
     catch (error) { setReview({ state: "failed", error: error instanceof Error ? error.message : undefined }); }
   }
 
-  const select = (label: string, key: "fullCode" | "articleCode" | "description" | "category", required: boolean) =>
+  const select = (label: string, key: "fullCode" | "articleCode" | "description" | "category" | "series" | "subfamily", required: boolean) =>
     <div key={key} className="grid items-center gap-2 py-2 sm:grid-cols-[14rem_1fr]"><label htmlFor={`wizard-${key}`} className="text-sm font-medium text-zinc-800">{label}{required ? "" : " (optional)"}</label>
       <select id={`wizard-${key}`} value={mapping?.[key] ?? ""} onChange={(event) => set(key, event.target.value)} className={input}><option value="">{required ? "Choose heading" : "Not used"}</option>{headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></div>;
   const togglePrice = (column: string, on: boolean) => setMapping((current) => current ? { ...current, priceColumns: on ? [...current.priceColumns, { column, label: "" }] : current.priceColumns.filter((item) => item.column !== column) } : current);
@@ -217,7 +217,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
 
     {step === 2 && mapping ? <div className="space-y-3">
       <div className="divide-y divide-zinc-100 rounded-md border border-zinc-200 px-3"><div className="grid gap-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 sm:grid-cols-[14rem_1fr]"><span>ProjectWorkflow field</span><span>Excel heading</span></div>
-        {select("Supplier code", "fullCode", true)}{select("Description", "description", false)}{select("Category / tier column", "category", false)}</div>
+        {select("Supplier code", "fullCode", true)}{select("Description", "description", false)}{select("Category / tier column", "category", false)}{select("Supplier family column", "series", false)}{mapping.series ? select("Supplier sub-family column", "subfamily", false) : null}</div>
       <fieldset className="space-y-2"><legend className="text-sm font-medium text-zinc-800">Price column{priceMode === "multiple" ? "s" : ""}</legend>
         {priceMode === "single" ? <><label className="grid max-w-md gap-1 text-xs"><span className="sr-only">Price column</span><select aria-label="Price column" value={mapping.priceColumns[0]?.column ?? ""} onChange={(event) => selectSinglePrice(event.target.value)} className={input}><option value="">Choose heading</option>{headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></label>
           {multiplePriceColumnsDetected ? <p className="text-xs text-amber-800">Multiple price columns detected. Choose one, or select the option below.</p> : null}
