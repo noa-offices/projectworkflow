@@ -58,3 +58,53 @@ test("the popup keeps the read-only note, filters, sticky header and plain colum
   for (const text of ["Read only. Nothing is saved here.", "Needs attention", "sticky top-0", "Your price", "Supplier price", "Difference", "Status", "sm:w-[min(1180px,96vw)]"]) assert.ok(popup.includes(text), text);
   assert.doesNotMatch(popup, /router|window\.location|<Link|supplierWrite/);
 });
+
+const identity = (key: string, code: string, dimension: string, price: number, currency = "EUR") => ({ key, code, price_field: "unit_price", dimension, raw_dimension: dimension, finishes: [], price, currency, row_keys: [], issues: [] }) as unknown as NonNullable<PriceMatch["source"]>;
+const scalarTarget = (key: string, template_id: string, price: number, currency: "AED" | "EUR" | "USD" = "EUR") => target(key, template_id, price, { code: "159983", raw_code: "159 983", currency, dimension: "" });
+const realMatches = async (sources: NonNullable<PriceMatch["source"]>[], targets: PriceTarget[], bindings: Array<{ id: string; code: string; price_field: string; source_dimension: string; target_keys: string[]; kind: "alias" | "shared" | "disambiguation"; confirmed: boolean }> = []) => (await import("./supplier-price-matching")).matchSupplierPrices(sources, targets, [], bindings);
+
+test("a Needs-mapping line with one target and one tier can be mapped, and the preview shows the result without writing", async () => {
+  const matches = await realMatches([identity("s1", "159983", "Cat A", 702)], [scalarTarget("t1", "T1", 702)]);
+  const [line] = buildPriceLines(matches, "T1").lines;
+  assert.equal(line.state, "needs_mapping");
+  assert.deepEqual(line.mapping, { code: "159983", priceField: "unit_price", sourceDimension: "Cat A", tierLabel: "Cat A", targetKey: "t1", pricingVersion: "1", targetPrice: 702, targetCurrency: "EUR", preview: "same" });
+  const changed = buildPriceLines(await realMatches([identity("s1", "159983", "Cat A", 750)], [scalarTarget("t1", "T1", 702)]), "T1").lines[0];
+  assert.equal(changed.mapping?.preview, "changed");
+});
+
+test("no Map button when the code has several supplier tiers, several product targets, another product, or a saved mapping", async () => {
+  const several = buildPriceLines(await realMatches([identity("s1", "159983", "Cat A", 702), identity("s2", "159983", "Cat B", 702)], [scalarTarget("t1", "T1", 702)]), "T1").lines;
+  assert.ok(several.length > 0 && several.every((line) => line.mapping === undefined), "several tiers");
+  const targets = buildPriceLines(await realMatches([identity("s1", "159983", "Cat A", 702)], [scalarTarget("t1", "T1", 702), scalarTarget("t2", "T1", 702)]), "T1").lines;
+  assert.ok(targets.length > 0 && targets.every((line) => line.mapping === undefined), "several targets");
+  const shared = buildPriceLines(await realMatches([identity("s1", "159983", "Cat A", 702)], [scalarTarget("t1", "T1", 702), scalarTarget("t2", "T2", 702)]), "T1").lines;
+  assert.ok(shared.every((line) => line.mapping === undefined), "a code used by another product");
+});
+
+test("a saved mapping is reported with its id, offers Remove only, and a duplicate pair of mappings is ignored like the matcher does", async () => {
+  const binding = { id: "b1", code: "159 983", price_field: "unit_price", source_dimension: "Cat A", target_keys: ["t1"], kind: "alias" as const, confirmed: true };
+  const sources = [identity("s1", "159983", "Cat A", 702)];
+  const matches = await realMatches(sources, [scalarTarget("t1", "T1", 702)], [binding]);
+  const [line] = buildPriceLines(matches, "T1", [binding]).lines;
+  assert.equal(line.state, "same");
+  assert.deepEqual(line.binding, { id: "b1", kind: "alias" });
+  assert.equal(line.mapping, undefined);
+  assert.equal(buildPriceLines(matches, "T1", [binding, { ...binding, id: "b2", code: "159983" }]).lines[0].binding, undefined);
+  assert.equal(buildPriceLines(matches, "T1", [{ ...binding, confirmed: false }]).lines[0].binding, undefined);
+});
+
+test("the popup saves or removes only from the confirm click, through the existing actions, with the brand-wide warning", () => {
+  const popup = readFileSync("components/quotations/supplier-price-lines-popup.tsx", "utf8");
+  assert.match(popup, /import \{ confirmSupplierBindings, removeSupplierBinding \} from "@\/app\/products\/price-updates\/supplier-sources\/actions"/);
+  assert.equal((popup.match(/await confirmSupplierBindings\(/g) ?? []).length, 1);
+  assert.equal((popup.match(/await removeSupplierBinding\(/g) ?? []).length, 1);
+  assert.match(popup, /kind: "alias", target_keys: \[mapping\.targetKey\]/);
+  assert.match(popup, /This is saved for the whole brand and for future price lists\./);
+  assert.match(popup, /if \(allowed !== true\) return null/);
+  // Both writes sit inside confirm(); the buttons only open the confirm step.
+  const confirm = popup.slice(popup.indexOf("const confirm = async"), popup.indexOf("} finally { setBusy(false); }"));
+  assert.ok(confirm.includes("confirmSupplierBindings(") && confirm.includes("removeSupplierBinding("));
+  assert.doesNotMatch(popup.replace(confirm, ""), /confirmSupplierBindings\(|removeSupplierBinding\(/);
+  const action = readFileSync("components/quotations/supplier-price-lines-actions.ts", "utf8");
+  assert.doesNotMatch(action, /supplierWrite|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(|revalidatePath/);
+});

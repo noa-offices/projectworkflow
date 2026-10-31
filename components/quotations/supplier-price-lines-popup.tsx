@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { filterAndOrderPriceLines, priceLineStateLabels, summarizePriceLines, type PriceLineFilter, type PriceLineState } from "@/lib/products/supplier-price-lines";
+import { confirmSupplierBindings, removeSupplierBinding } from "@/app/products/price-updates/supplier-sources/actions";
+import { filterAndOrderPriceLines, priceLineStateLabels, summarizePriceLines, type PriceLine, type PriceLineFilter, type PriceLineState } from "@/lib/products/supplier-price-lines";
 import { useCoverageAccess } from "./supplier-coverage-popup";
 import { supplierTemplatePriceLines, type PriceLinesResult } from "./supplier-price-lines-actions";
 
@@ -17,8 +18,65 @@ const badgeClass: Record<PriceLineState, string> = {
 };
 const filters: Array<{ key: PriceLineFilter; label: string }> = [{ key: "all", label: "All" }, { key: "attention", label: "Needs attention" }, { key: "same", label: "Same" }];
 
-function SourceLines({ source }: { source: PriceLinesResult["sources"][number] }) {
+type Pending = { kind: "map" | "remove"; line: PriceLine };
+
+/** Plain-words confirm step. Nothing is saved until the confirm button is clicked. */
+function ConfirmStep({ pending, busy, error, onCancel, onConfirm }: { pending: Pending; busy: boolean; error: string; onCancel: () => void; onConfirm: () => void }) {
+  const { line } = pending;
+  const mapping = line.mapping;
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-950/50 p-4" onClick={(event) => event.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-label={pending.kind === "map" ? "Map this line" : "Remove mapping"} className="w-[min(520px,96vw)] rounded-2xl border border-zinc-300 bg-white p-5 shadow-2xl">
+        <h4 className="text-base font-semibold text-zinc-950">{pending.kind === "map" ? "Map this line" : "Remove this mapping"}</h4>
+        {pending.kind === "map" && mapping ? (
+          <>
+            <p className="mt-2 text-sm text-zinc-700">The supplier gives this price a tier name. Your product has one price only. Saving tells the system: this tier is your price.</p>
+            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+              <dt className="text-zinc-500">Model code</dt><dd className="font-semibold text-zinc-900">{mapping.code}</dd>
+              <dt className="text-zinc-500">Supplier tier name</dt><dd className="font-semibold text-zinc-900">{mapping.tierLabel || "—"}</dd>
+              <dt className="text-zinc-500">Supplier price</dt><dd className="font-semibold text-zinc-900">{money(line.supplierPrice, line.supplierCurrency)}</dd>
+              <dt className="text-zinc-500">Your price it will point to</dt><dd className="font-semibold text-zinc-900">{money(mapping.targetPrice, mapping.targetCurrency)}</dd>
+              <dt className="text-zinc-500">Result after saving</dt><dd><span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-bold ${badgeClass[mapping.preview]}`}>{priceLineStateLabels[mapping.preview]}</span></dd>
+            </dl>
+          </>
+        ) : (
+          <p className="mt-2 text-sm text-zinc-700">Code {line.code} will need mapping again. Prices are not changed.</p>
+        )}
+        <p role="note" className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-amber-950">{pending.kind === "map" ? "This is saved for the whole brand and for future price lists." : "This is removed for the whole brand and for future price lists."}</p>
+        {error ? <p role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</p> : null}
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" disabled={busy} onClick={onCancel} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-semibold text-zinc-700">Cancel</button>
+          <button type="button" disabled={busy} onClick={onConfirm} className="rounded-md bg-emerald-800 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Saving…" : pending.kind === "map" ? "Save mapping" : "Remove mapping"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SourceLines({ source, brandId, onDone }: { source: PriceLinesResult["sources"][number]; brandId: string; onDone: (message: string) => void }) {
   const [filter, setFilter] = useState<PriceLineFilter>("all");
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const hasActions = source.lines.some((line) => line.mapping || line.binding);
+  // Writes happen only here, from the confirm button. Each uses the existing Price Updates action (role re-checked on the server).
+  const confirm = async () => {
+    if (!pending || busy) return;
+    setBusy(true); setError("");
+    try {
+      if (pending.kind === "map" && pending.line.mapping) {
+        const mapping = pending.line.mapping;
+        await confirmSupplierBindings(brandId, [{ code: mapping.code, price_field: mapping.priceField, source_dimension: mapping.sourceDimension, kind: "alias", target_keys: [mapping.targetKey], expected_targets: [{ key: mapping.targetKey, pricing_version: mapping.pricingVersion, price: mapping.targetPrice, currency: mapping.targetCurrency }] }]);
+        onDone(`Mapping saved for code ${mapping.code}.`);
+      } else if (pending.kind === "remove" && pending.line.binding) {
+        await removeSupplierBinding(brandId, pending.line.binding.id);
+        onDone(`Mapping removed for code ${pending.line.code}.`);
+      }
+      setPending(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save. Nothing was changed.");
+    } finally { setBusy(false); }
+  };
   const summary = summarizePriceLines(source.lines);
   const attention = summary.changed + summary.needsMapping + summary.other;
   const shown = filterAndOrderPriceLines(source.lines, filter);
@@ -44,10 +102,10 @@ function SourceLines({ source }: { source: PriceLinesResult["sources"][number] }
           <div className="mt-3 max-h-[52vh] overflow-auto rounded-lg border border-zinc-200">
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead className="sticky top-0 z-10 bg-zinc-100 text-xs font-semibold text-zinc-700">
-                <tr><th className="px-3 py-2">Model code</th><th className="px-3 py-2">Price name</th><th className="px-3 py-2 text-right">Your price</th><th className="px-3 py-2 text-right">Supplier price</th><th className="px-3 py-2 text-right">Difference</th><th className="px-3 py-2">Status</th></tr>
+                <tr><th className="px-3 py-2">Model code</th><th className="px-3 py-2">Price name</th><th className="px-3 py-2 text-right">Your price</th><th className="px-3 py-2 text-right">Supplier price</th><th className="px-3 py-2 text-right">Difference</th><th className="px-3 py-2">Status</th>{hasActions ? <th className="px-3 py-2">Action</th> : null}</tr>
               </thead>
               <tbody>
-                {shown.length === 0 ? <tr><td colSpan={6} className="px-3 py-4 text-sm text-zinc-600">No lines in this view.</td></tr> : shown.map((line) => (
+                {shown.length === 0 ? <tr><td colSpan={hasActions ? 7 : 6} className="px-3 py-4 text-sm text-zinc-600">No lines in this view.</td></tr> : shown.map((line) => (
                   <tr key={line.key} className="border-t border-zinc-100 align-top">
                     <td className="px-3 py-2 font-semibold text-zinc-900">{line.code}</td>
                     <td className="px-3 py-2 text-zinc-600">{line.field || "—"}</td>
@@ -55,6 +113,10 @@ function SourceLines({ source }: { source: PriceLinesResult["sources"][number] }
                     <td className="px-3 py-2 text-right tabular-nums">{money(line.supplierPrice, line.supplierCurrency)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{line.difference === null ? "—" : `${line.difference > 0 ? "+" : ""}${line.difference.toLocaleString("en-US", { minimumFractionDigits: 2 })}`}</td>
                     <td className="px-3 py-2"><span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-bold ${badgeClass[line.state]}`}>{priceLineStateLabels[line.state]}</span></td>
+                    {hasActions ? <td className="px-3 py-2">
+                      {line.mapping ? <button type="button" onClick={() => { setError(""); setPending({ kind: "map", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Map this line</button> : null}
+                      {line.binding ? <button type="button" onClick={() => { setError(""); setPending({ kind: "remove", line }); }} className="whitespace-nowrap text-xs font-semibold text-red-800 underline">Remove mapping</button> : null}
+                    </td> : null}
                   </tr>
                 ))}
               </tbody>
@@ -62,6 +124,7 @@ function SourceLines({ source }: { source: PriceLinesResult["sources"][number] }
           </div>
         </>
       )}
+      {pending ? <ConfirmStep pending={pending} busy={busy} error={error} onCancel={() => { setPending(null); setError(""); }} onConfirm={() => void confirm()} /> : null}
       {source.truncated ? <p className="mt-2 text-xs text-amber-800">Only the first 500 lines are shown.</p> : null}
     </section>
   );
@@ -74,10 +137,11 @@ export function SupplierPriceLinesAction({ templateId, templateName }: { templat
   const [result, setResult] = useState<PriceLinesResult | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState("");
   if (allowed !== true) return null;
 
-  const load = () => {
-    setOpen(true); setError(""); setResult(null); setLoading(true);
+  const load = (message = "") => {
+    setOpen(true); setError(""); setResult(null); setLoading(true); setNotice(message);
     supplierTemplatePriceLines(templateId)
       .then(setResult)
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Could not load the price lines."))
@@ -99,7 +163,8 @@ export function SupplierPriceLinesAction({ templateId, templateName }: { templat
               {loading ? <p className="text-sm text-zinc-500">Loading price lines… this can take a few seconds.</p> : null}
               {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</p> : null}
               {result && result.sources.length === 0 ? <p className="text-sm text-zinc-600">No current Supplier price list covers this product yet, so there is nothing to show.</p> : null}
-              {result?.sources.map((source) => <SourceLines key={`${source.definitionName}|${source.title}`} source={source} />)}
+              {notice ? <p role="status" className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-900">{notice}</p> : null}
+              {result?.sources.map((source) => <SourceLines key={`${source.definitionName}|${source.title}`} source={source} brandId={result.brandId} onDone={load} />)}
             </div>
           </div>
         </div>,

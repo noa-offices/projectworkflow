@@ -26,7 +26,8 @@ test("the server action uses the approver guard and has no UI or other writes", 
   assert.match(body, /await approver\(\)/);
   assert.match(body, /supplierRemoveBinding\(client, brandId, bindingId\)/);
   assert.doesNotMatch(body, /supplierWrite|\.from\(|\.delete\(/);
-  for (const file of ["components/quotations/supplier-price-lines-popup.tsx", "components/products/supplier-price-workspace-controls.tsx"]) assert.doesNotMatch(readFileSync(file, "utf8"), /removeSupplierBinding/, `no button yet in ${file}`);
+  // The Price Lines popup later added the only button, behind a confirm step (see supplier-price-lines.test.mts).
+  assert.doesNotMatch(readFileSync("components/products/supplier-price-workspace-controls.tsx", "utf8"), /removeSupplierBinding/);
 });
 
 test("the migration adds one guarded operation: role check, Brand-scoped delete, audit, nothing else", () => {
