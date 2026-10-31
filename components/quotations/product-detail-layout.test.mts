@@ -32,17 +32,28 @@ test("the right column no longer holds the moved blocks and keeps the preview an
   assert.ok(aside.indexOf("sticky bottom-0") < aside.indexOf("Add to Local Workspace"));
 });
 
-test("the card has every moved field, with a Price group, a Product details group and a full-width specification", () => {
+test("the card has every moved field: a Price group, and a Product details group that ends with the specification", () => {
   for (const moved of ["Source Currency Total", "Currency Conversion", "to AED rate", "Enter an exchange rate for", "Converted final:", "Pricing / Discount", "Discount Type", "Net Price:", "Net Total:", "Apply Updated Price", "Keep Current Quote Price",
     "Final Details", "Final Specification", 'name="final_specification_override"', "FinalSpecificationAiControl", "Reset to generated specification", "This only updates the current quotation item. Template specification stays unchanged.",
     "Dimensions", "Reset to product default", "Brand", "Country of Origin", "Mixed-currency add-ons use the conversion rates below.", "Mixed-currency linked products use the conversion rates below."]) assert.ok(card.includes(moved), `missing from the card: ${moved}`);
   // The yellow exchange rate box is the conversion block itself, next to the rate field.
   assert.match(card, /border-amber-200 bg-amber-50 p-3 text-left text-xs leading-5 text-amber-900/);
-  const price = card.indexOf(">Price</p>"), details = card.indexOf(">Product details</p>"), specification = card.indexOf('<div className="min-w-0 lg:col-span-2">');
-  assert.ok(price > 0 && price < details && details < specification, "visual order equals source order, so the keyboard order follows it");
+  const price = card.indexOf(">Price</p>"), details = card.indexOf(">Product details</p>");
+  const dimensions = card.indexOf(">Dimensions</span>"), brand = card.indexOf(">Brand</span>"), origin = card.indexOf("Country of Origin");
+  const specHeading = card.indexOf("Final Specification</p>"), textarea = card.indexOf('name="final_specification_override"');
+  assert.ok(price > 0 && price < details, "Price comes first");
   assert.ok(card.indexOf("Source Currency Total") > price && card.indexOf("Pricing / Discount") < details);
-  assert.ok(card.indexOf("Country of Origin") > details && card.indexOf("Country of Origin") < specification);
-  assert.ok(card.indexOf("final_specification_override") > specification);
+  // Order inside Product details = visual order = keyboard order: Dimensions, Brand, Country of Origin, then the Specification.
+  assert.ok(details < dimensions && dimensions < brand && brand < origin && origin < specHeading && specHeading < textarea, "Dimensions, Brand, Country of Origin, Specification");
+  assert.ok(card.indexOf("Reset to product default") > dimensions && card.indexOf("Reset to product default") < brand, "Reset sits with Dimensions");
+  // The specification belongs to the Product details group: no separate full-width block and no third group.
+  assert.doesNotMatch(card, /lg:col-span-2/, "no separate full-width specification block remains");
+  assert.equal((card.slice(details).match(/className="min-w-0 space-y-3"/g) ?? []).length, 0, "no group starts after Product details");
+  // It fills the width of its column; Improve / Shorten and the note stay under the textarea.
+  assert.match(card, /name="final_specification_override"[\s\S]*?rows=\{8\}[\s\S]*?className="mt-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs leading-5 text-zinc-700 outline-none focus:border-emerald-800"/);
+  const control = card.indexOf("<FinalSpecificationAiControl"), note = card.indexOf("This only updates the current quotation item.");
+  assert.ok(textarea < control && textarea < note, "the note and the Improve / Shorten control come after the textarea");
+  assert.ok(card.indexOf('<div className="grid gap-4 lg:grid-cols-2">') < price, "two groups side by side from the wide breakpoint, one column below");
   // Two groups side by side on wide screens, one column below; every column may shrink so nothing scrolls sideways.
   assert.match(card, /<div className="grid gap-4 lg:grid-cols-2">/);
   assert.equal((card.match(/className="min-w-0 space-y-3"/g) ?? []).length, 2);

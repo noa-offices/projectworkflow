@@ -4415,8 +4415,6 @@ export function ProductLibrarySelector({
                                   <input value={quotationOrigins[template.id] ?? originSnapshot ?? ""} onChange={(event) => setQuotationOrigins((current) => ({ ...current, [template.id]: event.target.value }))} onBlur={() => setQuotationOrigins((current) => current[template.id]?.trim() ? current : { ...current, [template.id]: originSnapshot ?? "" })} className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                                 </label>
                               </div>
-                              </div>
-                              <div className="min-w-0 lg:col-span-2">
                               <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
                                 <p className="font-bold uppercase text-zinc-500">Final Details</p>
                                 <p className="font-bold uppercase text-zinc-500">Final Specification</p>
