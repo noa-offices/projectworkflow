@@ -12,7 +12,7 @@ export const supplierFamilyStatusLabels: Record<SupplierFamilyPriceStatusKey, st
   price_checked: "Price checked", partially_checked: "Partially checked", no_price_list: "No current price list", legacy_manual: "Manual price check",
 };
 /** A per-product sign-off (supplier_template_checks): this Product matched this price list while its pricing version was this. */
-export type SupplierTemplateCheckFact = { templateId: string; sourceId: string; pricingVersion: string; checkedAt: string };
+export type SupplierTemplateCheckFact = { templateId: string; sourceId: string; pricingVersion: string; checkedAt: string; /** Who signed it off; absent when unknown. */ checkedByName?: string };
 export type SupplierVersionRef = { id: string; title: string; status: string; effective_from: string | null; created_at: string };
 /** A Source Definition responsible for a Family, with that definition's Source Versions (any status; the resolver filters). */
 export type SupplierResponsibilityInput = { templateId: string; definitionId: string; definitionName: string; versions: SupplierVersionRef[] };
@@ -29,6 +29,8 @@ export type SupplierFamilyPriceStatus = {
   editedSinceCheck?: boolean;
   /** When a per-product sign-off decided this status (price_checked or edited_since_check). */
   checkedAt?: string;
+  /** The full name of whoever signed off (price_checked only), when known. */
+  checkedByName?: string;
   detail: string;
 };
 export type SupplierFamilyStatusPresentation = {
@@ -43,7 +45,7 @@ export type SupplierBrandPriceStatus = {
   inReviewFamilies: number; readyToCompleteFamilies: number; noPriceListFamilies: number; legacyFamilies: number; upcomingCount: number;
   state: SupplierBrandPriceState;
 };
-type ResponsibilityState = { status: SupplierFamilyPriceStatusKey; source?: SupplierFamilyPriceStatus["source"]; upcoming?: SupplierVersionRef; progress?: SupplierFamilyPriceStatus["progress"]; checkedAt?: string; detail: string };
+type ResponsibilityState = { status: SupplierFamilyPriceStatusKey; source?: SupplierFamilyPriceStatus["source"]; upcoming?: SupplierVersionRef; progress?: SupplierFamilyPriceStatus["progress"]; checkedAt?: string; checkedByName?: string; detail: string };
 
 function latestCompleted(facts: SupplierFamilyReviewFact[]) {
   return [...facts].sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? "") || b.batchId.localeCompare(a.batchId))[0];
@@ -63,7 +65,7 @@ function responsibilityState(responsibility: SupplierResponsibilityInput, facts:
   if (check) {
     const on = supplierStatusDate(check.checkedAt.slice(0, 10));
     // A valid check beats any review of this product, including a stale open one.
-    if (check.pricingVersion === currentVersion) return { status: "price_checked", source: sourceRef, upcoming, checkedAt: check.checkedAt, detail: `${applicable.title}: checked on ${on}` };
+    if (check.pricingVersion === currentVersion) return { status: "price_checked", source: sourceRef, upcoming, checkedAt: check.checkedAt, ...(check.checkedByName ? { checkedByName: check.checkedByName } : {}), detail: `${applicable.title}: checked on ${on}${check.checkedByName ? ` by ${check.checkedByName}` : ""}` };
     // Prices were edited after the check, unless a brand-wide review was completed after it.
     if (!(completed?.completedAt && completed.completedAt >= check.checkedAt)) return { status: "edited_since_check", source: sourceRef, upcoming, checkedAt: check.checkedAt, detail: `${applicable.title}: product prices changed after the check on ${on}` };
   }
@@ -108,7 +110,7 @@ export function resolveSupplierFamilyPriceStatus(input: {
     const upcoming = upcomings[0] ? { sourceId: upcomings[0].id, title: upcomings[0].title, effectiveFrom: upcomings[0].effective_from ?? "" } : undefined;
     return {
       familyId: family.templateId, brandId: family.brandId, status: worst.state.status, label: supplierFamilyStatusLabels[worst.state.status],
-      source: worst.state.source, upcoming, progress: worst.state.progress, ...(worst.state.checkedAt ? { checkedAt: worst.state.checkedAt } : {}),
+      source: worst.state.source, upcoming, progress: worst.state.progress, ...(worst.state.checkedAt ? { checkedAt: worst.state.checkedAt } : {}), ...(worst.state.checkedByName ? { checkedByName: worst.state.checkedByName } : {}),
       detail: states.map(({ responsibility, state }) => `${responsibility.definitionName}: ${state.detail}`).join(" · "),
     };
   });
@@ -128,7 +130,7 @@ export function supplierFamilyStatusPresentation(status: SupplierFamilyPriceStat
       : status.status === "in_review" || status.status === "ready_to_complete" ? "info"
         : status.status === "no_price_list" || status.status === "legacy_manual" ? "neutral"
           : "warning";
-  const sourceDetail = status.checkedAt && status.status === "price_checked" ? `Checked on ${supplierStatusDate(status.checkedAt.slice(0, 10))}`
+  const sourceDetail = status.checkedAt && status.status === "price_checked" ? `Checked on ${supplierStatusDate(status.checkedAt.slice(0, 10))}${status.checkedByName ? ` by ${status.checkedByName}` : ""}`
     : status.checkedAt && status.status === "edited_since_check" ? `Product prices changed after the check on ${supplierStatusDate(status.checkedAt.slice(0, 10))}`
     : status.source
       ? `${status.source.definitionName} — ${status.source.title}`

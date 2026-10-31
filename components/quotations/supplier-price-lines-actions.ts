@@ -19,7 +19,7 @@ export type PriceLinesFamilies = {
 };
 export type PriceLinesResult = { brandId: string; sources: Array<{ definitionId: string; sourceId: string; definitionName: string; title: string; effectiveFrom: string | null; lines: PriceLine[]; truncated: boolean;
   /** The newest per-product sign-off for this price list: when, and whether the product's pricing version still matches it. Null when never checked. */
-  check: { checkedAt: string; valid: boolean } | null } & PriceLinesFamilies> };
+  check: { checkedAt: string; valid: boolean; /** The checker's full name, when known. */ checkedByName: string | null } | null } & PriceLinesFamilies> };
 
 const applyLookupLimit = 40;
 /**
@@ -72,7 +72,7 @@ export async function supplierTemplatePriceLines(templateId: string): Promise<Pr
     const { matches } = await supplierBrandMatches(client, current.id);
     const familyRequired = families.length > 0 && chosen.length === 0;
     sources.push({ definitionId: definition.id, sourceId: current.id, definitionName: definition.name, title: current.title, effectiveFrom: current.effective_from, families, chosen, missing,
-      check: (() => { const newest = checks.filter((item) => item.source_id === current.id).sort((a, b) => b.checked_at.localeCompare(a.checked_at))[0]; return newest ? { checkedAt: newest.checked_at, valid: String(newest.pricing_version) === String(template.pricing_version) } : null; })(),
+      check: (() => { const newest = checks.filter((item) => item.source_id === current.id).sort((a, b) => b.checked_at.localeCompare(a.checked_at))[0]; return newest ? { checkedAt: newest.checked_at, valid: String(newest.pricing_version) === String(template.pricing_version), checkedByName: newest.checked_by_name?.trim() || null } : null; })(),
       ...(await withApplyBatch(client, current.id, buildPriceLines(matches, templateId, bindings, { familyRequired }))) });
   }
   return { brandId: template.brand_id, sources };

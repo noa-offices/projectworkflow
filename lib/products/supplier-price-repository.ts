@@ -158,7 +158,8 @@ export async function supplierSource(client: SupabaseClient, sourceId: string) {
 }
 /** Review matches carry the identity without its evidence, so stored match rows do not grow; evidence stays on the identity. */
 function withoutEvidence(identity: SourceIdentity): SourceIdentity { const copy = { ...identity }; delete copy.evidence; return copy; }
-export type SupplierTemplateCheck = { template_id: string; source_id: string; definition_id: string; pricing_version: string; line_count: number; checked_at: string };
+/** `checked_by_name` is the checker's full name; absent when the older read function is still deployed, null when the profile has no name. */
+export type SupplierTemplateCheck = { template_id: string; source_id: string; definition_id: string; pricing_version: string; line_count: number; checked_at: string; checked_by_name?: string | null };
 /** Records one per-product sign-off. The database re-checks the role, the product's pricing version, coverage and the source. It changes no price, batch, decision or baseline. */
 export async function supplierMarkTemplateChecked(client: SupabaseClient, input: { definitionId: string; sourceId: string; templateId: string; expectedPricingVersion: string; lineCount: number; summary: Record<string, unknown> }) {
   return supplierWrite(client, "template_check_set", { definition_id: input.definitionId, source_id: input.sourceId, template_id: input.templateId, expected_pricing_version: input.expectedPricingVersion, line_count: input.lineCount, summary: input.summary });

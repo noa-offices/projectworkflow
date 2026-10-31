@@ -79,7 +79,7 @@ test("the badge shows exactly what the status engine says after the check, and a
 });
 
 test("already checked shows 'Checked on <date>'; edited since the check shows the message and the button again", () => {
-  assert.match(bar, /if \(source\.check\?\.valid\) return <p className="mt-3 text-sm font-semibold text-emerald-900">Checked on \{checkedDate\(source\.check\.checkedAt\)\}<\/p>;/);
+  assert.match(bar, /if \(source\.check\?\.valid\) return <p className="mt-3 text-sm font-semibold text-emerald-900">Checked on \{checkedDate\(source\.check\.checkedAt\)\}\{source\.check\.checkedByName \? ` by \$\{source\.check\.checkedByName\}` : ""\}<\/p>;/);
   assert.ok(bar.indexOf("source.check?.valid") < bar.indexOf("if (!verdict.ok) return null"), "a valid check shows the date even if lines changed shape later");
   assert.match(bar, /\{source\.check \? <p className="mb-1 text-sm font-medium text-amber-900">Prices changed since the last check<\/p> : null\}/);
   assert.ok(bar.indexOf("Prices changed since the last check") < bar.indexOf(">Mark prices as checked</button>"), "the message sits above the green button");
