@@ -21,3 +21,8 @@ export function newRecordSupplierStatus<T extends object>(next: T, existing: obj
   const computed = existing.some((record) => (record as Record<string, unknown>).supplier_family_price_load_state !== undefined);
   return computed && !("supplier_family_price_load_state" in next) ? { ...next, supplier_family_price_load_state: "unavailable" } : next;
 }
+
+/** The record with a freshly computed Supplier status (for example right after a product was marked as checked), no page reload needed. */
+export function withSupplierStatus<T extends object>(record: T, presentation: object | null | undefined): T {
+  return { ...record, supplier_family_price_presentation: presentation ?? undefined, supplier_family_price_load_state: "loaded", supplier_family_price_loading: false };
+}

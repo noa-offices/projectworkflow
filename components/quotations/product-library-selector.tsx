@@ -35,7 +35,7 @@ import {
 } from "@/lib/quotations/image-preview-zoom";
 import { createLocalId, localNow, type LocalQuotationItem } from "@/lib/local/quotation-workspace";
 import { friendlyPriceHealth, productTemplatePriceCheckState } from "@/lib/product-price-check";
-import { keepSupplierStatus, newRecordSupplierStatus } from "@/lib/products/supplier-status-record";
+import { keepSupplierStatus, newRecordSupplierStatus, withSupplierStatus } from "@/lib/products/supplier-status-record";
 import {
   groupedStandardCategoryPricingRows,
   standardCategoryPriceColumns as groupedCategoryPriceColumns,
@@ -471,9 +471,11 @@ function priceCheckState(template: ProductLibraryTemplate) {
 
 function PriceCheckBadge({
   compact = false,
+  onSupplierStatus,
   template,
 }: {
   compact?: boolean;
+  onSupplierStatus?: (templateId: string, presentation: ProductLibraryTemplate["supplier_family_price_presentation"] | null) => void;
   template: ProductLibraryTemplate;
 }) {
   const supplierPresentation = template.supplier_family_price_presentation ?? null;
@@ -506,7 +508,7 @@ function PriceCheckBadge({
     <span className={compact ? "mt-1 block" : "grid gap-1"}>
       <span className={badgeClass} title={supplierPresentation?.detail}>{health.label}</span>
       {!compact ? supplierPresentation?.actionHref ? <SupplierCoverageAction brandId={template.brand_id} templateId={template.id} templateName={templateSelectionName(template)} detail={supplierPresentation.detail} /> : <span className="block text-[11px] font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : null}
-      {!compact && supplierPresentation && !supplierPresentation.actionHref ? <SupplierPriceLinesAction templateId={template.id} templateName={templateSelectionName(template)} /> : null}
+      {!compact && supplierPresentation && !supplierPresentation.actionHref ? <SupplierPriceLinesAction templateId={template.id} templateName={templateSelectionName(template)} onSupplierStatus={onSupplierStatus} /> : null}
     </span>
   );
 }
@@ -1418,6 +1420,11 @@ export function ProductLibrarySelector({
 
     return (productCountByCategory.get(category.id) ?? 0) > 0;
   });
+
+  // A product was just marked as checked: show its new Supplier status in the open Product Library, no page reload.
+  const updateSupplierStatus = (templateId: string, presentation: ProductLibraryTemplate["supplier_family_price_presentation"] | null) => {
+    setTemplateRecords((current) => current.map((template) => (template.id === templateId ? withSupplierStatus(template, presentation) : template)));
+  };
 
   const updateTemplateRecord = (nextTemplate: ProductLibraryTemplate) => {
     // The server's copy of a saved template has no Supplier status; keep the one this page computed.
@@ -2999,7 +3006,7 @@ export function ProductLibrarySelector({
                               Quote name: {template.template_name}
                             </p>
                           ) : null}
-                          <PriceCheckBadge template={template} />
+                          <PriceCheckBadge template={template} onSupplierStatus={updateSupplierStatus} />
                         </div>
                       </div>
                       <form
@@ -4433,7 +4440,7 @@ export function ProductLibrarySelector({
                               <p className="text-sm font-semibold text-zinc-950">
                                 {formatQuotationMoney(previewCurrency, effectiveQuoteUnitPrice)}
                               </p>
-                              <PriceCheckBadge template={template} />
+                              <PriceCheckBadge template={template} onSupplierStatus={updateSupplierStatus} />
                               {!template.supplier_family_price_loading && (!template.supplier_family_price_presentation || Boolean(template.supplier_family_price_presentation.actionHref)) && priceCheckState(template).tone === "warning" ? (
                                 <>
                                   <p className="max-w-52 text-[11px] leading-4 text-amber-700">

@@ -4,7 +4,7 @@ import { requireActiveUser } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import type { DurableBinding, PriceMatch } from "@/lib/products/supplier-price-contracts";
 import { buildPriceLines, type PriceLine } from "@/lib/products/supplier-price-lines";
-import { resolveApplicableSupplierSourceVersion, supplierBrandMatches, supplierBusinessDate, supplierListTemplateFamilies, supplierMissingTemplateFamilies, supplierRows, supplierSourceFamilies } from "@/lib/products/supplier-price-repository";
+import { resolveApplicableSupplierSourceVersion, supplierBrandMatches, supplierBusinessDate, supplierLatestTemplateChecks, supplierListTemplateFamilies, supplierMissingTemplateFamilies, supplierRows, supplierSourceFamilies } from "@/lib/products/supplier-price-repository";
 import { findSourceReviewBatch } from "@/lib/products/supplier-replacement";
 import { createClient } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -17,7 +17,9 @@ export type PriceLinesFamilies = {
   /** Saved families that the current price list does not contain. */
   missing: Array<{ family: string; key: string }>;
 };
-export type PriceLinesResult = { brandId: string; sources: Array<{ definitionId: string; sourceId: string; definitionName: string; title: string; effectiveFrom: string | null; lines: PriceLine[]; truncated: boolean } & PriceLinesFamilies> };
+export type PriceLinesResult = { brandId: string; sources: Array<{ definitionId: string; sourceId: string; definitionName: string; title: string; effectiveFrom: string | null; lines: PriceLine[]; truncated: boolean;
+  /** The newest per-product sign-off for this price list: when, and whether the product's pricing version still matches it. Null when never checked. */
+  check: { checkedAt: string; valid: boolean } | null } & PriceLinesFamilies> };
 
 const applyLookupLimit = 40;
 /**
@@ -49,7 +51,7 @@ export async function supplierTemplatePriceLines(templateId: string): Promise<Pr
   const { profile } = await requireActiveUser();
   if (!canApproveBrandPrices(profile?.role, profile?.account_status)) throw Error("Brand price approver permission required.");
   const client = await createClient();
-  const template = (await supplierRows<{ id: string; brand_id: string }>(client, "product_templates", "id,brand_id", { id: templateId, is_active: true })).at(0);
+  const template = (await supplierRows<{ id: string; brand_id: string; pricing_version: number | string }>(client, "product_templates", "id,brand_id,pricing_version", { id: templateId, is_active: true })).at(0);
   if (!template) throw Error("This product is unavailable.");
   const covered = new Set((await supplierRows<{ definition_id: string }>(client, "supplier_source_definition_families", "definition_id", { template_id: templateId }, "definition_id")).map((row) => row.definition_id));
   const [definitions, versions] = await Promise.all([
@@ -57,6 +59,7 @@ export async function supplierTemplatePriceLines(templateId: string): Promise<Pr
     supplierRows<{ id: string; title: string; status: string; effective_from: string | null; created_at: string; definition_id: string | null }>(client, "supplier_source_versions", "id,title,status,effective_from,created_at,definition_id", { brand_id: template.brand_id, status: "imported" }),
   ]);
   const bindings = await supplierRows<DurableBinding>(client, "supplier_price_bindings", "*", { brand_id: template.brand_id });
+  const checks = (await supplierLatestTemplateChecks(client, [template.brand_id])).filter((item) => item.template_id === templateId);
   const sources: PriceLinesResult["sources"] = [];
   for (const definition of definitions.filter((item) => covered.has(item.id))) {
     const current = resolveApplicableSupplierSourceVersion(versions.filter((version) => version.definition_id === definition.id), supplierBusinessDate());
@@ -69,6 +72,7 @@ export async function supplierTemplatePriceLines(templateId: string): Promise<Pr
     const { matches } = await supplierBrandMatches(client, current.id);
     const familyRequired = families.length > 0 && chosen.length === 0;
     sources.push({ definitionId: definition.id, sourceId: current.id, definitionName: definition.name, title: current.title, effectiveFrom: current.effective_from, families, chosen, missing,
+      check: (() => { const newest = checks.filter((item) => item.source_id === current.id).sort((a, b) => b.checked_at.localeCompare(a.checked_at))[0]; return newest ? { checkedAt: newest.checked_at, valid: String(newest.pricing_version) === String(template.pricing_version) } : null; })(),
       ...(await withApplyBatch(client, current.id, buildPriceLines(matches, templateId, bindings, { familyRequired }))) });
   }
   return { brandId: template.brand_id, sources };

@@ -6,6 +6,10 @@ import { applySupplierReviewedPrice, confirmSupplierBindings, removeSupplierBind
 import { filterAndOrderPriceLines, priceLineStateLabels, summarizePriceLines, type PriceLine, type PriceLineFilter, type PriceLineState } from "@/lib/products/supplier-price-lines";
 import { useCoverageAccess } from "./supplier-coverage-popup";
 import { supplierTemplatePriceLines, type PriceLinesResult } from "./supplier-price-lines-actions";
+import { markTemplateSupplierPriceChecked } from "./supplier-template-check-actions";
+import { supplierTemplateStatusPresentation } from "./supplier-template-status-actions";
+import { evaluateTemplateCheck } from "@/lib/products/supplier-template-check";
+import type { SupplierFamilyStatusPresentation } from "@/lib/products/supplier-family-status";
 
 const money = (value: number | null, currency: string | null) => value === null ? "—" : `${currency ?? ""} ${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim();
 const badgeClass: Record<PriceLineState, string> = {
@@ -125,7 +129,54 @@ function FamilyBar({ source, templateId, onDone }: { source: Source; templateId:
   );
 }
 
-function SourceLines({ source, brandId, templateId, onDone }: { source: Source; brandId: string; templateId: string; onDone: (message: string) => void }) {
+const checkedDate = (iso: string) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(iso));
+type StatusListener = (templateId: string, presentation: SupplierFamilyStatusPresentation | null) => void;
+
+/**
+ * "Mark prices as checked" for ONE product against ONE price list. Shown only when every line matches (the same rules the server
+ * enforces again). One click opens a confirm step; only the confirm button writes, through markTemplateSupplierPriceChecked.
+ */
+function CheckBar({ source, templateId, templateName, onDone, onStatus }: { source: Source; templateId: string; templateName: string; onDone: (message: string) => void; onStatus?: StatusListener }) {
+  const [open, setOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const verdict = evaluateTemplateCheck(source);
+  if (source.check?.valid) return <p className="mt-3 text-sm font-semibold text-emerald-900">Checked on {checkedDate(source.check.checkedAt)}</p>;
+  if (!verdict.ok) return null;
+  const confirm = async () => {
+    if (busy) return;
+    setBusy(true); setError("");
+    try {
+      await markTemplateSupplierPriceChecked(templateId, source.sourceId);
+    } catch (reason) {
+      setError(`${reason instanceof Error ? reason.message : "Something went wrong."} Nothing was saved.`);
+      setBusy(false);
+      return;
+    }
+    // Saved. Now refresh the badge without a page reload; if that read fails the check is still saved.
+    let note = "";
+    try { onStatus?.(templateId, await supplierTemplateStatusPresentation(templateId)); } catch { note = " Reload the page to update the badge."; }
+    setBusy(false); setOpen(false);
+    onDone(`Marked as checked: all ${verdict.lineCount} lines match the supplier list.${note}`);
+  };
+  return (
+    <div className="mt-3">
+      {source.check ? <p className="mb-1 text-sm font-medium text-amber-900">Prices changed since the last check</p> : null}
+      <button type="button" onClick={() => { setError(""); setOpen(true); }} className="rounded-md bg-emerald-800 px-3 py-1.5 text-sm font-semibold text-white">Mark prices as checked</button>
+      {open ? <div className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-950/50 p-4" onClick={(event) => event.stopPropagation()}>
+        <div role="dialog" aria-modal="true" aria-label="Mark prices as checked" className="w-[min(520px,96vw)] rounded-2xl border border-zinc-300 bg-white p-5 shadow-2xl">
+          <h4 className="text-base font-semibold text-zinc-950">Mark prices as checked</h4>
+          <p className="mt-2 text-sm text-zinc-700">All {verdict.lineCount} lines match the supplier list. This marks {templateName} as checked against {source.title}. Product prices do not change.</p>
+          {error ? <p role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</p> : null}
+          <div className="mt-4 flex justify-end gap-2">
+            <button type="button" disabled={busy} onClick={() => setOpen(false)} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-semibold text-zinc-700">Cancel</button>
+            <button type="button" disabled={busy} onClick={() => void confirm()} className="rounded-md bg-emerald-800 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Saving…" : "Mark prices as checked"}</button>
+          </div>
+        </div>
+      </div> : null}
+    </div>
+  );
+}
+
+function SourceLines({ source, brandId, templateId, templateName, onDone, onStatus }: { source: Source; brandId: string; templateId: string; templateName: string; onDone: (message: string) => void; onStatus?: StatusListener }) {
   const [filter, setFilter] = useState<PriceLineFilter>("all");
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
@@ -175,6 +226,7 @@ function SourceLines({ source, brandId, templateId, onDone }: { source: Source; 
       <h4 className="text-sm font-semibold text-zinc-900">{source.definitionName} — {source.title}</h4>
       {source.effectiveFrom ? <p className="text-xs text-zinc-500">Price list valid from {source.effectiveFrom}</p> : null}
       <FamilyBar source={source} templateId={templateId} onDone={onDone} />
+      <CheckBar source={source} templateId={templateId} templateName={templateName} onDone={onDone} onStatus={onStatus} />
       {source.lines.length === 0 ? <p className="mt-3 text-sm text-zinc-600">This price list has no lines for this product.</p> : (
         <>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -221,7 +273,7 @@ function SourceLines({ source, brandId, templateId, onDone }: { source: Source; 
 }
 
 /** Read-only view of this Product's Supplier price lines. Allowed roles only; it never navigates and writes nothing. */
-export function SupplierPriceLinesAction({ templateId, templateName }: { templateId: string; templateName: string }) {
+export function SupplierPriceLinesAction({ templateId, templateName, onSupplierStatus }: { templateId: string; templateName: string; onSupplierStatus?: StatusListener }) {
   const allowed = useCoverageAccess();
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<PriceLinesResult | null>(null);
@@ -254,7 +306,7 @@ export function SupplierPriceLinesAction({ templateId, templateName }: { templat
               {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</p> : null}
               {result && result.sources.length === 0 ? <p className="text-sm text-zinc-600">No current Supplier price list covers this product yet, so there is nothing to show.</p> : null}
               {notice ? <p role="status" className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-900">{notice}</p> : null}
-              {result?.sources.map((source) => <SourceLines key={`${source.definitionName}|${source.title}`} source={source} brandId={result.brandId} templateId={templateId} onDone={load} />)}
+              {result?.sources.map((source) => <SourceLines key={`${source.definitionName}|${source.title}`} source={source} brandId={result.brandId} templateId={templateId} templateName={templateName} onDone={load} onStatus={onSupplierStatus} />)}
             </div>
           </div>
         </div>,
