@@ -17,7 +17,7 @@ export type PriceLinesFamilies = {
   /** Saved families that the current price list does not contain. */
   missing: Array<{ family: string; key: string }>;
 };
-export type PriceLinesResult = { brandId: string; sources: Array<{ definitionId: string; definitionName: string; title: string; effectiveFrom: string | null; lines: PriceLine[]; truncated: boolean } & PriceLinesFamilies> };
+export type PriceLinesResult = { brandId: string; sources: Array<{ definitionId: string; sourceId: string; definitionName: string; title: string; effectiveFrom: string | null; lines: PriceLine[]; truncated: boolean } & PriceLinesFamilies> };
 
 const applyLookupLimit = 40;
 /**
@@ -68,7 +68,7 @@ export async function supplierTemplatePriceLines(templateId: string): Promise<Pr
     const missing = absent.filter((item) => item.template_id === templateId).map((item) => ({ family: item.family, key: item.family_key }));
     const { matches } = await supplierBrandMatches(client, current.id);
     const familyRequired = families.length > 0 && chosen.length === 0;
-    sources.push({ definitionId: definition.id, definitionName: definition.name, title: current.title, effectiveFrom: current.effective_from, families, chosen, missing,
+    sources.push({ definitionId: definition.id, sourceId: current.id, definitionName: definition.name, title: current.title, effectiveFrom: current.effective_from, families, chosen, missing,
       ...(await withApplyBatch(client, current.id, buildPriceLines(matches, templateId, bindings, { familyRequired }))) });
   }
   return { brandId: template.brand_id, sources };

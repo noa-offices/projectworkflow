@@ -389,3 +389,32 @@ test("template families: the migration applies once and refuses a changed or alr
     await assert.rejects(changed.exec(templateSeriesMigration), /differs from the expected body/);
   } finally { await changed.close(); }
 });
+
+const templateChecksMigration = await readFile(new URL("../../supabase/migrations/20261103100000_supplier_template_checks.sql", import.meta.url), "utf8");
+
+test("template checks: the rollback TEST file and the assertions file pass on a PGlite replica and leave nothing behind", async () => {
+  const contract = await readFile(new URL("../../supabase/tests/supplier_template_checks.sql", import.meta.url), "utf8");
+  const combined = await readFile(new URL("../../supabase/tests/supplier_template_checks_TEST.sql", import.meta.url), "utf8");
+  const migrationBody = templateChecksMigration.replace(/^begin;\s*/i, "").replace(/commit;\s*$/i, "").trim();
+  assert.ok(combined.includes(migrationBody), "TEST contains the exact migration body");
+  assert.ok(combined.includes(contract.slice(contract.search(/\bbegin;\s*/i)).replace(/^begin;\s*/i, "").replace(/select 'PASS[\s\S]*$/, "").trim()), "TEST contains the exact assertions");
+  assert.doesNotMatch(combined, /\bcommit;/i);
+  const db = await templateSeriesReplica(); try {
+    // A second active product that no price list covers, so the "not covered" refusal is really exercised.
+    await db.exec("insert into product_templates select '00000000-0000-0000-0000-0000000000aa'::uuid, brand_id, 'Other', is_active, pricing_version, default_unit_price, currency, variant_pricing, category_pricing, desking_size_pricing, accessory_pricing, last_price_checked_at, last_price_checked_by, item_code from product_templates limit 1");
+    const results = await db.exec(combined);
+    assert.match(String((results.at(-1)?.rows[0] as { result?: string } | undefined)?.result), /^PASS: supplier template check checks completed and rolled back$/);
+    assert.equal((await db.query<{ n: string | null }>("select to_regclass('public.supplier_template_checks')::text n")).rows[0].n, null, "migration rolled back");
+  } finally { await db.close(); }
+});
+
+test("template checks: the migration applies once and refuses a changed or already patched function", async () => {
+  const db = await templateSeriesReplica(); try {
+    await db.exec(templateChecksMigration);
+    await assert.rejects(db.exec(templateChecksMigration), /already exists|differs from the expected body/);
+  } finally { await db.close(); }
+  const changed = await templateSeriesReplica(); try {
+    await changed.exec("create or replace function public.supplier_price_review_write(p_operation text,p_payload jsonb) returns jsonb language plpgsql as $$ begin return '{}'::jsonb; end $$;");
+    await assert.rejects(changed.exec(templateChecksMigration), /differs from the expected body/);
+  } finally { await changed.close(); }
+});

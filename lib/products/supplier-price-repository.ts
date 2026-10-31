@@ -158,6 +158,22 @@ export async function supplierSource(client: SupabaseClient, sourceId: string) {
 }
 /** Review matches carry the identity without its evidence, so stored match rows do not grow; evidence stays on the identity. */
 function withoutEvidence(identity: SourceIdentity): SourceIdentity { const copy = { ...identity }; delete copy.evidence; return copy; }
+export type SupplierTemplateCheck = { template_id: string; source_id: string; definition_id: string; pricing_version: string; line_count: number; checked_at: string };
+/** Records one per-product sign-off. The database re-checks the role, the product's pricing version, coverage and the source. It changes no price, batch, decision or baseline. */
+export async function supplierMarkTemplateChecked(client: SupabaseClient, input: { definitionId: string; sourceId: string; templateId: string; expectedPricingVersion: string; lineCount: number; summary: Record<string, unknown> }) {
+  return supplierWrite(client, "template_check_set", { definition_id: input.definitionId, source_id: input.sourceId, template_id: input.templateId, expected_pricing_version: input.expectedPricingVersion, line_count: input.lineCount, summary: input.summary });
+}
+/** The newest sign-off per (price list, product) for these brands. Before the migration, or for roles that cannot read Supplier data, it reads as "no checks". */
+export async function supplierLatestTemplateChecks(client: SupabaseClient, brandIds: string[]): Promise<SupplierTemplateCheck[]> {
+  const rows: SupplierTemplateCheck[] = [];
+  for (let from = 0; from < brandIds.length; from += 50) {
+    const { data, error } = await client.rpc("supplier_template_checks_latest", { p_brand_ids: brandIds.slice(from, from + 50) });
+    if (error && ["PGRST202", "42883", "42501"].includes(error.code ?? "")) return [];
+    if (error) throw Error(error.message);
+    rows.push(...((data ?? []) as SupplierTemplateCheck[]));
+  }
+  return rows;
+}
 export type SupplierTemplateFamily = { definition_id: string; template_id: string; family: string; family_key: string };
 async function supplierRpcRows<T>(client: SupabaseClient, name: string, args: Record<string, unknown>): Promise<T[] | null> {
   const { data, error } = await client.rpc(name, args);

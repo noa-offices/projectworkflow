@@ -5,6 +5,7 @@ import { supplierBrandStateLabels, type PriceUpdatesBrandView, type PriceUpdates
 // Presentation only. Labels come from the shared resolver labels; no status is decided here.
 const card = "rounded-lg border border-zinc-200 bg-white shadow-sm";
 const badgeTone: Record<SupplierFamilyPriceStatusKey, string> = {
+  edited_since_check: "border-amber-300 bg-amber-100 text-amber-950",
   price_checked: "border-emerald-200 bg-emerald-50 text-emerald-900",
   partially_checked: "border-amber-200 bg-amber-50 text-amber-900",
   update_available: "border-amber-200 bg-amber-50 text-amber-900",

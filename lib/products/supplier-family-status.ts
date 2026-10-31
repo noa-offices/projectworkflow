@@ -3,14 +3,16 @@ import { resolveApplicableSupplierSourceVersion, upcomingSupplierSourceVersions,
 // One shared Family price-status resolver. Pure: callers load the batched inputs once (coverage, Source Versions, Phase 2A-0 facts)
 // and every consumer (Price Updates, Product Library, Local Builder, Templates) gets the same answer. No database access here.
 
-export type SupplierFamilyPriceStatusKey = "needs_attention" | "update_available" | "in_review" | "ready_to_complete" | "price_checked" | "partially_checked" | "no_price_list" | "legacy_manual";
+export type SupplierFamilyPriceStatusKey = "needs_attention" | "update_available" | "edited_since_check" | "in_review" | "ready_to_complete" | "price_checked" | "partially_checked" | "no_price_list" | "legacy_manual";
 /** Highest priority first. The first matching status across a Family's responsibilities is the one shown. */
-export const supplierFamilyStatusPrecedence: SupplierFamilyPriceStatusKey[] = ["needs_attention", "update_available", "in_review", "ready_to_complete", "partially_checked", "price_checked", "no_price_list", "legacy_manual"];
+export const supplierFamilyStatusPrecedence: SupplierFamilyPriceStatusKey[] = ["needs_attention", "update_available", "edited_since_check", "in_review", "ready_to_complete", "partially_checked", "price_checked", "no_price_list", "legacy_manual"];
 /** The one user-facing label set. UI components read these; they never derive status themselves. */
 export const supplierFamilyStatusLabels: Record<SupplierFamilyPriceStatusKey, string> = {
-  needs_attention: "Needs attention", update_available: "Price update available", in_review: "In review", ready_to_complete: "Ready to complete",
+  needs_attention: "Needs attention", update_available: "Price update available", edited_since_check: "Edited since check", in_review: "In review", ready_to_complete: "Ready to complete",
   price_checked: "Price checked", partially_checked: "Partially checked", no_price_list: "No current price list", legacy_manual: "Manual price check",
 };
+/** A per-product sign-off (supplier_template_checks): this Product matched this price list while its pricing version was this. */
+export type SupplierTemplateCheckFact = { templateId: string; sourceId: string; pricingVersion: string; checkedAt: string };
 export type SupplierVersionRef = { id: string; title: string; status: string; effective_from: string | null; created_at: string };
 /** A Source Definition responsible for a Family, with that definition's Source Versions (any status; the resolver filters). */
 export type SupplierResponsibilityInput = { templateId: string; definitionId: string; definitionName: string; versions: SupplierVersionRef[] };
@@ -25,6 +27,8 @@ export type SupplierFamilyPriceStatus = {
   progress?: { checked: number; total: number; excluded: number; unresolved: number };
   /** Not provided: the completion stores no pricing version per Family, so this cannot be proven safely at Family level. */
   editedSinceCheck?: boolean;
+  /** When a per-product sign-off decided this status (price_checked or edited_since_check). */
+  checkedAt?: string;
   detail: string;
 };
 export type SupplierFamilyStatusPresentation = {
@@ -39,13 +43,13 @@ export type SupplierBrandPriceStatus = {
   inReviewFamilies: number; readyToCompleteFamilies: number; noPriceListFamilies: number; legacyFamilies: number; upcomingCount: number;
   state: SupplierBrandPriceState;
 };
-type ResponsibilityState = { status: SupplierFamilyPriceStatusKey; source?: SupplierFamilyPriceStatus["source"]; upcoming?: SupplierVersionRef; progress?: SupplierFamilyPriceStatus["progress"]; detail: string };
+type ResponsibilityState = { status: SupplierFamilyPriceStatusKey; source?: SupplierFamilyPriceStatus["source"]; upcoming?: SupplierVersionRef; progress?: SupplierFamilyPriceStatus["progress"]; checkedAt?: string; detail: string };
 
 function latestCompleted(facts: SupplierFamilyReviewFact[]) {
   return [...facts].sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? "") || b.batchId.localeCompare(a.batchId))[0];
 }
 /** Status of one responsibility (one Source Definition for one Family), from the applicable Source Version only. */
-function responsibilityState(responsibility: SupplierResponsibilityInput, facts: SupplierFamilyReviewFact[], businessDate: string): ResponsibilityState {
+function responsibilityState(responsibility: SupplierResponsibilityInput, facts: SupplierFamilyReviewFact[], businessDate: string, checks: SupplierTemplateCheckFact[] = [], currentVersion: string | null = null): ResponsibilityState {
   const applicable = resolveApplicableSupplierSourceVersion(responsibility.versions, businessDate);
   const upcoming = upcomingSupplierSourceVersions(responsibility.versions, businessDate)[0];
   const sourceRef = applicable ? { definitionId: responsibility.definitionId, definitionName: responsibility.definitionName, sourceId: applicable.id, title: applicable.title, effectiveFrom: applicable.effective_from } : undefined;
@@ -54,6 +58,15 @@ function responsibilityState(responsibility: SupplierResponsibilityInput, facts:
   }
   const forVersion = facts.filter((fact) => fact.templateId === responsibility.templateId && fact.sourceId === applicable.id);
   const completed = latestCompleted(forVersion.filter((fact) => fact.batchStatus === "completed"));
+  // A per-product sign-off for exactly this price list. Without a check, or without a known current pricing version, nothing here changes.
+  const check = currentVersion === null ? undefined : [...checks].filter((item) => item.templateId === responsibility.templateId && item.sourceId === applicable.id).sort((a, b) => b.checkedAt.localeCompare(a.checkedAt))[0];
+  if (check) {
+    const on = supplierStatusDate(check.checkedAt.slice(0, 10));
+    // A valid check beats any review of this product, including a stale open one.
+    if (check.pricingVersion === currentVersion) return { status: "price_checked", source: sourceRef, upcoming, checkedAt: check.checkedAt, detail: `${applicable.title}: checked on ${on}` };
+    // Prices were edited after the check, unless a brand-wide review was completed after it.
+    if (!(completed?.completedAt && completed.completedAt >= check.checkedAt)) return { status: "edited_since_check", source: sourceRef, upcoming, checkedAt: check.checkedAt, detail: `${applicable.title}: product prices changed after the check on ${on}` };
+  }
   if (completed) {
     const progress = { checked: completed.resolvedTargets, total: completed.totalTargets, excluded: completed.excludedTargets, unresolved: 0 };
     if (completed.fullyChecked) return { status: "price_checked", source: sourceRef, upcoming, progress, detail: `${applicable.title}: all ${completed.totalTargets} pricing targets checked` };
@@ -78,9 +91,10 @@ function responsibilityState(responsibility: SupplierResponsibilityInput, facts:
  */
 export function resolveSupplierFamilyPriceStatus(input: {
   businessDate: string;
-  families: Array<{ templateId: string; brandId: string }>;
+  families: Array<{ templateId: string; brandId: string; /** The product's current pricing_version; unknown means any check is ignored. */ pricingVersion?: string | null }>;
   responsibilities: SupplierResponsibilityInput[];
   facts: SupplierFamilyReviewFact[];
+  checks?: SupplierTemplateCheckFact[];
   legacyDetail?: (templateId: string) => string;
 }): SupplierFamilyPriceStatus[] {
   return input.families.map((family) => {
@@ -88,13 +102,13 @@ export function resolveSupplierFamilyPriceStatus(input: {
     if (responsibilities.length === 0) {
       return { familyId: family.templateId, brandId: family.brandId, status: "legacy_manual", label: supplierFamilyStatusLabels.legacy_manual, detail: input.legacyDetail?.(family.templateId) ?? "Manual price check" };
     }
-    const states = responsibilities.map((responsibility) => ({ responsibility, state: responsibilityState(responsibility, input.facts, input.businessDate) }));
+    const states = responsibilities.map((responsibility) => ({ responsibility, state: responsibilityState(responsibility, input.facts, input.businessDate, input.checks, family.pricingVersion ?? null) }));
     const worst = [...states].sort((a, b) => supplierFamilyStatusPrecedence.indexOf(a.state.status) - supplierFamilyStatusPrecedence.indexOf(b.state.status))[0];
     const upcomings = states.flatMap(({ state }) => state.upcoming ? [state.upcoming] : []).sort((a, b) => (a.effective_from ?? "").localeCompare(b.effective_from ?? ""));
     const upcoming = upcomings[0] ? { sourceId: upcomings[0].id, title: upcomings[0].title, effectiveFrom: upcomings[0].effective_from ?? "" } : undefined;
     return {
       familyId: family.templateId, brandId: family.brandId, status: worst.state.status, label: supplierFamilyStatusLabels[worst.state.status],
-      source: worst.state.source, upcoming, progress: worst.state.progress,
+      source: worst.state.source, upcoming, progress: worst.state.progress, ...(worst.state.checkedAt ? { checkedAt: worst.state.checkedAt } : {}),
       detail: states.map(({ responsibility, state }) => `${responsibility.definitionName}: ${state.detail}`).join(" · "),
     };
   });
@@ -114,9 +128,11 @@ export function supplierFamilyStatusPresentation(status: SupplierFamilyPriceStat
       : status.status === "in_review" || status.status === "ready_to_complete" ? "info"
         : status.status === "no_price_list" || status.status === "legacy_manual" ? "neutral"
           : "warning";
-  const sourceDetail = status.source
-    ? `${status.source.definitionName} — ${status.source.title}`
-    : status.detail;
+  const sourceDetail = status.checkedAt && status.status === "price_checked" ? `Checked on ${supplierStatusDate(status.checkedAt.slice(0, 10))}`
+    : status.checkedAt && status.status === "edited_since_check" ? `Product prices changed after the check on ${supplierStatusDate(status.checkedAt.slice(0, 10))}`
+    : status.source
+      ? `${status.source.definitionName} — ${status.source.title}`
+      : status.detail;
   const progressDetail = status.status === "partially_checked" && status.progress
     ? `${status.progress.checked} / ${status.progress.total} checked · ${status.progress.excluded} excluded`
     : sourceDetail;
@@ -132,7 +148,7 @@ export function supplierFamilyStatusPresentation(status: SupplierFamilyPriceStat
  */
 export function resolveSupplierBrandPriceStatus(statuses: Array<Pick<SupplierFamilyPriceStatus, "status">>, upcomingCount = 0): SupplierBrandPriceStatus {
   const count = (key: SupplierFamilyPriceStatusKey) => statuses.filter((item) => item.status === key).length;
-  const checked = count("price_checked"), partial = count("partially_checked"), needs = count("needs_attention"), update = count("update_available"), inReview = count("in_review"), ready = count("ready_to_complete"), noList = count("no_price_list"), legacy = count("legacy_manual");
+  const checked = count("price_checked"), partial = count("partially_checked"), needs = count("needs_attention"), update = count("update_available") + count("edited_since_check"), inReview = count("in_review"), ready = count("ready_to_complete"), noList = count("no_price_list"), legacy = count("legacy_manual");
   const applicable = checked + partial + needs + update + inReview + ready;
   let state: SupplierBrandPriceState;
   if (applicable === 0) state = "legacy_manual";
