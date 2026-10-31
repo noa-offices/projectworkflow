@@ -1,4 +1,5 @@
 import type { DimensionRule, DurableBinding, PriceMatch, PriceTarget, SourceIdentity } from "./supplier-price-contracts";
+import { plainSupplierDimension, supplierDimensionFamily, supplierFamilyKey } from "./supplier-price-import";
 
 /** Comparison identity only: whitespace is formatting ("1AF 044" and "1AF044" are the same article). Stored and display codes are never changed. */
 export const comparisonCode = (code: string) => code.replace(/\s+/g, "");
@@ -31,7 +32,13 @@ function mappedDimension(source: SourceIdentity, target: PriceTarget, rules: Dim
   const dimensions = new Set(matching.filter((rule) => (rule.template_id ? 2 : 0) + (rule.group_id ? 1 : 0) === specificity).map((rule) => rule.dimension_code));
   return dimensions.size === 1 ? [...dimensions][0] : null;
 }
-export function matchSupplierPrices(sources: SourceIdentity[], targets: PriceTarget[], rules: DimensionRule[] = [], bindings: DurableBinding[] = []): PriceMatch[] {
+/**
+ * `familyScope` (template id -> allowed family keys) is optional. A template with no entry, or an empty one, matches exactly as before.
+ * A template with chosen families only takes identities that carry a family tag for one of them; identities with no family tag stay
+ * candidates. Two chosen families that give the same code and price field different prices are never resolved: those lines are "ambiguous".
+ * Saved bindings are explicit and are not filtered by the scope.
+ */
+export function matchSupplierPrices(sources: SourceIdentity[], targets: PriceTarget[], rules: DimensionRule[] = [], bindings: DurableBinding[] = [], familyScope?: ReadonlyMap<string, ReadonlySet<string>>): PriceMatch[] {
   const index = new Map<string, PriceTarget[]>(); const byKey = new Map(targets.map((target) => [target.key, target]));
   for (const target of targets) { const key = JSON.stringify([comparisonCode(target.code), target.price_field]); const bucket = index.get(key) ?? []; bucket.push(target); index.set(key, bucket); }
   // Bindings whose codes differ only by whitespace would be two answers for one identity: neither is used, so the row stays unresolved.
@@ -39,27 +46,36 @@ export function matchSupplierPrices(sources: SourceIdentity[], targets: PriceTar
   for (const binding of bindings.filter((item) => item.confirmed)) { const key = JSON.stringify([comparisonCode(binding.code), binding.price_field, binding.source_dimension]); bindingGroups.set(key, [...(bindingGroups.get(key) ?? []), binding]); }
   const bindingIndex = new Map([...bindingGroups].filter(([, group]) => group.length === 1).map(([key, group]) => [key, group[0]]));
   const represented = new Set<string>();
+  const viaBinding = new Set<string>();
   const matches = sources.map<PriceMatch>((source) => {
     const base = { key: source.key, source, targets: [] as PriceTarget[], candidate_shared: false };
-    const candidates = index.get(JSON.stringify([comparisonCode(source.code), source.price_field])) ?? [];
+    const sourceFamily = familyScope?.size ? supplierDimensionFamily(source.dimension) : null;
+    const familyKey = sourceFamily ? supplierFamilyKey(sourceFamily.family) : null;
+    const candidates = (index.get(JSON.stringify([comparisonCode(source.code), source.price_field])) ?? [])
+      .filter((target) => familyKey === null || !familyScope?.get(target.template_id)?.size || familyScope.get(target.template_id)!.has(familyKey));
+    // For a product that chose this family, the family tag only selects the identity; the tier is the plain category, as for a profile without families.
+    const chosen = (target: PriceTarget) => familyKey !== null && Boolean(familyScope?.get(target.template_id)?.size);
+    const plainSource: SourceIdentity = familyKey !== null ? { ...source, dimension: plainSupplierDimension(source.dimension) } : source;
+    const view = (target: PriceTarget) => chosen(target) ? plainSource : source;
     // Missing means no Supplier identity exists for the code: any identity with this code represents its Products, whatever mapping remains unresolved.
     candidates.forEach((target) => represented.add(target.key));
     if (source.issues.length || source.price === null) return { ...base, classification: "invalid_source" };
     const binding = bindingIndex.get(JSON.stringify([comparisonCode(source.code), source.price_field, source.dimension]));
     let found: PriceTarget[];
     if (binding) {
+      viaBinding.add(source.key);
       found = binding.target_keys.flatMap((key) => byKey.has(key) ? [byKey.get(key)!] : []);
       if (found.length !== binding.target_keys.length || !found.length) return { ...base, classification: "ambiguous", targets: found };
     } else {
       const direct = new Set<string>();
       found = candidates.filter((target) => {
-        if (mappedDimension(source, target, rules) === target.dimension) return true;
-        if (!directTierMatch(source, target, rules)) return false;
+        if (mappedDimension(view(target), target, rules) === target.dimension) return true;
+        if (!directTierMatch(view(target), target, rules)) return false;
         direct.add(target.key); return true;
       });
       // Two columns of one row that read the same to the Supplier tier: never pick one for the user.
       if (found.length > 1 && found.every((target) => direct.has(target.key)) && new Set(found.map((target) => JSON.stringify([target.template_id, target.group_id, target.row_id, target.physical_field]))).size === 1) return { ...base, classification: "ambiguous", targets: found };
-      if (!found.length && candidates.length && (source.dimension || candidates.some((target) => target.dimension))) {
+      if (!found.length && candidates.length && candidates.some((target) => view(target).dimension || target.dimension)) {
         // The article exists in the Supplier source and only needs a mapping; its Products must not also be reported as missing from it.
         candidates.forEach((target) => represented.add(target.key));
         return { ...base, classification: "needs_dimension_mapping", targets: candidates };
@@ -76,6 +92,22 @@ export function matchSupplierPrices(sources: SourceIdentity[], targets: PriceTar
     const comparison = target.currency !== source.currency || target.price === null ? "changed" : source.price === target.price ? "unchanged" : source.price > target.price ? "increased" : "decreased";
     return { ...base, targets: found, comparison, classification: comparison };
   });
+  if (familyScope?.size) {
+    // Several chosen families for one target with different prices: never pick one.
+    const groups = new Map<string, Array<{ index: number; family: string }>>();
+    matches.forEach((match, index) => {
+      if (!match.source || match.targets.length !== 1 || viaBinding.has(match.key) || !["unchanged", "increased", "decreased", "changed"].includes(match.classification)) return;
+      const target = match.targets[0];
+      if (!familyScope.get(target.template_id)?.size) return;
+      const family = supplierDimensionFamily(match.source.dimension);
+      if (family) groups.set(target.key, [...(groups.get(target.key) ?? []), { index, family: supplierFamilyKey(family.family) }]);
+    });
+    for (const group of groups.values()) {
+      if (new Set(group.map((item) => item.family)).size < 2) continue;
+      if (new Set(group.map((item) => JSON.stringify([matches[item.index].source!.price, matches[item.index].source!.currency]))).size < 2) continue;
+      for (const { index } of group) { const { key, source, targets: found, candidate_shared } = matches[index]; matches[index] = { key, source, targets: found, candidate_shared, classification: "ambiguous" }; }
+    }
+  }
   for (const target of targets) if (!represented.has(target.key)) matches.push({ key: `target:${target.key}`, source: null, targets: [target], classification: "target_not_represented", candidate_shared: false });
   return matches;
 }

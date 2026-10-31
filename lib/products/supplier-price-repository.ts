@@ -158,17 +158,48 @@ export async function supplierSource(client: SupabaseClient, sourceId: string) {
 }
 /** Review matches carry the identity without its evidence, so stored match rows do not grow; evidence stays on the identity. */
 function withoutEvidence(identity: SourceIdentity): SourceIdentity { const copy = { ...identity }; delete copy.evidence; return copy; }
+export type SupplierTemplateFamily = { definition_id: string; template_id: string; family: string; family_key: string };
+async function supplierRpcRows<T>(client: SupabaseClient, name: string, args: Record<string, unknown>): Promise<T[] | null> {
+  const { data, error } = await client.rpc(name, args);
+  // Before the Phase 2 migration is applied the read functions do not exist; that reads as "no family saved", never as a failure.
+  if (error && (error.code === "PGRST202" || error.code === "42883")) return null;
+  if (error) throw Error(error.message);
+  return (data ?? []) as T[];
+}
+/** Saved families of one definition as the matcher's scope: template id -> family keys. Empty when none are saved. */
+export async function supplierFamilyScope(client: SupabaseClient, definitionId: string | null | undefined): Promise<Map<string, Set<string>>> {
+  const scope = new Map<string, Set<string>>();
+  if (!definitionId) return scope;
+  for (const row of (await supplierRpcRows<SupplierTemplateFamily>(client, "supplier_template_series_list", { p_definition_id: definitionId })) ?? []) scope.set(row.template_id, (scope.get(row.template_id) ?? new Set()).add(row.family_key));
+  return scope;
+}
+/** Replaces the whole family set of one product in one definition; an empty list clears it. The database re-checks the role. */
+export async function supplierSetTemplateFamilies(client: SupabaseClient, definitionId: string, templateId: string, families: string[]) {
+  return supplierWrite(client, "template_series_set", { definition_id: definitionId, template_id: templateId, families });
+}
+export async function supplierListTemplateFamilies(client: SupabaseClient, scope: { definitionId?: string; brandId?: string }) {
+  return (await supplierRpcRows<SupplierTemplateFamily>(client, "supplier_template_series_list", { p_definition_id: scope.definitionId ?? null, p_brand_id: scope.brandId ?? null })) ?? [];
+}
+/** The distinct families found in one Supplier price list, with how many identities carry each. */
+export async function supplierSourceFamilies(client: SupabaseClient, sourceId: string) {
+  return (await supplierRpcRows<{ family: string; family_key: string; identity_count: number }>(client, "supplier_source_families", { p_source_id: sourceId })) ?? [];
+}
+/** Saved families this Supplier price list does not contain. Nothing is guessed or substituted for them. */
+export async function supplierMissingTemplateFamilies(client: SupabaseClient, definitionId: string, sourceId: string) {
+  return (await supplierRpcRows<Omit<SupplierTemplateFamily, "definition_id">>(client, "supplier_template_series_missing", { p_definition_id: definitionId, p_source_id: sourceId })) ?? [];
+}
 export async function supplierBrandMatches(client: SupabaseClient, sourceId: string) {
   const source = await supplierSource(client, sourceId);
   if (source.status !== "imported") throw Error("Matching refuses an incomplete or archived source.");
   const coverage = await supplierSourceCoverage(client, source);
-  const [{ targets, templates }, identities, rules, bindings] = await Promise.all([
+  const [{ targets, templates }, identities, rules, bindings, familyScope] = await Promise.all([
     supplierBrandTargets(client, source.brand_id, coverage),
     supplierRows<{ data: SourceIdentity }>(client, "supplier_source_identities", "key,data", { source_id: sourceId }, "key"),
     supplierRows<DimensionRule>(client, "supplier_dimension_vocabulary", "*", { brand_id: source.brand_id, is_active: true }),
     supplierRows<DurableBinding>(client, "supplier_price_bindings", "*", { brand_id: source.brand_id }),
+    supplierFamilyScope(client, source.definition_id),
   ]);
-  return { source, templates, targets, coverage, rules, matches: matchSupplierPrices(identities.map((identity) => withoutEvidence(identity.data)), targets, rules, bindings) };
+  return { source, templates, targets, coverage, rules, matches: matchSupplierPrices(identities.map((identity) => withoutEvidence(identity.data)), targets, rules, bindings, familyScope) };
 }
 /** Builds a review batch. Coverage is the outer boundary (a source definition’s Families, or the whole Brand for a legacy source); the scope only narrows within it. */
 export async function supplierCreateReviewBatch(client: SupabaseClient, sourceId: string, scope: string, selectedIds: string[], brandListId?: string) {

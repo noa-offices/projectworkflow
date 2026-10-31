@@ -14,7 +14,20 @@ export function supplierSeriesDimension(base: string, profile: SupplierProfile, 
   const sub = typeof subfamily === "string" ? subfamily.trim() : "";
   return JSON.stringify([base, "series", name, ...(profile.subfamily_column ? [sub] : [])]);
 }
-/** The plain category or tier of a dimension (the raw_dimension). Anything that is not a family-tagged dimension is returned unchanged. */
+/** The one spelling rule for comparing families (same as the database's supplier_family_key): trimmed, spaces collapsed, lower case. */
+export function supplierFamilyKey(family: string): string {
+  return family.trim().replace(/\s+/g, " ").toLowerCase();
+}
+/** The family (and sub-family when the profile has that column) of a family-tagged dimension; null for every other dimension. */
+export function supplierDimensionFamily(dimension: string): { family: string; subfamily: string | null } | null {
+  if (!dimension.startsWith("[")) return null;
+  try {
+    const parsed: unknown = JSON.parse(dimension);
+    if (!Array.isArray(parsed) || parsed[1] !== "series" || typeof parsed[2] !== "string" || !parsed[2].trim()) return null;
+    return { family: parsed[2], subfamily: typeof parsed[3] === "string" ? parsed[3] : null };
+  } catch { return null; }
+}
+/** The plain category or tier of a dimension. Anything that is not a family-tagged dimension is returned unchanged. */
 export function plainSupplierDimension(dimension: string): string {
   if (!dimension.startsWith("[")) return dimension;
   try {

@@ -13,7 +13,7 @@ import { cancelIncompleteSupplierImport, continueIncompleteSupplierCleanup, supp
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
 import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierFamilyUnchangedMatchKeys, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
 
-import { supplierRemoveBinding } from "@/lib/products/supplier-price-repository";
+import { supplierListTemplateFamilies, supplierMissingTemplateFamilies, supplierRemoveBinding, supplierSetTemplateFamilies, supplierSourceFamilies } from "@/lib/products/supplier-price-repository";
 import { canManageSupplierCapacity, supplierCapacityReport, supplierDeletePreviousSource, supplierSourceStorage, supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierConfirmCoverage, supplierCreateSourceDefinition, supplierDeleteSourceDefinition, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierUpdateSourceDefinition } from "@/lib/products/supplier-price-repository";
 
 const workspacePath = "/products/price-updates/supplier-sources";
@@ -203,6 +203,21 @@ export async function removeSupplierBinding(brandId: string, bindingId: string) 
   const { client } = await approver();
   if (typeof brandId !== "string" || !brandId || typeof bindingId !== "string" || !bindingId) throw Error("Choose the mapping to remove.");
   const result = await supplierRemoveBinding(client, brandId, bindingId); revalidatePath(workspacePath); return result;
+}
+/** Saves the families of one product in one Supplier price list definition (replaces the whole set; an empty list clears it). */
+export async function setSupplierTemplateFamilies(definitionId: string, templateId: string, families: string[]) {
+  const { client } = await approver();
+  if (typeof definitionId !== "string" || typeof templateId !== "string" || !Array.isArray(families) || families.some((family) => typeof family !== "string")) throw Error("Choose the product and its families.");
+  const result = await supplierSetTemplateFamilies(client, definitionId, templateId, families); revalidatePath(workspacePath); return result;
+}
+export async function listSupplierTemplateFamilies(scope: { definitionId?: string; brandId?: string }) {
+  const { client } = await approver(); return supplierListTemplateFamilies(client, scope);
+}
+export async function listSupplierSourceFamilies(sourceId: string) {
+  const { client } = await approver(); return supplierSourceFamilies(client, sourceId);
+}
+export async function listMissingSupplierTemplateFamilies(definitionId: string, sourceId: string) {
+  const { client } = await approver(); return supplierMissingTemplateFamilies(client, definitionId, sourceId);
 }
 export async function archiveSupplierDimension(id: string) {
   const { client } = await approver(); await supplierWrite(client, "archive_dimension", { id }); revalidatePath(workspacePath);

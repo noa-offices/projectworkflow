@@ -345,3 +345,47 @@ test("series import: the rollback TEST file and the assertions file pass on a PG
     assert.equal((await db.query<{ n: string | null }>("select to_regprocedure('public.supplier_plain_dimension(text)')::text n")).rows[0].n, null, "migration rolled back");
   } finally { await db.close(); }
 });
+
+const templateSeriesMigration = await readFile(new URL("../../supabase/migrations/20261102100000_supplier_template_series.sql", import.meta.url), "utf8");
+async function templateSeriesReplica() {
+  const db = await fixture();
+  await db.exec(seriesMigration);
+  // The replica's minimal tables get what the assertions need; production already has them. Roles now follow the signed-in user, as in production.
+  await db.exec(`create table auth.users(id uuid primary key,email text);
+    create type public.user_role as enum ('system_owner','admin_manager','procurement_manager','sales_designer','sales_coordinator','designer','viewer','warehouse_staff');
+    create type public.account_status as enum ('active','pending','disabled');
+    alter table profiles add column email text, add column full_name text, add column role public.user_role, add column account_status public.account_status;
+    alter table brands add column name text;
+    create table audit_activity_log(id uuid primary key default gen_random_uuid(),entity_type text not null,entity_id uuid,parent_entity_type text,parent_entity_id uuid,action text not null,title text not null,description text,metadata jsonb not null default '{}',created_by uuid references profiles(id),created_at timestamptz not null default now());
+    create or replace function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+    create or replace function public.current_user_can_review_brand_prices() returns boolean language sql stable security definer as $$select coalesce(exists(select 1 from public.profiles where id=auth.uid() and account_status='active' and role::text in ('system_owner','admin_manager','procurement_manager','sales_coordinator','designer')),false)$$;
+    create or replace function public.current_user_can_approve_brand_prices() returns boolean language sql stable security definer as $$select coalesce(exists(select 1 from public.profiles where id=auth.uid() and account_status='active' and role::text in ('system_owner','admin_manager','procurement_manager','sales_coordinator','designer')),false)$$;`);
+  return db;
+}
+
+test("template families: the rollback TEST file and the assertions file pass on a PGlite replica and leave nothing behind", async () => {
+  const contract = await readFile(new URL("../../supabase/tests/supplier_template_series.sql", import.meta.url), "utf8");
+  const combined = await readFile(new URL("../../supabase/tests/supplier_template_series_TEST.sql", import.meta.url), "utf8");
+  const migrationBody = templateSeriesMigration.replace(/^begin;\s*/i, "").replace(/commit;\s*$/i, "").trim();
+  assert.ok(combined.includes(migrationBody), "TEST contains the exact migration body");
+  assert.ok(combined.includes(contract.slice(contract.search(/begin;\s*/i)).replace(/^begin;\s*/i, "").replace(/select 'PASS[\s\S]*$/, "").trim()), "TEST contains the exact assertions");
+  assert.doesNotMatch(combined, /commit;/i);
+  const db = await templateSeriesReplica(); try {
+    const batchesBefore = (await db.query<{ n: number }>("select (select count(*) from supplier_price_batches)::int + (select count(*) from supplier_price_decisions)::int n")).rows[0].n;
+    const results = await db.exec(combined);
+    assert.match(String((results.at(-1)?.rows[0] as { result?: string } | undefined)?.result), /^PASS: supplier template family checks completed and rolled back$/);
+    assert.equal((await db.query<{ n: string | null }>("select to_regclass('public.supplier_template_series')::text n")).rows[0].n, null, "migration rolled back");
+    assert.equal((await db.query<{ n: number }>("select (select count(*) from supplier_price_batches)::int + (select count(*) from supplier_price_decisions)::int n")).rows[0].n, batchesBefore, "batches and decisions untouched");
+  } finally { await db.close(); }
+});
+
+test("template families: the migration applies once and refuses a changed or already patched function", async () => {
+  const db = await templateSeriesReplica(); try {
+    await db.exec(templateSeriesMigration);
+    await assert.rejects(db.exec(templateSeriesMigration), /already exists|differs from the expected body/);
+  } finally { await db.close(); }
+  const changed = await templateSeriesReplica(); try {
+    await changed.exec("create or replace function public.supplier_price_review_write(p_operation text,p_payload jsonb) returns jsonb language plpgsql as $$ begin return '{}'::jsonb; end $$;");
+    await assert.rejects(changed.exec(templateSeriesMigration), /differs from the expected body/);
+  } finally { await changed.close(); }
+});
