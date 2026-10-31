@@ -62,7 +62,7 @@ export function SupplierCoverageAction({ brandId, templateId, templateName, deta
 
   return (
     <>
-      <button type="button" onClick={(event) => { event.stopPropagation(); setOpen(true); }} className="block text-left text-[11px] font-medium text-emerald-800 underline">{detail}</button>
+      <button type="button" onClick={(event) => { event.stopPropagation(); setOpen(true); }} className="mt-2 inline-flex max-w-full items-center justify-center justify-self-start whitespace-normal break-words rounded-md px-3 py-1.5 text-center text-sm font-semibold transition bg-emerald-800 text-white hover:bg-emerald-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800">{detail}</button>
       {open && typeof document !== "undefined" ? createPortal(
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-950/45 px-4" onClick={(event) => event.stopPropagation()}>
           <div role="dialog" aria-modal="true" aria-label="Add to Supplier price list" className="w-[min(440px,96vw)] rounded-2xl border border-zinc-300 bg-white p-5 shadow-2xl">
