@@ -96,7 +96,7 @@ test("a saved mapping is reported with its id, offers Remove only, and a duplica
 test("the popup saves or removes only from the confirm click, through the existing actions, with the brand-wide warning", () => {
   const popup = readFileSync("components/quotations/supplier-price-lines-popup.tsx", "utf8");
   assert.match(popup, /import \{[^}]*confirmSupplierBindings[^}]*removeSupplierBinding[^}]*\} from "@\/app\/products\/price-updates\/supplier-sources\/actions"/);
-  assert.equal((popup.match(/await confirmSupplierBindings\(/g) ?? []).length, 1);
+  assert.equal((popup.match(/await confirmSupplierBindings\(/g) ?? []).length, 2, 'one save for Map this line and one for Map as shared');
   assert.equal((popup.match(/await removeSupplierBinding\(/g) ?? []).length, 1);
   assert.match(popup, /kind: "alias", target_keys: \[mapping\.targetKey\]/);
   assert.match(popup, /This is saved for the whole brand and for future price lists\./);
@@ -162,4 +162,65 @@ test("the popup writes a price only from the confirm click: review mark first, t
   assert.match(popup, /if \(allowed !== true\) return null/);
   const actions = readFileSync("app/products/price-updates/supplier-sources/actions.ts", "utf8");
   assert.match(actions.match(/export async function applySupplierReviewedPrice[\s\S]*?\n\}/)?.[0] ?? "", /await approver\(\)/);
+});
+
+const sharedBinding = { id: "sb", code: "159983", price_field: "unit_price", source_dimension: "", target_keys: ["t1", "t2"], kind: "shared" as const, confirmed: true };
+
+test("Map as shared: eligible when one supplier line is read by 2+ targets with equal price and currency", async () => {
+  const targets = [scalarTarget("t1", "T1", 33), scalarTarget("t2", "T1", 33)];
+  const lines = buildPriceLines(await realMatches([identity("s1", "159983", "", 33)], targets), "T1").lines;
+  assert.equal(lines.length, 2);
+  for (const line of lines) {
+    assert.equal(line.state, "ambiguous");
+    assert.ok(line.shared, "each unclear line can be mapped as shared");
+    assert.deepEqual(line.shared!.targets.map((item) => item.key), ["t1", "t2"], "exactly the matcher's targets, never picked by the user");
+    assert.equal(line.shared!.preview, "shared");
+    assert.deepEqual([line.shared!.code, line.shared!.priceField, line.shared!.sourceDimension], ["159983", "unit_price", ""]);
+    assert.ok(!line.mapping && !line.apply && !line.binding);
+  }
+  // Two different products: the line of T1 lists both targets.
+  const cross = buildPriceLines(await realMatches([identity("s1", "159983", "", 33)], [scalarTarget("t1", "T1", 33), scalarTarget("t2", "T2", 33)]), "T1").lines;
+  assert.deepEqual(cross.map((line) => line.shared?.targets.map((item) => item.templateId)), [["T1", "T2"]]);
+});
+
+test("Map as shared: no button for different prices, one target, other currencies, or an existing mapping", async () => {
+  const differentPrices = buildPriceLines(await realMatches([identity("s1", "159983", "", 33)], [scalarTarget("t1", "T1", 33), scalarTarget("t2", "T1", 40)]), "T1").lines;
+  assert.ok(differentPrices.length === 2 && differentPrices.every((line) => !line.shared), "different prices");
+  const oneTarget = buildPriceLines(await realMatches([identity("s1", "159983", "", 33)], [scalarTarget("t1", "T1", 33)]), "T1").lines;
+  assert.ok(oneTarget.length === 1 && !oneTarget[0].shared, "one target");
+  const supplierAed = buildPriceLines(await realMatches([identity("s1", "159983", "", 33, "AED")], [scalarTarget("t1", "T1", 33), scalarTarget("t2", "T1", 33)]), "T1").lines;
+  assert.ok(supplierAed.every((line) => !line.shared), "supplier currency differs");
+  const emptyPrices = buildPriceLines(await realMatches([identity("s1", "159983", "", 33)], [{ ...scalarTarget("t1", "T1", 33), price: null }, { ...scalarTarget("t2", "T1", 33), price: null }]), "T1").lines;
+  assert.ok(emptyPrices.every((line) => !line.shared), "empty prices");
+  const targets = [scalarTarget("t1", "T1", 33), scalarTarget("t2", "T1", 33)];
+  const mapped = buildPriceLines(await realMatches([identity("s1", "159983", "", 33)], targets, [sharedBinding]), "T1", [sharedBinding]).lines;
+  assert.ok(mapped.length === 2 && mapped.every((line) => line.state === "shared" && !line.shared && line.binding?.id === "sb"), "already mapped: only Remove mapping is offered");
+  // Two columns of one row that read the same tier are one price cell seen twice, not a shared case: the matcher gives no candidate_shared there.
+  const sameRow = [{ ...scalarTarget("t1", "T1", 33), dimension: "SG3", column_id: "a" }, { ...scalarTarget("t2", "T1", 33), dimension: "SG3", column_id: "b" }];
+  const columns = buildPriceLines(await realMatches([identity("s1", "159983", "SG3", 33)], sameRow), "T1").lines;
+  assert.ok(columns.length === 2 && columns.every((line) => line.state === "ambiguous" && !line.shared), "two columns of one row");
+});
+
+test("Map as shared: nothing is written on load or on the first click; confirm saves once with kind shared and the baseline", () => {
+  const popup = readFileSync("components/quotations/supplier-price-lines-popup.tsx", "utf8");
+  const actions = readFileSync("components/quotations/supplier-price-lines-actions.ts", "utf8");
+  assert.doesNotMatch(actions, /confirmSupplierBindings|supplierWrite|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/);
+  assert.match(popup, /setPending\(\{ kind: "share", line \}\)/, "the button only opens the confirm step");
+  const confirm = popup.slice(popup.indexOf("const confirm = async"), popup.indexOf("} finally { setBusy(false); }"));
+  const share = confirm.slice(confirm.indexOf('pending.kind === "share" && pending.line.shared'), confirm.indexOf('pending.kind === "apply"'));
+  assert.equal((share.match(/await confirmSupplierBindings\(/g) ?? []).length, 1, "one save in the share branch");
+  assert.match(share, /kind: "shared", target_keys: shared\.targets\.map\(\(item\) => item\.key\)/);
+  assert.match(share, /expected_targets: shared\.targets\.map\(\(item\) => \(\{ key: item\.key, pricing_version: item\.pricingVersion, price: item\.price, currency: item\.currency \}\)\)/);
+  assert.doesNotMatch(popup.replace(confirm, ""), /confirmSupplierBindings\(/, "no save outside confirm");
+  assert.match(popup, /will use this supplier line together\. Product prices and saved quotations do not change\. You can remove this mapping later\./);
+  assert.match(popup, /Map as shared/);
+  assert.match(popup, /if \(allowed !== true\) return null/, "same role check as Map this line");
+  const serverActions = readFileSync("app/products/price-updates/supplier-sources/actions.ts", "utf8");
+  assert.match(serverActions.match(/export async function confirmSupplierBindings[\s\S]*?\n\}/)?.[0] ?? "", /await approver\(\)/);
+});
+
+test("the wizard's family hint tells the truth about choosing none", () => {
+  const wizard = readFileSync("components/products/supplier-import-wizard.tsx", "utf8");
+  assert.match(wizard, /If you choose none, the lines show Needs mapping until you choose a family\./);
+  assert.doesNotMatch(wizard, /every family in the list is compared/);
 });
