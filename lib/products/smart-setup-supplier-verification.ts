@@ -7,7 +7,7 @@ export const reasonLabels: Record<SmartSetupSupplierCheckResult["reason"], strin
   same_price: "Same price as the supplier list.", price_differs: "Price differs from the supplier list.", no_source_candidate: "Code not found in this supplier price list.",
   missing_draft_price: "The imported price is empty, so it cannot be compared.", currency_mismatch: "Currency differs from the supplier list.", basis_mismatch: "Price basis differs from the supplier list.",
   ambiguous_source_contexts: "The supplier list has several prices for this code and context; one is not chosen automatically.", shared_price_unconfirmed: "The code is shared by several rows; the shared price is not confirmed.",
-  shared_price_baseline_drift: "Rows sharing this code carry different prices.", needs_dimension_mapping: "The supplier category/size is not mapped to this column.",
+  shared_price_baseline_drift: "Rows sharing this code carry different prices.", needs_dimension_mapping: "The supplier category/size is not mapped to this column.", choose_family: "Choose a family first.",
   invalid_source_evidence: "The supplier price for this code is not usable.", companion_reference: "The supplier list only references this code as a companion.",
 };
 export const statusOrder: Record<SmartSetupSupplierCheckStatus, number> = { MISMATCH: 0, NEEDS_REVIEW: 1, NOT_FOUND: 2, MATCHED: 3 };
@@ -19,9 +19,11 @@ export function smartSetupFingerprint(parts: unknown): string {
   return `${text.length}:${hash.toString(16)}`;
 }
 /** Everything a check result depends on: the whole priced draft, routing, brand and the exact source version. */
-export function checkFingerprint(input: { draft: ProductTemplateDraft; routingPlan: unknown; brandId: string; definitionId: string; versionId: string }) {
+export function checkFingerprint(input: { draft: ProductTemplateDraft; routingPlan: unknown; brandId: string; definitionId: string; versionId: string; familyKeys?: string[] }) {
   const { draft } = input;
-  return smartSetupFingerprint({ p: draft.pricing, o: draft.optionGroups, c: draft.defaultCurrency, r: input.routingPlan, b: input.brandId, d: input.definitionId, v: input.versionId });
+  // The family choice changes the result; without one the fingerprint is exactly what it was before families existed.
+  const families = input.familyKeys?.length ? { f: [...input.familyKeys].sort() } : {};
+  return smartSetupFingerprint({ p: draft.pricing, o: draft.optionGroups, c: draft.defaultCurrency, r: input.routingPlan, b: input.brandId, d: input.definitionId, v: input.versionId, ...families });
 }
 
 export type SmartSetupCheckRequest = { ok: true; cells: SmartSetupPriceCell[]; unsupported: SmartSetupUnsupportedCell[] } | { ok: false; message: string };

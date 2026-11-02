@@ -30,9 +30,9 @@ function downloadCsv(rows: ReviewRow[], title: string, decisions: DecisionMap, c
   document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
 }
 
-export type SupplierReviewDialogProps = { fresh: SupplierCheckedResult | null; stale: boolean; selected: SmartSetupSupplierSourceOption | null; onClose: () => void; initialStatuses?: ReviewStatus[]; initialQuery?: string; canManageDecisions?: boolean; onDecisionsSaved?: (decisions: SavedReviewDecision[]) => void };
+export type SupplierReviewDialogProps = { /** The family bar of the verification panel, shown at the top of the window. Absent when the price list has no families. */ familyBar?: React.ReactNode; fresh: SupplierCheckedResult | null; stale: boolean; selected: SmartSetupSupplierSourceOption | null; onClose: () => void; initialStatuses?: ReviewStatus[]; initialQuery?: string; canManageDecisions?: boolean; onDecisionsSaved?: (decisions: SavedReviewDecision[]) => void };
 /** The check stays read-only. Managers may explicitly save separate decisions; the draft is never changed. */
-export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialStatuses = DEFAULT_REVIEW_STATUSES, initialQuery = "", canManageDecisions = false, onDecisionsSaved }: SupplierReviewDialogProps) {
+export function SupplierReviewDialog({ familyBar = null, fresh, stale, selected, onClose, initialStatuses = DEFAULT_REVIEW_STATUSES, initialQuery = "", canManageDecisions = false, onDecisionsSaved }: SupplierReviewDialogProps) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const saveButtonRef = useRef<HTMLButtonElement>(null);
@@ -169,6 +169,7 @@ export function SupplierReviewDialog({ fresh, stale, selected, onClose, initialS
           </div>
           <button type="button" onClick={requestClose} disabled={decisions.saving} className="h-9 shrink-0 rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-900 hover:bg-zinc-100 disabled:opacity-50">Close</button>
         </div>
+        {familyBar}
         {canManageDecisions && fresh ? <ReviewSaveButton count={decisions.unsavedCount} disabled={!decisions.enabled} saving={decisions.saving} onSave={() => { void saveDecisions(); }} buttonRef={saveButtonRef} /> : null}
         {decisions.loading ? <p role="status" className="text-sm text-zinc-600">Loading saved decisions…</p> : null}
         {decisions.loadError ? <p role="alert" className="text-sm text-red-800">{decisions.loadError} <button type="button" onClick={decisions.retry} className="underline">Try again</button></p> : null}

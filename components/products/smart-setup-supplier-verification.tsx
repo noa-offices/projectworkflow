@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { checkSmartSetupSupplierPrices, listSmartSetupSupplierSourcesAction } from "@/app/products/smart-setup-supplier-check-actions";
+import { checkSmartSetupSupplierPrices, listSmartSetupSupplierSourcesAction, loadSmartSetupSupplierFamilies } from "@/app/products/smart-setup-supplier-check-actions";
+import { setSupplierTemplateFamilies } from "@/app/products/price-updates/supplier-sources/actions";
+import { SupplierFamilyBar } from "@/components/products/supplier-family-bar";
+import type { SmartSetupSupplierFamilyState } from "@/lib/products/smart-setup-supplier-families";
 import { listSupplierPriceDecisions } from "@/app/products/supplier-review-decision-actions";
 import type { ProductTemplateDraft } from "@/lib/products/product-template-draft";
 import type { SmartSetupSupplierCheckOutput } from "@/lib/products/smart-setup-supplier-check";
@@ -17,7 +20,7 @@ type Sources = { state: "loading" } | { state: "unauthorized" } | { state: "erro
 export type SupplierCheckedResult = { fingerprint: string; output: SmartSetupSupplierCheckOutput; cells: SmartSetupPriceCell[]; unsupported: SmartSetupUnsupportedCell[] };
 
 /** Read-only supplier price verification for the current Smart Setup draft. Never edits the draft, applies a price, or blocks Apply. Mount with key={brandId}. */
-export function SmartSetupSupplierVerification({ draft, routingPlan, brandId }: { draft: ProductTemplateDraft; routingPlan: unknown; brandId: string }) {
+export function SmartSetupSupplierVerification({ draft, routingPlan, brandId, templateId }: { draft: ProductTemplateDraft; routingPlan: unknown; brandId: string; /** Set only when a saved Product Template is being edited. A new unsaved product has none. */ templateId?: string }) {
   const [sources, setSources] = useState<Sources>({ state: "loading" });
   const [definitionId, setDefinitionId] = useState("");
   const [checked, setChecked] = useState<SupplierCheckedResult | null>(null);
@@ -25,6 +28,10 @@ export function SmartSetupSupplierVerification({ draft, routingPlan, brandId }: 
   const [error, setError] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const requestId = useRef(0);
+  // Both are tied to the selected price list, so choosing another list starts clean without resetting state in an effect.
+  const [storedFamilies, setStoredFamilies] = useState<{ forList: string; state: SmartSetupSupplierFamilyState } | null>(null);
+  // For a new unsaved product the family is kept here only; nothing is saved.
+  const [storedNames, setStoredNames] = useState<{ forList: string; names: string[] }>({ forList: "", names: [] });
   const selected = sources.state === "ready" ? sources.options.find((o) => o.definitionId === definitionId) ?? null : null;
 
   useEffect(() => {
@@ -36,19 +43,41 @@ export function SmartSetupSupplierVerification({ draft, routingPlan, brandId }: 
     return () => { current = false; };
   }, [brandId]);
 
-  const fingerprint = useMemo(() => (selected ? checkFingerprint({ draft, routingPlan, brandId, definitionId: selected.definitionId, versionId: selected.versionId }) : null), [draft, routingPlan, brandId, selected]);
+  const selectedDefinition = selected?.definitionId, selectedVersion = selected?.versionId;
+  const listKey = `${selectedDefinition ?? ""}|${selectedVersion ?? ""}|${templateId ?? ""}`;
+  const familyState = storedFamilies?.forList === listKey ? storedFamilies.state : null;
+  const screenNames = useMemo(() => (storedNames.forList === listKey ? storedNames.names : []), [storedNames, listKey]);
+  const setFamilyState = (state: SmartSetupSupplierFamilyState) => setStoredFamilies({ forList: listKey, state });
+  const setScreenNames = (names: string[]) => setStoredNames({ forList: listKey, names });
+  useEffect(() => {
+    if (!selectedDefinition || !selectedVersion) return;
+    let current = true;
+    loadSmartSetupSupplierFamilies({ brandId, definitionId: selectedDefinition, sourceVersionId: selectedVersion, templateId })
+      .then((state) => { if (current) setStoredFamilies({ forList: listKey, state }); })
+      .catch(() => { if (current) setStoredFamilies({ forList: listKey, state: { families: [], chosen: [], missing: [] } }); });
+    return () => { current = false; };
+  }, [brandId, selectedDefinition, selectedVersion, templateId, listKey]);
+  const saved = Boolean(templateId);
+  const chosen = useMemo(() => !familyState ? [] : saved ? familyState.chosen : familyState.families.filter((f) => screenNames.includes(f.family)).map(({ family, key }) => ({ family, key })), [familyState, saved, screenNames]);
+  const familyKeys = useMemo(() => chosen.map((f) => f.key), [chosen]);
+
+  const fingerprint = useMemo(() => (selected ? checkFingerprint({ draft, routingPlan, brandId, definitionId: selected.definitionId, versionId: selected.versionId, familyKeys }) : null), [draft, routingPlan, brandId, selected, familyKeys]);
   const fresh = checked && fingerprint && checked.fingerprint === fingerprint ? checked : null;
   const stale = Boolean(checked && !fresh);
 
-  const run = async () => {
+  /** names is the family choice just made on screen; the state has not caught up with it yet. */
+  const run = async (names?: string[], families = familyState?.families ?? []) => {
     if (!selected || !fingerprint) return;
+    const keys = names ? families.filter((f) => names.includes(f.family)).map((f) => f.key) : familyKeys;
+    const runFingerprint = checkFingerprint({ draft, routingPlan, brandId, definitionId: selected.definitionId, versionId: selected.versionId, familyKeys: keys });
+    const familyNames = !saved ? (names ?? screenNames) : [];
     const request = buildSmartSetupCheckRequest(draft);
     if (!request.ok) { setError(request.message); return; }
     const id = ++requestId.current; setRunning(true); setError(null);
     try {
-      const output = await checkSmartSetupSupplierPrices({ brandId, definitionId: selected.definitionId, sourceVersionId: selected.versionId, cells: request.cells });
+      const output = await checkSmartSetupSupplierPrices({ brandId, definitionId: selected.definitionId, sourceVersionId: selected.versionId, cells: request.cells, ...(templateId ? { templateId } : {}), ...(familyNames.length ? { familyNames } : {}) });
       // The result belongs to the draft and selection it was requested for; a newer request supersedes it.
-      if (id === requestId.current) { setChecked({ fingerprint, output, cells: request.cells, unsupported: request.unsupported }); }
+      if (id === requestId.current) { setChecked({ fingerprint: runFingerprint, output, cells: request.cells, unsupported: request.unsupported }); }
     } catch (e) {
       if (id === requestId.current) setError(e instanceof Error && e.message ? e.message : "Supplier price check failed.");
     } finally {
@@ -56,12 +85,27 @@ export function SmartSetupSupplierVerification({ draft, routingPlan, brandId }: 
     }
   };
 
-  return <SupplierVerificationPanel brandId={brandId} sources={sources} definitionId={definitionId} onSelect={(id) => { setDefinitionId(id); setError(null); }} selected={selected} running={running} error={error} stale={stale} fresh={fresh} reviewOpen={reviewOpen} onReviewOpen={() => setReviewOpen(true)} onReviewClose={() => setReviewOpen(false)} onRun={run} />;
+  // Saved product: the choice is saved once, then the comparison reloads. New product: the choice is only used for this check.
+  const chooseFamily = async (names: string[]) => {
+    if (!selected) return;
+    let next = familyState;
+    if (templateId) {
+      await setSupplierTemplateFamilies(selected.definitionId, templateId, names);
+      next = await loadSmartSetupSupplierFamilies({ brandId, definitionId: selected.definitionId, sourceVersionId: selected.versionId, templateId });
+      setFamilyState(next);
+    } else setScreenNames(names);
+    void run(names, next?.families);
+  };
+  const family = familyState && familyState.families.length ? { families: familyState.families, chosen, missing: saved ? familyState.missing : [], saved, onChoose: chooseFamily } : null;
+
+  return <SupplierVerificationPanel family={family} brandId={brandId} sources={sources} definitionId={definitionId} onSelect={(id) => { setDefinitionId(id); setError(null); }} selected={selected} running={running} error={error} stale={stale} fresh={fresh} reviewOpen={reviewOpen} onReviewOpen={() => setReviewOpen(true)} onReviewClose={() => setReviewOpen(false)} onRun={() => void run()} />;
 }
 
-export type SupplierVerificationPanelProps = { brandId: string; sources: Sources; definitionId: string; onSelect: (definitionId: string) => void; selected: SmartSetupSupplierSourceOption | null; running: boolean; error: string | null; stale: boolean; fresh: SupplierCheckedResult | null; reviewOpen: boolean; onReviewOpen: () => void; onReviewClose: () => void; onRun: () => void };
+export type SupplierVerificationPanelProps = { brandId: string; sources: Sources; definitionId: string; onSelect: (definitionId: string) => void; selected: SmartSetupSupplierSourceOption | null; running: boolean; error: string | null; stale: boolean; fresh: SupplierCheckedResult | null; reviewOpen: boolean; onReviewOpen: () => void; onReviewClose: () => void; onRun: () => void; family?: SupplierVerificationFamily | null };
+export type SupplierVerificationFamily = { families: SmartSetupSupplierFamilyState["families"]; chosen: SmartSetupSupplierFamilyState["chosen"]; missing: SmartSetupSupplierFamilyState["missing"]; saved: boolean; onChoose: (names: string[]) => Promise<void> };
+export const unsavedFamilyNote = "This product is not saved yet, so the family is used for this check only. Nothing is saved.";
 /** Presentation only: renders exactly what the service returned; no matching or comparison happens here. */
-export function SupplierVerificationPanel({ brandId, sources, definitionId, onSelect, selected, running, error, stale, fresh, reviewOpen, onReviewOpen, onReviewClose, onRun }: SupplierVerificationPanelProps) {
+export function SupplierVerificationPanel({ brandId, sources, definitionId, onSelect, selected, running, error, stale, fresh, reviewOpen, onReviewOpen, onReviewClose, onRun, family = null }: SupplierVerificationPanelProps) {
   const canManageDecisions = sources.state === "ready" && sources.canManageDecisions === true;
   const [decisionSummary, setDecisionSummary] = useState<{ fingerprint: string; count: number } | null>(null);
   const onDecisionsSaved = useCallback((records: SavedReviewDecision[]) => {
@@ -81,6 +125,7 @@ export function SupplierVerificationPanel({ brandId, sources, definitionId, onSe
   const wasOpen = useRef(false);
   // Closing the review window hands focus back to the button that opened it.
   useEffect(() => { if (wasOpen.current && !reviewOpen) reviewButton.current?.focus(); wasOpen.current = reviewOpen; }, [reviewOpen]);
+  const familyBar = family ? <SupplierFamilyBar families={family.families} chosen={family.chosen} missing={family.missing} onSave={family.onChoose} saveLabel={family.saved ? "Save family" : "Use for this check"} note={family.saved ? undefined : unsavedFamilyNote} /> : null;
   const summary = fresh ? summarizeCheckResults(fresh.output.results) : null;
   const headline = summary
     ? `${summary.counts.MATCHED} matched · ${summary.counts.MISMATCH} mismatch · ${summary.counts.NOT_FOUND} not found · ${summary.counts.NEEDS_REVIEW} needs review${canManageDecisions && decidedCount !== null ? ` · ${decidedCount} decided` : ""}`
@@ -96,6 +141,8 @@ export function SupplierVerificationPanel({ brandId, sources, definitionId, onSe
         : sources.state === "error" ? <p className="text-red-800">Supplier price lists could not be loaded.</p>
         : !sources.options.length ? <p className="text-zinc-600">No applicable supplier price list.</p>
         : <>
+          {selected ? familyBar : null}
+          {selected && family && !family.chosen.length ? <p className="font-semibold text-amber-900">Choose a family first.</p> : null}
           <div className="flex flex-wrap items-end gap-2">
             <label className="min-w-64 flex-1 font-medium text-zinc-700">Supplier price list
               <select aria-label="Supplier price list" value={definitionId} onChange={(e) => onSelect(e.target.value)} className="mt-1 block h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-xs">
@@ -117,6 +164,6 @@ export function SupplierVerificationPanel({ brandId, sources, definitionId, onSe
         </>}
     </div>
   </details>
-  {reviewOpen ? <SupplierReviewDialog fresh={fresh} stale={stale} selected={selected} onClose={onReviewClose} canManageDecisions={canManageDecisions} onDecisionsSaved={onDecisionsSaved} /> : null}
+  {reviewOpen ? <SupplierReviewDialog fresh={fresh} stale={stale} selected={selected} onClose={onReviewClose} canManageDecisions={canManageDecisions} onDecisionsSaved={onDecisionsSaved} familyBar={selected ? familyBar : null} /> : null}
   </>;
 }
