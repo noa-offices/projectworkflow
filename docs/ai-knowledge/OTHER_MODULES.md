@@ -1,0 +1,17 @@
+# Clients, projects, procurement, auth and settings
+
+## Clients / projects ? implemented entry points
+
+[Clients page](../../app/clients/page.tsx), [actions](../../app/clients/actions.ts), [project file](../../app/clients/projects/%5Bid%5D/page.tsx), [project orders](../../app/projects/orders/page.tsx), [completed projects](../../app/projects/completed/page.tsx), and [client manager](../../components/sales/clients-manager.tsx). [Client payload](../../lib/clients/client-payload.ts), [numbering](../../lib/clients/client-numbering.ts), [payment model](../../lib/projects/client-payment-model.ts), and [procurement readiness](../../lib/projects/procurement-readiness.ts) are entry helpers. `clients`, `projects`, quotations and payment records are related; inspect [database guide](../DATABASE.md) and migrations for RLS and later additions. Quotations, procurement, NOA, payment and document outputs may be affected. Tests: [payment](../../lib/projects/client-payment-model.test.mjs), [readiness](../../lib/projects/procurement-readiness.test.mjs). Exact snapshot and lifecycle guarantees: **NOT VERIFIED**.
+
+## Procurement / orders ? implemented entry points
+
+[Orders](../../app/procurement/orders/page.tsx), [order detail](../../app/procurement/orders/%5BorderNo%5D/page.tsx), [completed](../../app/procurement/completed/page.tsx), [PO generation action](../../lib/procurement/generate-po-action.ts), [vendor document action](../../lib/procurement/vendor-docs-action.ts), and [vendor steps](../../lib/procurement/vendor-steps.ts). Relevant records include `project_purchase_orders`, `procurement_vendor_docs`, `procurement_vendor_progress`, quotation purchase-order settings and project records; [database guide](../DATABASE.md) and later migrations supply schema/RLS context. Quotation, project execution and documents are dependencies. Tests: [generate PO](../../lib/procurement/generate-po-action.test.mts), [vendor dates](../../lib/procurement/vendor-dates.test.mts). Full status transitions and snapshot guarantees: **NOT VERIFIED**.
+
+## Authentication / roles / RLS
+
+[Auth guards](../../lib/auth.ts), [role access](../../lib/auth-access.ts), [auth actions](../../app/auth/actions.ts), [server client](../../lib/supabase/server.ts), [migrations](../../supabase/migrations/), and [auth access tests](../../lib/auth-access.test.mts). Login, signup, callback and account-status flow are described in [workflows](../WORKFLOWS.md); exact approval lifecycle remains **NOT VERIFIED**. Every module is affected by auth changes. Preserve application guards and database RLS independently.
+
+## Settings and other active areas
+
+[Settings](../../app/settings/page.tsx), [actions](../../app/settings/actions.ts), [users](../../app/settings/users/page.tsx), [company](../../app/settings/company/page.tsx), [documents](../../app/settings/documents/page.tsx), [AI settings](../../app/settings/ai/page.tsx), [workers](../../app/settings/workers/page.tsx), [system health](../../app/settings/system-health/page.tsx), and [AI settings tests](../../app/settings/ai/ai-settings.test.mts). Company/document settings affect exports; AI settings affect provider use; users and workers interact with auth and HR. Other active areas include dashboard, sales, commissions, notifications and leave; their complete contracts, routes, tests and planned status are **NOT VERIFIED**. See [overview](../PROJECT_OVERVIEW.md) and [workflows](../WORKFLOWS.md), then inspect the relevant route directly.
