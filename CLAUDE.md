@@ -2,6 +2,10 @@
 
 # ProjectWorkflow — Claude Development Guide
 
+## Module knowledge routing
+
+For every new feature or bug-fix task, use [MODULE_ROUTER.md](docs/ai-knowledge/MODULE_ROUTER.md) to identify the relevant module guide, verified source files, dependencies, and focused tests. Read only the relevant module knowledge; do not repeat broad repository audits when the router provides the required information.
+
 ## Project
 
 ProjectWorkflow is a B2B quotation/specification/project ERP built with:
