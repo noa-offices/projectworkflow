@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { applySharedConfirmations, sharedCodeGroups, sharedCodeKey, sharedDiffersText } from "@/lib/products/smart-setup-shared-confirm";
 import type { SmartSetupSupplierSourceOption } from "@/lib/products/smart-setup-supplier-sources";
 import { countReviewStatuses, DEFAULT_REVIEW_STATUSES, filterReviewedRows, filterReviewRows, isReviewedRow, REVIEW_STATUS_CHIPS, reviewRowsToCsv, reviewSortLabels, reviewStatusLabels, sortReviewRows, toggleReviewStatus, type ReviewRow, type ReviewSort, type ReviewStatus } from "@/lib/products/smart-setup-supplier-review";
 import { evidenceText, importedPriceText, reasonLabels, referencePriceText } from "@/lib/products/smart-setup-supplier-verification";
@@ -42,7 +43,19 @@ export function SupplierReviewDialog({ familyBar = null, fresh, stale, selected,
   const [sort, setSort] = useState<ReviewSort>("status");
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(800);
-  const decisions = useSupplierReviewDecisions(fresh, canManageDecisions, onDecisionsSaved);
+  // "Confirm shared" lives only in this window: closing it forgets it. Nothing is saved and the draft is not changed.
+  const [confirmedShared, setConfirmedShared] = useState<ReadonlySet<string>>(() => new Set());
+  const sharedGroups = useMemo(() => (fresh ? sharedCodeGroups(fresh.output.results) : new Map()), [fresh]);
+  const shownFresh = useMemo(() => (fresh && confirmedShared.size ? { ...fresh, output: { ...fresh.output, results: applySharedConfirmations(fresh.output.results, confirmedShared) } } : fresh), [fresh, confirmedShared]);
+  const decisions = useSupplierReviewDecisions(shownFresh, canManageDecisions, onDecisionsSaved);
+  const toggleShared = (key: string, on: boolean) => setConfirmedShared((current) => { const next = new Set(current); if (on) next.add(key); else next.delete(key); return next; });
+  const sharedGroupOf = (row: ReviewRow) => { const group = sharedGroups.get(sharedCodeKey(row.result.code)); return group?.locators.includes(row.result.locator) ? group : undefined; };
+  const sharedControl = (row: ReviewRow): ReactNode => {
+    const group = sharedGroupOf(row); if (!group) return null;
+    if (confirmedShared.has(group.key)) return <button type="button" onClick={() => toggleShared(group.key, false)} className="mb-1 min-h-9 rounded-md border border-zinc-400 bg-white px-2 text-sm font-semibold text-zinc-900">Undo</button>;
+    return group.canConfirm ? <button type="button" onClick={() => toggleShared(group.key, true)} className="mb-1 min-h-9 rounded-md border border-emerald-700 bg-white px-2 text-sm font-semibold text-emerald-900">Confirm shared</button> : null;
+  };
+  const sharedNote = (row: ReviewRow) => { const group = sharedGroupOf(row); return group?.differs && !confirmedShared.has(group.key) ? sharedDiffersText : ""; };
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [bulkAction, setBulkAction] = useState<ReviewDecision | "">("");
   const [decisionFilter, setDecisionFilter] = useState<"" | "undecided" | "decided" | "check_later">("");
@@ -191,7 +204,7 @@ export function SupplierReviewDialog({ familyBar = null, fresh, stale, selected,
           <div className="grid grid-cols-2 gap-2 text-sm"><p>Imported <strong className="block">{importedPriceText(row.result)}</strong></p><p>Supplier <strong className="block">{referencePriceText(row.result)}</strong></p></div>
           <div className="flex flex-wrap gap-1"><span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold ${pillTone[row.result.status]}`}>{reviewStatusLabels[row.result.status]}</span>{reviewed(row) ? <ReviewedTag /> : null}</div>
           <p className="text-xs text-zinc-600">{reasonLabels[row.result.reason]}</p>
-          <details open className="rounded-md border border-zinc-200 bg-zinc-50 px-2"><summary className="min-h-10 cursor-pointer py-2 text-sm font-semibold">Action</summary>{actionControls(row)}</details>
+          <details open className="rounded-md border border-zinc-200 bg-zinc-50 px-2"><summary className="min-h-10 cursor-pointer py-2 text-sm font-semibold">Action</summary>{sharedControl(row)}{actionControls(row)}</details>
         </article>)}</div> : null}
         <table className={`w-full border-collapse text-left text-sm ${canManageDecisions ? "hidden min-w-[1250px] xl:table" : "min-w-[960px]"}`}>
           <thead className="sticky top-0 z-10 bg-zinc-100 text-xs uppercase tracking-wide text-zinc-600 shadow-[0_1px_0_#d4d4d8]">
@@ -199,7 +212,7 @@ export function SupplierReviewDialog({ familyBar = null, fresh, stale, selected,
           </thead>
           <tbody>
             {windowed && first > 0 ? <tr aria-hidden="true" style={{ height: first * ROW_HEIGHT }}><td colSpan={7} className="p-0" /></tr> : null}
-            {shown.slice(first, last).map((row) => <ReviewTableRow key={row.result.locator} row={row} reviewed={reviewed(row)} selection={canManageDecisions ? selectionBox(row) : undefined} action={canManageDecisions ? actionControls(row) : undefined} />)}
+            {shown.slice(first, last).map((row) => <ReviewTableRow key={row.result.locator} sharedAction={sharedControl(row)} note={sharedNote(row)} row={row} reviewed={reviewed(row)} selection={canManageDecisions ? selectionBox(row) : undefined} action={canManageDecisions ? actionControls(row) : undefined} />)}
             {windowed && last < shown.length ? <tr aria-hidden="true" style={{ height: (shown.length - last) * ROW_HEIGHT }}><td colSpan={7} className="p-0" /></tr> : null}
           </tbody>
         </table>
@@ -214,7 +227,7 @@ export function SupplierReviewDialog({ familyBar = null, fresh, stale, selected,
 
 function ReviewedTag() { return <span className="inline-block rounded-full border border-zinc-300 bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">Reviewed</span>; }
 
-export function ReviewTableRow({ row, reviewed, selection, action }: { row: ReviewRow; reviewed: boolean; selection?: React.ReactNode; action?: React.ReactNode }) {
+export function ReviewTableRow({ row, reviewed, selection, action, sharedAction, note }: { row: ReviewRow; reviewed: boolean; selection?: React.ReactNode; action?: React.ReactNode; sharedAction?: React.ReactNode; note?: string }) {
   const { result: r, difference } = row;
   const evidence = evidenceText(r);
   const tone = !difference || difference.amount === 0 ? "text-zinc-700" : difference.amount > 0 ? "text-red-700" : "text-blue-700";
@@ -227,7 +240,7 @@ export function ReviewTableRow({ row, reviewed, selection, action }: { row: Revi
     <td className="whitespace-nowrap px-3 text-right tabular-nums">{referencePriceText(r)}</td>
     <td className={`whitespace-nowrap px-3 text-right tabular-nums font-semibold ${tone}`} title={direction || undefined}>{difference ? <>{amountFormat.format(difference.amount)}{difference.percent !== null ? <span className="block text-xs font-normal">{percentFormat.format(difference.percent)}%</span> : null}</> : <span className="font-normal text-zinc-400">—</span>}</td>
     <td className="px-3"><div className="flex flex-wrap gap-1"><span className={`whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-semibold ${pillTone[r.status]}`}>{reviewStatusLabels[r.status]}</span>{reviewed ? <ReviewedTag /> : null}</div></td>
-    {action ? <td className="w-60 px-3">{action}</td> : null}
-    <td className="max-w-md px-3 text-zinc-700"><div className="line-clamp-2" title={reasonLabels[r.reason]}>{reasonLabels[r.reason]}</div>{evidence ? <div className="truncate text-xs text-zinc-500">{evidence}</div> : null}</td>
+    {action ? <td className="w-60 px-3">{sharedAction}{action}</td> : null}
+    <td className="max-w-md px-3 text-zinc-700"><div className="line-clamp-2" title={reasonLabels[r.reason]}>{reasonLabels[r.reason]}</div>{note ? <div className="text-xs text-amber-900">{note}</div> : null}{!action ? sharedAction : null}{evidence ? <div className="truncate text-xs text-zinc-500">{evidence}</div> : null}</td>
   </tr>;
 }

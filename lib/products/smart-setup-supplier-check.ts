@@ -22,6 +22,8 @@ export type SmartSetupSupplierCheckResult = {
   referencePrice: number | null; referenceCurrency: string | null;
   source: { versionId: string; definitionId: string; title: string; currency: string; basis: string };
   evidence: { identityKey: string; sheet: string; rowNumber: number; sourceRowCount: number | null } | null;
+  /** Only for a shared code that is not confirmed: the one usable supplier price it could be confirmed against. Never a matched price. */
+  sharedCandidate?: { price: number; currency: string } | null;
 };
 /** `templateId` (a saved product) reads its saved families; `familyNames` (chosen on screen, for example for a new unsaved product) win over them. Neither = no family scope. */
 export type SmartSetupSupplierCheckInput = { brandId: unknown; definitionId: unknown; sourceVersionId: unknown; priceBasis?: unknown; cells: unknown; templateId?: unknown; familyNames?: unknown };
@@ -168,7 +170,8 @@ export async function runSmartSetupSupplierCheck(deps: SmartSetupSupplierCheckDe
     if (cell.price === null && outcome.status !== "NOT_FOUND") outcome = review("missing_draft_price", outcome.source);
     const established = outcome.status === "MATCHED" || outcome.status === "MISMATCH";
     const evidence = outcome.source ? firstEvidence.get(outcome.source.key)?.[0] : undefined;
-    return { locator: cell.locator, role: cell.role, code: cell.code, priceField: cell.priceField, dimension: cell.dimension, status: outcome.status, reason: outcome.reason, importedPrice: cell.price, importedCurrency: cell.currency,
+    const candidate = outcome.reason === "shared_price_unconfirmed" && outcome.source && outcome.source.price !== null && !outcome.source.issues.length ? { price: outcome.source.price, currency: outcome.source.currency } : null;
+    return { ...(candidate ? { sharedCandidate: candidate } : {}), locator: cell.locator, role: cell.role, code: cell.code, priceField: cell.priceField, dimension: cell.dimension, status: outcome.status, reason: outcome.reason, importedPrice: cell.price, importedCurrency: cell.currency,
       referencePrice: established ? outcome.source!.price : null, referenceCurrency: established ? outcome.source!.currency : null, source,
       evidence: outcome.source && established ? { identityKey: outcome.source.key, sheet: evidence?.sheet ?? "", rowNumber: evidence?.row_number ?? 0, sourceRowCount: outcome.source.source_row_count ?? null } : null };
   });
