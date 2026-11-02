@@ -10,7 +10,7 @@ import { decisionWithDraft, decisionKey, decisionLabels, draftForRow, supplierPr
 import { useSupplierReviewDecisions } from "./use-supplier-review-decisions";
 import { ReviewDecisionControls, ReviewSaveButton } from "./supplier-review-decision-controls";
 
-const ROW_HEIGHT = 60;
+const ROW_HEIGHT = 52;
 const WINDOW_ABOVE = 300; // beyond this many shown rows only the visible slice is rendered
 const OVERSCAN = 8;
 const chipTone: Record<ReviewStatus, { on: string; off: string }> = {
@@ -52,8 +52,8 @@ export function SupplierReviewDialog({ familyBar = null, fresh, stale, selected,
   const sharedGroupOf = (row: ReviewRow) => { const group = sharedGroups.get(sharedCodeKey(row.result.code)); return group?.locators.includes(row.result.locator) ? group : undefined; };
   const sharedControl = (row: ReviewRow): ReactNode => {
     const group = sharedGroupOf(row); if (!group) return null;
-    if (confirmedShared.has(group.key)) return <button type="button" onClick={() => toggleShared(group.key, false)} className="mb-1 min-h-9 rounded-md border border-zinc-400 bg-white px-2 text-sm font-semibold text-zinc-900">Undo</button>;
-    return group.canConfirm ? <button type="button" onClick={() => toggleShared(group.key, true)} className="mb-1 min-h-9 rounded-md border border-emerald-700 bg-white px-2 text-sm font-semibold text-emerald-900">Confirm shared</button> : null;
+    if (confirmedShared.has(group.key)) return <button type="button" onClick={() => toggleShared(group.key, false)} className="min-h-8 rounded-md border border-zinc-400 bg-white px-2 text-sm font-semibold text-zinc-900">Undo</button>;
+    return group.canConfirm ? <button type="button" onClick={() => toggleShared(group.key, true)} className="min-h-8 rounded-md border border-emerald-700 bg-white px-2 text-sm font-semibold text-emerald-900">Confirm shared</button> : null;
   };
   const sharedNote = (row: ReviewRow) => { const group = sharedGroupOf(row); return group?.differs && !confirmedShared.has(group.key) ? sharedDiffersText : ""; };
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
@@ -122,83 +122,82 @@ export function SupplierReviewDialog({ familyBar = null, fresh, stale, selected,
     else if (!event.shiftKey && active === lastItem) { event.preventDefault(); firstItem.focus(); }
   };
 
+  // One toolbar row (it wraps on narrow screens) ...
+  const toolbar = fresh ? <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+    <div role="group" aria-label="Show rows with these statuses" className="flex flex-wrap gap-1.5">
+      {REVIEW_STATUS_CHIPS.map((s) => {
+        const on = statuses.has(s);
+        return <button key={s} type="button" aria-pressed={on} onClick={() => { setStatuses((current) => toggleReviewStatus(current, s)); backToTop(); }} className={`h-8 rounded-full border px-2.5 text-xs font-semibold ${on ? chipTone[s].on : chipTone[s].off}`}>{reviewStatusLabels[s]} <span className="font-normal">{counts[s]}</span></button>;
+      })}
+    </div>
+    <input type="search" aria-label="Search" value={query} onChange={(e) => { setQuery(e.target.value); backToTop(); }} placeholder="Search model, code, category or price field" className="h-8 min-w-40 max-w-80 flex-1 rounded-md border border-zinc-300 bg-white px-2 text-sm" />
+    <label className="flex items-center gap-1 text-xs font-medium text-zinc-700">Sort by
+      <select value={sort} onChange={(e) => { setSort(e.target.value as ReviewSort); backToTop(); }} className="h-8 rounded-md border border-zinc-300 bg-white px-2 text-sm">
+        {(Object.keys(reviewSortLabels) as ReviewSort[]).map((k) => <option key={k} value={k}>{reviewSortLabels[k]}</option>)}
+      </select>
+    </label>
+    <div className="ml-auto flex flex-wrap items-center gap-2">
+      <button type="button" disabled={!shown.length || (canManageDecisions && (decisions.loading || !!decisions.loadError))} onClick={() => downloadCsv(shown, fresh.output.source.title, decisions.saved, decisions.conflicts)} className="h-8 rounded-md border border-emerald-700 bg-white px-3 text-sm font-semibold text-emerald-900 disabled:cursor-not-allowed disabled:opacity-50">Export CSV</button>
+      {canManageDecisions ? <ReviewSaveButton count={decisions.unsavedCount} disabled={!decisions.enabled} saving={decisions.saving} onSave={() => { void saveDecisions(); }} buttonRef={saveButtonRef} /> : null}
+    </div>
+  </div> : null;
+  // ... and one compact row under it. On narrow screens this row scrolls away with the list.
   const controls = fresh ? <>
-          <div className="flex flex-wrap items-center gap-2">
-            <div role="group" aria-label="Show rows with these statuses" className="flex flex-wrap gap-2">
-              {REVIEW_STATUS_CHIPS.map((s) => {
-                const on = statuses.has(s);
-                return <button key={s} type="button" aria-pressed={on} onClick={() => { setStatuses((current) => toggleReviewStatus(current, s)); backToTop(); }} className={`h-9 rounded-full border px-3 text-sm font-semibold ${on ? chipTone[s].on : chipTone[s].off}`}>{reviewStatusLabels[s]} <span className="font-normal">{counts[s]}</span></button>;
-              })}
-            </div>
-          </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="min-w-48 flex-1 text-sm font-medium text-zinc-700">Search
-              <input type="search" value={query} onChange={(e) => { setQuery(e.target.value); backToTop(); }} placeholder="Model, code, category or price field" className="mt-1 block h-9 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm" />
-            </label>
-            <label className="text-sm font-medium text-zinc-700">Sort by
-              <select value={sort} onChange={(e) => { setSort(e.target.value as ReviewSort); backToTop(); }} className="mt-1 block h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm">
-                {(Object.keys(reviewSortLabels) as ReviewSort[]).map((k) => <option key={k} value={k}>{reviewSortLabels[k]}</option>)}
-              </select>
-            </label>
-            <button type="button" disabled={!shown.length || (canManageDecisions && (decisions.loading || !!decisions.loadError))} onClick={() => downloadCsv(shown, fresh.output.source.title, decisions.saved, decisions.conflicts)} className="h-9 rounded-md border border-emerald-700 bg-white px-3 text-sm font-semibold text-emerald-900 disabled:cursor-not-allowed disabled:opacity-50">Export CSV</button>
-          </div>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-zinc-600" aria-live="polite">
-            <span>Showing {shown.length} of {allRows.length} rows{reviewedHidden ? ` (${reviewedHidden} reviewed hidden)` : ""}</span>
-            {canManageDecisions ? <><button type="button" aria-pressed={showReviewed} onClick={() => { setShowReviewed((current) => !current); setSelectedKeys(new Set()); backToTop(); }} className="min-h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm font-medium text-zinc-800">Show reviewed ({reviewedCount})</button>{reviewedHidden ? <span>{reviewedHidden} reviewed and hidden</span> : null}</> : null}
-          </div>
-          {canManageDecisions ? <>
-            <div role="group" aria-label="Filter decisions" className="flex flex-wrap gap-2">
-              {([["undecided", "Not decided"], ["decided", "Decided"], ["check_later", "Check later"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={decisionFilter === value} onClick={() => { setDecisionFilter(decisionFilter === value ? "" : value); backToTop(); }} className={`min-h-9 rounded-full border px-3 text-sm ${decisionFilter === value ? "border-emerald-800 bg-emerald-100" : "border-zinc-300 bg-white"}`}>{label}</button>)}
-            </div>
-            <div className="flex flex-wrap items-center gap-3 text-sm">
-              <label className="flex min-h-10 items-center gap-2"><input type="checkbox" checked={eligibleKeys.length > 0 && eligibleKeys.every((k) => selectedShownKeys.has(k))} disabled={!decisions.enabled || !eligibleKeys.length} onChange={(e) => setSelectedKeys((current) => { const next = new Set([...current].filter((key) => eligibleKeys.includes(key))); eligibleKeys.forEach((k) => e.target.checked ? next.add(k) : next.delete(k)); return next; })} className="h-5 w-5 accent-emerald-800" />Select all shown</label>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-600">
+            <span aria-live="polite">Showing {shown.length} of {allRows.length} rows{reviewedHidden ? ` (${reviewedHidden} reviewed hidden)` : ""}</span>
+            {canManageDecisions ? <>
+              <button type="button" aria-pressed={showReviewed} onClick={() => { setShowReviewed((current) => !current); setSelectedKeys(new Set()); backToTop(); }} className="min-h-8 rounded-md border border-zinc-300 bg-white px-2 text-xs font-medium text-zinc-800">Show reviewed ({reviewedCount})</button>
+              <div role="group" aria-label="Filter decisions" className="flex flex-wrap gap-1.5">
+                {([["undecided", "Not decided"], ["decided", "Decided"], ["check_later", "Check later"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={decisionFilter === value} onClick={() => { setDecisionFilter(decisionFilter === value ? "" : value); backToTop(); }} className={`min-h-8 rounded-full border px-2.5 text-xs ${decisionFilter === value ? "border-emerald-800 bg-emerald-100" : "border-zinc-300 bg-white"}`}>{label}</button>)}
+              </div>
+              <label className="flex min-h-8 items-center gap-1.5 text-zinc-800"><input type="checkbox" checked={eligibleKeys.length > 0 && eligibleKeys.every((k) => selectedShownKeys.has(k))} disabled={!decisions.enabled || !eligibleKeys.length} onChange={(e) => setSelectedKeys((current) => { const next = new Set([...current].filter((key) => eligibleKeys.includes(key))); eligibleKeys.forEach((k) => e.target.checked ? next.add(k) : next.delete(k)); return next; })} className="h-4 w-4 accent-emerald-800" />Select all shown</label>
               <span>Decided {shown.filter((r) => effectiveDecision(r)).length} of {shown.length} shown</span>
-            </div>
-            {selectedShownKeys.size ? <div className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-sm">
+            </> : null}
+          </div>
+          {canManageDecisions && selectedShownKeys.size ? <div className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-sm">
               <strong>{selectedShownKeys.size} selected</strong>
-              <select aria-label="Bulk action" value={bulkAction} disabled={!decisions.enabled} onChange={(e) => setBulkAction(e.target.value as ReviewDecision | "")} className="h-10 rounded-md border border-zinc-300 bg-white px-2">
+              <select aria-label="Bulk action" value={bulkAction} disabled={!decisions.enabled} onChange={(e) => setBulkAction(e.target.value as ReviewDecision | "")} className="h-8 rounded-md border border-zinc-300 bg-white px-2">
                 <option value="">Choose an action</option>{(Object.keys(decisionLabels) as ReviewDecision[]).map((d) => <option key={d} value={d} disabled={d === "use_supplier" && bulkSupplierUnavailable}>{decisionLabels[d]}</option>)}
               </select>
-              <button type="button" disabled={!bulkAction || !decisions.enabled || (bulkAction === "use_supplier" && bulkSupplierUnavailable)} onClick={applyBulk} className="min-h-10 rounded-md bg-emerald-800 px-3 font-semibold text-white disabled:opacity-50">Apply to selected</button>
-              <button type="button" onClick={() => setSelectedKeys(new Set())} className="min-h-10 px-2 underline">Clear</button>
+              <button type="button" disabled={!bulkAction || !decisions.enabled || (bulkAction === "use_supplier" && bulkSupplierUnavailable)} onClick={applyBulk} className="min-h-8 rounded-md bg-emerald-800 px-3 font-semibold text-white disabled:opacity-50">Apply to selected</button>
+              <button type="button" onClick={() => setSelectedKeys(new Set())} className="min-h-8 px-2 underline">Clear</button>
               {bulkAction === "set_custom" ? <p className="w-full text-xs">Enter your price on each selected row before saving.</p> : null}
             </div> : null}
-            {decisions.unsavedCount ? <p className="text-xs text-zinc-600">CSV includes saved decisions. Save your changes to include them.</p> : null}
-          </> : null}
+          {canManageDecisions && decisions.unsavedCount ? <p className="text-xs text-zinc-600">CSV includes saved decisions. Save your changes to include them.</p> : null}
   </> : null;
 
-  return <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-950/55 p-[2.5vw]">
-    <div ref={panelRef} tabIndex={-1} onKeyDown={onKeyDown} className="flex h-[95dvh] w-[95vw] min-w-0 flex-col overflow-hidden rounded-xl bg-white text-zinc-900 shadow-2xl outline-none">
-      <header className="shrink-0 space-y-3 border-b border-zinc-200 bg-zinc-50 p-3 sm:p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 id={titleId} className="text-lg font-semibold">Supplier price review</h2>
-            {fresh ? <dl className="mt-1 flex flex-wrap gap-x-5 gap-y-0.5 text-sm text-zinc-700">
-              <div className="flex gap-1"><dt className="text-zinc-500">Price list</dt><dd className="font-semibold">{fresh.output.source.title}</dd></div>
-              <div className="flex gap-1"><dt className="text-zinc-500">Currency</dt><dd className="font-semibold">{fresh.output.source.currency}</dd></div>
-              <div className="flex gap-1"><dt className="text-zinc-500">Price basis</dt><dd className="font-semibold">{fresh.output.source.basis}</dd></div>
-              {selected?.effectiveFrom ? <div className="flex gap-1"><dt className="text-zinc-500">Effective</dt><dd className="font-semibold">{selected.effectiveFrom}</dd></div> : null}
+  return <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-950/55 p-[1vw] sm:p-[1.5vh]">
+    <div ref={panelRef} tabIndex={-1} onKeyDown={onKeyDown} className="flex h-full w-full min-w-0 flex-col overflow-hidden rounded-xl bg-white text-zinc-900 shadow-2xl outline-none">
+      <header className="shrink-0 space-y-1.5 border-b border-zinc-200 bg-zinc-50 px-3 py-2 sm:px-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-0.5">
+            <h2 id={titleId} className="text-base font-semibold">Supplier price review</h2>
+            {fresh ? <dl className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-zinc-600">
+              <div className="flex gap-1"><dt>Price list</dt><dd className="font-semibold text-zinc-800">{fresh.output.source.title}</dd></div>
+              <div className="flex gap-1"><dt>Currency</dt><dd className="font-semibold text-zinc-800">{fresh.output.source.currency}</dd></div>
+              <div className="flex gap-1"><dt>Price basis</dt><dd className="font-semibold text-zinc-800">{fresh.output.source.basis}</dd></div>
+              {selected?.effectiveFrom ? <div className="flex gap-1"><dt>Effective</dt><dd className="font-semibold text-zinc-800">{selected.effectiveFrom}</dd></div> : null}
             </dl> : null}
           </div>
-          <button type="button" onClick={requestClose} disabled={decisions.saving} className="h-9 shrink-0 rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-900 hover:bg-zinc-100 disabled:opacity-50">Close</button>
+          <button type="button" onClick={requestClose} disabled={decisions.saving} className="h-8 shrink-0 rounded-md border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-900 hover:bg-zinc-100 disabled:opacity-50">Close</button>
         </div>
         {familyBar}
-        {canManageDecisions && fresh ? <ReviewSaveButton count={decisions.unsavedCount} disabled={!decisions.enabled} saving={decisions.saving} onSave={() => { void saveDecisions(); }} buttonRef={saveButtonRef} /> : null}
-        {decisions.loading ? <p role="status" className="text-sm text-zinc-600">Loading saved decisions…</p> : null}
-        {decisions.loadError ? <p role="alert" className="text-sm text-red-800">{decisions.loadError} <button type="button" onClick={decisions.retry} className="underline">Try again</button></p> : null}
-        {decisions.message ? <p role="status" className="text-sm text-emerald-900">{decisions.message}</p> : null}
-        {decisions.saveError ? <p role="alert" className="text-sm text-red-800">{decisions.saveError}</p> : null}
+        {decisions.loading ? <p role="status" className="text-xs text-zinc-600">Loading saved decisions…</p> : null}
+        {decisions.loadError ? <p role="alert" className="text-xs text-red-800">{decisions.loadError} <button type="button" onClick={decisions.retry} className="underline">Try again</button></p> : null}
+        {decisions.message ? <p role="status" className="text-xs text-emerald-900">{decisions.message}</p> : null}
+        {decisions.saveError ? <p role="alert" className="text-xs text-red-800">{decisions.saveError}</p> : null}
         {confirmClose ? <div role="alertdialog" aria-modal="true" aria-label="Unsaved decisions" className="rounded-md border border-amber-400 bg-amber-50 p-3 text-sm">
           <p>You have {decisions.unsavedCount} unsaved change{decisions.unsavedCount === 1 ? "" : "s"}. Close and discard them?</p>
           <div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => setConfirmClose(false)} className="min-h-10 rounded border border-zinc-400 bg-white px-3 font-semibold">Keep reviewing</button><button type="button" onClick={onClose} className="min-h-10 rounded border border-red-700 px-3 font-semibold text-red-800">Discard and close</button></div>
         </div> : null}
-        {controls ? <div className="hidden space-y-3 sm:block">{controls}</div> : null}
+        {toolbar}
+        {controls ? <div className="hidden space-y-1.5 sm:block">{controls}</div> : null}
       </header>
       {!fresh ? <div className="p-4 text-sm">
         <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">{stale ? "The draft or selection changed after the last check, so this result is out of date and is no longer shown. Close this window and run Check Supplier Prices again." : "There is no supplier price check to show. Close this window and run Check Supplier Prices first."}</p>
       </div> : <div ref={scrollRef} tabIndex={0} role="region" aria-label="Supplier price rows" onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)} className="min-h-0 flex-1 overflow-auto">
         {/* On narrow screens the filters live in the scroll area so they scroll away; the table header stays sticky. */}
-        <div className="space-y-3 border-b border-zinc-200 bg-zinc-50 p-3 sm:hidden">{controls}</div>
+        <div className="space-y-1.5 border-b border-zinc-200 bg-zinc-50 p-2 sm:hidden">{controls}</div>
         {canManageDecisions ? <div className="grid divide-y divide-zinc-200 sm:grid-cols-2 xl:hidden">{shown.slice(first, last).map((row) => <article key={row.result.locator} className="space-y-2 p-3">
           <div className="flex items-start gap-3">{selectionBox(row)}<div className="min-w-0"><h3 className="break-words font-semibold">{row.model}</h3><p className="break-words text-sm text-zinc-600">{row.result.code} · {row.category}</p></div></div>
           <div className="grid grid-cols-2 gap-2 text-sm"><p>Imported <strong className="block">{importedPriceText(row.result)}</strong></p><p>Supplier <strong className="block">{referencePriceText(row.result)}</strong></p></div>
@@ -207,8 +206,8 @@ export function SupplierReviewDialog({ familyBar = null, fresh, stale, selected,
           <details open className="rounded-md border border-zinc-200 bg-zinc-50 px-2"><summary className="min-h-10 cursor-pointer py-2 text-sm font-semibold">Action</summary>{sharedControl(row)}{actionControls(row)}</details>
         </article>)}</div> : null}
         <table className={`w-full border-collapse text-left text-sm ${canManageDecisions ? "hidden min-w-[1250px] xl:table" : "min-w-[960px]"}`}>
-          <thead className="sticky top-0 z-10 bg-zinc-100 text-xs uppercase tracking-wide text-zinc-600 shadow-[0_1px_0_#d4d4d8]">
-            <tr>{canManageDecisions ? <th scope="col" className="px-3 py-2">Select</th> : null}<th scope="col" className="px-3 py-2">Model / code</th><th scope="col" className="px-3 py-2">Price field / category</th><th scope="col" className="px-3 py-2 text-right">Imported price</th><th scope="col" className="px-3 py-2 text-right">Supplier price</th><th scope="col" className="px-3 py-2 text-right">Difference</th><th scope="col" className="px-3 py-2">Status</th>{canManageDecisions ? <th scope="col" className="px-3 py-2">Action</th> : null}<th scope="col" className="px-3 py-2">Reason / evidence</th></tr>
+          <thead className="sticky top-0 z-10 bg-zinc-100 text-[11px] uppercase tracking-wide text-zinc-600 shadow-[0_1px_0_#d4d4d8]">
+            <tr>{canManageDecisions ? <th scope="col" className="px-3 py-1.5">Select</th> : null}<th scope="col" className="px-3 py-1.5">Model / code</th><th scope="col" className="px-3 py-1.5">Price field / category</th><th scope="col" className="px-3 py-1.5 text-right">Imported price</th><th scope="col" className="px-3 py-1.5 text-right">Supplier price</th><th scope="col" className="px-3 py-1.5 text-right">Difference</th><th scope="col" className="px-3 py-1.5">Status</th>{canManageDecisions ? <th scope="col" className="px-3 py-1.5">Action</th> : null}<th scope="col" className="px-3 py-1.5">Reason / evidence</th></tr>
           </thead>
           <tbody>
             {windowed && first > 0 ? <tr aria-hidden="true" style={{ height: first * ROW_HEIGHT }}><td colSpan={7} className="p-0" /></tr> : null}
@@ -218,7 +217,7 @@ export function SupplierReviewDialog({ familyBar = null, fresh, stale, selected,
         </table>
         {!shown.length ? <p className="p-4 text-sm text-zinc-600">{reviewedHidden ? "All rows in this view are reviewed. Product prices have not changed." : allRows.length ? "No rows match the selected statuses and search." : "The check returned no rows."}</p> : null}
       </div>}
-      {canManageDecisions && fresh ? <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-200 bg-zinc-50 px-3 py-2 text-sm">
+      {canManageDecisions && fresh ? <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs">
         <span>{allRows.filter((r) => effectiveDecision(r)).length} decided · {counts.MATCHED} matched · {counts.MISMATCH} mismatch · {counts.NOT_FOUND} not found · {counts.NEEDS_REVIEW} needs review</span>
       </footer> : null}
     </div>

@@ -125,7 +125,7 @@ export function SupplierVerificationPanel({ brandId, sources, definitionId, onSe
   const wasOpen = useRef(false);
   // Closing the review window hands focus back to the button that opened it.
   useEffect(() => { if (wasOpen.current && !reviewOpen) reviewButton.current?.focus(); wasOpen.current = reviewOpen; }, [reviewOpen]);
-  const familyBar = family ? <SupplierFamilyBar families={family.families} chosen={family.chosen} missing={family.missing} onSave={family.onChoose} saveLabel={family.saved ? "Save family" : "Use for this check"} note={family.saved ? undefined : unsavedFamilyNote} /> : null;
+  const familyBar = family ? <SupplierFamilyBar families={family.families} chosen={family.chosen} missing={family.missing} onSave={family.onChoose} saveLabel={family.saved ? "Save family" : "Use for this check"} note={family.saved ? undefined : unsavedFamilyNote} compact /> : null;
   const summary = fresh ? summarizeCheckResults(fresh.output.results) : null;
   const headline = summary
     ? `${summary.counts.MATCHED} matched · ${summary.counts.MISMATCH} mismatch · ${summary.counts.NOT_FOUND} not found · ${summary.counts.NEEDS_REVIEW} needs review${canManageDecisions && decidedCount !== null ? ` · ${decidedCount} decided` : ""}`

@@ -11,6 +11,8 @@ export type SupplierFamilyBarProps = {
   saveLabel?: string;
   /** Plain-words line shown above the choices, for example that nothing is saved. */
   note?: string;
+  /** One slim line instead of a box. The note becomes small text on the same line. */
+  compact?: boolean;
 };
 const searchFrom = 15;
 
@@ -18,7 +20,7 @@ const searchFrom = 15;
  * Which Supplier family or families a product belongs to. Only for price lists that have families.
  * Nothing happens until the save button is pressed; then `onSave` is called once.
  */
-export function SupplierFamilyBar({ families, chosen, missing = [], onSave, saveLabel = "Save family", note }: SupplierFamilyBarProps) {
+export function SupplierFamilyBar({ families, chosen, missing = [], onSave, saveLabel = "Save family", note, compact = false }: SupplierFamilyBarProps) {
   const [open, setOpen] = useState(false), [picked, setPicked] = useState<string[]>([]), [query, setQuery] = useState(""), [busy, setBusy] = useState(false), [error, setError] = useState("");
   if (!families.length) return null;
   const openPanel = () => {
@@ -39,15 +41,16 @@ export function SupplierFamilyBar({ families, chosen, missing = [], onSave, save
     finally { setBusy(false); }
   };
   return (
-    <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-sm" aria-label="Supplier family">
-      {missing.map((item) => <p key={item.key} role="alert" className="mb-2 rounded-md border border-amber-300 bg-amber-50 p-2 font-semibold text-amber-950">This family is not in the new price list: {item.family}. Choose again.</p>)}
-      <div className="flex flex-wrap items-center gap-2">
+    <div className={compact ? "text-xs" : "mt-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-sm"} aria-label="Supplier family">
+      {missing.map((item) => <p key={item.key} role="alert" className={`rounded-md border border-amber-300 bg-amber-50 font-semibold text-amber-950 ${compact ? "mb-1 px-2 py-1" : "mb-2 p-2"}`}>This family is not in the new price list: {item.family}. Choose again.</p>)}
+      <div className={`flex flex-wrap items-center ${compact ? "gap-x-2 gap-y-1" : "gap-2"}`}>
         {chosen.length === 0
           ? <span className="text-zinc-800">No family chosen for this product. Choose a family to compare prices.</span>
           : <><span className="text-xs font-semibold text-zinc-600">Family:</span>{chosen.map((item) => <span key={item.key} className="rounded-full border border-emerald-300 bg-white px-2 py-0.5 text-xs font-semibold text-emerald-900">{item.family}</span>)}</>}
-        {!open ? <button type="button" onClick={openPanel} className="rounded-md border border-emerald-700 bg-white px-3 py-1 text-xs font-semibold text-emerald-900">{chosen.length === 0 ? "Choose family" : "Change"}</button> : null}
+        {!open ? <button type="button" onClick={openPanel} className={`rounded-md border border-emerald-700 bg-white text-xs font-semibold text-emerald-900 ${compact ? "px-2 py-0.5" : "px-3 py-1"}`}>{chosen.length === 0 ? "Choose family" : "Change"}</button> : null}
+        {note && compact ? <span title={note} className="text-[11px] text-zinc-500">{note}</span> : null}
       </div>
-      {note ? <p className="mt-2 text-xs text-zinc-700">{note}</p> : null}
+      {note && !compact ? <p className="mt-2 text-xs text-zinc-700">{note}</p> : null}
       {open ? <div className="mt-3 space-y-2">
         <p className="text-xs text-zinc-700">Choose one family. Choose more only if this product really mixes parts from more than one family.</p>
         {families.length > searchFrom ? <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search families" aria-label="Search families" className="h-8 w-full max-w-xs rounded-md border border-zinc-300 px-2 text-sm" /> : null}
