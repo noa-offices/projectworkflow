@@ -3,6 +3,8 @@ import { parseSupportedCurrency } from "../currencies";
 import { normalizeManufacturerCode } from "./manufacturer-code";
 import { smartSetupCellsToTargets, type SmartSetupPriceArchitecture, type SmartSetupPriceCell } from "./smart-setup-supplier-targets";
 import type { DimensionRule, DurableBinding, PriceBasis, PriceMatch, PriceTarget, SourceIdentity, SourceVersion } from "./supplier-price-contracts";
+import { smartSetupFamilyScope, resolveSmartSetupFamilyKeys } from "./smart-setup-supplier-families";
+import { supplierDimensionFamily } from "./supplier-price-import";
 import { comparisonCode, matchSupplierPrices } from "./supplier-price-matching";
 import { resolveApplicableSupplierSourceVersion, supplierBusinessDate, supplierRows } from "./supplier-price-repository";
 
@@ -10,7 +12,7 @@ export const SMART_SETUP_CHECK_MAX_CELLS = 500;
 export type SmartSetupSupplierCheckStatus = "MATCHED" | "MISMATCH" | "NOT_FOUND" | "NEEDS_REVIEW";
 export type SmartSetupSupplierCheckReason =
   | "same_price" | "price_differs" | "no_source_candidate" | "missing_draft_price" | "currency_mismatch" | "basis_mismatch"
-  | "ambiguous_source_contexts" | "shared_price_unconfirmed" | "shared_price_baseline_drift" | "needs_dimension_mapping" | "invalid_source_evidence" | "companion_reference";
+  | "ambiguous_source_contexts" | "shared_price_unconfirmed" | "shared_price_baseline_drift" | "needs_dimension_mapping" | "invalid_source_evidence" | "companion_reference" | "choose_family";
 export type SmartSetupSupplierCheckResult = {
   locator: string; role: string; code: string; priceField: string; dimension: string;
   status: SmartSetupSupplierCheckStatus; reason: SmartSetupSupplierCheckReason;
@@ -21,12 +23,19 @@ export type SmartSetupSupplierCheckResult = {
   source: { versionId: string; definitionId: string; title: string; currency: string; basis: string };
   evidence: { identityKey: string; sheet: string; rowNumber: number; sourceRowCount: number | null } | null;
 };
-export type SmartSetupSupplierCheckInput = { brandId: unknown; definitionId: unknown; sourceVersionId: unknown; priceBasis?: unknown; cells: unknown };
+/** `templateId` (a saved product) reads its saved families; `familyNames` (chosen on screen, for example for a new unsaved product) win over them. Neither = no family scope. */
+export type SmartSetupSupplierCheckInput = { brandId: unknown; definitionId: unknown; sourceVersionId: unknown; priceBasis?: unknown; cells: unknown; templateId?: unknown; familyNames?: unknown };
 export type SmartSetupSupplierCheckOutput = { source: SmartSetupSupplierCheckResult["source"]; results: SmartSetupSupplierCheckResult[] };
 
 const architectures = new Set<SmartSetupPriceArchitecture>(["base_model", "workstation", "price_matrix", "modular_matrix", "modular_direct", "option_direct", "option_category"]);
 const priceFields = new Set(["unit_price", "default_price", "additional_price"]);
 const idText = (value: unknown, what: string) => { if (typeof value !== "string" || !value.trim() || value.length > 100) throw Error(`${what} is required.`); return value.trim(); };
+const optionalId = (value: unknown, what: string) => (value === undefined || value === null || value === "" ? null : idText(value, what));
+const optionalNames = (value: unknown) => {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length > 50 || value.some((name) => typeof name !== "string" || name.length > 200)) throw Error("Family names are not valid.");
+  return value as string[];
+};
 const boundedText = (value: unknown, max: number) => typeof value === "string" && value.length <= max;
 
 /** Structural validation of the submitted projection. The projection is the user's own draft; it never carries authorization. */
@@ -49,7 +58,7 @@ export function parseSmartSetupPriceCells(value: unknown): SmartSetupPriceCell[]
 
 type VersionRow = SourceVersion & { created_at: string };
 /** Ownership + applicability of the selected source version. Submitted ids are never trusted; every row is read through the caller's RLS client. */
-async function loadApplicableVersion(client: SupabaseClient, brandId: string, definitionId: string, versionId: string) {
+export async function loadApplicableVersion(client: SupabaseClient, brandId: string, definitionId: string, versionId: string) {
   const brand = (await supplierRows<{ id: string }>(client, "brands", "id", { id: brandId })).at(0);
   if (!brand) throw Error("Brand unavailable.");
   const definition = (await supplierRows<{ id: string }>(client, "supplier_source_definitions", "id", { id: definitionId, brand_id: brandId, is_active: true })).at(0);
@@ -137,17 +146,23 @@ export async function runSmartSetupSupplierCheck(deps: SmartSetupSupplierCheckDe
   const cells = parseSmartSetupPriceCells(input.cells);
   const client = await deps.getClient();
   const version = await loadApplicableVersion(client, brandId, definitionId, versionId);
-  const targets = smartSetupCellsToTargets(brandId, cells);
-  const [{ identities, firstEvidence }, rules, bindings] = await Promise.all([
+  const allTargets = smartSetupCellsToTargets(brandId, cells);
+  const [{ identities: allIdentities, firstEvidence }, rules, bindings] = await Promise.all([
     loadIdentities(client, version.id, [...new Set(cells.map((c) => c.code))]),
     supplierRows<DimensionRule>(client, "supplier_dimension_vocabulary", "*", { brand_id: brandId, is_active: true }),
     supplierRows<DurableBinding>(client, "supplier_price_bindings", "*", { brand_id: brandId }),
   ]);
-  const matches = matchSupplierPrices(identities, targets, rules, transientBindings(bindings, targets));
+  const familyKeys = await resolveSmartSetupFamilyKeys(client, { definitionId, versionId: version.id, templateId: optionalId(input.templateId, "Product"), familyNames: optionalNames(input.familyNames) });
+  // The list is split into families but none is chosen: a code that exists under a family tag cannot be compared safely, so it is left for the user to decide.
+  const guarded = familyKeys.size ? new Set<string>() : new Set(allIdentities.filter((i) => supplierDimensionFamily(i.dimension) !== null).map((i) => comparisonCode(i.code)));
+  const targets = allTargets.filter((t) => !guarded.has(comparisonCode(t.code)));
+  const identities = allIdentities.filter((i) => !guarded.has(comparisonCode(i.code)));
+  const matches = matchSupplierPrices(identities, targets, rules, transientBindings(bindings, targets), smartSetupFamilyScope(familyKeys));
   const outcomes = mapSmartSetupMatches(matches, targets, expectedBasis !== null && expectedBasis !== (version.basis as PriceBasis));
+  for (const t of allTargets) if (guarded.has(comparisonCode(t.code))) outcomes.set(t.key, review("choose_family", null));
   const source = { versionId: version.id, definitionId, title: version.title, currency: version.currency, basis: version.basis };
-  const byKey = new Map(targets.map((t, i) => [t.key, cells[i]]));
-  const results = targets.map<SmartSetupSupplierCheckResult>((t) => {
+  const byKey = new Map(allTargets.map((t, i) => [t.key, cells[i]]));
+  const results = allTargets.map<SmartSetupSupplierCheckResult>((t) => {
     const cell = byKey.get(t.key)!; let outcome = outcomes.get(t.key)!;
     // Null is missing evidence, never zero: it can never be MATCHED or MISMATCH.
     if (cell.price === null && outcome.status !== "NOT_FOUND") outcome = review("missing_draft_price", outcome.source);

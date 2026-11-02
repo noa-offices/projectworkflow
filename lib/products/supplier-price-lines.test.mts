@@ -276,20 +276,21 @@ test("the lines action returns the families, the chosen set and the missing ones
 
 test("family bar in the popup: hidden without families, plain messages, one save from the button, nothing on load", () => {
   const popup = readFileSync("components/quotations/supplier-price-lines-popup.tsx", "utf8");
-  const bar = popup.slice(popup.indexOf("function FamilyBar"), popup.indexOf("function SourceLines"));
-  assert.match(bar, /if \(!source\.families\.length\) return null/, "hidden for brands like LAS");
+  // The bar itself is the shared component (also used by Smart Setup); the popup only wires its one save call.
+  const bar = readFileSync("components/products/supplier-family-bar.tsx", "utf8");
+  const wiring = popup.slice(popup.indexOf("function FamilyBar"), popup.indexOf("const checkedDate"));
+  assert.match(bar, /if \(!families\.length\) return null/, "hidden for brands like LAS");
   assert.match(bar, /No family chosen for this product\. Choose a family to compare prices\./);
   assert.match(bar, /"Choose family" : "Change"/);
-  assert.match(bar, /source\.chosen\.map\(\(item\) => <span key=\{item\.key\}[^>]*>\{item\.family\}<\/span>\)/, "chosen families as chips");
+  assert.match(bar, /chosen\.map\(\(item\) => <span key=\{item\.key\}[^>]*>\{item\.family\}<\/span>\)/, "chosen families as chips");
   assert.match(bar, /Choose one family\. Choose more only if this product really mixes parts from more than one family\./);
-  assert.match(bar, /const searchFrom = 15|source\.families\.length > searchFrom/);
-  assert.match(popup, /const searchFrom = 15;/);
-  assert.match(bar, /source\.families\.length === 1 \? \[source\.families\[0\]\.key\] : \[\]/, "one is selected for the user only when the list has exactly one");
+  assert.match(bar, /families\.length > searchFrom/);
+  assert.match(bar, /const searchFrom = 15;/);
+  assert.match(bar, /families\.length === 1 \? \[families\[0\]\.key\] : \[\]/, "one is selected for the user only when the list has exactly one");
   assert.match(bar, /This family is not in the new price list: \{item\.family\}\. Choose again\./);
   assert.equal((popup.match(/await setSupplierTemplateFamilies\(/g) ?? []).length, 1, "one save call in the whole popup");
-  assert.match(bar, /await setSupplierTemplateFamilies\(source\.definitionId, templateId, names\)/);
-  const beforeSave = bar.slice(0, bar.indexOf("const save = async"));
-  assert.doesNotMatch(beforeSave, /setSupplierTemplateFamilies|useEffect/, "nothing is written when the bar opens or loads");
+  assert.match(wiring, /await setSupplierTemplateFamilies\(source\.definitionId, templateId, names\)/);
+  assert.doesNotMatch(bar, /setSupplierTemplateFamilies|useEffect/, "the shared bar never writes by itself and never loads on open");
   assert.match(bar, /disabled=\{busy \|\| !picked\.length\}/, "saving needs at least one family");
   assert.match(popup, /if \(allowed !== true\) return null/, "same role check as the other popup actions");
   assert.match(popup, /Choose a family first\./);

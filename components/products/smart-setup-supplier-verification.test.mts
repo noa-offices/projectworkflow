@@ -11,7 +11,8 @@ import { projectDraftPricing } from "@/lib/products/smart-setup-supplier-targets
 import { buildSmartSetupCheckRequest, checkFingerprint } from "@/lib/products/smart-setup-supplier-verification";
 
 // The panel imports server actions (auth, cookies). Panel rendering is presentation-only, so the actions are stubbed.
-mock.module("@/app/products/smart-setup-supplier-check-actions", { namedExports: { checkSmartSetupSupplierPrices: async () => { throw Error("not called in static render"); }, listSmartSetupSupplierSourcesAction: async () => ({ status: "unauthorized" }) } });
+mock.module("@/app/products/smart-setup-supplier-check-actions", { namedExports: { checkSmartSetupSupplierPrices: async () => { throw Error("not called in static render"); }, listSmartSetupSupplierSourcesAction: async () => ({ status: "unauthorized" }), loadSmartSetupSupplierFamilies: async () => { throw Error("not called in static render"); } } });
+mock.module("@/app/products/price-updates/supplier-sources/actions", { namedExports: { setSupplierTemplateFamilies: async () => { throw Error("not called in static render"); } } });
 mock.module("@/app/products/supplier-review-decision-actions", { namedExports: { listSupplierPriceDecisions: async () => [], saveSupplierPriceDecisions: async () => { throw Error("not called in static render"); } } });
 const { SupplierVerificationPanel } = await import("./smart-setup-supplier-verification");
 const { SupplierReviewDialog } = await import("./smart-setup-supplier-review-dialog");
@@ -157,4 +158,58 @@ test("Smart Setup wiring: verification sits before Apply, brand is bridged, Appl
   assert.doesNotMatch(importer.slice(importer.indexOf("const requestApply"), importer.indexOf("const routingValidation")), /SupplierVerification|checkSmartSetupSupplierPrices/); // Apply path does not consult the check
   assert.doesNotMatch(importer, /max-h-72/);
   assert.doesNotMatch(ui + readFileSync("components/products/smart-setup-supplier-review-dialog.tsx", "utf8") + readFileSync("lib/products/smart-setup-supplier-review.ts", "utf8"), /supplierApplyReviewedPrice|supplierWrite|\.insert\(|\.update\(|\.rpc\(|matchSupplierPrices/);
+});
+
+// ---- Family bar (Smart Setup uses the same family choice as the Product Library popup) ----
+const everyFamilies = [{ family: "AIM", key: "aim", count: 3 }, { family: "EVERY", key: "every", count: 5 }];
+const familyProp = (over: Record<string, unknown> = {}) => ({ families: everyFamilies, chosen: [], missing: [], saved: true, onChoose: async () => {}, ...over });
+
+test("the Family bar is hidden when the price list has no families", () => {
+  assert.doesNotMatch(panel(), /Supplier family|Choose a family/);
+  assert.doesNotMatch(panel({ family: null }), /Supplier family|Choose a family/);
+});
+test("no family chosen: the bar offers Choose family and the guard text is shown", () => {
+  const html = panel({ family: familyProp() });
+  assert.match(html, /No family chosen for this product\. Choose a family to compare prices\./);
+  assert.match(html, />Choose family</);
+  assert.match(html, /Choose a family first\./);
+});
+test("a chosen family shows as a chip with Change and no guard text", () => {
+  const html = panel({ family: familyProp({ chosen: [{ family: "EVERY", key: "every" }] }) });
+  assert.match(html, /EVERY/); assert.match(html, />Change</); assert.doesNotMatch(html, /Choose a family first\./);
+});
+test("a new unsaved product says in plain words that nothing is saved", () => {
+  assert.match(panel({ family: familyProp({ saved: false }) }), /not saved yet[^<]*Nothing is saved\./);
+  assert.doesNotMatch(panel({ family: familyProp({ saved: true }) }), /not saved yet/);
+});
+test("a saved family that the new list no longer has is flagged", () => {
+  assert.match(panel({ family: familyProp({ missing: [{ family: "OLD", key: "old" }] }) }), /This family is not in the new price list: OLD/);
+});
+test("the full-screen review shows the same bar when one is supplied", () => {
+  const html = renderToStaticMarkup(createElement(SupplierReviewDialog, { fresh: null, stale: false, selected: option, onClose() {}, familyBar: createElement("div", { "aria-label": "Supplier family" }, "bar") } as never));
+  assert.match(html, /aria-label="Supplier family"/);
+  assert.doesNotMatch(renderToStaticMarkup(createElement(SupplierReviewDialog, { fresh: null, stale: false, selected: option, onClose() {} } as never)), /Supplier family/);
+});
+test("the fingerprint is unchanged without a family and changes with the family choice", () => {
+  const d = draft({ baseModelRows: [priced("a", "A1", 100)] });
+  assert.equal(fp(d), checkFingerprint({ draft: d, routingPlan: plan, brandId: "b1", definitionId: "d1", versionId: "v1", familyKeys: [] }));
+  assert.notEqual(fp(d), checkFingerprint({ draft: d, routingPlan: plan, brandId: "b1", definitionId: "d1", versionId: "v1", familyKeys: ["every"] }));
+  assert.notEqual(checkFingerprint({ draft: d, routingPlan: plan, brandId: "b1", definitionId: "d1", versionId: "v1", familyKeys: ["aim"] }), checkFingerprint({ draft: d, routingPlan: plan, brandId: "b1", definitionId: "d1", versionId: "v1", familyKeys: ["every"] }));
+});
+test("wiring: the saved family is written by exactly one call, and only from choosing a family", () => {
+  const source = readFileSync("components/products/smart-setup-supplier-verification.tsx", "utf8");
+  assert.equal(source.match(/setSupplierTemplateFamilies\(/g)?.length, 1);
+  const chooser = source.slice(source.indexOf("const chooseFamily"), source.indexOf("const family ="));
+  assert.match(chooser, /if \(templateId\) \{\s*await setSupplierTemplateFamilies\(/);
+  assert.doesNotMatch(source.replace(chooser, ""), /setSupplierTemplateFamilies\(/);
+  // Nothing is written when the families load: the loader is the read-only action.
+  assert.doesNotMatch(source, /import \{[^}]*(setSupplierTemplateFamilies)[^}]*\} from "@\/app\/products\/smart-setup/);
+  assert.match(source, /templateId=\{|templateId\?: string/);
+});
+test("wiring: the families action has the same reviewer gate before it reads anything, and a new product passes no template id", () => {
+  const actions = readFileSync("app/products/smart-setup-supplier-check-actions.ts", "utf8");
+  const family = actions.slice(actions.indexOf("export async function loadSmartSetupSupplierFamilies"));
+  assert.ok(family.indexOf("requireBrandPriceReviewer()") > -1 && family.indexOf("requireBrandPriceReviewer()") < family.indexOf("createClient()"));
+  assert.doesNotMatch(family, /supplierSetTemplateFamilies|setSupplierTemplateFamilies|\.insert\(|\.update\(|\.upsert\(|\.delete\(/);
+  assert.equal(readFileSync("components/products/smart-product-json-import.tsx", "utf8").match(/templateId=\{editMode \? templateId : undefined\}/g)?.length, 2);
 });
