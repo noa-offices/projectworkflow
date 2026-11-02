@@ -142,7 +142,7 @@ test("full review dialog: a stale result is not shown, also while the dialog is 
 test("large results render a windowed slice in the dialog, never in the footer", () => {
   const results = Array.from({ length: 450 }, (_, i) => result({ locator: `l${i}`, code: `C${i}`, status: "MISMATCH", reason: "price_differs" }));
   const html = panel({ reviewOpen: true, fresh: fresh(results) });
-  assert.match(html, /Showing 450 of 450 rows/); const rendered = html.match(/<tr style="height:60px"/g)?.length ?? 0;
+  assert.match(html, /Showing 450 of 450 rows/); const rendered = html.match(/<tr style="height:52px"/g)?.length ?? 0;
   assert.ok(rendered > 0 && rendered < 60, `rendered ${rendered}`);
   assert.match(html, /<tr aria-hidden="true" style="height:\d+px">/, "spacer for the rows below");
 });
