@@ -511,11 +511,10 @@ function PriceCheckBadge({
           ? "inline-flex rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-900"
           : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-900";
 
-  const noteText = supplierPresentation?.detail ?? legacyHealth.helper;
   return (
     <span className={wrapperClass}>
       <span className={inline ? badgeClass.replace("text-[10px]", "text-xs") : badgeClass} title={supplierPresentation?.detail}>{health.label}</span>
-      {!compact ? supplierPresentation?.actionHref ? <SupplierCoverageAction brandId={template.brand_id} templateId={template.id} templateName={templateSelectionName(template)} detail={supplierPresentation.detail} /> : inline ? (noteText ? <span title={noteText} className="min-w-0 max-w-[32rem] truncate text-xs font-medium text-zinc-500">{noteText}</span> : null) : <span className="block text-[11px] font-medium text-zinc-500">{noteText}</span> : null}
+      {!compact ? supplierPresentation?.actionHref ? <SupplierCoverageAction brandId={template.brand_id} templateId={template.id} templateName={templateSelectionName(template)} detail={supplierPresentation.detail} /> : inline ? <span title={supplierPresentation?.detail ?? legacyHealth.helper} className="min-w-0 max-w-[32rem] truncate text-xs font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : <span className="block text-[11px] font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : null}
       {!compact && supplierPresentation?.manualCheck ? <ManualPriceLinesButton templateId={template.id} templateName={templateSelectionName(template)} onSupplierStatus={onSupplierStatus} /> : null}
       {!compact && supplierPresentation && !supplierPresentation.actionHref && !supplierPresentation.manualCheck ? <SupplierPriceLinesAction templateId={template.id} templateName={templateSelectionName(template)} onSupplierStatus={onSupplierStatus} /> : null}
     </span>
