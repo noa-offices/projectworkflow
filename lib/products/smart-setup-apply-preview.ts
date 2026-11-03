@@ -30,8 +30,7 @@ export type SmartSetupApplyProblem = { message: string; details: string };
 /** Plain-English message plus the technical text for a small "Details" part. */
 export function describeSmartSetupApplyError(error: unknown): SmartSetupApplyProblem {
   const details = error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error.";
-  const looksReadable = /^[^\n]*"[^"]+"/.test(details) && !/\bat\s.+:\d+/.test(details);
-  return { message: looksReadable ? details : "Something went wrong while applying the imported data. Nothing was changed.", details };
+  return { message: error instanceof PricingColumnIdentityError ? details : "Something went wrong while applying the imported data. Nothing was changed.", details };
 }
 
 /** Dry run of Apply. Returns null when the mapping works, otherwise the reason Apply would fail. */
