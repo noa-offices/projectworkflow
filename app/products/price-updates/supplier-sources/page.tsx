@@ -16,6 +16,10 @@ import { priceListReviewState } from "@/lib/products/supplier-list-presentation"
 import { requireBrandPriceReviewer } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { createClient } from "@/lib/supabase/server";
+import { loadManualPriceState } from "@/lib/products/manual-price-check";
+import { loadManualBrandScreenData } from "@/components/products/manual-brand-price-updates-data";
+import { ManualBrandPriceUpdates } from "@/components/products/manual-brand-price-updates";
+import { MANUAL_PRODUCT_LIMIT } from "@/lib/products/manual-brand-products";
 import { SUPPLIER_BULK_LIMIT, canManageSupplierCapacity, familySections, supplierBrandMatches, supplierCoverageOverview, supplierFamilyCoverageSetup, supplierPriceListCards, supplierPreviousSources, supplierFamilyOverview, supplierFamilyRows, supplierFamilyUnchangedMatchKeys, supplierMatchProvenance, supplierRows, supplierSourceCoverageSuggestion, type FamilyOverview, type FamilyRow, type FamilySection, type SupplierCoverageOverview, type SupplierFamilyCoverageRow, type SupplierPreviousSource } from "@/lib/products/supplier-price-repository";
 import type { DimensionRule, PriceMatch, ReviewBatch, SourceVersion, SupplierCoverageSuggestionRow, SupplierProfile } from "@/lib/products/supplier-price-contracts";
 
@@ -34,6 +38,21 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
   const client = await createClient(); const params = await searchParams ?? {};
   const brands = await supplierRows<{ id: string; name: string; stored_price_basis: string }>(client, "brands", "id,name,stored_price_basis", { is_active: true });
   const brand = brands.find((item) => item.id === text(params.brand)) ?? brands[0];
+  // A manual price check Brand gets its own screen. Brands with supplier codes continue below, unchanged.
+  const manualBrandState = brand ? (await loadManualPriceState(client, [brand.id])).get(brand.id) : undefined;
+  if (brand && manualBrandState) {
+    const manualData = await loadManualBrandScreenData(client, brand.id, manualBrandState);
+    return <ErpAppShell title="Manual price check" description="Check this Brand's products by hand when a new price list is released." role={profile?.role ?? null} userDisplayName={displayName} userEmail={user.email} userAvatarUrl={profile?.avatar_url ?? null} userRole={profile?.role ?? null}>
+      <div className="space-y-4 text-sm">
+        <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+          <div><Link href="/products/price-updates" className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">← Price Updates</Link>
+            <p className="mt-2 text-lg font-semibold text-zinc-950">{brand.name}</p></div>
+          <form className="flex flex-wrap items-end gap-2"><label className="grid gap-1 text-xs font-semibold text-zinc-700">Brand <select name="brand" defaultValue={brand.id} className="h-9 min-w-48 rounded-md border border-zinc-200 bg-white px-3 text-sm font-normal outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10">{brands.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">Open Brand</button></form>
+        </div>
+        <ManualBrandPriceUpdates brandId={brand.id} brandName={brand.name} initialRows={manualData.rows} releases={manualData.releases} latest={manualData.latest} canManage={canApproveBrandPrices(profile?.role, profile?.account_status)} today={manualData.today} truncated={manualData.truncated} limit={MANUAL_PRODUCT_LIMIT} />
+      </div>
+    </ErpAppShell>;
+  }
   const base = "/products/price-updates/supplier-sources";
   const href = (changes: Record<string, string>) => { const query = new URLSearchParams(Object.fromEntries(Object.entries(params).map(([key, value]) => [key, text(value)]))); if (brand) query.set("brand", brand.id); for (const [key, value] of Object.entries(changes)) query.set(key, value); return `${base}?${query}`; };
   const sourceOffset = offset(params.sourceOffset), batchOffset = offset(params.batchOffset), from = offset(params.offset);
