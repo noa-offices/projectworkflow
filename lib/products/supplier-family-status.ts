@@ -34,14 +34,17 @@ export type SupplierFamilyPriceStatus = {
   checkedByName?: string;
   /** Manual price check Brands only: the release this status is about. Present when the product may be marked checked now. */
   manualReleaseId?: string;
+  /** Manual price check Brands only, for price_update_due, edited_since_check and price_checked: the product opens the manual "Update prices" window in every one of these statuses. */
+  manualBrand?: true;
   detail: string;
+
 };
 export type SupplierFamilyStatusPresentation = {
   label: string;
   tone: "success" | "info" | "warning" | "danger" | "neutral";
   detail: string;
   actionHref?: string;
-  /** Manual price check Brands only: the product can be marked as checked for the latest release. */
+  /** Manual price check Brands only: the product opens the manual "Update prices" window (any manual status except legacy_manual). */
   manualCheck?: boolean;
 };
 export type SupplierBrandPriceState = "needs_attention" | "partially_checked" | "update_available" | "in_review" | "ready_to_complete" | "current" | "legacy_manual";
@@ -117,6 +120,7 @@ export function resolveSupplierFamilyPriceStatus(input: {
         ...(manual.status === "price_checked" ? { checkedAt: manual.checkedAt, ...(manual.checkedByName ? { checkedByName: manual.checkedByName } : {}) } : {}),
         ...(manual.status === "edited_since_check" ? { checkedAt: manual.checkedAt } : {}),
         ...(manual.status === "price_update_due" || manual.status === "edited_since_check" ? { manualReleaseId: manual.release.id } : {}),
+        manualBrand: true as const,
       };
     }
     const responsibilities = input.responsibilities.filter((item) => item.templateId === family.templateId).sort((a, b) => a.definitionName.localeCompare(b.definitionName) || a.definitionId.localeCompare(b.definitionId));
@@ -160,7 +164,7 @@ export function supplierFamilyStatusPresentation(status: SupplierFamilyPriceStat
   const upcoming = status.upcoming?.effectiveFrom
     ? `New price list effective ${supplierStatusDate(status.upcoming.effectiveFrom)}`
     : null;
-  return { label: status.label, tone, detail: [progressDetail, status.status === "needs_attention" && status.progress ? `Needs attention (${status.progress.unresolved} open)` : null, upcoming].filter(Boolean).join(" · "), ...(status.manualReleaseId ? { manualCheck: true } : {}) };
+  return { label: status.label, tone, detail: [progressDetail, status.status === "needs_attention" && status.progress ? `Needs attention (${status.progress.unresolved} open)` : null, upcoming].filter(Boolean).join(" · "), ...(status.manualReleaseId || status.manualBrand ? { manualCheck: true } : {}) };
 }
 
 /**
