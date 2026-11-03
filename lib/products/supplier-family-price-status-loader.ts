@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadManualPriceState } from "./manual-price-check";
 import { mapSupplierReads, supplierBusinessDate, supplierFamilyReviewFacts, supplierLatestTemplateChecks, readProductPages, resolveApplicableSupplierSourceVersion } from "./supplier-price-repository";
 import {
   resolveSupplierFamilyPriceStatus,
@@ -18,16 +19,18 @@ export async function loadSupplierFamilyPriceStatusMap(client: SupabaseClient, f
   const brandIds = [...new Set(families.map((family) => family.brand_id))];
   // Facts depend only on Brands, so they load while definitions are read instead of after them.
   const checksPromise = supplierLatestTemplateChecks(client, brandIds);
+  const manualPromise = loadManualPriceState(client, brandIds);
   const factsPromise = mapSupplierReads(brandIds, async (brandId) => [brandId, await supplierFamilyReviewFacts(client, brandId)] as const);
   const definitionsResult = await readProductPages((from, to) => client.from("supplier_source_definitions").select("id,brand_id,name").in("brand_id", brandIds).eq("is_active", true).order("id").range(from, to).returns<DefinitionRow[]>());
-  if (definitionsResult.error) { factsPromise.catch(() => undefined); checksPromise.catch(() => undefined); throw Error(definitionsResult.error.message); }
+  if (definitionsResult.error) { factsPromise.catch(() => undefined); checksPromise.catch(() => undefined); manualPromise.catch(() => undefined); throw Error(definitionsResult.error.message); }
   const definitions = definitionsResult.data ?? [];
   const definitionIds = definitions.map((definition) => definition.id);
-  const [familiesResult, versionsResult, factsByBrand, checkRows] = await Promise.all([
+  const [familiesResult, versionsResult, factsByBrand, checkRows, manual] = await Promise.all([
     definitionIds.length ? readProductPages((from, to) => client.from("supplier_source_definition_families").select("definition_id,template_id").in("definition_id", definitionIds).order("definition_id").order("template_id").range(from, to).returns<DefinitionFamilyRow[]>()) : Promise.resolve({ data: [], error: null }),
     definitionIds.length ? readProductPages((from, to) => client.from("supplier_source_versions").select("id,title,status,effective_from,created_at,definition_id").in("definition_id", definitionIds).eq("status", "imported").order("id").range(from, to).returns<VersionRow[]>()) : Promise.resolve({ data: [], error: null }),
     factsPromise,
     checksPromise,
+    manualPromise,
   ]);
   if (familiesResult.error) throw Error(familiesResult.error.message);
   if (versionsResult.error) throw Error(versionsResult.error.message);
@@ -41,7 +44,7 @@ export async function loadSupplierFamilyPriceStatusMap(client: SupabaseClient, f
   });
   const businessDate = supplierBusinessDate();
   const brandsWithCurrentSource = new Set(definitions.filter((definition) => resolveApplicableSupplierSourceVersion(versionsByDefinition.get(definition.id) ?? [], businessDate)).map((definition) => definition.brand_id));
-  const statuses = resolveSupplierFamilyPriceStatus({ businessDate, families: families.map((family) => ({ templateId: family.id, brandId: family.brand_id, pricingVersion: family.pricing_version === undefined || family.pricing_version === null ? null : String(family.pricing_version) })), responsibilities, facts: factsByBrand.flatMap(([, facts]) => facts),
+  const statuses = resolveSupplierFamilyPriceStatus({ businessDate, families: families.map((family) => ({ templateId: family.id, brandId: family.brand_id, pricingVersion: family.pricing_version === undefined || family.pricing_version === null ? null : String(family.pricing_version) })), responsibilities, manual, facts: factsByBrand.flatMap(([, facts]) => facts),
     checks: checkRows.map((row) => ({ templateId: row.template_id, sourceId: row.source_id, pricingVersion: String(row.pricing_version), checkedAt: row.checked_at, ...(row.checked_by_name?.trim() ? { checkedByName: row.checked_by_name.trim() } : {}) })) });
-  return new Map(statuses.map((status) => [status.familyId, { ...status, brandHasCurrentSource: brandsWithCurrentSource.has(status.brandId) }]));
+  return new Map(statuses.map((status) => [status.familyId, { ...status, brandHasCurrentSource: !manual.has(status.brandId) && brandsWithCurrentSource.has(status.brandId) }]));
 }

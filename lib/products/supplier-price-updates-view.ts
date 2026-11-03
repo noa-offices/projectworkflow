@@ -1,6 +1,7 @@
 import { resolveSupplierBrandPriceStatus, resolveSupplierFamilyPriceStatus, supplierFamilyStatusLabels, type SupplierBrandPriceState, type SupplierBrandPriceStatus, type SupplierFamilyPriceStatus, type SupplierFamilyPriceStatusKey, type SupplierResponsibilityInput, type SupplierVersionRef } from "./supplier-family-status";
 import { mapSupplierReads, readProductPages, resolveApplicableSupplierSourceVersion, supplierFamilyReviewFacts, upcomingSupplierSourceVersions, type SupplierFamilyReviewFact } from "./supplier-price-repository";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { ManualPriceState } from "./manual-price-check";
 
 // Price Updates view model. Pure grouping and filtering over the shared resolvers; the page and components only render this.
 // No status rule lives here: Family and Brand statuses come from resolveSupplierFamilyPriceStatus and resolveSupplierBrandPriceStatus.
@@ -10,7 +11,7 @@ export const supplierBrandStateLabels: Record<SupplierBrandPriceState, string> =
   in_review: "In review", ready_to_complete: "Ready to complete", legacy_manual: "Manual price checks",
 };
 export type PriceUpdatesBrandInput = { id: string; name: string };
-export type PriceUpdatesFamilyInput = { id: string; brandId: string; name: string };
+export type PriceUpdatesFamilyInput = { id: string; brandId: string; name: string; /** Needed to trust a manual price check sign-off. */ pricingVersion?: string | null };
 export type PriceUpdatesDefinitionInput = { id: string; brandId: string; name: string; isActive: boolean; familyIds: string[]; versions: SupplierVersionRef[] };
 export type PriceUpdatesFamilyStatus = SupplierFamilyPriceStatus & { familyName: string };
 export type PriceUpdatesSourceGroup = {
@@ -37,6 +38,8 @@ export function buildSupplierPriceUpdatesView(input: {
   definitions: PriceUpdatesDefinitionInput[];
   facts: SupplierFamilyReviewFact[];
   legacyDetail: (familyId: string) => string;
+  /** Manual price check Brands; omitted means none. */
+  manual?: ManualPriceState;
 }): PriceUpdatesBrandView[] {
   return input.brands.map((brand) => {
     const families = input.families.filter((family) => family.brandId === brand.id);
@@ -44,8 +47,8 @@ export function buildSupplierPriceUpdatesView(input: {
     const responsibilities: SupplierResponsibilityInput[] = definitions.flatMap((definition) => definition.familyIds.map((familyId) => ({ templateId: familyId, definitionId: definition.id, definitionName: definition.name, versions: definition.versions })));
     const statuses = resolveSupplierFamilyPriceStatus({
       businessDate: input.businessDate,
-      families: families.map((family) => ({ templateId: family.id, brandId: brand.id })),
-      responsibilities,
+      families: families.map((family) => ({ templateId: family.id, brandId: brand.id, pricingVersion: family.pricingVersion ?? null })),
+      responsibilities, manual: input.manual,
       facts: input.facts.filter((fact) => fact.brandId === brand.id),
       legacyDetail: input.legacyDetail,
     });

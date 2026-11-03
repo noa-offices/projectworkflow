@@ -1,14 +1,15 @@
+import { resolveManualFamilyStatus, type ManualPriceState } from "./manual-price-check";
 import { resolveApplicableSupplierSourceVersion, upcomingSupplierSourceVersions, type SupplierFamilyReviewFact } from "./supplier-price-repository";
 
 // One shared Family price-status resolver. Pure: callers load the batched inputs once (coverage, Source Versions, Phase 2A-0 facts)
 // and every consumer (Price Updates, Product Library, Local Builder, Templates) gets the same answer. No database access here.
 
-export type SupplierFamilyPriceStatusKey = "needs_attention" | "update_available" | "edited_since_check" | "in_review" | "ready_to_complete" | "price_checked" | "partially_checked" | "no_price_list" | "legacy_manual";
+export type SupplierFamilyPriceStatusKey = "needs_attention" | "update_available" | "price_update_due" | "edited_since_check" | "in_review" | "ready_to_complete" | "price_checked" | "partially_checked" | "no_price_list" | "legacy_manual";
 /** Highest priority first. The first matching status across a Family's responsibilities is the one shown. */
-export const supplierFamilyStatusPrecedence: SupplierFamilyPriceStatusKey[] = ["needs_attention", "update_available", "edited_since_check", "in_review", "ready_to_complete", "partially_checked", "price_checked", "no_price_list", "legacy_manual"];
+export const supplierFamilyStatusPrecedence: SupplierFamilyPriceStatusKey[] = ["needs_attention", "update_available", "price_update_due", "edited_since_check", "in_review", "ready_to_complete", "partially_checked", "price_checked", "no_price_list", "legacy_manual"];
 /** The one user-facing label set. UI components read these; they never derive status themselves. */
 export const supplierFamilyStatusLabels: Record<SupplierFamilyPriceStatusKey, string> = {
-  needs_attention: "Needs attention", update_available: "Price update available", edited_since_check: "Edited since check", in_review: "In review", ready_to_complete: "Ready to complete",
+  needs_attention: "Needs attention", update_available: "Price update available", price_update_due: "Price update due", edited_since_check: "Edited since check", in_review: "In review", ready_to_complete: "Ready to complete",
   price_checked: "Price checked", partially_checked: "Partially checked", no_price_list: "No current price list", legacy_manual: "Manual price check",
 };
 /** A per-product sign-off (supplier_template_checks): this Product matched this price list while its pricing version was this. */
@@ -31,6 +32,8 @@ export type SupplierFamilyPriceStatus = {
   checkedAt?: string;
   /** The full name of whoever signed off (price_checked only), when known. */
   checkedByName?: string;
+  /** Manual price check Brands only: the release this status is about. Present when the product may be marked checked now. */
+  manualReleaseId?: string;
   detail: string;
 };
 export type SupplierFamilyStatusPresentation = {
@@ -38,6 +41,8 @@ export type SupplierFamilyStatusPresentation = {
   tone: "success" | "info" | "warning" | "danger" | "neutral";
   detail: string;
   actionHref?: string;
+  /** Manual price check Brands only: the product can be marked as checked for the latest release. */
+  manualCheck?: boolean;
 };
 export type SupplierBrandPriceState = "needs_attention" | "partially_checked" | "update_available" | "in_review" | "ready_to_complete" | "current" | "legacy_manual";
 export type SupplierBrandPriceStatus = {
@@ -98,8 +103,22 @@ export function resolveSupplierFamilyPriceStatus(input: {
   facts: SupplierFamilyReviewFact[];
   checks?: SupplierTemplateCheckFact[];
   legacyDetail?: (templateId: string) => string;
+  /** Manual price check Brands (no Supplier codes). Their products never use Supplier responsibilities; Brands with codes are unchanged. */
+  manual?: ManualPriceState;
 }): SupplierFamilyPriceStatus[] {
   return input.families.map((family) => {
+    const manualBrand = input.manual?.get(family.brandId);
+    if (manualBrand) {
+      const manual = resolveManualFamilyStatus({ state: manualBrand, templateId: family.templateId, pricingVersion: family.pricingVersion ?? null, businessDate: input.businessDate });
+      const base = { familyId: family.templateId, brandId: family.brandId, status: manual.status, label: supplierFamilyStatusLabels[manual.status], detail: manual.detail };
+      if (manual.status === "legacy_manual") return { ...base, detail: input.legacyDetail?.(family.templateId) ?? manual.detail };
+      return {
+        ...base,
+        ...(manual.status === "price_checked" ? { checkedAt: manual.checkedAt, ...(manual.checkedByName ? { checkedByName: manual.checkedByName } : {}) } : {}),
+        ...(manual.status === "edited_since_check" ? { checkedAt: manual.checkedAt } : {}),
+        ...(manual.status === "price_update_due" || manual.status === "edited_since_check" ? { manualReleaseId: manual.release.id } : {}),
+      };
+    }
     const responsibilities = input.responsibilities.filter((item) => item.templateId === family.templateId).sort((a, b) => a.definitionName.localeCompare(b.definitionName) || a.definitionId.localeCompare(b.definitionId));
     if (responsibilities.length === 0) {
       return { familyId: family.templateId, brandId: family.brandId, status: "legacy_manual", label: supplierFamilyStatusLabels.legacy_manual, detail: input.legacyDetail?.(family.templateId) ?? "Manual price check" };
@@ -130,7 +149,7 @@ export function supplierFamilyStatusPresentation(status: SupplierFamilyPriceStat
       : status.status === "in_review" || status.status === "ready_to_complete" ? "info"
         : status.status === "no_price_list" || status.status === "legacy_manual" ? "neutral"
           : "warning";
-  const sourceDetail = status.checkedAt && status.status === "price_checked" ? `Checked on ${supplierStatusDate(status.checkedAt.slice(0, 10))}${status.checkedByName ? ` by ${status.checkedByName}` : ""}`
+  const sourceDetail = status.status === "price_update_due" ? status.detail : status.checkedAt && status.status === "price_checked" ? `Checked on ${supplierStatusDate(status.checkedAt.slice(0, 10))}${status.checkedByName ? ` by ${status.checkedByName}` : ""}`
     : status.checkedAt && status.status === "edited_since_check" ? `Product prices changed after the check on ${supplierStatusDate(status.checkedAt.slice(0, 10))}`
     : status.source
       ? `${status.source.definitionName} — ${status.source.title}`
@@ -141,7 +160,7 @@ export function supplierFamilyStatusPresentation(status: SupplierFamilyPriceStat
   const upcoming = status.upcoming?.effectiveFrom
     ? `New price list effective ${supplierStatusDate(status.upcoming.effectiveFrom)}`
     : null;
-  return { label: status.label, tone, detail: [progressDetail, status.status === "needs_attention" && status.progress ? `Needs attention (${status.progress.unresolved} open)` : null, upcoming].filter(Boolean).join(" · ") };
+  return { label: status.label, tone, detail: [progressDetail, status.status === "needs_attention" && status.progress ? `Needs attention (${status.progress.unresolved} open)` : null, upcoming].filter(Boolean).join(" · "), ...(status.manualReleaseId ? { manualCheck: true } : {}) };
 }
 
 /**
@@ -150,7 +169,7 @@ export function supplierFamilyStatusPresentation(status: SupplierFamilyPriceStat
  */
 export function resolveSupplierBrandPriceStatus(statuses: Array<Pick<SupplierFamilyPriceStatus, "status">>, upcomingCount = 0): SupplierBrandPriceStatus {
   const count = (key: SupplierFamilyPriceStatusKey) => statuses.filter((item) => item.status === key).length;
-  const checked = count("price_checked"), partial = count("partially_checked"), needs = count("needs_attention"), update = count("update_available") + count("edited_since_check"), inReview = count("in_review"), ready = count("ready_to_complete"), noList = count("no_price_list"), legacy = count("legacy_manual");
+  const checked = count("price_checked"), partial = count("partially_checked"), needs = count("needs_attention"), update = count("update_available") + count("edited_since_check") + count("price_update_due"), inReview = count("in_review"), ready = count("ready_to_complete"), noList = count("no_price_list"), legacy = count("legacy_manual");
   const applicable = checked + partial + needs + update + inReview + ready;
   let state: SupplierBrandPriceState;
   if (applicable === 0) state = "legacy_manual";

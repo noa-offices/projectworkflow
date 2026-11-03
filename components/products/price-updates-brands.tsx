@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ManualPriceCheckPanel, type ManualReleaseRow } from "./manual-price-check-panel";
 import { supplierFamilyStatusLabels, type SupplierFamilyPriceStatusKey } from "@/lib/products/supplier-family-status";
 import { supplierBrandStateLabels, type PriceUpdatesBrandView, type PriceUpdatesFamilyStatus, type PriceUpdatesSourceGroup, type PriceUpdatesSummary } from "@/lib/products/supplier-price-updates-view";
 
@@ -9,6 +10,7 @@ const badgeTone: Record<SupplierFamilyPriceStatusKey, string> = {
   price_checked: "border-emerald-200 bg-emerald-50 text-emerald-900",
   partially_checked: "border-amber-200 bg-amber-50 text-amber-900",
   update_available: "border-amber-200 bg-amber-50 text-amber-900",
+  price_update_due: "border-amber-300 bg-amber-100 text-amber-950",
   in_review: "border-sky-200 bg-sky-50 text-sky-900",
   ready_to_complete: "border-sky-200 bg-sky-50 text-sky-900",
   needs_attention: "border-red-200 bg-red-50 text-red-900",
@@ -89,7 +91,9 @@ export function PriceUpdatesStatusLegend() {
   return <p className="text-xs text-zinc-500">Brand states: {Object.values(supplierBrandStateLabels).join(" · ")}</p>;
 }
 
-export type PriceUpdatesBrandSummary = { view: PriceUpdatesBrandView; priceLists: number; reviewsInProgress: number; upcomingLists?: number; href: string };
+/** Manual price check Brands (no Supplier codes). `manual` false still shows the small mode switch to approvers. */
+export type PriceUpdatesManualInfo = { manual: boolean; releases: ManualReleaseRow[]; canManage: boolean; today: string; dueCount: number };
+export type PriceUpdatesBrandSummary = { view: PriceUpdatesBrandView; priceLists: number; reviewsInProgress: number; upcomingLists?: number; href: string; manual?: PriceUpdatesManualInfo };
 /**
  * Brand-level card for the landing page: counts and one state only. Family rows live in the Brand workspace.
  * Same anatomy as the Supplier price-list cards: title + badge, small-caps subtitle, grouped figures, divider, one light action.
@@ -99,7 +103,9 @@ export function PriceUpdatesBrandSummaryCard({ summary }: { summary: PriceUpdate
   const managed = p.applicableFamilies + p.noPriceListFamilies;
   const needReview = p.updateAvailableFamilies + p.needsAttentionFamilies + p.inReviewFamilies + p.partiallyCheckedFamilies + p.readyToCompleteFamilies;
   const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
-  const note = needReview ? `${plural(needReview, "Family still needs", "Families still need")} review.`
+  const isManual = Boolean(summary.manual?.manual);
+  const note = isManual ? (summary.manual!.dueCount ? `${plural(summary.manual!.dueCount, "product is", "products are")} waiting for a price check.` : summary.manual!.releases.length ? "All products are price checked." : "No price list released yet.")
+    : needReview ? `${plural(needReview, "Family still needs", "Families still need")} review.`
     : summary.reviewsInProgress ? `${plural(summary.reviewsInProgress, "review is", "reviews are")} currently in progress.`
       : p.applicableFamilies && p.checkedFamilies === p.applicableFamilies ? "All Supplier-managed Families are current."
         : summary.priceLists === 0 ? "No current Supplier price list." : "Nothing is waiting.";
@@ -116,6 +122,7 @@ export function PriceUpdatesBrandSummaryCard({ summary }: { summary: PriceUpdate
     <dl className="grid grid-cols-2 gap-x-6 gap-y-3 border-t border-zinc-100 pt-4">{metrics.map(([label, value]) =>
       <div key={label}><dt className="text-xs font-medium uppercase tracking-wide text-zinc-500">{label}</dt><dd className="text-lg font-semibold tabular-nums text-zinc-950">{value}</dd></div>)}</dl>
     <p className="text-sm text-zinc-600">{note}</p>
+    {summary.manual ? <ManualPriceCheckPanel brandId={view.brandId} brandName={view.brandName} manual={summary.manual.manual} releases={summary.manual.releases} canManage={summary.manual.canManage} today={summary.manual.today} /> : null}
     <div className="mt-auto flex justify-end border-t border-zinc-100 pt-3"><Link href={summary.href} aria-label={`Open ${view.brandName}`} className="inline-flex h-8 items-center gap-1 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800">Open Brand <span aria-hidden="true">→</span></Link></div>
   </li>;
 }

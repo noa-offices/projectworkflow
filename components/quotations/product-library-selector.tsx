@@ -1,6 +1,7 @@
 "use client";
 
 import { SupplierCoverageAction } from "./supplier-coverage-popup";
+import { ManualPriceCheckAction } from "./manual-price-check-action";
 import { SupplierPriceLinesAction } from "./supplier-price-lines-popup";
 import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
@@ -164,6 +165,7 @@ export type ProductLibraryTemplate = {
     tone: "success" | "info" | "warning" | "danger" | "neutral";
     detail: string;
     actionHref?: string;
+    manualCheck?: boolean;
   };
   supplier_family_price_load_state?: "loaded" | "unavailable";
   // True until the (streamed) supplier status has arrived; shows a neutral placeholder instead of the legacy label.
@@ -508,7 +510,8 @@ function PriceCheckBadge({
     <span className={compact ? "mt-1 block" : "grid gap-1"}>
       <span className={badgeClass} title={supplierPresentation?.detail}>{health.label}</span>
       {!compact ? supplierPresentation?.actionHref ? <SupplierCoverageAction brandId={template.brand_id} templateId={template.id} templateName={templateSelectionName(template)} detail={supplierPresentation.detail} /> : <span className="block text-[11px] font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : null}
-      {!compact && supplierPresentation && !supplierPresentation.actionHref ? <SupplierPriceLinesAction templateId={template.id} templateName={templateSelectionName(template)} onSupplierStatus={onSupplierStatus} /> : null}
+      {!compact && supplierPresentation?.manualCheck ? <ManualPriceCheckAction templateId={template.id} onSupplierStatus={onSupplierStatus} /> : null}
+      {!compact && supplierPresentation && !supplierPresentation.actionHref && !supplierPresentation.manualCheck ? <SupplierPriceLinesAction templateId={template.id} templateName={templateSelectionName(template)} onSupplierStatus={onSupplierStatus} /> : null}
     </span>
   );
 }
