@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
@@ -8,7 +9,9 @@ import { requireProductLibraryManager } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import { createClient } from "@/lib/supabase/server";
-import { BrandPriceCheckMethodField, PriceCheckModeLabel } from "@/components/products/brand-price-check-method";
+import { BrandPriceCheckMethodField } from "@/components/products/brand-price-check-method";
+import { BrandsBrowser, type BrandCardRow } from "@/components/products/brands-browser";
+import { parseBrandFilters } from "@/lib/products/brands-filter";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { loadManualPriceState, type PriceCheckMode } from "@/lib/products/manual-price-check";
 import {
@@ -34,6 +37,7 @@ type BrandsSearchParams = {
   category?: string | string[];
   addBrand?: string | string[];
   editBrand?: string | string[];
+  method?: string | string[];
 };
 
 type BrandsPageProps = {
@@ -71,7 +75,7 @@ function brandsHref(
   params: BrandsSearchParams,
   updates: Partial<
     Record<
-      "q" | "status" | "brand" | "category" | "addBrand" | "editBrand",
+      "q" | "status" | "method" | "brand" | "category" | "addBrand" | "editBrand",
       string | null
     >
   >,
@@ -81,6 +85,7 @@ function brandsHref(
   for (const key of [
     "q",
     "status",
+    "method",
     "brand",
     "category",
     "addBrand",
@@ -217,17 +222,6 @@ function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel?: s
   );
 }
 
-function PrimaryLink({ href, label }: { href: string; label: string }) {
-  return (
-    <Link
-      href={href}
-      className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-    >
-      {label}
-    </Link>
-  );
-}
-
 function SecondaryLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
@@ -340,74 +334,6 @@ function subcategoryCountLabel(count: number) {
   return `${count} ${count === 1 ? "subcategory" : "subcategories"}`;
 }
 
-function BrandListCard({
-  archiveHrefId,
-  brand,
-  isSelected,
-  mainCount,
-  openHref,
-  editHref,
-  priceCheckMode,
-  subCount,
-}: {
-  archiveHrefId: string;
-  brand: Brand;
-  isSelected: boolean;
-  mainCount: number;
-  openHref: string;
-  editHref: string;
-  priceCheckMode: PriceCheckMode;
-  subCount: number;
-}) {
-  return (
-    <article
-      className={`rounded-lg border p-4 shadow-sm transition ${
-        isSelected
-          ? "border-emerald-200 bg-emerald-50/70"
-          : "border-zinc-200 bg-white"
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-semibold text-zinc-950">
-              {brand.name}
-            </h3>
-            {brand.code ? (
-              <span className="rounded border border-zinc-200 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">
-                Code: {brand.code}
-              </span>
-            ) : null}
-            <PriceCheckModeLabel mode={priceCheckMode} />
-          </div>
-          <p className="mt-2 text-sm text-zinc-500">
-            Origin: {brand.origin ?? "-"}
-          </p>
-          <p className="mt-1 text-sm text-zinc-500">
-            {mainCount} categories · {subCount} subcategories
-          </p>
-        </div>
-        <div className="shrink-0 pt-0.5">
-          <StatusBadge active={brand.is_active} />
-        </div>
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <ActionLink href={openHref} label="Open" tone="primary" />
-        <ActionLink href={editHref} label="Edit" />
-        <form action={archiveBrand}>
-          <input type="hidden" name="id" value={archiveHrefId} />
-          <ConfirmSubmitButton
-            message="This will move the brand to Archive. You can restore it later."
-            className="inline-flex h-8 items-center justify-center rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
-          >
-            Archive
-          </ConfirmSubmitButton>
-        </form>
-      </div>
-    </article>
-  );
-}
-
 /** True when the Brand has an active supplier definition or an imported supplier price list. Only used for the warning. */
 async function brandHasSupplierPriceLists(supabase: Awaited<ReturnType<typeof createClient>>, brandId: string) {
   const [definitions, versions] = await Promise.all([
@@ -451,8 +377,6 @@ async function BrandsContent({ searchParams, auth }: BrandsPageProps & { auth: A
   const { user } = auth;
   const params = (await searchParams) ?? {};
   const message = stringParam(params.message);
-  const searchQuery = stringParam(params.q).trim();
-  const statusFilter = stringParam(params.status);
   const selectedBrandId = stringParam(params.brand);
   const selectedCategoryId = stringParam(params.category);
   const showAddBrand = stringParam(params.addBrand) === "1";
@@ -496,7 +420,6 @@ async function BrandsContent({ searchParams, auth }: BrandsPageProps & { auth: A
 
   const brandList = brands ?? [];
   const categoryList = categories ?? [];
-  const activeBrandList = brandList.filter((brand) => brand.is_active);
   const archivedBrandList = brandList.filter((brand) => !brand.is_active);
   const activeCategoryList = categoryList.filter((category) => category.is_active);
   const archivedMainCategories = categoryList.filter(
@@ -529,26 +452,6 @@ async function BrandsContent({ searchParams, auth }: BrandsPageProps & { auth: A
     );
     subcategoryCountByBrand.set(brandId, count);
   }
-
-  const normalizedSearch = searchQuery.toLowerCase();
-  const visibleBrandList =
-    statusFilter === "inactive" || statusFilter === "archive"
-      ? archivedBrandList
-      : activeBrandList;
-  const filteredBrands = visibleBrandList.filter((brand) => {
-    const matchesSearch =
-      !normalizedSearch ||
-      brand.name.toLowerCase().includes(normalizedSearch) ||
-      (brand.origin ?? "").toLowerCase().includes(normalizedSearch);
-    const matchesStatus =
-      !statusFilter ||
-      statusFilter === "all" ||
-      statusFilter === "archive" ||
-      (statusFilter === "active" && brand.is_active) ||
-      (statusFilter === "inactive" && !brand.is_active);
-
-    return matchesSearch && matchesStatus;
-  });
 
   const selectedBrand = brandList.find((brand) => brand.id === selectedBrandId) ?? null;
   // Price check method: manual Brands come from the existing read function (before the migration it reads as "none").
@@ -588,71 +491,42 @@ async function BrandsContent({ searchParams, auth }: BrandsPageProps & { auth: A
     })),
   ];
 
-  return (
-      <div className="px-5 py-6 sm:px-8">
-          <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">
-                  Brands
-                </h1>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-                  Manage brands, origins, categories, and subcategories used by
-                  products and materials.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <SecondaryLink href="/products" label="Back to products" />
-                <PrimaryLink
-                  href={brandsHref(params, { addBrand: "1", editBrand: null })}
-                  label="+ Add Brand"
-                />
-              </div>
-            </div>
-            {message ? (
-              <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
-                {message}
-              </p>
-            ) : null}
-          </section>
-
-          <section className="mt-5 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-              <form
-                action="/products/brands"
-                className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px_auto] xl:min-w-[720px]"
-              >
-                <input
-                  name="q"
-                  defaultValue={searchQuery}
-                  placeholder="Search brands or origin"
-                  className="h-10 rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                />
-                <select
-                  name="status"
-                  defaultValue={statusFilter || "all"}
-                  className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                >
-                  <option value="all">All statuses</option>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
-                <button
-                  type="submit"
-                  className="h-10 rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                >
-                  Search
-                </button>
-              </form>
-              {!showAddBrand ? (
-                <PrimaryLink
-                  href={brandsHref(params, { addBrand: "1", editBrand: null })}
-                  label="+ Add Brand"
-                />
-              ) : null}
-            </div>
-
-            {showAddBrand ? (
+  const filters = parseBrandFilters((key) => stringParam(params[key as keyof BrandsSearchParams]));
+  const rows: BrandCardRow[] = brandList.map((brand) => ({
+    id: brand.id,
+    name: brand.name,
+    code: brand.code,
+    origin: brand.origin,
+    isActive: brand.is_active,
+    method: manualBrands.has(brand.id) ? "manual" : "codes",
+    mainCount: mainCategoriesByBrand.get(brand.id)?.length ?? 0,
+    subCount: subcategoryCountByBrand.get(brand.id) ?? 0,
+    openHref: brandsHref(params, { brand: brand.id, category: null, addBrand: null, editBrand: null }),
+    editHref: brandsHref(params, { brand: brand.id, category: null, addBrand: null, editBrand: brand.id }),
+  }));
+  // Archive (or Restore, for an archived brand) stays a server action form on the card, with the same confirmation as before.
+  const cardActions: Record<string, ReactNode> = Object.fromEntries(brandList.map((brand) => [
+    brand.id,
+    brand.is_active ? (
+      <form key="archive" action={archiveBrand}>
+        <input type="hidden" name="id" value={brand.id} />
+        <ConfirmSubmitButton
+          message="This will move the brand to Archive. You can restore it later."
+          className="inline-flex h-8 items-center justify-center rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
+        >
+          Archive
+        </ConfirmSubmitButton>
+      </form>
+    ) : (
+      <form key="restore" action={restoreBrand}>
+        <input type="hidden" name="id" value={brand.id} />
+        <button type="submit" className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
+          Restore
+        </button>
+      </form>
+    ),
+  ]));
+  const addForm = showAddBrand ? (
               <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 p-5">
                 <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
@@ -674,73 +548,10 @@ async function BrandsContent({ searchParams, auth }: BrandsPageProps & { auth: A
                   })}
                 />
               </div>
-            ) : null}
-          </section>
-
-          <section className="mt-6 grid gap-6 2xl:grid-cols-[minmax(420px,540px)_1fr]">
-            <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-              <div className="border-b border-zinc-200 px-5 py-4">
-                <h2 className="font-semibold text-zinc-950">Brand list</h2>
-                <p className="mt-1 text-sm text-zinc-500">
-                  {filteredBrands.length} of {brandList.length} shown
-                </p>
-              </div>
-
-              <div className="grid gap-4 p-4 xl:grid-cols-2">
-                {filteredBrands.map((brand) => {
-                  const mainCount = mainCategoriesByBrand.get(brand.id)?.length ?? 0;
-                  const subCount = subcategoryCountByBrand.get(brand.id) ?? 0;
-                  const isSelected = brand.id === selectedBrand?.id;
-
-                  return (
-                    <BrandListCard
-                      key={brand.id}
-                      archiveHrefId={brand.id}
-                      brand={brand}
-                      editHref={brandsHref(params, {
-                        brand: brand.id,
-                        category: null,
-                        addBrand: null,
-                        editBrand: brand.id,
-                      })}
-                      isSelected={isSelected}
-                      priceCheckMode={manualBrands.has(brand.id) ? "manual" : "supplier_codes"}
-                      mainCount={mainCount}
-                      openHref={brandsHref(params, {
-                        brand: brand.id,
-                        category: null,
-                        addBrand: null,
-                        editBrand: null,
-                      })}
-                      subCount={subCount}
-                    />
-                  );
-                })}
-              </div>
-
-              {!filteredBrands.length ? (
-                <div className="p-8 text-center text-sm text-zinc-500">
-                  <p>{brandList.length ? "No brands match the current search." : "No brands yet."}</p>
-                  {!brandList.length ? (
-                    <>
-                      <p className="mt-2">
-                        Create a brand to start adding product templates, material groups, and finishes.
-                      </p>
-                      <div className="mt-4">
-                        <PrimaryLink
-                          href={brandsHref(params, { addBrand: "1", editBrand: null })}
-                          label="+ Add Brand"
-                        />
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
-            </section>
-
-            <div className="space-y-5">
-              {selectedBrand ? (
-                <>
+            ) : null;
+  // Everything the right panel showed for an opened brand now lives in the drawer, unchanged.
+  const drawer = selectedBrand ? (
+    <div className="space-y-5">
                   <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div>
@@ -996,21 +807,23 @@ async function BrandsContent({ searchParams, auth }: BrandsPageProps & { auth: A
                       ) : null}
                     </section>
                   ) : null}
-                </>
-              ) : (
-                <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
-                  <h2 className="text-base font-semibold text-zinc-900">
-                    Open a brand to manage its details
-                  </h2>
-                  <p className="mt-2">
-                    Select a brand to review metadata, edit its details, and
-                    manage categories and subcategories.
-                  </p>
-                </section>
-              )}
-            </div>
-          </section>
+    </div>
+  ) : null;
 
+  return (
+    <>
+      <BrandsBrowser
+        rows={rows}
+        initialFilters={filters}
+        selectedBrandId={selectedBrand?.id ?? ""}
+        drawer={drawer}
+        cardActions={cardActions}
+        addForm={addForm}
+        addHref={brandsHref(params, { addBrand: "1", editBrand: null })}
+        backHref="/products"
+        message={message}
+      />
+      <div className="px-5 pb-6 sm:px-8">
           <section className="mt-6 rounded-lg border border-zinc-200 bg-white shadow-sm">
             <div className="border-b border-zinc-200 p-4">
               <h2 className="font-semibold text-zinc-950">Archive</h2>
@@ -1059,5 +872,6 @@ async function BrandsContent({ searchParams, auth }: BrandsPageProps & { auth: A
             </div>
           </section>
       </div>
+    </>
   );
 }
