@@ -78,3 +78,27 @@ test("a default price and mixed currencies", () => {
   const mixed = [{ ...lines[0] }, { ...lines[0], key: "x", currency: "AED" }];
   assert.equal(sharedLineCurrency(mixed), null);
 });
+
+test("window grid: variants become rows and price names become columns", async () => {
+  const { groupPriceLines } = await import("./manual-price-lines.js");
+  const t = rose() as unknown as { category_pricing: Array<{ items: Array<Record<string, unknown>> }> };
+  t.category_pricing[0].items.push({ id: "r2", variant_name: "Footrest", currency: "USD", is_active: true, prices: { "col-a": 120 } }); // no Grade A+ price
+  const lines = brandPriceTargets([t as unknown as ProductPriceInput], [], { includeCodeless: true }).map(manualLineFromTarget);
+  const grid = groupPriceLines(lines);
+  assert.deepEqual(grid.columns, ["Grade A", "Grade A+", "Price"]);
+  assert.deepEqual(grid.rows.map((r) => r.name), ["Rose Chair - Rose armchair", "Rose Chair - Footrest", "Rose Chair - Arm pad"]);
+  assert.deepEqual(grid.rows[0].cells.map((c) => c?.price ?? null), [319, 349, null]);
+  assert.deepEqual(grid.rows[1].cells.map((c) => c?.price ?? null), [120, null, null]); // missing cells are null
+  assert.equal(grid.rows[1].cells[1], null);
+  assert.deepEqual(grid.rows[2].cells.map((c) => c?.price ?? null), [null, null, 50]);
+});
+
+test("window grid: a product with one price name has one column; names match ignoring case; a repeat gets its own column", async () => {
+  const { groupPriceLines } = await import("./manual-price-lines.js");
+  const mk = (key: string, rowKey: string, columnName: string, price: number): import("./manual-price-lines.js").ManualPriceLine => ({ key, code: rowKey, label: columnName, price, currency: "USD", rowKey, rowName: rowKey, columnName });
+  assert.deepEqual(groupPriceLines([mk("1", "a", "Price", 1), mk("2", "b", "Price", 2)]).columns, ["Price"]);
+  assert.deepEqual(groupPriceLines([mk("1", "a", "GRADE A", 1), mk("2", "b", "Grade a", 2)]).columns, ["GRADE A"]);
+  const dup = groupPriceLines([mk("1", "a", "Grade A", 1), mk("2", "a", "Grade A", 2)]);
+  assert.deepEqual(dup.columns, ["Grade A", "Grade A"]);
+  assert.deepEqual(dup.rows[0].cells.map((c) => c?.price), [1, 2]);
+});

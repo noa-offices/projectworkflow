@@ -4,7 +4,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { markManualPriceCheckedAction } from "@/components/products/manual-price-check-actions";
 import { loadManualPriceLinesAction, saveManualPriceLinesAction, type ManualPriceLinesResult } from "@/components/products/manual-price-lines-actions";
-import { collectPriceChanges, isEditableLine, NO_PRICES_MESSAGE, sharedLineCurrency, priceDifference, priceInputText, pricesWillChangeText, type ManualPriceLine } from "@/lib/products/manual-price-lines";
+import { collectPriceChanges, groupPriceLines, NO_PRICES_MESSAGE, priceDifference, priceInputText, pricesWillChangeText, type ManualPriceLine } from "@/lib/products/manual-price-lines";
 import type { SupplierFamilyStatusPresentation } from "@/lib/products/supplier-family-status";
 import { supplierTemplateStatusPresentation } from "./supplier-template-status-actions";
 
@@ -14,29 +14,35 @@ const dateText = (value: string) => new Intl.DateTimeFormat("en-GB", { day: "num
 const buttonClass = "rounded-md bg-emerald-800 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50";
 const quietButton = "rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-semibold text-zinc-700 disabled:opacity-50";
 
-/** The table. With canEdit false there are no inputs at all. Changed rows are highlighted. */
+/**
+ * The grid: one row per product variant, one column per price name. A cell shows the current price (small, with currency) and, when
+ * editable, the New price box under it and the difference only when the typed price differs. A missing price is a dash with no box.
+ * Wide grids scroll sideways inside the window; the first column stays in view.
+ */
 export function ManualPriceLinesTable({ lines, canEdit, inputs, errors, onInput }: { lines: ManualPriceLine[]; canEdit: boolean; inputs: Record<string, string>; errors: Record<string, string>; onInput: (key: string, value: string) => void }) {
-  // One shared currency goes in the headers; mixed currencies show in each cell. Never the template currency.
-  const currency = sharedLineCurrency(lines), unit = currency ? ` (${currency})` : "", cell = (line: ManualPriceLine) => `${money(line.price)}${!currency && line.price !== null ? ` ${line.currency}` : ""}`;
   if (lines.length === 0) return <p className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">{NO_PRICES_MESSAGE}</p>;
+  const grid = groupPriceLines(lines);
   return <div className="mt-3 max-h-[52vh] overflow-auto rounded-lg border border-zinc-200">
-    <table className="w-full min-w-[640px] text-left text-sm">
-      <thead className="sticky top-0 z-10 bg-zinc-100 text-xs font-semibold text-zinc-700">
-        <tr><th className="px-3 py-2">Model code</th><th className="px-3 py-2">Price name</th><th className="px-3 py-2 text-right">Current price{unit}</th>{canEdit ? <th className="px-3 py-2 text-right">New price{unit}</th> : null}{canEdit ? <th className="px-3 py-2 text-right">Difference</th> : null}</tr>
+    <table className="w-full text-left text-sm" style={{ minWidth: 200 + grid.columns.length * 150 }}>
+      <thead className="sticky top-0 z-20 bg-zinc-100 text-xs font-semibold uppercase text-zinc-700">
+        <tr><th className="sticky left-0 z-30 min-w-48 bg-zinc-100 px-3 py-2 normal-case">Product</th>{grid.columns.map((name) => <th key={name} className="px-3 py-2 text-right">{name}</th>)}</tr>
       </thead>
       <tbody>
-        {lines.map((line) => {
-          const text = inputs[line.key] ?? priceInputText(line.price), diff = priceDifference(line, text), changed = diff !== null && diff !== 0, error = errors[line.key];
-          return <tr key={line.key} className={`border-t border-zinc-100 align-top ${changed ? "bg-amber-50" : ""}`} data-changed={changed ? "true" : "false"}>
-            <td className="px-3 py-2 font-semibold text-zinc-900">{line.code}</td>
-            <td className="px-3 py-2 text-zinc-600">{line.label || "—"}</td>
-            <td className="px-3 py-2 text-right tabular-nums">{cell(line)}</td>
-            {canEdit ? <td className="px-3 py-2 text-right">{isEditableLine(line)
-              ? <><input type="text" inputMode="decimal" aria-label={`New price for ${line.code} ${line.label}`} value={text} onChange={(event) => onInput(line.key, event.target.value)} className={`h-8 w-28 rounded-md border px-2 text-right text-sm tabular-nums ${error ? "border-red-400" : "border-zinc-300"}`} />{error ? <span role="alert" className="block text-xs text-red-800">{error}</span> : null}</>
-              : <span className="block max-w-48 text-xs text-zinc-600">This price is empty. Set it by hand in Edit Template.</span>}</td> : null}
-            {canEdit ? <td className={`px-3 py-2 text-right tabular-nums ${changed ? "font-semibold text-amber-950" : "text-zinc-500"}`}>{signed(diff)}</td> : null}
-          </tr>;
-        })}
+        {grid.rows.map((row) => <tr key={row.key} className="border-t border-zinc-100 align-top">
+          <td className="sticky left-0 z-10 min-w-48 bg-white px-3 py-2"><span className="block font-semibold text-zinc-900">{row.name}</span>{row.modelCode ? <span className="block text-xs text-zinc-500">{row.modelCode}</span> : null}</td>
+          {row.cells.map((line, index) => {
+            if (!line || line.price === null) return <td key={index} className="px-3 py-2 text-right text-zinc-400" title={line ? "This price is empty. Set it by hand in Edit Template." : undefined}>—</td>;
+            const text = inputs[line.key] ?? priceInputText(line.price), diff = priceDifference(line, text), changed = diff !== null && diff !== 0, error = errors[line.key];
+            return <td key={index} className={`px-3 py-2 text-right ${changed ? "bg-amber-50" : ""}`} data-changed={changed ? "true" : "false"}>
+              <span className="block text-xs tabular-nums text-zinc-500">{line.currency} {money(line.price)}</span>
+              {canEdit ? <>
+                <input type="text" inputMode="decimal" aria-label={`New price for ${row.name} ${line.columnName ?? ""}`.trim()} value={text} onChange={(event) => onInput(line.key, event.target.value)} className={`mt-1 h-8 w-full max-w-36 rounded-md border px-2 text-right text-sm tabular-nums ${error ? "border-red-400" : "border-zinc-300"}`} />
+                {error ? <span role="alert" className="block text-xs text-red-800">{error}</span> : null}
+                {changed ? <span className="block text-xs font-semibold tabular-nums text-amber-950">{signed(diff)}</span> : null}
+              </> : null}
+            </td>;
+          })}
+        </tr>)}
       </tbody>
     </table>
   </div>;
