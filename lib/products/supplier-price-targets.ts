@@ -13,13 +13,22 @@ function text(value: unknown) { return typeof value === "string" ? value : ""; }
 function storedId(value: unknown, context: string) { const id = text(value); if (!id) throw Error(`Persisted target identity missing: ${context}. No array-index fallback is allowed.`); return id; }
 function number(value: unknown): number | null { return typeof value === "number" && Number.isFinite(value) ? value : null; }
 
+export type PriceTargetOptions = {
+  /** Opt in (default off). Keeps priced rows that have no supplier code, with the same keys and fields as coded rows. Used only by the manual price check window. */
+  includeCodeless?: boolean;
+};
+
 /** Read only. Every locator is a stored identity or the fixed legacy flat container, never an array offset. */
-export function brandPriceTargets(templates: ProductPriceInput[], components: RecordValue[] = []): PriceTarget[] {
+export function brandPriceTargets(templates: ProductPriceInput[], components: RecordValue[] = [], options: PriceTargetOptions = {}): PriceTarget[] {
   const targets: PriceTarget[] = []; const keys = new Set<string>();
   for (const template of templates) {
     const add = (architecture: string, group: RecordValue, row: RecordValue, physicalField: string, priceField = "unit_price", column?: { id: string; dimension_code: string; label?: string }) => {
       const rawCode = text(row.supplier_price_list_code ?? row.item_code);
-      if (!rawCode.trim() || row.is_active === false || group.is_active === false) return;
+      if (row.is_active === false || group.is_active === false) return;
+      if (!rawCode.trim()) {
+        // Codeless rows are kept only on request, and only when they carry stored ids (a row without ids cannot be written safely).
+        if (!options.includeCodeless || !text(row.id) || !text(group.id)) return;
+      }
       const currency = parseSupportedCurrency(row.currency ?? template.currency);
       if (!currency) throw Error(`Unsupported target currency for ${template.template_name}.`);
       const groupId = storedId(group.id, `${architecture} group`);
@@ -51,7 +60,7 @@ export function brandPriceTargets(templates: ProductPriceInput[], components: Re
           const row = record(rawRow);
           if (architecture === "desking_size_pricing") {
             add(architecture, group, { ...row, supplier_price_list_code: row.base_supplier_price_list_code ?? row.supplier_price_list_code }, "default_price");
-            if (text(row.additional_supplier_price_list_code)) add(architecture, group, { ...row, supplier_price_list_code: row.additional_supplier_price_list_code }, "additional_price");
+            if (text(row.additional_supplier_price_list_code) || (options.includeCodeless && number(row.additional_price) !== null)) add(architecture, group, { ...row, supplier_price_list_code: row.additional_supplier_price_list_code }, "additional_price");
           } else if (columns.length) {
             for (const column of columns) if (Object.hasOwn(record(row.prices), column.id)) add(architecture, group, row, "prices", "unit_price", column);
           } else add(architecture, group, row, "price");

@@ -11,7 +11,7 @@ const lines = [
 const noop = () => {};
 
 test("editable table: an input per priced line, prefilled with the current price, currency in the header", () => {
-  const html = renderToStaticMarkup(<ManualPriceLinesTable lines={lines} currency="USD" canEdit inputs={{}} errors={{}} onInput={noop} />);
+  const html = renderToStaticMarkup(<ManualPriceLinesTable lines={lines} canEdit inputs={{}} errors={{}} onInput={noop} />);
   assert.equal((html.match(/<input/g) ?? []).length, 2); // the empty price has no input
   assert.match(html, /value="100"/); assert.match(html, /value="120.5"/);
   assert.match(html, /New price \(USD\)/); assert.match(html, /Set it by hand in Edit Template/);
@@ -19,18 +19,35 @@ test("editable table: an input per priced line, prefilled with the current price
 });
 
 test("changed rows are highlighted and show the live difference", () => {
-  const html = renderToStaticMarkup(<ManualPriceLinesTable lines={lines} currency="USD" canEdit inputs={{ b: "125" }} errors={{}} onInput={noop} />);
+  const html = renderToStaticMarkup(<ManualPriceLinesTable lines={lines} canEdit inputs={{ b: "125" }} errors={{}} onInput={noop} />);
   assert.equal((html.match(/data-changed="true"/g) ?? []).length, 1);
   assert.match(html, /\+4\.50/);
 });
 
 test("an invalid number shows its message next to the input", () => {
-  const html = renderToStaticMarkup(<ManualPriceLinesTable lines={lines} currency="USD" canEdit inputs={{ a: "abc" }} errors={{ a: "Use numbers only, up to 2 decimals." }} onInput={noop} />);
+  const html = renderToStaticMarkup(<ManualPriceLinesTable lines={lines} canEdit inputs={{ a: "abc" }} errors={{ a: "Use numbers only, up to 2 decimals." }} onInput={noop} />);
   assert.match(html, /role="alert"[^>]*>Use numbers only/);
 });
 
 test("read-only mode has no inputs and no new-price columns", () => {
-  const html = renderToStaticMarkup(<ManualPriceLinesTable lines={lines} currency="USD" canEdit={false} inputs={{}} errors={{}} onInput={noop} />);
+  const html = renderToStaticMarkup(<ManualPriceLinesTable lines={lines} canEdit={false} inputs={{}} errors={{}} onInput={noop} />);
   assert.doesNotMatch(html, /<input/); assert.doesNotMatch(html, /New price/); assert.doesNotMatch(html, /Difference/);
   assert.match(html, /Current price \(USD\)/); assert.match(html, /Normal wood/);
+});
+
+test("the header shows the lines' own currency, never the template currency", () => {
+  const usd = [{ key: "a", code: "Rose", label: "Grade A", price: 319, currency: "USD" }];
+  const html = renderToStaticMarkup(<ManualPriceLinesTable lines={usd} canEdit inputs={{}} errors={{}} onInput={noop} />);
+  assert.match(html, /Current price \(USD\)/); assert.match(html, /New price \(USD\)/); assert.doesNotMatch(html, /AED/);
+});
+
+test("mixed currencies show the currency in each cell and not in the header", () => {
+  const mixed = [{ key: "a", code: "A", label: "x", price: 10, currency: "USD" }, { key: "b", code: "B", label: "y", price: 20, currency: "AED" }];
+  const html = renderToStaticMarkup(<ManualPriceLinesTable lines={mixed} canEdit={false} inputs={{}} errors={{}} onInput={noop} />);
+  assert.match(html, />Current price</); assert.match(html, /10\.00 USD/); assert.match(html, /20\.00 AED/);
+});
+
+test("a product with no price cells says so", () => {
+  const html = renderToStaticMarkup(<ManualPriceLinesTable lines={[]} canEdit inputs={{}} errors={{}} onInput={noop} />);
+  assert.match(html, /This product has no prices yet\. Add them in Edit Template\./);
 });
