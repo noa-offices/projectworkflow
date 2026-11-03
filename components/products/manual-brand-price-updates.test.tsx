@@ -44,6 +44,6 @@ test("the page switches on the Brand's manual state before any supplier read, so
   const manualAt = source.indexOf("loadManualPriceState(client, [brand.id])");
   assert.ok(manualAt > 0);
   assert.ok(manualAt < source.indexOf('"supplier_price_profiles"'), "the manual check comes before the supplier reads");
-  assert.match(source, /if \(brand && manualBrandState\) \{[\s\S]*?<ManualBrandPriceUpdates[\s\S]*?\n  \}\n  const base = /); // the early return ends before the supplier page starts
+  assert.match(source, /if \(brand && manualBrandState\) \{[\s\S]*?<ManualBrandPriceUpdates[\s\S]*?\r?\n  \}\r?\n  const base = /); // the early return ends before the supplier page starts
   assert.ok(source.includes("<SupplierAdvancedImportSettings"), "the supplier screen code is still there");
 });

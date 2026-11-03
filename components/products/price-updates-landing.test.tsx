@@ -44,7 +44,7 @@ test("Open Brand routes to the existing Brand workspace", () => {
 });
 
 test("page reuses the shared resolver builders and reads Brand-level data only, one batched read per dataset", () => {
-  assert.match(page, /buildSupplierPriceUpdatesView/); assert.match(page, /loadSupplierPriceUpdatesInputs/); assert.match(page, /PriceUpdatesBrandSummaryCard/);
+  assert.match(page, /buildSupplierPriceUpdatesView/); assert.match(page, /loadSupplierPriceUpdatesInputs/); assert.match(page, /PriceUpdatesBrowser/); // the small-card browser replaced the old big cards
   assert.doesNotMatch(page, /PriceUpdatesBrandCard\b|PriceUpdatesReview|familyActionFor|product_categories|brand_price_list_updates|supplier_price_matches/);
   assert.match(page, /\.select\("id,brand_id,template_name,pricing_version"\)/);
   assert.doesNotMatch(page, /for \(const brand of brandList\)/);
