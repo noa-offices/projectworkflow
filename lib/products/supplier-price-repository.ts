@@ -273,7 +273,7 @@ function supplierDetailPayload(template: ProductPriceInput, target: PriceTarget,
 }
 
 /** Builds one writer operation (mode, payload, history) for a target against the given Template copies. */
-function supplierTargetWrite(current: PriceTarget, templates: Map<string, ProductPriceInput>, price: number, currency: string, base: Record<string, unknown>) {
+export function supplierTargetWrite(current: PriceTarget, templates: Map<string, ProductPriceInput>, price: number, currency: string, base: Record<string, unknown>) {
   if (current.architecture === "simple" && current.physical_field === "default_unit_price") {
     return { mode: "supplier_default" as const, payload: { default_unit_price: price, currency } as Record<string, unknown>, history: base };
   }

@@ -32,13 +32,15 @@ export async function releaseManualPriceListAction(brandId: string, effectiveFro
 }
 
 /** Marks ONE product as checked for the Brand's latest released price list. The server picks the release; the browser sends only the product. */
-export async function markManualPriceCheckedAction(templateId: string): Promise<{ message: string }> {
+export async function markManualPriceCheckedAction(templateId: string, expectedPricingVersion?: string): Promise<{ message: string }> {
   const id = idText(templateId, "Product");
   const client = await approver();
   const template = (await supplierRows<{ id: string; brand_id: string; pricing_version: number | string }>(client, "product_templates", "id,brand_id,pricing_version", { id, is_active: true })).at(0);
   if (!template) throw Error("This product is unavailable.");
   const release = latestPassedManualRelease((await loadManualPriceState(client, [template.brand_id])).get(template.brand_id)?.releases ?? [], supplierBusinessDate());
   if (!release) throw Error("No price list has been released for this Brand yet.");
+  // The window passes the version it just saved, so a product edited in between is refused instead of being marked as checked.
+  if (expectedPricingVersion !== undefined && String(template.pricing_version) !== expectedPricingVersion) throw Error("This Product Template changed. Reload before saving.");
   await markManualPriceChecked(client, { templateId: id, releaseId: release.id, expectedPricingVersion: String(template.pricing_version) });
   refresh();
   return { message: "The product is marked as price checked." };
