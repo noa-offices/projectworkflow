@@ -67,9 +67,22 @@ test("the shared resolver gives manual Brands the manual statuses and the right 
   assert.equal(checked.manualReleaseId, undefined);
   assert.match(supplierFamilyStatusPresentation(checked).detail, /^Checked on 3 Feb 2026 by Sara Khan$/);
   assert.equal(supplierFamilyStatusPresentation(due).manualCheck, true);
-  assert.equal(supplierFamilyStatusPresentation(checked).manualCheck, undefined);
+  assert.equal(supplierFamilyStatusPresentation(checked).manualCheck, true); // the manual window opens after "Price checked" too
   const edited = resolveSupplierFamilyPriceStatus({ businessDate: "2026-02-10", families: [family(T1, BRAND, "6")], responsibilities: [], facts: [], manual })[0];
   assert.equal(edited.status, "edited_since_check");
+  assert.equal(supplierFamilyStatusPresentation(edited).manualCheck, true);
+});
+
+test("the manual window opens in every manual status, but not for legacy_manual or supplier-code Brands", () => {
+  const flag = (businessDate: string, brandId: string, pricingVersion: string, manualState?: typeof manual) => {
+    const [item] = resolveSupplierFamilyPriceStatus({ businessDate, families: [family(T1, brandId, pricingVersion)], responsibilities: [], facts: [], ...(manualState ? { manual: manualState } : {}) });
+    return [item.status, supplierFamilyStatusPresentation(item).manualCheck] as const;
+  };
+  assert.deepEqual(flag("2026-02-10", BRAND, "5", manual), ["price_checked", true]);
+  assert.deepEqual(flag("2026-02-10", BRAND, "6", manual), ["edited_since_check", true]);
+  assert.deepEqual(flag("2026-02-10", BRAND, "5", new Map([[BRAND, state([release("r1", "2026-01-15")], [])]])), ["price_update_due", true]);
+  assert.deepEqual(flag("2026-01-01", BRAND, "5", manual), ["legacy_manual", undefined]); // no release has started yet
+  assert.deepEqual(flag("2026-02-10", "other-brand", "5"), ["legacy_manual", undefined]); // a Brand with supplier codes and no responsibilities
 });
 
 test("a manual Brand with no passed release keeps the legacy status", () => {
