@@ -561,6 +561,32 @@ export function orderedSections(sections: LocalQuotationSection[]) {
   return [...sections].sort((left, right) => left.sort_order - right.sort_order || left.id.localeCompare(right.id));
 }
 
+/**
+ * A Sub Section is "loose" when it has no Main Section now: no parent id, or a parent id that is not a Main Section in the list
+ * (for example after its Main Section was removed). Pure: returns a new list and never changes the one it is given.
+ */
+export function isLooseSubSection(section: LocalQuotationSection, sections: LocalQuotationSection[]) {
+  if (section.section_kind !== "sub") return false;
+  return !section.parent_section_id || !sections.some((candidate) => candidate.id === section.parent_section_id && candidate.section_kind === "main");
+}
+
+/**
+ * Called after a Main Section is added: the loose Sub Sections after it (in order, up to the next Main Section or the end) join it.
+ * Sub Sections that already have a valid Main Section are not touched. Nothing else changes.
+ */
+export function attachLooseSubSections(sections: LocalQuotationSection[], mainSectionId: string): LocalQuotationSection[] {
+  const ordered = orderedSections(sections);
+  const start = ordered.findIndex((section) => section.id === mainSectionId && section.section_kind === "main");
+  if (start < 0) return sections;
+  const adopt = new Set<string>();
+  for (const section of ordered.slice(start + 1)) {
+    if (section.section_kind === "main") break;
+    if (isLooseSubSection(section, sections)) adopt.add(section.id);
+  }
+  if (!adopt.size) return sections;
+  return sections.map((section) => adopt.has(section.id) ? { ...section, parent_section_id: mainSectionId } : section);
+}
+
 export function orderedItems(items: LocalQuotationItem[], sectionId: string | null) {
   return items
     .filter((item) => item.section_id === sectionId && item.is_active !== false)

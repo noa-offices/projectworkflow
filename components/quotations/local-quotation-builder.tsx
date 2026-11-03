@@ -40,6 +40,7 @@ import {
 } from "@/lib/local/quotation-conflict";
 import {
   createEmptyItem,
+  attachLooseSubSections,
   createEmptySection,
   createLocalId,
   localNow,
@@ -2460,9 +2461,11 @@ export function LocalQuotationBuilder({
         }
       }
 
+      const sections = withReindexedSections(current.sections, insertAtIndex, nextSection);
+      // A new Main Section takes the loose Sub Sections right after it (left behind when a Main Section was removed).
       return {
         ...current,
-        sections: withReindexedSections(current.sections, insertAtIndex, nextSection),
+        sections: kind === "main" ? attachLooseSubSections(sections, nextSection.id) : sections,
       };
     });
   }
