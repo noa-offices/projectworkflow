@@ -4,13 +4,13 @@ import { revalidatePath } from "next/cache";
 import { requireActiveUser } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { latestPassedManualRelease, loadManualPriceState, resolveManualFamilyStatus } from "@/lib/products/manual-price-check";
-import { STALE_TEMPLATE_MESSAGE, validateChangesForSave, type ManualPriceLine } from "@/lib/products/manual-price-lines";
+import { manualLineFromTarget, STALE_TEMPLATE_MESSAGE, validateChangesForSave, type ManualPriceLine } from "@/lib/products/manual-price-lines";
 import { pricingConflictMessage } from "@/lib/products/pricing-write-version";
 import { supplierBrandTargets, supplierBusinessDate, supplierRows, supplierTargetWrite } from "@/lib/products/supplier-price-repository";
 import { createClient } from "@/lib/supabase/server";
 
 export type ManualPriceLinesResult = {
-  templateName: string; brandName: string; currency: string; pricingVersion: string; canEdit: boolean;
+  templateName: string; brandName: string; pricingVersion: string; canEdit: boolean;
   release: { effectiveFrom: string; note: string } | null;
   lines: ManualPriceLine[];
   /** Set only when the product is checked for the latest release at its current version. */
@@ -22,11 +22,11 @@ const idText = (value: unknown) => { if (typeof value !== "string" || !value.tri
 async function readLines(client: Awaited<ReturnType<typeof createClient>>, templateId: string) {
   const template = (await supplierRows<{ id: string; brand_id: string }>(client, "product_templates", "id,brand_id", { id: templateId, is_active: true })).at(0);
   if (!template) throw Error("This product is unavailable.");
-  const { targets, templates } = await supplierBrandTargets(client, template.brand_id, [templateId]);
+  const { targets, templates } = await supplierBrandTargets(client, template.brand_id, [templateId], { includeCodeless: true }); // only this window keeps rows without a supplier code
   const own = targets.filter((target) => target.template_id === templateId);
   const full = templates.find((item) => item.id === templateId);
   if (!full) throw Error("This product is unavailable.");
-  return { brandId: template.brand_id, targets: own, templates, name: String(full.template_name ?? ""), version: String(full.pricing_version), currency: String(full.currency ?? "") };
+  return { brandId: template.brand_id, targets: own, templates, name: String(full.template_name ?? ""), version: String(full.pricing_version) };
 }
 
 /** Read only. Anyone who can open the product can see the lines; editing is decided by the server again on save. */
@@ -40,10 +40,10 @@ export async function loadManualPriceLinesAction(templateId: string): Promise<Ma
   const release = state ? latestPassedManualRelease(state.releases, supplierBusinessDate()) : null;
   const status = resolveManualFamilyStatus({ state, templateId: id, pricingVersion: data.version, businessDate: supplierBusinessDate() });
   return {
-    templateName: data.name, brandName: brand?.name ?? "", currency: data.currency, pricingVersion: data.version,
+    templateName: data.name, brandName: brand?.name ?? "", pricingVersion: data.version,
     canEdit: canApproveBrandPrices(profile?.role, profile?.account_status),
     release: release ? { effectiveFrom: release.effectiveFrom, note: release.note } : null,
-    lines: data.targets.map((target) => ({ key: target.key, code: target.raw_code || target.code, label: [target.label, target.dimension_label ?? target.dimension].filter(Boolean).join(" · "), price: target.price, currency: target.currency })),
+    lines: data.targets.map(manualLineFromTarget),
     checked: status.status === "price_checked" ? { checkedAt: status.checkedAt, checkedByName: status.checkedByName ?? null } : null,
   };
 }
@@ -58,7 +58,7 @@ export async function saveManualPriceLinesAction(templateId: string, expectedVer
   if (!canApproveBrandPrices(profile?.role, profile?.account_status)) throw Error("Brand price approver permission required.");
   const client = await createClient();
   const data = await readLines(client, id);
-  const lines: ManualPriceLine[] = data.targets.map((target) => ({ key: target.key, code: target.raw_code || target.code, label: target.label, price: target.price, currency: target.currency }));
+  const lines: ManualPriceLine[] = data.targets.map(manualLineFromTarget);
   const changes = validateChangesForSave(lines, rawChanges, String(expectedVersion), data.version);
   if (!changes.length) return { pricingVersion: data.version, savedCount: 0 };
   const state = (await loadManualPriceState(client, [data.brandId])).get(data.brandId);

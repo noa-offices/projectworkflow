@@ -4,7 +4,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { markManualPriceCheckedAction } from "@/components/products/manual-price-check-actions";
 import { loadManualPriceLinesAction, saveManualPriceLinesAction, type ManualPriceLinesResult } from "@/components/products/manual-price-lines-actions";
-import { collectPriceChanges, isEditableLine, priceDifference, priceInputText, pricesWillChangeText, type ManualPriceLine } from "@/lib/products/manual-price-lines";
+import { collectPriceChanges, isEditableLine, NO_PRICES_MESSAGE, sharedLineCurrency, priceDifference, priceInputText, pricesWillChangeText, type ManualPriceLine } from "@/lib/products/manual-price-lines";
 import type { SupplierFamilyStatusPresentation } from "@/lib/products/supplier-family-status";
 import { supplierTemplateStatusPresentation } from "./supplier-template-status-actions";
 
@@ -15,19 +15,22 @@ const buttonClass = "rounded-md bg-emerald-800 px-3 py-1.5 text-sm font-semibold
 const quietButton = "rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-semibold text-zinc-700 disabled:opacity-50";
 
 /** The table. With canEdit false there are no inputs at all. Changed rows are highlighted. */
-export function ManualPriceLinesTable({ lines, currency, canEdit, inputs, errors, onInput }: { lines: ManualPriceLine[]; currency: string; canEdit: boolean; inputs: Record<string, string>; errors: Record<string, string>; onInput: (key: string, value: string) => void }) {
+export function ManualPriceLinesTable({ lines, canEdit, inputs, errors, onInput }: { lines: ManualPriceLine[]; canEdit: boolean; inputs: Record<string, string>; errors: Record<string, string>; onInput: (key: string, value: string) => void }) {
+  // One shared currency goes in the headers; mixed currencies show in each cell. Never the template currency.
+  const currency = sharedLineCurrency(lines), unit = currency ? ` (${currency})` : "", cell = (line: ManualPriceLine) => `${money(line.price)}${!currency && line.price !== null ? ` ${line.currency}` : ""}`;
+  if (lines.length === 0) return <p className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">{NO_PRICES_MESSAGE}</p>;
   return <div className="mt-3 max-h-[52vh] overflow-auto rounded-lg border border-zinc-200">
     <table className="w-full min-w-[640px] text-left text-sm">
       <thead className="sticky top-0 z-10 bg-zinc-100 text-xs font-semibold text-zinc-700">
-        <tr><th className="px-3 py-2">Model code</th><th className="px-3 py-2">Price name</th><th className="px-3 py-2 text-right">Current price ({currency})</th>{canEdit ? <th className="px-3 py-2 text-right">New price ({currency})</th> : null}{canEdit ? <th className="px-3 py-2 text-right">Difference</th> : null}</tr>
+        <tr><th className="px-3 py-2">Model code</th><th className="px-3 py-2">Price name</th><th className="px-3 py-2 text-right">Current price{unit}</th>{canEdit ? <th className="px-3 py-2 text-right">New price{unit}</th> : null}{canEdit ? <th className="px-3 py-2 text-right">Difference</th> : null}</tr>
       </thead>
       <tbody>
-        {lines.length === 0 ? <tr><td colSpan={canEdit ? 5 : 3} className="px-3 py-4 text-sm text-zinc-600">This product has no price lines.</td></tr> : lines.map((line) => {
+        {lines.map((line) => {
           const text = inputs[line.key] ?? priceInputText(line.price), diff = priceDifference(line, text), changed = diff !== null && diff !== 0, error = errors[line.key];
           return <tr key={line.key} className={`border-t border-zinc-100 align-top ${changed ? "bg-amber-50" : ""}`} data-changed={changed ? "true" : "false"}>
             <td className="px-3 py-2 font-semibold text-zinc-900">{line.code}</td>
             <td className="px-3 py-2 text-zinc-600">{line.label || "—"}</td>
-            <td className="px-3 py-2 text-right tabular-nums">{money(line.price)}</td>
+            <td className="px-3 py-2 text-right tabular-nums">{cell(line)}</td>
             {canEdit ? <td className="px-3 py-2 text-right">{isEditableLine(line)
               ? <><input type="text" inputMode="decimal" aria-label={`New price for ${line.code} ${line.label}`} value={text} onChange={(event) => onInput(line.key, event.target.value)} className={`h-8 w-28 rounded-md border px-2 text-right text-sm tabular-nums ${error ? "border-red-400" : "border-zinc-300"}`} />{error ? <span role="alert" className="block text-xs text-red-800">{error}</span> : null}</>
               : <span className="block max-w-48 text-xs text-zinc-600">This price is empty. Set it by hand in Edit Template.</span>}</td> : null}
@@ -109,7 +112,7 @@ export function ManualPriceLinesAction({ templateId, templateName, canEdit, onSu
             {error ? <p role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</p> : null}
             {data ? <>
               <p className="text-sm font-semibold text-zinc-900">{data.release ? `Price list released ${dateText(data.release.effectiveFrom)}${data.release.note ? ` - ${data.release.note}` : ""}` : "No price list has been released yet."}</p>
-              <ManualPriceLinesTable lines={data.lines} currency={data.currency} canEdit={editable} inputs={inputs} errors={showErrors ? pending.errors : {}} onInput={(key, value) => { setInputs((current) => ({ ...current, [key]: value })); setNotice(""); setError(""); setShowErrors(false); }} />
+              <ManualPriceLinesTable lines={data.lines} canEdit={editable} inputs={inputs} errors={showErrors ? pending.errors : {}} onInput={(key, value) => { setInputs((current) => ({ ...current, [key]: value })); setNotice(""); setError(""); setShowErrors(false); }} />
               {data.checked ? <p className="mt-3 text-sm font-semibold text-emerald-900">Checked on {dateText(data.checked.checkedAt)}{data.checked.checkedByName ? ` by ${data.checked.checkedByName}` : ""}</p> : null}
               {editable ? <div className="mt-4 flex flex-wrap items-center gap-2">
                 <button type="button" disabled={busy || loading} onClick={askToSave} className={buttonClass}>Save prices</button>

@@ -13,6 +13,28 @@ export function parsePriceInput(text: string): { ok: true; value: number } | { o
   return Number.isFinite(value) && value <= 1e12 ? { ok: true, value } : { ok: false, message: "This number is too large." };
 }
 
+type LineSource = { key: string; raw_code: string; code: string; label: string; template_name: string; dimension?: string; dimension_label?: string; physical_field: string; price: number | null; currency: string };
+const fieldNames: Record<string, string> = { default_unit_price: "Default price", default_price: "Default price", additional_price: "Additional price" };
+
+/**
+ * One window line from a price target. A row with a code looks as before. A row without a code shows its own name (or the model name)
+ * in the code cell, and the price name is the column or price field, so no cell is ever empty.
+ */
+export function manualLineFromTarget(target: LineSource): ManualPriceLine {
+  const code = (target.raw_code || target.code).trim();
+  const column = target.dimension_label ?? target.dimension ?? "";
+  if (code) return { key: target.key, code, label: [target.label, column].filter(Boolean).join(" · "), price: target.price, currency: target.currency };
+  return { key: target.key, code: target.label.trim() || target.template_name.trim() || "Price", label: column || fieldNames[target.physical_field] || "Price", price: target.price, currency: target.currency };
+}
+
+/** The one currency of all priced lines, or null when they differ (then each cell shows its own). */
+export function sharedLineCurrency(lines: ManualPriceLine[]): string | null {
+  const currencies = new Set(lines.filter((line) => line.price !== null).map((line) => line.currency));
+  return currencies.size === 1 ? [...currencies][0] : null;
+}
+
+export const NO_PRICES_MESSAGE = "This product has no prices yet. Add them in Edit Template.";
+
 export const priceInputText = (price: number | null) => price === null ? "" : String(price);
 
 /** Only lines with a price can be typed over; an empty price is set in Edit Template. */

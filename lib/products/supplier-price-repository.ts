@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeManufacturerCode } from "./manufacturer-code";
 import type { DimensionRule, DurableBinding, PriceMatch, PriceTarget, ProductPriceInput, ReviewBatch, SourceIdentity, SourceVersion, SupplierIdentityEvidence, SupplierCoverageConflict, SupplierCoverageSuggestionRow, SupplierSourceDefinitionSummary } from "./supplier-price-contracts";
 import { expectedPricingVersion, pricingConflictMessage } from "./pricing-write-version";
-import { brandPriceTargets } from "./supplier-price-targets";
+import { brandPriceTargets, type PriceTargetOptions } from "./supplier-price-targets";
 import { comparisonCode, matchSupplierPrices } from "./supplier-price-matching";
 
 export type SupplierSourceInspectorRow = {
@@ -133,14 +133,14 @@ export async function supplierWrite(client: SupabaseClient, operation: string, p
 /** A batch’s immutable coverage snapshot: null is legacy/unrestricted, otherwise the only Families that participate in the review. */
 export function supplierBatchCoverage(batch: { coverage_template_ids?: string[] | null }): string[] | null { return batch.coverage_template_ids ?? null; }
 /** The one Supplier target universe. Every matching, review, readiness, Apply and Confirm path takes its targets here, so all agree on coverage. */
-export async function supplierBrandTargets(client: SupabaseClient, brandId: string, coverage: string[] | null = null) {
+export async function supplierBrandTargets(client: SupabaseClient, brandId: string, coverage: string[] | null = null, options: PriceTargetOptions = {}) {
   const [allTemplates, components] = await Promise.all([
     supplierRows<ProductPriceInput>(client, "product_templates", "id,brand_id,template_name,item_code,currency,default_unit_price,pricing_version,variant_pricing,category_pricing,desking_size_pricing,accessory_pricing", { brand_id: brandId, is_active: true }),
     supplierRows<Record<string, unknown>>(client, "product_components", "id,template_id,component_code,component_name,currency,unit_price,is_active,product_templates!inner(brand_id)", { "product_templates.brand_id": brandId, is_active: true }),
   ]);
   const covered = coverage ? new Set(coverage) : null;
   const templates = covered ? allTemplates.filter((template) => covered.has(template.id)) : allTemplates;
-  return { templates, targets: brandPriceTargets(templates, components) };
+  return { templates, targets: brandPriceTargets(templates, components, options) };
 }
 /** Coverage for a source that has a definition: the active definition’s confirmed Families, or an error. Null for a legacy source. The database derives the same set for the batch snapshot. */
 export async function supplierSourceCoverage(client: SupabaseClient, source: { brand_id: string; definition_id?: string | null }): Promise<string[] | null> {
