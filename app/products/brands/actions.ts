@@ -6,6 +6,7 @@ import { requireProductLibraryManager } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import { createClient } from "@/lib/supabase/server";
+import { setPriceCheckModeAction } from "@/components/products/manual-price-check-actions";
 
 function textValue(formData: FormData, name: string) {
   const value = formData.get(name);
@@ -108,6 +109,18 @@ export async function updateBrand(formData: FormData) {
   if (error) {
     console.error("BRAND UPDATE ERROR", error.message);
     redirectWithMessage("Brand could not be updated.");
+  }
+
+  // Price check method: only sent when the person can change it. The existing action checks the permission again.
+  const priceCheckMode = textValue(formData, "price_check_mode");
+  if (priceCheckMode) {
+    try {
+      await setPriceCheckModeAction(id, priceCheckMode === "manual" ? "manual" : "supplier_codes");
+    } catch (modeError) {
+      console.error("BRAND PRICE CHECK MODE ERROR", modeError instanceof Error ? modeError.message : modeError);
+      revalidatePath("/products/brands");
+      redirectWithMessage("Brand updated, but the price check method could not be changed.");
+    }
   }
 
   revalidatePath("/products/brands");

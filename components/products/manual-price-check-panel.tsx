@@ -1,15 +1,17 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { releaseManualPriceListAction, setPriceCheckModeAction } from "./manual-price-check-actions";
+import Link from "next/link";
+import { releaseManualPriceListAction } from "./manual-price-check-actions";
 
 export type ManualReleaseRow = { id: string; effectiveFrom: string; note: string; createdByName?: string };
 const field = "h-8 rounded-md border border-zinc-200 bg-white px-2 text-xs outline-none focus:border-emerald-800";
 const button = "inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 disabled:opacity-50";
 
 /**
- * Small control on a Brand's price-update card. Everyone who can read the card sees the release history of a manual Brand;
- * only price approvers (canManage) get the buttons. All rules live in the database functions.
+ * Small control on a Brand's price-update card. It shows the Brand's price check method (read only; it is changed on the Brands page).
+ * Everyone who can read the card sees the release history of a manual Brand; only price approvers (canManage) get the buttons.
+ * All rules live in the database functions.
  */
 export function ManualPriceCheckPanel({ brandId, brandName, manual, releases, canManage, today }: { brandId: string; brandName: string; manual: boolean; releases: ManualReleaseRow[]; canManage: boolean; today: string }) {
   const [open, setOpen] = useState(false);
@@ -21,8 +23,8 @@ export function ManualPriceCheckPanel({ brandId, brandName, manual, releases, ca
     setMessage("");
     try { await work(); setMessage(done); } catch (error) { setMessage(error instanceof Error ? error.message : "Could not save."); }
   });
-  if (!manual && !canManage) return null;
   return <div className="space-y-2 border-t border-zinc-100 pt-3 text-xs" aria-label={`Manual price check for ${brandName}`}>
+    <p className="text-zinc-700" data-testid="price-check-method">Price check method: <span className="font-semibold text-zinc-900">{manual ? "Manual" : "Codes"}</span>{canManage ? <> · <Link href={`/products/brands?brand=${brandId}&editBrand=${brandId}`} className="font-semibold text-emerald-900 underline">Edit brand</Link></> : null}</p>
     {manual ? <>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="font-semibold text-zinc-800">Manual price check</p>
@@ -35,9 +37,6 @@ export function ManualPriceCheckPanel({ brandId, brandName, manual, releases, ca
       </form> : null}
       {releases.length ? <ul className="space-y-0.5 text-zinc-600">{releases.slice(0, 5).map((release) => <li key={release.id}>{release.effectiveFrom}{release.note ? ` · ${release.note}` : ""}{release.createdByName ? ` · by ${release.createdByName}` : ""}{release.effectiveFrom > today ? " · not started yet" : ""}</li>)}{releases.length > 5 ? <li>and {releases.length - 5} older</li> : null}</ul> : <p className="text-zinc-500">No price list released yet.</p>}
     </> : null}
-    {canManage ? <div className="flex flex-wrap items-center gap-2">
-      <button type="button" disabled={pending} className={button} onClick={() => run(() => setPriceCheckModeAction(brandId, manual ? "supplier_codes" : "manual"), manual ? "This Brand now uses Supplier codes." : "This Brand now uses manual price checks.")}>{manual ? "Use Supplier codes instead" : "Use manual price checks"}</button>
-    </div> : null}
     {message ? <p role="status" className="text-zinc-700">{message}</p> : null}
   </div>;
 }
