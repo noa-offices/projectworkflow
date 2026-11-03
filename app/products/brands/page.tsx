@@ -8,6 +8,9 @@ import { requireProductLibraryManager } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import { createClient } from "@/lib/supabase/server";
+import { BrandPriceCheckMethodField, PriceCheckModeLabel } from "@/components/products/brand-price-check-method";
+import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
+import { loadManualPriceState, type PriceCheckMode } from "@/lib/products/manual-price-check";
 import {
   archiveBrand,
   archiveCategory,
@@ -259,7 +262,9 @@ function ActionLink({
   );
 }
 
-function BrandForm({ brand, cancelHref }: { brand?: Brand; cancelHref?: string }) {
+type PriceCheckInfo = { mode: PriceCheckMode; canChange: boolean; hasSupplierLists: boolean };
+
+function BrandForm({ brand, cancelHref, priceCheck }: { brand?: Brand; cancelHref?: string; priceCheck?: PriceCheckInfo }) {
   return (
     <form action={brand ? updateBrand : createBrand} className="grid gap-3 md:grid-cols-2">
       {brand ? <input type="hidden" name="id" value={brand.id} /> : null}
@@ -278,6 +283,7 @@ function BrandForm({ brand, cancelHref }: { brand?: Brand; cancelHref?: string }
         label="Description"
         defaultValue={brand?.description}
       />
+      {brand && priceCheck ? <BrandPriceCheckMethodField currentMode={priceCheck.mode} canChange={priceCheck.canChange} hasSupplierLists={priceCheck.hasSupplierLists} /> : null}
       <div className="flex flex-col gap-3 md:col-span-2 sm:flex-row sm:items-end sm:justify-between">
         <ActiveToggle defaultChecked={brand?.is_active ?? true} />
         <div className="flex gap-2">
@@ -341,6 +347,7 @@ function BrandListCard({
   mainCount,
   openHref,
   editHref,
+  priceCheckMode,
   subCount,
 }: {
   archiveHrefId: string;
@@ -349,6 +356,7 @@ function BrandListCard({
   mainCount: number;
   openHref: string;
   editHref: string;
+  priceCheckMode: PriceCheckMode;
   subCount: number;
 }) {
   return (
@@ -370,6 +378,7 @@ function BrandListCard({
                 Code: {brand.code}
               </span>
             ) : null}
+            <PriceCheckModeLabel mode={priceCheckMode} />
           </div>
           <p className="mt-2 text-sm text-zinc-500">
             Origin: {brand.origin ?? "-"}
@@ -397,6 +406,15 @@ function BrandListCard({
       </div>
     </article>
   );
+}
+
+/** True when the Brand has an active supplier definition or an imported supplier price list. Only used for the warning. */
+async function brandHasSupplierPriceLists(supabase: Awaited<ReturnType<typeof createClient>>, brandId: string) {
+  const [definitions, versions] = await Promise.all([
+    supabase.from("supplier_source_definitions").select("id", { count: "exact", head: true }).eq("brand_id", brandId).eq("is_active", true),
+    supabase.from("supplier_source_versions").select("id", { count: "exact", head: true }).eq("brand_id", brandId).eq("status", "imported"),
+  ]);
+  return (definitions.count ?? 0) > 0 || (versions.count ?? 0) > 0;
 }
 
 type ArchiveItem = {
@@ -533,6 +551,10 @@ async function BrandsContent({ searchParams, auth }: BrandsPageProps & { auth: A
   });
 
   const selectedBrand = brandList.find((brand) => brand.id === selectedBrandId) ?? null;
+  // Price check method: manual Brands come from the existing read function (before the migration it reads as "none").
+  const canChangePriceCheck = canApproveBrandPrices(auth.profile?.role, auth.profile?.account_status);
+  const manualBrands = brandList.length ? await loadManualPriceState(supabase, brandList.map((brand) => brand.id)) : new Map();
+  const selectedBrandHasSupplierLists = selectedBrand ? await brandHasSupplierPriceLists(supabase, selectedBrand.id) : false;
   const selectedMainCategories = selectedBrand
     ? mainCategoriesByBrand.get(selectedBrand.id) ?? []
     : [];
@@ -682,6 +704,7 @@ async function BrandsContent({ searchParams, auth }: BrandsPageProps & { auth: A
                         editBrand: brand.id,
                       })}
                       isSelected={isSelected}
+                      priceCheckMode={manualBrands.has(brand.id) ? "manual" : "supplier_codes"}
                       mainCount={mainCount}
                       openHref={brandsHref(params, {
                         brand: brand.id,
@@ -779,7 +802,7 @@ async function BrandsContent({ searchParams, auth }: BrandsPageProps & { auth: A
                         Edit Brand
                       </summary>
                       <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                        <BrandForm brand={selectedBrand} />
+                        <BrandForm brand={selectedBrand} priceCheck={{ mode: manualBrands.has(selectedBrand.id) ? "manual" : "supplier_codes", canChange: canChangePriceCheck, hasSupplierLists: selectedBrandHasSupplierLists }} />
                       </div>
                     </details>
                   </section>
