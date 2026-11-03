@@ -146,7 +146,8 @@ test("old/new matrix shape round-trips label rename without re-keying prices", (
     assert.deepEqual(pricingColumns(group), pricingColumns({ ...group, price_columns: pricingColumns(group) }));
   }
   assert.equal(initialPricingDimensionCode("Cat. D - Stretch / Melange"), "cat_d_stretch_melange");
-  assert.throws(() => pricingColumns({ price_categories: ["Cat B","Cat-B"] }), /Conflicting/);
+  assert.deepEqual(pricingColumns({ price_categories: ["Cat B","Cat-B"] }).map((column) => column.dimension_code), ["cat_b", "cat_b_2"]); // auto codes that collide are made unique, not rejected
+  assert.throws(() => pricingColumns({ price_columns: [{ id: "a", label: "Cat B", dimension_code: "cat_b" }, { id: "b", label: "Cat-B", dimension_code: "cat_b" }] }), /both use the code/);
 });
 
 test("metadata-only column declarations preserve exact frozen keys on save", () => {

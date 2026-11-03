@@ -30,6 +30,7 @@ import { mapDraftWorkstationPricing } from "@/lib/products/product-template-draf
 import { createSmartSaveTracker, smartSetupSectionActions, type SmartSetupApplySection } from "@/lib/products/smart-setup-section-apply";
 import { mapDraftBaseModelPricing } from "@/lib/products/product-template-draft-base-model-adapter";
 import { mapDraftPriceMatricesToCategoryGroups } from "@/lib/products/product-template-draft-category-adapter";
+import { mapSmartDraftForApply } from "@/lib/products/smart-setup-apply-preview";
 import { mapDraftModularPricing } from "@/lib/products/product-template-draft-modular-adapter";
 import { mapDraftOptionGroupsToAccessories } from "@/lib/products/product-template-draft-accessory-adapter";
 import { draftForSmartSetupReviewApply, smartReviewMatrixOverrides, type SmartSetupReviewRoutingPlan } from "@/lib/products/smart-product-review-routing";
@@ -516,19 +517,13 @@ export function ProductTemplateForm({
   const replacementVersionRef = useRef<Partial<Record<SmartSetupApplySection, number>>>({});
   const lastApplyVersionsRef = useRef<Partial<Record<SmartSetupApplySection, number>>>({});
   function requestSmartDraftApply(draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = [], sourcePdfMeta?: { sourcePdfStoragePath?: string; sourcePdfFileName?: string }, incremental = false, incrementalSections: SmartSetupPricingSection[] = []) {
+    const { applyDraft, workstation, baseModel, categoryResult, modularResult, accessoryResult } = mapSmartDraftForApply(draft, routingPlan, subgroupAssignments); // may throw; nothing below changes state until it has succeeded
     lastApplyVersionsRef.current = {};
-    const applyDraft = routingPlan ? draftForSmartSetupReviewApply(draft, routingPlan) : draft;
-    const matrixRouting = routingPlan ? smartReviewMatrixOverrides(routingPlan) : undefined;
-    const workstation = mapDraftWorkstationPricing(applyDraft, subgroupAssignments.find((entry) => entry.pricingType === "workstation")?.subgroups);
-    const baseModel = mapDraftBaseModelPricing(applyDraft, matrixRouting);
     const subgroupFor = (pricingType: ProductTemplateGroupReferenceType, groupId: string) => subgroupAssignments.find((entry) => entry.pricingType === pricingType && entry.groupId === groupId)?.subgroups;
     const flatSubgroups = subgroupAssignments.find((entry) => entry.sourceKey === "base_model:rows" && entry.pricingType === "base_model")?.subgroups;
     const baseModelGroups = baseModel.groups.map((group) => ({ ...group, subgroups: subgroupFor("base_model", group.id) }));
-    const categoryResult = mapDraftPriceMatricesToCategoryGroups(applyDraft, matrixRouting);
     const category = { ...categoryResult, groups: categoryResult.groups.map((group) => ({ ...group, subgroups: subgroupFor("finish_category", group.id) })) };
-    const modularResult = mapDraftModularPricing(applyDraft);
     const modular = { ...modularResult, groups: modularResult.groups.map((group) => ({ ...group, subgroups: subgroupFor("modular", group.id) })) };
-    const accessoryResult = mapDraftOptionGroupsToAccessories(applyDraft, routingPlan);
     const accessories = { ...accessoryResult, groups: accessoryResult.groups.map((group) => ({ ...group, subgroups: subgroupFor("accessory", group.id) })) };
     const draftPresence = getDraftPricingSectionPresence(applyDraft);
     draftPresence.workstation = workstation.rows.length > 0;
