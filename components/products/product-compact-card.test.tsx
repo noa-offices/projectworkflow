@@ -43,7 +43,7 @@ test("Page A card (no price status) has no status wrapper on the image and is ot
 });
 
 test("the grid keeps 4 columns on very wide screens", () => {
-  assert.match(productCardGridClass, /sm:grid-cols-2/); assert.match(productCardGridClass, /xl:grid-cols-3/); assert.match(productCardGridClass, /2xl:grid-cols-4/);
+  assert.match(productCardGridClass, /@min-.576px.:grid-cols-2/); assert.match(productCardGridClass, /@min-.896px.:grid-cols-3/); assert.match(productCardGridClass, /@min-.1040px.:grid-cols-4/);
 });
 
 test("the Product Management toolbar has one Add Product Template button, search, four dropdowns, small chips and the bulk buttons", async () => {

@@ -23,7 +23,7 @@ test("one slim chip row, one toolbar with a single Add Group and Add Brand, and 
 
 test("brand cards use a 1, 2, 3, 4 column grid and show name, code, counts, +N chips and one button", () => {
   const html = render();
-  assert.match(html, /md:grid-cols-2/); assert.match(html, /xl:grid-cols-3/); assert.match(html, /2xl:grid-cols-4/);
+  assert.match(html, /@min-.576px.:grid-cols-2/); assert.match(html, /@min-.896px.:grid-cols-3/); assert.match(html, /@min-.1040px.:grid-cols-4/); assert.match(html, /@container/);
   assert.match(html, /5 groups · 20 materials/); assert.match(html, /\+2/); assert.match(html, /Open brand/); assert.match(html, /Add first group/);
   const card = renderToStaticMarkup(<MaterialBrandCard onAddGroup={noop} onOpen={noop} row={{ brand: brands[0], groups: groups.slice(0, 1), materials: 4, thumbs: groups[0].thumbs }} />);
   assert.match(card, /Arca/); assert.match(card, />AR</); assert.match(card, /1 group · 4 materials/); assert.match(card, /loading="lazy"/);

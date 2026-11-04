@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Search } from "lucide-react";
-import { toolbarControl as control, toolbarFocusRing as focusRing, toolbarSecondaryButton } from "./product-toolbar-styles";
+import { toolbarControl as control, toolbarFocusRing as focusRing, toolbarActions, toolbarContainer, toolbarRow, toolbarSearch, toolbarSecondaryButton, toolbarSelectWidth } from "./product-toolbar-styles";
 
 type BrowseOption = {
   id: string;
@@ -81,8 +81,8 @@ export function ProductLibraryBrowseControls({
   const hasFilters = Boolean(searchQuery || selectedBrandId || selectedCategoryId || selectedSubCategoryId);
 
   return (
-    <section className="flex flex-wrap items-center gap-2" aria-label="Find products">
-      <div className="relative min-w-[12rem] flex-1 sm:max-w-sm">
+    <section className={`${toolbarContainer} ${toolbarRow}`} aria-label="Find products">
+      <div className={toolbarSearch}>
         <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
         <input
           type="search"
@@ -97,7 +97,7 @@ export function ProductLibraryBrowseControls({
         aria-label="Main category"
         value={selectedCategoryId}
         onChange={(event) => replaceParams({ main: event.target.value || null, sub: null })}
-        className={control}
+        className={`${control} ${toolbarSelectWidth}`}
       >
         <option value="">All main categories</option>
         {categoryOptions.map((option) => (
@@ -108,7 +108,7 @@ export function ProductLibraryBrowseControls({
         aria-label="Sub category"
         value={selectedSubCategoryId}
         onChange={(event) => replaceParams({ sub: event.target.value || null })}
-        className={control}
+        className={`${control} ${toolbarSelectWidth}`}
       >
         <option value="">All sub categories</option>
         {subCategoryOptions.map((option) => (
@@ -117,7 +117,7 @@ export function ProductLibraryBrowseControls({
       </select>
       <a
         href="/products/manage"
-        className={`${toolbarSecondaryButton} sm:ml-auto`}
+        className={`${toolbarSecondaryButton} @xl:ml-auto`}
       >
         Open Product Management
       </a>

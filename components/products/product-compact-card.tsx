@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { cardGridColumns } from "./product-toolbar-styles";
 
 const focusRing = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800";
 
@@ -71,5 +72,5 @@ export function ProductCompactCard({
   );
 }
 
-/** The grid both pages use: 1, 2, 3 and 4 columns, equal heights in a row. */
-export const productCardGridClass = "grid auto-rows-fr gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
+/** The grid both pages use: 1, 2, 3 and 4 columns by the width of the page content (put "@container" on a wrapper), equal heights in a row. */
+export const productCardGridClass = cardGridColumns;

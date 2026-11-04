@@ -404,7 +404,7 @@ export function ProductManagementTemplateResults({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="@container space-y-4">
       <BulkArchiveBar
         checkedIds={checkedIds}
         onClearSelection={() => setCheckedIds(new Set())}

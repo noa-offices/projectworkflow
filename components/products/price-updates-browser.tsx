@@ -16,6 +16,7 @@ export type PriceUpdatesCardData = {
   manual?: { latestRelease: string | null; countsText: string; canManage: boolean; today: string };
 };
 
+import { cardGridColumns, toolbarRow, toolbarSearch, toolbarSelectWidth } from "./product-toolbar-styles";
 const focusRing = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800";
 const control = `h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10`;
 const dateText = (value: string) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
@@ -72,7 +73,7 @@ export function PriceUpdatesBrowser({ cards, initialFilters, statusOptions, canE
   const counts = useMemo(() => chipCounts(rows, filters), [rows, filters]);
   const refresh = () => startTransition(() => router.refresh()); // the card shows the new release without a full page reload
 
-  return <div className="space-y-4">
+  return <div className="@container space-y-4">
     <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter by status">
       {priceUpdatesChips.map((chip) => {
         const active = filters.status === chip.state;
@@ -82,20 +83,20 @@ export function PriceUpdatesBrowser({ cards, initialFilters, statusOptions, canE
         </button>;
       })}
     </div>
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+    <div className={toolbarRow}>
       <label className="sr-only" htmlFor="pu-search">Search brands</label>
-      <input id="pu-search" type="search" value={typed} onChange={(event) => setTyped(event.target.value)} placeholder="Search by brand name" className={`${control} w-full lg:max-w-sm`} />
+      <input id="pu-search" type="search" value={typed} onChange={(event) => setTyped(event.target.value)} placeholder="Search by brand name" className={`${control} ${toolbarSearch}`} />
       <label className="sr-only" htmlFor="pu-status">Status</label>
-      <select id="pu-status" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))} className={control}>
+      <select id="pu-status" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))} className={`${control} ${toolbarSelectWidth}`}>
         <option value="">All statuses</option>{statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
       <label className="sr-only" htmlFor="pu-method">Price check method</label>
-      <select id="pu-method" value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value as PriceUpdatesMethod }))} className={control}>
+      <select id="pu-method" value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value as PriceUpdatesMethod }))} className={`${control} ${toolbarSelectWidth}`}>
         <option value="all">All price check methods</option><option value="codes">Codes</option><option value="manual">Manual</option>
       </select>
-      <p className="text-sm text-zinc-500 lg:ml-auto" role="status" aria-live="polite" data-testid="pu-count">{priceUpdatesCountText(visible.length, cards.length)}</p>
+      <p className="text-sm text-zinc-500 @xl:ml-auto" role="status" aria-live="polite" data-testid="pu-count">{priceUpdatesCountText(visible.length, cards.length)}</p>
     </div>
-    {visible.length ? <ul className="grid auto-rows-fr gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" aria-label="Brands">
+    {visible.length ? <ul className={cardGridColumns} aria-label="Brands">
       {visible.map((card) => <PriceUpdatesCard key={card.brandId} card={card} canEditBrand={canEditBrand} onChanged={refresh} />)}
     </ul> : <div className="rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
       <p>{cards.length ? noPriceUpdatesText(filters.q) : "No brands yet."}</p>
