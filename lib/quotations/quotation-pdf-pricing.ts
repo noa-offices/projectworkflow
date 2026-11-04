@@ -1,4 +1,5 @@
 import { roundExact2, type PricingRule } from "../quotation-pricing";
+import { type QuotationPdfSettings } from "./quotation-pdf-settings";
 
 type PdfLine = { unit_price: number; discount_type: string; discount_value: number; net_price: number; net_total: number; qty: number };
 type PdfQuotation = { subtotal: number; discount_total: number; vat_amount: number; grand_total: number; overall_discount_type: string; overall_discount_value: number };
@@ -24,4 +25,18 @@ export function pdfTotals(rule: PricingRule | null | undefined, quotation: PdfQu
     vat: quotation.vat_amount,
     grandTotal: quotation.grand_total,
   };
+}
+
+export type PdfTotalRowKey = "subtotal" | "itemDiscount" | "extraDiscount" | "totalAfterDiscount" | "rounding" | "vat" | "grandTotal";
+
+export function pdfTotalRowKeys(settings: Pick<QuotationPdfSettings, "showItemDiscount" | "showExtraDiscount">, hasExtraDiscount: boolean, hasRounding = false): PdfTotalRowKey[] {
+  return [
+    ...(settings.showItemDiscount && settings.showExtraDiscount ? ["subtotal" as const] : []),
+    ...(settings.showItemDiscount ? ["itemDiscount" as const] : []),
+    ...(settings.showExtraDiscount && hasExtraDiscount ? ["extraDiscount" as const] : []),
+    "totalAfterDiscount",
+    ...(hasRounding ? ["rounding" as const] : []),
+    "vat",
+    "grandTotal",
+  ];
 }

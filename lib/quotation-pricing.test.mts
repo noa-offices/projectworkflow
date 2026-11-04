@@ -78,7 +78,7 @@ test("legacy displays and amounts are unchanged", () => {
   }
   assert.equal(ruleMoneyCell(undefined, 1399.5), "1,400");
   assert.match(formatRuleMoney(LEGACY_PRICING_RULE, "AED", 1399.5), /1,400$/);
-  assert.equal(ruleMoneyCell(WHOLE, 1399.5), "1,399.5");
+  assert.equal(ruleMoneyCell(WHOLE, 1399.5), "1,399.50");
   assert.match(formatRuleMoney(WHOLE, "AED", 1468.95), /1,468\.95$/);
   assert.equal(ruleExactAmount(WHOLE, 1468.95), 1468.95); // the Project File total is exact
   assert.equal(ruleExactAmount(LEGACY_PRICING_RULE, 1469.48), 1470);
@@ -134,7 +134,7 @@ test("the actions use the quotation's rule; whole AED change detection and the a
 test("the builders pass the rule to the Product Library, the row editor and the manual conversion", () => {
   const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const local = read("../components/quotations/local-quotation-builder.tsx"), shared = read("../app/quotations/[id]/builder/page.tsx");
-  assert.equal(local.split("pricingRule={readPricingRule(workspace.layout_settings)}").length - 1, 2);
+  assert.equal(local.match(/^\s+pricingRule=\{readPricingRule\(workspace\.layout_settings\)\}$/gm)?.length, 2);
   assert.ok(shared.includes("const pricingRule = readPricingRule(quotation.layout_settings);"));
   assert.ok(shared.includes("<ProductLibrarySelector\n          pricingRule={readPricingRule(quotation.layout_settings)}"));
   assert.equal(shared.split("<QuotationRowEditorProvider\n").length - 1, shared.split("<QuotationRowEditorProvider\n                              pricingRule={item.pricing_rule}").length - 1);

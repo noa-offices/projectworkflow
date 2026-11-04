@@ -7,7 +7,8 @@ import {
   type ImageDisplaySettings,
 } from "@/lib/image-display-settings";
 import { formatRuleMoney, readPricingRule, ruleMoneyCell, type PricingRule } from "@/lib/quotation-pricing";
-import { pdfLineAmounts, pdfTotals } from "@/lib/quotations/quotation-pdf-pricing";
+import { pdfLineAmounts, pdfTotalRowKeys, pdfTotals } from "@/lib/quotations/quotation-pdf-pricing";
+import { displayedTotals, formatRoundingDifference, roundingAdjustmentFromLayout } from "@/lib/quotations/quotation-total-display";
 import {
   formatBrandOriginSupplier,
   specificationWithoutDuplicateCode,
@@ -1432,6 +1433,8 @@ function NotesTermsSummaryPage({
   const resolvedNotes = settings.notesOverride?.trim() || data.documentSetup.notes.clientIntroNote || data.defaultQuotationNotes || DEFAULT_QUOTATION_NOTES;
   const pricingRule = readPricingRule(data.quotation.layout_settings);
   const totals = pdfTotals(pricingRule, data.quotation);
+  const display = displayedTotals(pricingRule, data.quotation, roundingAdjustmentFromLayout(data.quotation.layout_settings));
+  const rows = pdfTotalRowKeys(settings, totals.overallDiscount > 0, display.rounding !== 0);
 
   return (
     <div className="grid h-full grid-cols-[minmax(0,1.4fr)_minmax(320px,0.9fr)] gap-5">
@@ -1461,18 +1464,28 @@ function NotesTermsSummaryPage({
       <section className="rounded-sm border border-zinc-300 bg-white p-4">
         <h2 className="text-sm font-bold uppercase tracking-wide text-zinc-800">Summary / Totals</h2>
         <div className="mt-3 overflow-hidden border border-zinc-900 bg-white">
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
+          {rows.includes("subtotal") ? <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
             <span>Total Price</span>
             <span className="whitespace-nowrap font-semibold">{money(pricingRule, data.quotation.currency, totals.subtotal)}</span>
-          </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
+          </div> : null}
+          {rows.includes("itemDiscount") ? <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
             <span>Item Discount</span>
             <span className="whitespace-nowrap font-semibold">{money(pricingRule, data.quotation.currency, totals.itemDiscount)}</span>
-          </div>
-          {Number(totals.overallDiscount || 0) > 0 ? (
+          </div> : null}
+          {rows.includes("extraDiscount") ? (
             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
               <span>Extra Discount</span>
               <span className="whitespace-nowrap font-semibold">{money(pricingRule, data.quotation.currency, totals.overallDiscount)}</span>
+            </div>
+          ) : null}
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 bg-emerald-50 px-4 py-2.5 text-xs font-semibold">
+            <span>Total after discount</span>
+            <span className="whitespace-nowrap">{money(pricingRule, data.quotation.currency, display.totalAfterDiscount)}</span>
+          </div>
+          {rows.includes("rounding") ? (
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2 text-[10px] text-zinc-600">
+              <span>Rounding</span>
+              <span className="whitespace-nowrap">{formatRoundingDifference(pricingRule, data.quotation.currency, display.rounding)}</span>
             </div>
           ) : null}
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">

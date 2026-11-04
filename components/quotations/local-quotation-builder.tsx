@@ -1,7 +1,8 @@
 "use client";
 
 import { announcedSnapshotOf } from "@/lib/products/price-announcements";
-import { readPricingRule } from "@/lib/quotation-pricing";
+import { readPricingRule, type PricingRule } from "@/lib/quotation-pricing";
+import { formatRoundingDifference, lineRoundingAdjustment } from "@/lib/quotations/quotation-total-display";
 import Link from "next/link";
 import { prepareQuotationSharedImages } from "@/app/quotations/shared-image-actions";
 import { useRouter } from "next/navigation";
@@ -76,6 +77,8 @@ type LocalQuotationItemPatch = Partial<Omit<LocalQuotationItem, "qty" | "unit_pr
 };
 type PriceRoundingMetadata = {
   rounded_net_prices?: Record<string, number>;
+  adjustments_by_item?: Record<string, number>;
+  adjustment?: number;
   step?: number | null;
   last_applied_step?: number | null;
   applied_at?: string | null;
@@ -1554,10 +1557,11 @@ function formatTableNumber(value: unknown) {
   });
 }
 
-function formatWorkspaceMoney(currency: string | null | undefined, value: unknown) {
-  return formatMoney(currency, exactMoneyValue(value), {
+function formatWorkspaceMoney(currency: string | null | undefined, value: unknown, pricingRule?: PricingRule) {
+  const exact = exactMoneyValue(value);
+  return formatMoney(currency, exact, {
     maximumFractionDigits: 2,
-    minimumFractionDigits: 0,
+    minimumFractionDigits: pricingRule === "whole_aed_v1" && !Number.isInteger(exact) ? 2 : 0,
   });
 }
 
@@ -1586,9 +1590,16 @@ function readPriceRoundingMetadata(workspace: LocalQuotationWorkspace): PriceRou
   const roundedNetPrices = Object.fromEntries(
     Object.entries(roundedNetPricesRecord).filter(([, value]) => Number.isFinite(Number(value))),
   ) as Record<string, number>;
+  const adjustmentsByItem = Object.fromEntries(
+    Object.entries((rounding.adjustments_by_item ?? {}) as Record<string, unknown>)
+      .filter(([, value]) => Number.isFinite(Number(value)))
+      .map(([id, value]) => [id, Number(value)]),
+  );
 
   return {
     rounded_net_prices: roundedNetPrices,
+    adjustments_by_item: adjustmentsByItem,
+    adjustment: Number.isFinite(Number(rounding.adjustment)) ? Number(rounding.adjustment) : 0,
     step: Number.isFinite(Number(rounding.step)) ? Number(rounding.step) : null,
     last_applied_step: Number.isFinite(Number(rounding.last_applied_step)) ? Number(rounding.last_applied_step) : null,
     applied_at: typeof rounding.applied_at === "string" ? rounding.applied_at : null,
@@ -1642,23 +1653,23 @@ function InsertSectionRow({
   );
 }
 
-function SectionTotalRow({ currency, total, totalColumns }: { currency: string; total: number; totalColumns: number }) {
+function SectionTotalRow({ currency, total, totalColumns, pricingRule }: { currency: string; total: number; totalColumns: number; pricingRule: PricingRule }) {
   return (
     <tr>
       <td colSpan={totalColumns} className="border border-zinc-300 bg-zinc-50 px-3 py-2 text-right text-xs font-bold uppercase tracking-wide text-zinc-700">
         <span className="mr-4 text-zinc-500">Section Total</span>
-        <span className="text-zinc-950">{formatWorkspaceMoney(currency, total)}</span>
+        <span className="text-zinc-950">{formatWorkspaceMoney(currency, total, pricingRule)}</span>
       </td>
     </tr>
   );
 }
 
-function MainSectionTotalRow({ currency, label, total, totalColumns }: { currency: string; label: string; total: number; totalColumns: number }) {
+function MainSectionTotalRow({ currency, label, total, totalColumns, pricingRule }: { currency: string; label: string; total: number; totalColumns: number; pricingRule: PricingRule }) {
   return (
     <tr>
       <td colSpan={totalColumns} className="border border-zinc-950 bg-zinc-950 px-3 py-2 text-right text-sm font-bold uppercase tracking-wide text-white">
         <span className="mr-4">{label || "Main Section"} Total</span>
-        <span>{formatWorkspaceMoney(currency, total)}</span>
+        <span>{formatWorkspaceMoney(currency, total, pricingRule)}</span>
       </td>
     </tr>
   );
@@ -2397,11 +2408,15 @@ export function LocalQuotationBuilder({
 
       const roundingMetadata = readPriceRoundingMetadata(current);
       const nextRoundedNetPrices = { ...(roundingMetadata.rounded_net_prices ?? {}) };
+      const nextAdjustments = { ...(roundingMetadata.adjustments_by_item ?? {}) };
       delete nextRoundedNetPrices[itemId];
+      delete nextAdjustments[itemId];
 
       return withPriceRoundingMetadata(nextWorkspace, {
         ...roundingMetadata,
         rounded_net_prices: nextRoundedNetPrices,
+        adjustments_by_item: nextAdjustments,
+        adjustment: exactMoneyValue(Object.values(nextAdjustments).reduce((sum, value) => sum + value, 0)),
       });
     }, { groupKey: `item:${itemId}`, mode: "merge" });
   }
@@ -2635,6 +2650,7 @@ export function LocalQuotationBuilder({
     commit((current) => {
       const currentRounding = readPriceRoundingMetadata(current);
       const roundedNetPrices: Record<string, number> = {};
+      const adjustmentsByItem: Record<string, number> = {};
       const items = current.items.map((item) => {
         if (
           item.is_active === false ||
@@ -2642,11 +2658,17 @@ export function LocalQuotationBuilder({
           ["note", "blank", "subtotal"].includes(item.item_type) ||
           ["heading", "note", "no_quote"].includes(item.line_style)
         ) {
+          delete adjustmentsByItem[item.id];
           return item;
         }
 
         const roundedNetPrice = roundToNearestStep(exactMoneyValue(item.net_price), step);
         roundedNetPrices[item.id] = roundedNetPrice;
+        if (!item.is_optional || item.include_in_total === true) {
+          adjustmentsByItem[item.id] = exactMoneyValue((currentRounding.adjustments_by_item?.[item.id] ?? 0) + lineRoundingAdjustment(roundedNetPrice, exactMoneyValue(item.net_price), Number(item.qty) || 0));
+        } else {
+          delete adjustmentsByItem[item.id];
+        }
         return item;
       });
 
@@ -2658,6 +2680,8 @@ export function LocalQuotationBuilder({
         {
           ...currentRounding,
           rounded_net_prices: roundedNetPrices,
+          adjustments_by_item: adjustmentsByItem,
+          adjustment: exactMoneyValue(Object.values(adjustmentsByItem).reduce((sum, value) => sum + value, 0)),
           step,
           last_applied_step: step,
           applied_at: localNow(),
@@ -2685,6 +2709,8 @@ export function LocalQuotationBuilder({
         {
           ...currentRounding,
           rounded_net_prices: {},
+          adjustments_by_item: {},
+          adjustment: 0,
           applied_at: null,
           last_applied_step: currentRounding.last_applied_step ?? currentRounding.step ?? null,
         },
@@ -2923,7 +2949,7 @@ export function LocalQuotationBuilder({
         label: "Converted quote price",
         value: snapshotDetails.convertedQuotePrice
           ? `${snapshotDetails.quoteCurrency} ${snapshotDetails.convertedQuotePrice}`
-          : formatWorkspaceMoney(item.currency || workspace.currency, item.unit_price),
+          : formatWorkspaceMoney(item.currency || workspace.currency, item.unit_price, readPricingRule(workspace.layout_settings)),
       },
       { label: "Selected options", value: snapshotDetails.selectedOptionNames.join(", ") || sourceLibrarySummary(item).selectedOptions.join(", ") || sourceLibrarySummary(item).selectedOptionIds.join(", ") },
     ].filter((row) => Boolean(row.value));
@@ -3399,7 +3425,7 @@ export function LocalQuotationBuilder({
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-zinc-950">{currentDocumentNumber ?? "Draft quotation"}</p>
               <p className="break-words text-xs font-semibold text-emerald-950">
-                {formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total)}
+                {formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total, readPricingRule(workspace.layout_settings))}
               </p>
             </div>
             <button
@@ -3990,7 +4016,7 @@ export function LocalQuotationBuilder({
                 </div>
               </ClickAwayWrapper>
               <div className="inline-flex h-9 items-center border border-emerald-900 bg-emerald-50 px-3 text-xs font-semibold text-emerald-950">
-                Final Total: {formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total)}
+                Final Total: {formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total, readPricingRule(workspace.layout_settings))}
               </div>
             </div>
           </div>
@@ -4636,7 +4662,7 @@ export function LocalQuotationBuilder({
                           </td>
                         </tr>
                         {!childrenByParent.get(section.id)?.length ? (
-                          <MainSectionTotalRow currency={workspace.currency} label={section.section_title} total={mainTotal} totalColumns={totalColumns} />
+                          <MainSectionTotalRow currency={workspace.currency} label={section.section_title} total={mainTotal} totalColumns={totalColumns} pricingRule={readPricingRule(workspace.layout_settings)} />
                         ) : null}
                       </Fragment>
                     );
@@ -4953,7 +4979,7 @@ export function LocalQuotationBuilder({
                           })()}
                         </Fragment>
                       ))}
-                      <SectionTotalRow currency={workspace.currency} total={sectionTotal} totalColumns={totalColumns} />
+                      <SectionTotalRow currency={workspace.currency} total={sectionTotal} totalColumns={totalColumns} pricingRule={readPricingRule(workspace.layout_settings)} />
                       <tr>
                         <td colSpan={totalColumns} className="border border-zinc-300 bg-zinc-50 px-2 py-2">
                           <div className="flex flex-wrap items-center gap-2">
@@ -4991,7 +5017,7 @@ export function LocalQuotationBuilder({
                         </td>
                       </tr>
                       {section.parent_section_id && sectionsById.get(section.parent_section_id)?.section_kind === "main" && nextSection?.parent_section_id !== section.parent_section_id ? (
-                        <MainSectionTotalRow currency={workspace.currency} label={sectionsById.get(section.parent_section_id)?.section_title ?? ""} total={mainSectionTotalById.get(section.parent_section_id) ?? 0} totalColumns={totalColumns} />
+                        <MainSectionTotalRow currency={workspace.currency} label={sectionsById.get(section.parent_section_id)?.section_title ?? ""} total={mainSectionTotalById.get(section.parent_section_id) ?? 0} totalColumns={totalColumns} pricingRule={readPricingRule(workspace.layout_settings)} />
                       ) : null}
                     </Fragment>
                   );
@@ -5162,7 +5188,7 @@ export function LocalQuotationBuilder({
                     const imageUrl = item.proposed_image_url_snapshot || item.specified_image_url_snapshot || null;
                     const title = item.item_name_snapshot || item.model_snapshot || item.item_code_snapshot || (itemType === "note" ? "Note" : itemType === "blank" ? "Blank row" : "Unnamed item");
                     const lineTotal = itemCountsInLocalTotals(item)
-                      ? formatWorkspaceMoney(workspace.currency, item.net_total)
+                      ? formatWorkspaceMoney(workspace.currency, item.net_total, readPricingRule(workspace.layout_settings))
                       : netTotalPlaceholder(item);
 
                     return (
@@ -5374,25 +5400,25 @@ export function LocalQuotationBuilder({
           <div className="w-full max-w-md border border-zinc-300 bg-white text-sm">
             <div className="flex min-w-0 items-center justify-between gap-3 bg-emerald-950 px-3 py-3 text-base font-bold text-white xl:hidden">
               <span>Final Total</span>
-              <span className="min-w-0 break-words text-right">{formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total)}</span>
+              <span className="min-w-0 break-words text-right">{formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total, readPricingRule(workspace.layout_settings))}</span>
             </div>
             <p className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
               Existing PDF/spec routes still use the saved software snapshot. Save to Software before preview/download.
             </p>
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">Total Price</span>
-              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.subtotal)}</span>
+              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.subtotal, readPricingRule(workspace.layout_settings))}</span>
             </div>
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">Item Discount</span>
-              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.discount_total)}</span>
+              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.discount_total, readPricingRule(workspace.layout_settings))}</span>
             </div>
             <div className="border-b border-zinc-300 bg-zinc-50 px-3 py-3">
               <div className="grid gap-2">
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-semibold text-zinc-600">Extra Discount</span>
                   <span className="text-xs text-zinc-500">
-                    {formatWorkspaceMoney(workspace.currency, workspace.totals.overall_discount_amount)}
+                    {formatWorkspaceMoney(workspace.currency, workspace.totals.overall_discount_amount, readPricingRule(workspace.layout_settings))}
                   </span>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-[120px_minmax(0,1fr)_72px]">
@@ -5444,13 +5470,23 @@ export function LocalQuotationBuilder({
                 </p>
               </div>
             </div>
+            <div className="flex justify-between border-b border-zinc-300 bg-emerald-50 px-3 py-2 font-semibold text-zinc-900">
+              <span>Total after discount</span>
+              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.net_total, readPricingRule(workspace.layout_settings))}</span>
+            </div>
+            {priceRoundingMetadata.adjustment ? (
+              <div className="flex justify-between border-b border-zinc-300 px-3 py-2 text-xs text-zinc-600">
+                <span>Rounding</span>
+                <span>{formatRoundingDifference(readPricingRule(workspace.layout_settings), workspace.currency, priceRoundingMetadata.adjustment)}</span>
+              </div>
+            ) : null}
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">VAT {workspace.vat_percent}%</span>
-              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.vat_amount)}</span>
+              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.vat_amount, readPricingRule(workspace.layout_settings))}</span>
             </div>
             <div className="hidden justify-between bg-emerald-950 px-3 py-3 text-base font-bold text-white xl:flex">
               <span>Final Total</span>
-              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total)}</span>
+              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total, readPricingRule(workspace.layout_settings))}</span>
             </div>
           </div>
         </section>

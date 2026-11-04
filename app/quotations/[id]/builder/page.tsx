@@ -80,6 +80,7 @@ import {
   quotationRootBaseNo,
 } from "@/lib/quotation-options";
 import { LEGACY_PRICING_RULE, formatRuleMoney, readPricingRule, ruleConvertedPrice, ruleExactAmount, ruleMoneyCell, type PricingRule } from "@/lib/quotation-pricing";
+import { displayedTotals, formatRoundingDifference, roundingAdjustmentFromLayout } from "@/lib/quotations/quotation-total-display";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
   createQuotationItem,
@@ -434,16 +435,6 @@ function discountAmount(item: QuotationItem) {
   }
 
   return item.discount_value;
-}
-
-function overallDiscountAmount(quotation: Quotation) {
-  const itemNetTotal = Math.max(quotation.subtotal - quotation.discount_total, 0);
-
-  if (quotation.overall_discount_type === "percent") {
-    return (itemNetTotal * quotation.overall_discount_value) / 100;
-  }
-
-  return quotation.overall_discount_value;
 }
 
 function mergeModeForItem(item: QuotationItem): MergeMode {
@@ -3523,6 +3514,7 @@ export default async function QuotationBuilderPage({
   }
 
   const pricingRule = readPricingRule(quotation.layout_settings);
+  const summaryTotals = displayedTotals(pricingRule, quotation, roundingAdjustmentFromLayout(quotation.layout_settings));
   for (const item of items ?? []) item.pricing_rule = pricingRule;
 
   for (const item of items ?? []) {
@@ -4741,12 +4733,28 @@ export default async function QuotationBuilderPage({
               <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.subtotal, pricingRule)}</span>
             </div>
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
-              <span className="font-semibold text-zinc-600">Total Discount</span>
-              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.discount_total + overallDiscountAmount(quotation), pricingRule)}</span>
+              <span className="font-semibold text-zinc-600">Item Discount</span>
+              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, summaryTotals.itemDiscount, pricingRule)}</span>
             </div>
+            {summaryTotals.extraDiscount > 0 ? (
+              <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
+                <span className="font-semibold text-zinc-600">Extra Discount</span>
+                <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, summaryTotals.extraDiscount, pricingRule)}</span>
+              </div>
+            ) : null}
             {canManageRecords ? (
               <div className="border-b border-zinc-300 bg-zinc-50 px-3 py-3">
                 <ExtraDiscountForm quotation={quotation} returnTo={builderPath} />
+              </div>
+            ) : null}
+            <div className="flex justify-between border-b border-zinc-300 bg-emerald-50 px-3 py-2 font-semibold text-zinc-900">
+              <span>Total after discount</span>
+              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, summaryTotals.totalAfterDiscount, pricingRule)}</span>
+            </div>
+            {summaryTotals.rounding !== 0 ? (
+              <div className="flex justify-between border-b border-zinc-300 px-3 py-2 text-xs text-zinc-600">
+                <span>Rounding</span>
+                <span>{formatRoundingDifference(pricingRule, quotation.currency, summaryTotals.rounding)}</span>
               </div>
             ) : null}
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">

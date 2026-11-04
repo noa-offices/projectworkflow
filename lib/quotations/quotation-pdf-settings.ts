@@ -26,6 +26,8 @@ export type QuotationPdfSettings = {
   density: QuotationPdfDensity;
   imageSize: QuotationPdfImageSize;
   repeatTableHeader: boolean;
+  showItemDiscount: boolean;
+  showExtraDiscount: boolean;
   showFullHeaderOnlyFirstPage: boolean;
   manualPageBreaks: string[];
   flowOrder: QuotationPdfFlowOrder;
@@ -42,6 +44,8 @@ export const DEFAULT_QUOTATION_PDF_SETTINGS: QuotationPdfSettings = {
   density: "compact",
   imageSize: "medium",
   repeatTableHeader: true,
+  showItemDiscount: true,
+  showExtraDiscount: true,
   showFullHeaderOnlyFirstPage: true,
   manualPageBreaks: [],
   flowOrder: {
@@ -127,6 +131,8 @@ export function normalizeQuotationPdfSettings(
         ? "large"
         : "medium",
     repeatTableHeader: normalizedBoolean(record, "repeatTableHeader", DEFAULT_QUOTATION_PDF_SETTINGS.repeatTableHeader),
+    showItemDiscount: normalizedBoolean(record, "showItemDiscount", DEFAULT_QUOTATION_PDF_SETTINGS.showItemDiscount),
+    showExtraDiscount: normalizedBoolean(record, "showExtraDiscount", DEFAULT_QUOTATION_PDF_SETTINGS.showExtraDiscount),
     showFullHeaderOnlyFirstPage: normalizedBoolean(record, "showFullHeaderOnlyFirstPage", DEFAULT_QUOTATION_PDF_SETTINGS.showFullHeaderOnlyFirstPage),
     manualPageBreaks: normalizedStringArray(record.manualPageBreaks),
     flowOrder: normalizedFlowOrder(record.flowOrder),
