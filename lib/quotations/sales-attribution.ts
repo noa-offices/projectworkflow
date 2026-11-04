@@ -56,9 +56,11 @@ function quotationSortTime(quotation: SalesAttributionQuotation): number {
 function primaryQuotationRank(quotation: SalesAttributionQuotation): number | null {
   const revisionBase = quotation.quotation_no?.trim().replace(/-R\d+$/i, "") ?? "";
   const hasOptionSuffix = /-(?:OPT-[A-Z]+|OPT\d+)$/i.test(revisionBase);
+  const isVariation = /-V\d+$/i.test(revisionBase);
   const optionSequence = quotationOptionSequence(quotation);
 
-  if (hasOptionSuffix || optionSequence > 1) return null;
+  // A variation changes a Project; it is never the folder's primary quotation.
+  if (hasOptionSuffix || isVariation || optionSequence > 1) return null;
   return quotation.option_no === null ? 0 : 1;
 }
 

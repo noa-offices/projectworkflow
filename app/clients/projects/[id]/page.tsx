@@ -13,6 +13,7 @@ import {
   permanentlyDeleteQuotation,
   restoreQuotation,
 } from "@/app/quotations/actions";
+import { folderProjectOrderNo } from "@/lib/quotations/project-variation";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import {
@@ -716,7 +717,7 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                                 quotationId={quotation.id}
                                 projectId={project.id}
                               />
-                              {baseNo && isLatestRevision ? (
+                              {folderProjectOrderNo(quotations ?? [], quotation.quotation_no) ? null : baseNo && isLatestRevision ? (
                                 <QuotationActionForm
                                   action={createQuotationRevision}
                                   label={`Create Revision (${quotationRevisionLabel((quotation.revision_no ?? 0) + 1)} next)`}

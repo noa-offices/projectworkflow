@@ -7,6 +7,7 @@ import { quotationStatusLabel } from "@/lib/quotation-status";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { documentSetupRecord } from "@/lib/quotations/document-setup";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { folderProjectOrderNo, variationLinkFromLayoutSettings } from "@/lib/quotations/project-variation";
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -57,7 +58,7 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
     searchParams ?? Promise.resolve({} as { message?: string }),
   ]);
   const supabase = await createSupabaseClient();
-  const [{ data: quotations, error }, { data: clients, error: clientsError }] = await Promise.all([
+  const [{ data: quotations, error }, { data: clients, error: clientsError }, { data: projectFileRows }] = await Promise.all([
     supabase
       .from("quotations")
       .select("id,client_id,quotation_no,title,legacy_reference,quotation_date,status,grand_total,currency,layout_settings,status_updated_at,updated_at")
@@ -69,7 +70,13 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
       .from("clients")
       .select("id,company_name")
       .returns<ClientRow[]>(),
+    supabase
+      .from("quotations")
+      .select("id,quotation_no,layout_settings")
+      .not("layout_settings->projectFile", "is", null)
+      .returns<Array<{ id: string; quotation_no: string | null; layout_settings: unknown }>>(),
   ]);
+  const folderRows = [...(quotations ?? []), ...(projectFileRows ?? [])];
 
   if (error) {
     console.error("APPROVED QUOTATIONS LIST ERROR", error.message);
@@ -88,12 +95,14 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
       projectFileFromLayoutSettings(quotation.layout_settings) ??
       clientApprovalDraftFromLayoutSettings(quotation.layout_settings)?.confirmedOrder ??
       null;
+    // Never offer Create Project File when the folder already has a Project: link to that Project instead.
+    const folderOrderNo = variationLinkFromLayoutSettings(quotation.layout_settings)?.orderNo ?? folderProjectOrderNo(folderRows, quotation.quotation_no);
 
     return {
       ...quotation,
       clientName: quotation.client_id ? clientNames.get(quotation.client_id) ?? "Client" : "Client",
       folderNo: projectFile?.folderNo ?? quotationFolderNumberFromQuotationNumber(quotation.quotation_no),
-      projectFile,
+      projectFile: projectFile ?? (folderOrderNo ? { orderNo: folderOrderNo } : null),
       reference:
         textFromRecord(header, "reference") ??
         quotation.legacy_reference?.trim() ??

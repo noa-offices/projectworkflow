@@ -16,6 +16,7 @@ import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
 import { deleteFolderAction } from "@/lib/quotations/delete-folder-action";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { variationLabel, variationLinkFromLayoutSettings } from "@/lib/quotations/project-variation";
 
 type Client = { id: string; company_name: string };
 
@@ -96,8 +97,14 @@ function quotationFolderKey(quotation: Quotation) {
   return `legacy:${quotation.id}`;
 }
 
+function VariationBadge({ layoutSettings }: { layoutSettings: unknown }) {
+  const link = variationLinkFromLayoutSettings(layoutSettings);
+  if (!link) return null;
+  return <span className="ml-2 inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-800">Variation {variationLabel(link)}</span>;
+}
+
 function isOriginalQuotation(quotation: Quotation) {
-  return !quotation.quotation_no?.trim().match(/-(?:R|OPT)\d+/i);
+  return !quotation.quotation_no?.trim().match(/-(?:R|OPT|V)\d+/i);
 }
 
 function latestQuotation(left: Quotation, right: Quotation) {
@@ -670,7 +677,10 @@ export function QuotationListLiveFilter({
                       )}
                     </td>
                     <td className="max-w-[200px] px-4 py-3 text-zinc-600">{folder.projectName}</td>
-                    <td className="px-4 py-3 font-medium text-zinc-950">{quotation.quotation_no ?? quotation.legacy_reference ?? "-"}</td>
+                    <td className="px-4 py-3 font-medium text-zinc-950">
+                      {quotation.quotation_no ?? quotation.legacy_reference ?? "-"}
+                      <VariationBadge layoutSettings={quotation.layout_settings} />
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${quotationListStatusBadgeClassName(quotation)}`}>
                         {quotationListStatusLabel(quotation)}

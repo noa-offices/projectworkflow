@@ -63,6 +63,22 @@ import { isLockedQuotationUpdateAllowed, isQuotationLocked, lockedSourceCopySett
 import { quotationWriteLockReason } from "@/lib/quotations/quotation-write-lock";
 import { projectSnapshotNotice, saveProjectSnapshot } from "@/lib/quotations/project-snapshot";
 import {
+  folderProjectOrderNo,
+  formatVariationNumber,
+  noSnapshotMessage,
+  revisionRefusal,
+  variationCreationDecision,
+  variationLayoutSettings,
+  variationLinkFromLayoutSettings,
+  variationNoFromQuotationNo,
+  variationRowsFromSnapshot,
+  withoutVariationLink,
+  type ExistingVariation,
+  type SnapshotItemRow,
+  type SnapshotSectionRow,
+  type VariationLink,
+} from "@/lib/quotations/project-variation";
+import {
   clientApprovalDraftFromLayoutSettings,
   isCancelledClientApprovalStatus,
   isActiveClientApprovalStatus,
@@ -1104,7 +1120,7 @@ async function nextDirectQuotationSequence(
 
   const prefix = clientSequencePrefix(clientSequence);
   const maxSequence = (data ?? []).reduce((max, quotation) => {
-    const match = quotation.quotation_no?.trim().match(new RegExp(`^QN-${prefix}-(\\d{3})(?:-(?:R\\d+|OPT\\d+))*$`, "i"));
+    const match = quotation.quotation_no?.trim().match(new RegExp(`^QN-${prefix}-(\\d{3})(?:-(?:R\\d+|OPT\\d+|V\\d+))*$`, "i"));
     if (!match) return max;
 
     const sequence = Number.parseInt(match[1], 10);
@@ -3050,7 +3066,7 @@ function validUuidOrNull(value: string | null | undefined) {
 }
 
 function projectWorkflowQuotationPathParts(quotationNo: string | null | undefined) {
-  const match = quotationNo?.trim().match(/^QN-(\d{4})-(\d{3})((?:-(?:R\d+|OPT\d+))*)$/i);
+  const match = quotationNo?.trim().match(/^QN-(\d{4})-(\d{3})((?:-(?:R\d+|OPT\d+|V\d+))*)$/i);
   if (!match) return null;
 
   return {
@@ -3099,7 +3115,7 @@ function isOriginalQuotationCandidate(quotation: Pick<QuotationFolderRedirectCan
 }
 
 function quotationBranchTokensForAction(quotationNo: string | null | undefined) {
-  return Array.from(quotationNo?.trim().matchAll(/-(R|OPT)(\d+)/gi) ?? []);
+  return Array.from(quotationNo?.trim().matchAll(/-(R|OPT|V)(\d+)/gi) ?? []);
 }
 
 function latestQuotationCandidate(left: QuotationFolderRedirectCandidate, right: QuotationFolderRedirectCandidate) {
@@ -3213,6 +3229,27 @@ async function copyQuotation(
     console.error("QUOTATION COPY READ ERROR", sourceError?.message);
     if (resultMode) return fail("Quotation could not be copied.");
     redirectWithMessage(redirectPath, "Quotation could not be copied.");
+  }
+
+  if (mode === "revision") {
+    const { data: folderRows, error: folderRowsError } = await supabase
+      .from("quotations")
+      .select("id,quotation_no,layout_settings")
+      .eq("client_id", source.client_id)
+      .returns<Array<{ id: string; quotation_no: string | null; layout_settings: unknown }>>();
+    if (folderRowsError) console.error("QUOTATION REVISION FOLDER READ ERROR", folderRowsError.message);
+    const refusal = folderRowsError
+      ? "Could not create revision. The parent quotation was not changed."
+      : revisionRefusal(source, folderProjectOrderNo(folderRows ?? [], source.quotation_no));
+    if (refusal) {
+      if (resultMode) return fail(refusal);
+      redirectWithMessage(redirectPath, refusal);
+    }
+  }
+  if (mode === "option" && variationLinkFromLayoutSettings(source.layout_settings)) {
+    const refusal = "A variation cannot have options. Create the option from the original quotation.";
+    if (resultMode) return fail(refusal);
+    redirectWithMessage(redirectPath, refusal);
   }
 
   const parentQuotationNo = normalizedQuotationPath(source.quotation_no);
@@ -3459,11 +3496,11 @@ async function copyQuotation(
       notes: source.notes,
       layout_mode: source.layout_mode,
       // A locked source keeps its Project File only on itself: the new row starts unlocked, with the same pricing rule.
-      layout_settings: lockedSourceCopySettings(source, mode === "duplicate" && duplicateDestinationMode === "create_new_enquiry"
+      layout_settings: withoutVariationLink(lockedSourceCopySettings(source, mode === "duplicate" && duplicateDestinationMode === "create_new_enquiry"
         ? newEnquiryCopyLayoutSettings(source.layout_settings)
         : mode === "revision" || mode === "option"
           ? branchLayoutSettings(source.layout_settings, parentBranchMetadata)
-          : source.layout_settings ?? {}),
+          : source.layout_settings ?? {})),
       overall_discount_type: source.overall_discount_type,
       overall_discount_value: source.overall_discount_value,
       is_active: true,
@@ -3682,6 +3719,155 @@ export async function createQuotationRevisionOptimistic(formData: FormData) {
 export async function createQuotationOptionOptimistic(formData: FormData) {
   formData.set("result_mode", "optimistic");
   return await copyQuotation(formData, "option", "Option created.");
+}
+
+export async function createProjectVariation(formData: FormData) {
+  const { user, displayName } = await requireQuotationActionUser();
+  const quotationId = actionQuotationId(formData);
+  const redirectPath = returnPath(formData, "/quotations");
+  if (!quotationId) redirectWithMessage(redirectPath, "Quotation is required.");
+
+  const supabase = await createSupabaseClient();
+  const { data: source, error: sourceError } = await supabase
+    .from("quotations")
+    .select("id,client_id,project_id,quotation_no,salesperson_id,layout_settings")
+    .eq("id", quotationId)
+    .maybeSingle<{ id: string; client_id: string; project_id: string | null; quotation_no: string | null; salesperson_id: string | null; layout_settings: unknown }>();
+  if (sourceError || !source) {
+    console.error("VARIATION SOURCE READ ERROR", sourceError?.message);
+    redirectWithMessage(redirectPath, "Variation could not be created.");
+  }
+
+  const projectFile = projectFileFromLayoutSettings(source.layout_settings);
+  if (!projectFile || projectFile.quotationId !== source.id) {
+    redirectWithMessage(redirectPath, "A variation can only be created from a Project's own quotation.");
+  }
+  if (typeof (source.layout_settings as { projectCancelledAt?: unknown } | null)?.projectCancelledAt === "string") {
+    redirectWithMessage(redirectPath, "This Project is cancelled, so a variation cannot be created.");
+  }
+  const workflowParts = projectWorkflowQuotationPathParts(source.quotation_no);
+  // The database numbering trigger rewrites quotation_no on any row with a project_id, so -V<n> can only live on a row without one.
+  if (!workflowParts || validUuidOrNull(source.project_id)) {
+    redirectWithMessage(redirectPath, "This Project uses an older quotation number, so a variation cannot be created yet.");
+  }
+
+  const { data: snapshot, error: snapshotError } = await supabase
+    .from("project_snapshots")
+    .select("id,order_no,revision_no,currency,vat_percent,subtotal,discount_total,overall_discount_type,overall_discount_value,vat_amount,grand_total,quotation_title,payment_terms,validity,delivery_terms,warranty_terms,notes,legacy_reference,layout_mode,layout_settings")
+    .eq("quotation_id", source.id)
+    .maybeSingle<{
+      id: string; order_no: string; revision_no: number; currency: string; vat_percent: number; subtotal: number; discount_total: number;
+      overall_discount_type: string | null; overall_discount_value: number; vat_amount: number; grand_total: number; quotation_title: string | null;
+      payment_terms: string | null; validity: string | null; delivery_terms: string | null; warranty_terms: string | null; notes: string | null;
+      legacy_reference: string | null; layout_mode: string | null; layout_settings: unknown;
+    }>();
+  if (snapshotError) {
+    console.error("VARIATION SNAPSHOT READ ERROR", snapshotError.message);
+    redirectWithMessage(redirectPath, "The Project's frozen copy could not be read. Nothing was created.");
+  }
+  if (!snapshot) redirectWithMessage(redirectPath, noSnapshotMessage);
+
+  const { data: existing, error: existingError } = await supabase
+    .from("quotations")
+    .select("quotation_no,status,is_active")
+    .eq("client_id", source.client_id)
+    .ilike("quotation_no", `${workflowParts.baseNo}-V%`)
+    .returns<ExistingVariation[]>();
+  if (existingError) {
+    console.error("VARIATION LIST READ ERROR", existingError.message);
+    redirectWithMessage(redirectPath, "Variation could not be created.");
+  }
+  const decision = variationCreationDecision(existing ?? []);
+  if (!decision.ok) redirectWithMessage(redirectPath, decision.message);
+
+  const [{ data: sections, error: sectionsError, count: sectionCount }, { data: items, error: itemsError, count: itemCount }] = await Promise.all([
+    supabase.from("project_snapshot_sections").select("original_section_id,sort_order,data", { count: "exact" }).eq("snapshot_id", snapshot.id).order("sort_order", { ascending: true }).returns<SnapshotSectionRow[]>(),
+    supabase.from("project_snapshot_items").select("original_item_id,sort_order,data", { count: "exact" }).eq("snapshot_id", snapshot.id).order("sort_order", { ascending: true }).returns<SnapshotItemRow[]>(),
+  ]);
+  // A partial read would silently drop approved scope.
+  if (sectionsError || itemsError || !sections || !items || sectionCount !== sections.length || itemCount !== items.length) {
+    console.error("VARIATION SNAPSHOT ROWS READ ERROR", sectionsError?.message ?? itemsError?.message);
+    redirectWithMessage(redirectPath, "The Project's frozen copy could not be read. Nothing was created.");
+  }
+
+  const newQuotationId = crypto.randomUUID();
+  const quotationNo = formatVariationNumber(workflowParts.baseNo, decision.variationNo);
+  const link: VariationLink = { orderNo: snapshot.order_no, projectQuotationId: source.id, snapshotId: snapshot.id, variationNo: decision.variationNo, baseRevisionNo: snapshot.revision_no };
+  const rows = variationRowsFromSnapshot({ quotationId: newQuotationId, userId: user.id, sections, items, newId: () => crypto.randomUUID() });
+
+  const { data: created, error: insertError } = await supabase
+    .from("quotations")
+    .insert({
+      id: newQuotationId,
+      client_id: source.client_id,
+      project_id: null,
+      quotation_no: quotationNo,
+      // revision_no and option_no stay plain: the base revision is in variationOf, and these drive the folder's latest revision.
+      option_no: 1,
+      revision_no: 0,
+      salesperson_id: source.salesperson_id,
+      title: `${snapshot.quotation_title ?? snapshot.order_no} - Variation ${decision.variationNo}`,
+      quotation_date: new Date().toISOString().slice(0, 10),
+      status: "draft",
+      currency: snapshot.currency,
+      vat_percent: snapshot.vat_percent,
+      payment_terms: snapshot.payment_terms,
+      validity: snapshot.validity,
+      delivery_terms: snapshot.delivery_terms,
+      warranty_terms: snapshot.warranty_terms,
+      notes: snapshot.notes,
+      legacy_reference: snapshot.legacy_reference,
+      layout_mode: snapshot.layout_mode,
+      layout_settings: variationLayoutSettings(snapshot.layout_settings, link, rows.idMap),
+      overall_discount_type: snapshot.overall_discount_type,
+      overall_discount_value: snapshot.overall_discount_value,
+      // Starts at the approved totals, not recalculated. The first edit recalculates under the Project's pricing rule.
+      subtotal: snapshot.subtotal,
+      discount_total: snapshot.discount_total,
+      vat_amount: snapshot.vat_amount,
+      grand_total: snapshot.grand_total,
+      is_active: true,
+      created_by: user.id,
+    })
+    .select("id,quotation_no")
+    .single<{ id: string; quotation_no: string | null }>();
+  if (insertError || !created) {
+    console.error("VARIATION CREATE ERROR", insertError?.message);
+    redirectWithMessage(redirectPath, "Variation could not be created. If another person just created one, reload and try again.");
+  }
+
+  // Nothing half-made is left behind: rows go with the quotation.
+  const undo = async (message: string, detail?: string) => {
+    console.error("VARIATION CREATE ROLLBACK", detail);
+    const { error } = await supabase.from("quotations").delete().eq("id", newQuotationId);
+    if (error) console.error("VARIATION ROLLBACK ERROR", error.message);
+    redirectWithMessage(redirectPath, message);
+  };
+  if (created.quotation_no !== quotationNo) await undo("This Project uses an older quotation number, so a variation cannot be created yet.", created.quotation_no ?? "no number");
+  if (rows.sections.length) {
+    const { error } = await supabase.from("quotation_sections").insert(rows.sections);
+    if (error) await undo("Variation could not be created. Nothing was saved.", error.message);
+  }
+  if (rows.items.length) {
+    await prepareSharedSnapshotImages(supabase, rows.items);
+    const { error } = await supabase.from("quotation_items").insert(rows.items);
+    if (error) await undo("Variation could not be created. Nothing was saved.", error.message);
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: newQuotationId,
+    action: "project_variation_created",
+    title: "Variation created",
+    description: `${quotationNo} for Project ${snapshot.order_no}`,
+    metadata: { orderNo: snapshot.order_no, projectQuotationId: source.id, snapshotId: snapshot.id, variationNo: decision.variationNo, baseRevisionNo: snapshot.revision_no },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+  revalidatePath("/quotations");
+  revalidatePath(`/quotations/${source.id}`);
+  revalidatePath(`/projects/orders/${snapshot.order_no}`);
+  redirectWithMessage(`/quotations/${newQuotationId}`, `Variation V${decision.variationNo} created.`);
 }
 
 export async function deactivateQuotation(formData: FormData) {
@@ -4082,6 +4268,10 @@ export async function createClientApprovalDraft(formData: FormData) {
   const workflowParts = projectWorkflowQuotationPathParts(quotation.quotation_no);
   if (!workflowParts || !quotation.quotation_no) {
     redirectWithMessage(redirectPath, "This older quotation needs to be prepared before it can be submitted to the client.");
+  }
+  // The client response number is per folder, so a variation's would collide with the Project's own.
+  if (variationNoFromQuotationNo(quotation.quotation_no)) {
+    redirectWithMessage(redirectPath, "Set this variation's status to Client Confirmed when the client agrees.");
   }
 
   if (!quotation.client_id) {
@@ -4804,6 +4994,11 @@ export async function updateQuotation(formData: FormData) {
       table: "quotations",
     });
     redirectWithMessage(`/quotations/${id}`, actionErrorMessage("Quotation could not be updated", currentQuotationError));
+  }
+
+  // This form writes quotation_no and project_id; the numbering trigger would then erase a variation's -V<n>.
+  if (variationNoFromQuotationNo(currentQuotation.quotation_no)) {
+    redirectWithMessage(`/quotations/${id}`, "A variation keeps its number and its Project.");
   }
 
   const { error } = await supabase.from("quotations").update(payload).eq("id", id);

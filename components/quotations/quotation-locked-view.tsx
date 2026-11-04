@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { createQuotationOption, createQuotationRevision, duplicateQuotation } from "@/app/quotations/actions";
+import { createProjectVariation, createQuotationOption, duplicateQuotation } from "@/app/quotations/actions";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { ExportExcelButton } from "@/components/quotations/export-excel-button";
 import { QuotationPdfDocument } from "@/components/quotations/quotation-pdf-document";
@@ -39,10 +39,10 @@ export async function LockedQuotationView({ quotation, role }: LockedQuotationVi
           <ExportExcelButton quotationId={quotation.id} className={actionClassName} />
           {canManageRecords ? (
             <>
-              <form action={createQuotationRevision}>
+              <form action={createProjectVariation}>
                 <input type="hidden" name="quotation_id" value={quotation.id} />
                 <input type="hidden" name="return_to" value={basePath} />
-                <PendingSubmitButton className={actionClassName} pendingLabel="Creating revision...">Create revision</PendingSubmitButton>
+                <PendingSubmitButton className={actionClassName} pendingLabel="Creating variation...">Create variation</PendingSubmitButton>
               </form>
               <form action={createQuotationOption}>
                 <input type="hidden" name="quotation_id" value={quotation.id} />
