@@ -49,7 +49,7 @@ function deliveryNoteTitle(quotation?: { quotation_no: string | null; title: str
 
 export async function generateMetadata({ params }: DeliveryNotePageProps): Promise<Metadata> {
   const { id } = await params;
-  const data = await loadQuotationDerivedDocumentData(id);
+  const data = await loadQuotationDerivedDocumentData(id, { projectScope: true });
   return { title: deliveryNoteTitle(data?.quotation) };
 }
 
@@ -60,7 +60,7 @@ export default async function DeliveryNotePage({ params, searchParams }: Deliver
   const printMode = query.print === "1";
 
   const [data, settingsResult] = await Promise.all([
-    loadQuotationDerivedDocumentData(id),
+    loadQuotationDerivedDocumentData(id, { projectScope: true }),
     loadDeliveryNoteSettings(id),
   ]);
 

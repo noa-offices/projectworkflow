@@ -57,7 +57,7 @@ export async function GET(request: NextRequest, { params }: DownloadPurchaseOrde
 
   const { id } = await params;
   const [data, settingsResult] = await Promise.all([
-    loadQuotationDerivedDocumentData(id),
+    loadQuotationDerivedDocumentData(id, { projectScope: true }),
     loadPurchaseOrderSettings(id),
   ]);
 

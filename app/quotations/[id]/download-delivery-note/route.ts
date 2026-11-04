@@ -49,7 +49,7 @@ export async function GET(request: NextRequest, { params }: DownloadDeliveryNote
 
   const { id } = await params;
   const [data, settingsResult] = await Promise.all([
-    loadQuotationDerivedDocumentData(id),
+    loadQuotationDerivedDocumentData(id, { projectScope: true }),
     loadDeliveryNoteSettings(id),
   ]);
 
