@@ -8,6 +8,7 @@ import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { loadProjectScope } from "@/lib/projects/project-scope";
 import { vendorReceivingStatusLabel, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 
 export const dynamic = "force-dynamic";
@@ -117,17 +118,9 @@ export default async function CompletedProcurementDetailPage({
   if (!entry) notFound();
   if (!entry.completedAt) notFound();
 
-  const { data: items } = await supabase
-    .from("quotation_items")
-    .select(
-      "id,item_name_snapshot,item_code_snapshot,brand_name_snapshot,supplier_name_snapshot,size_snapshot,finish_snapshot,qty,net_total,currency,sort_order,is_active",
-    )
-    .eq("quotation_id", entry.quotationId)
-    .eq("is_active", true)
-    .order("sort_order", { ascending: true })
-    .returns<ProcurementItemRow[]>();
-
-  const activeItems = items ?? [];
+  // The Project's frozen copy when it has one; the live quotation for an older Project (lib/projects/project-scope.ts).
+  const scope = await loadProjectScope<ProcurementItemRow>(supabase, entry.quotationId, { itemColumns: "id,item_name_snapshot,item_code_snapshot,brand_name_snapshot,supplier_name_snapshot,size_snapshot,finish_snapshot,qty,net_total,currency,sort_order,is_active" });
+  const activeItems = scope.items;
   const vendorGroups = buildEffectiveDocumentGroups(activeItems);
 
   const { data: vendorDocRows } = await supabase

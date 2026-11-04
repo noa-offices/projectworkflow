@@ -35,3 +35,7 @@ A backfilled copy holds what the quotation holds today. It is not proof of what 
 
 - **B2:** switch Project, procurement, payment-context and Project document readers to the copy (see `PROJECT_SNAPSHOT_STEP_B_STUDY.md`), using `project_snapshot_state` and falling back to live data where no copy exists.
 - **B3:** a database guard on `quotations`, `quotation_items` and `quotation_sections` so direct writes cannot change a locked quotation.
+
+## Project scope (Step B2)
+
+`lib/projects/project-scope.ts` (`loadProjectScope`) is the one place that reads what a Project is made of: header, sections and items. A Project with a frozen copy (`project_snapshots*`) reads the copy, with exact row counts and the original ids; a missing, failed or partial read falls back to the live quotation exactly as before. Readers switched: the Project page, both procurement order pages and the Project documents (`loadQuotationDerivedDocumentData(id, { projectScope: true })`: purchase order, RFQ, order confirmation, delivery note and their downloads). Not switched: lists (Project File flags and contract total only), payments (contract total only), the CRM project folder, the quotation pages and the quotation Excel export, and NOA. Lifecycle flags (completed, cancelled) stay on the live quotation. Step C2 changes this module only: it will return the latest applied variation instead of the original copy.

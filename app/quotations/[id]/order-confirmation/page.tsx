@@ -89,7 +89,7 @@ function buildDefaultSettings(data: NonNullable<Awaited<ReturnType<typeof loadQu
 
 export async function generateMetadata({ params }: OrderConfirmationPageProps): Promise<Metadata> {
   const { id } = await params;
-  const data = await loadQuotationDerivedDocumentData(id);
+  const data = await loadQuotationDerivedDocumentData(id, { projectScope: true });
 
   return {
     title: orderConfirmationTitle(data?.quotation),
@@ -101,7 +101,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Or
   const { id } = await params;
   const query = await searchParams;
   const printMode = query.print === "1";
-  const data = await loadQuotationDerivedDocumentData(id);
+  const data = await loadQuotationDerivedDocumentData(id, { projectScope: true });
 
   if (!data) {
     notFound();

@@ -1,5 +1,6 @@
 import { getCompanyProfile, type CompanyProfile } from "@/lib/company-profile";
 import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
+import { loadProjectScope } from "@/lib/projects/project-scope";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export type DerivedDocumentClient = {
@@ -478,17 +479,32 @@ export function preferredItemImageUrl(item: Pick<DerivedDocumentItem, "id">, ima
   return imageUrlByItemId.get(item.id) ?? null;
 }
 
-export async function loadQuotationDerivedDocumentData(id: string): Promise<DerivedDocumentData | null> {
+/**
+ * projectScope: the Project's documents (purchase order, RFQ, order confirmation, delivery note) read the Project's frozen copy when it has one.
+ * The quotation's own exports leave it off and read the live quotation.
+ */
+export async function loadQuotationDerivedDocumentData(id: string, options: { projectScope?: boolean } = {}): Promise<DerivedDocumentData | null> {
   const supabase = await createSupabaseClient();
   const companyProfile = await getCompanyProfile();
-  const { data: quotation, error: quotationError } = await supabase
-    .from("quotations")
-    .select("id,client_id,project_id,quotation_no,revision_no,title,quotation_date,currency,subtotal,discount_total,vat_percent,vat_amount,grand_total,payment_terms,validity,delivery_terms,warranty_terms,notes,legacy_reference,option_no,layout_settings,overall_discount_type,overall_discount_value")
-    .eq("id", id)
-    .maybeSingle<DerivedDocumentQuotation>();
+  const scope = options.projectScope
+    ? await loadProjectScope<DerivedDocumentItem, DerivedDocumentSection, DerivedDocumentQuotation>(supabase, id, {
+        headerColumns: "id,client_id,project_id,quotation_no,revision_no,title,quotation_date,currency,subtotal,discount_total,vat_percent,vat_amount,grand_total,payment_terms,validity,delivery_terms,warranty_terms,notes,legacy_reference,option_no,layout_settings,overall_discount_type,overall_discount_value",
+        sectionColumns: "id,section_title,section_notes,parent_section_id,section_kind,sort_order,is_active",
+        sectionOrder: [["sort_order", true], ["section_title", true]],
+        itemColumns: "id,section_id,item_type,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,supplier_name_snapshot,qty,unit_label,unit_price,net_total,currency,sort_order,is_optional,include_in_total,is_rate_only,line_style,is_active,notes",
+        itemOrder: [["sort_order", true], ["id", true]],
+      })
+    : null;
+  const { data: quotation, error: quotationError } = scope
+    ? { data: scope.header, error: null }
+    : await supabase
+        .from("quotations")
+        .select("id,client_id,project_id,quotation_no,revision_no,title,quotation_date,currency,subtotal,discount_total,vat_percent,vat_amount,grand_total,payment_terms,validity,delivery_terms,warranty_terms,notes,legacy_reference,option_no,layout_settings,overall_discount_type,overall_discount_value")
+        .eq("id", id)
+        .maybeSingle<DerivedDocumentQuotation>();
 
   if (quotationError) {
-    console.error("DERIVED DOCUMENT QUOTATION ERROR", quotationError.message);
+    console.error("DERIVED DOCUMENT QUOTATION ERROR", (quotationError as { message: string }).message);
   }
 
   if (!quotation) return null;
@@ -512,22 +528,26 @@ export async function loadQuotationDerivedDocumentData(id: string): Promise<Deri
           .eq("id", projectId)
           .maybeSingle<DerivedDocumentProject>()
       : Promise.resolve({ data: null }),
-    supabase
-      .from("quotation_sections")
-      .select("id,section_title,section_notes,parent_section_id,section_kind,sort_order,is_active")
-      .eq("quotation_id", id)
-      .eq("is_active", true)
-      .order("sort_order", { ascending: true })
-      .order("section_title", { ascending: true })
-      .returns<DerivedDocumentSection[]>(),
-    supabase
-      .from("quotation_items")
-      .select("id,section_id,item_type,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,supplier_name_snapshot,qty,unit_label,unit_price,net_total,currency,sort_order,is_optional,include_in_total,is_rate_only,line_style,is_active,notes")
-      .eq("quotation_id", id)
-      .eq("is_active", true)
-      .order("sort_order", { ascending: true })
-      .order("id", { ascending: true })
-      .returns<DerivedDocumentItem[]>(),
+    scope
+      ? Promise.resolve({ data: scope.sections })
+      : supabase
+          .from("quotation_sections")
+          .select("id,section_title,section_notes,parent_section_id,section_kind,sort_order,is_active")
+          .eq("quotation_id", id)
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true })
+          .order("section_title", { ascending: true })
+          .returns<DerivedDocumentSection[]>(),
+    scope
+      ? Promise.resolve({ data: scope.items })
+      : supabase
+          .from("quotation_items")
+          .select("id,section_id,item_type,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,supplier_name_snapshot,qty,unit_label,unit_price,net_total,currency,sort_order,is_optional,include_in_total,is_rate_only,line_style,is_active,notes")
+          .eq("quotation_id", id)
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true })
+          .order("id", { ascending: true })
+          .returns<DerivedDocumentItem[]>(),
   ]);
 
   const activeItems = (itemsResponse.data ?? []).filter(isDocumentItem);

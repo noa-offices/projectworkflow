@@ -51,7 +51,7 @@ export async function GET(request: NextRequest, { params }: DownloadProcurementR
 
   const { id } = await params;
   const [data, settingsResult] = await Promise.all([
-    loadQuotationDerivedDocumentData(id),
+    loadQuotationDerivedDocumentData(id, { projectScope: true }),
     loadProcurementRfqSettings(id),
   ]);
 

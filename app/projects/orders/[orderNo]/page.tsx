@@ -21,6 +21,7 @@ import { CancelProjectButton } from "@/components/projects/cancel-project-button
 import { ReopenProjectButton } from "@/components/projects/reopen-project-button";
 import { NotifyButton } from "@/components/notifications/notify-button";
 import { ProjectFileResponsiveLayout } from "@/components/projects/project-file-responsive-layout";
+import { loadProjectScope } from "@/lib/projects/project-scope";
 import { ProjectVendorOperations, type ProjectVendorOperationsSummary } from "@/components/projects/project-vendor-operations";
 import type { VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 import { ClientPaymentNoAccess, ClientPaymentPanel } from "@/components/projects/client-payment-panel";
@@ -142,20 +143,15 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
   if (!entry) {
     notFound();
   }
-  // Project amounts use the rule on the source quotation that owns the Project File.
-  const pricingRule = readPricingRule(entry.quotationRow.layout_settings);
-
-  const { data: items, error: itemsError } = await supabase
-    .from("quotation_items")
-    .select("id,item_name_snapshot,item_code_snapshot,brand_name_snapshot,size_snapshot,finish_snapshot,supplier_name_snapshot,qty,unit_label,unit_price,net_price,net_total,currency,sort_order,is_optional,is_active,line_style")
-    .eq("quotation_id", entry.quotationId)
-    .eq("is_active", true)
-    .order("sort_order", { ascending: true })
-    .returns<QuotationItemRow[]>();
-
-  if (itemsError) {
-    console.error("CONFIRMED ORDER ITEMS ERROR", itemsError.message);
-  }
+  // The Project's frozen copy when it has one; the live quotation for an older Project (lib/projects/project-scope.ts).
+  const scope = await loadProjectScope<QuotationItemRow, never, Pick<ConfirmedOrderQuotationRow, "subtotal" | "vat_percent" | "vat_amount" | "grand_total" | "payment_terms">>(supabase, entry.quotationId, {
+    itemColumns: "id,item_name_snapshot,item_code_snapshot,brand_name_snapshot,size_snapshot,finish_snapshot,supplier_name_snapshot,qty,unit_label,unit_price,net_price,net_total,currency,sort_order,is_optional,is_active,line_style",
+    headerColumns: "subtotal,vat_percent,vat_amount,grand_total,payment_terms",
+  });
+  const items = scope.items;
+  // Totals and terms come from the copy. The lifecycle flags (completed, cancelled) stay on the live quotation, where they are written.
+  const commercial = { ...entry.quotationRow, ...scope.header };
+  const pricingRule = scope.pricingRule ?? readPricingRule(entry.quotationRow.layout_settings);
 
   const procurementVendorGroups = buildEffectiveDocumentGroups(items ?? []);
 
@@ -384,6 +380,9 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950">
           This is a locked snapshot of the approved quotation. Items cannot be edited here.
         </p>
+        {scope.source === "live" && scope.fallback === "no_snapshot" ? (
+          <p className="mt-2 text-xs text-zinc-500">Older Project: no frozen copy yet</p>
+        ) : null}
       </div>
       <div className="min-w-0 xl:hidden">
         {numberedItems.length === 0 ? (
@@ -483,15 +482,15 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
                 Subtotal
               </td>
               <td className="px-4 py-3 text-right text-sm font-semibold text-zinc-950">
-                {formatCurrency(entry.quotationRow.subtotal)}
+                {formatCurrency(commercial.subtotal)}
               </td>
             </tr>
             <tr>
               <td colSpan={7} className="px-4 py-3 text-right text-sm font-semibold text-zinc-500">
-                VAT {entry.quotationRow.vat_percent}%
+                VAT {commercial.vat_percent}%
               </td>
               <td className="px-4 py-3 text-right text-sm font-semibold text-zinc-950">
-                {formatCurrency(entry.quotationRow.vat_amount)}
+                {formatCurrency(commercial.vat_amount)}
               </td>
             </tr>
             <tr className="border-t border-zinc-200 bg-zinc-50">
@@ -499,7 +498,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
                 Grand Total
               </td>
               <td className="px-4 py-3 text-right text-sm font-bold text-zinc-950">
-                {formatCurrency(entry.quotationRow.grand_total)}
+                {formatCurrency(commercial.grand_total)}
               </td>
             </tr>
           </tfoot>
@@ -688,7 +687,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
       orderNo={decodedOrderNo}
       contractTotal={String(entry.order.total)}
       currency={entry.order.currency}
-      paymentTerms={entry.quotationRow.payment_terms}
+      paymentTerms={commercial.payment_terms}
       scheduleReadOnly={Boolean(completedAt || cancelledAt)}
       receiptsAllowed={!cancelledAt}
       canVoid={canVoidClientPaymentReceipts(profile?.role)}
