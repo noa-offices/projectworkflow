@@ -37,6 +37,8 @@ import {
   QuickCategoryForm,
 } from "@/components/products/template-category-fields";
 import { ProductLibraryBrowseControls } from "@/components/products/product-library-browse-controls";
+import { ProductCompactCard, productCardGridClass } from "@/components/products/product-compact-card";
+import { brandAndCategoryLine, oneLineText, templateCodeLine } from "@/lib/products/product-card-text";
 import { TemplateMaterialGroupSelectionPanel } from "@/components/products/template-material-group-selection-panel";
 import { ProductTemplateForm } from "@/components/products/product-template-form";
 import { requireProductLibraryManager } from "@/lib/auth";
@@ -2067,13 +2069,9 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
       }),
       brandName: brandMap.get(template.brand_id) ?? "Unknown brand",
       categoryText: [
-        template.main_category_id
-          ? categoryMap.get(template.main_category_id) ?? "Main category"
-          : "No main category",
-        template.sub_category_id
-          ? categoryMap.get(template.sub_category_id) ?? "No sub category"
-          : "No sub category",
-      ].join(" / "),
+        template.main_category_id ? categoryMap.get(template.main_category_id) ?? "Main category" : null,
+        template.sub_category_id ? categoryMap.get(template.sub_category_id) ?? "Sub category" : null,
+      ].filter(Boolean).join(" / "),
       imageCount: productLibraryImageCount(template),
       path: [
         brandMap.get(template.brand_id) ?? "Unknown brand",
@@ -2397,86 +2395,40 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
 
             {libraryResultTemplates.length ? (
               <section className="mt-6">
-                <div className="mb-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-500 shadow-sm">
-                  Browse all products or narrow by brand/category.
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                <div className={productCardGridClass}>
                   {libraryResultTemplates.map((template) => {
-                    const openHref = templatesHref(params, {
-                      template: template.id,
-                      editTemplate: null,
-                      addTemplate: null,
-                    });
-                    const editHref = templatesHref(params, {
-                      manage: "1",
-                      template: template.id,
-                      editTemplate: template.id,
-                      addTemplate: null,
-                    });
-                    const primaryImage = productLibraryPrimaryImage(template);
+                    const categoryNames = [template.main_category_id ? categoryMap.get(template.main_category_id) : null, template.sub_category_id ? categoryMap.get(template.sub_category_id) : null];
 
                     return (
-                      <article
+                      <ProductCompactCard
                         key={template.id}
-                        className={`overflow-hidden rounded-xl border bg-white shadow-sm transition hover:border-zinc-300 hover:shadow-md ${
-                          selectedTemplate?.id === template.id
-                            ? "border-emerald-200 bg-emerald-50/30"
-                            : "border-zinc-200"
-                        }`}
-                      >
-                        <div className="flex h-44 items-center justify-center overflow-hidden border-b border-zinc-200 bg-zinc-50">
+                        badge={<TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />}
+                        codeLine={templateCodeLine(template.template_code, template.item_code)}
+                        descriptionLine={oneLineText(template.description, template.default_specification)}
+                        editHref={templatesHref(params, {
+                          manage: "1",
+                          template: template.id,
+                          editTemplate: template.id,
+                          addTemplate: null,
+                        })}
+                        imageCount={productLibraryImageCount(template)}
+                        media={
                           <ProductLibraryPreviewImage
                             alt={template.template_name}
                             className="flex h-full w-full items-center justify-center"
-                            path={primaryImage}
+                            path={productLibraryPrimaryImage(template)}
                           />
-                        </div>
-                        <div className="flex flex-col gap-3 p-4">
-                          <div className="flex items-start gap-2">
-                            <h3 className="min-w-0 flex-1 text-sm font-semibold text-zinc-950">
-                              {templateSelectionName(template)}
-                            </h3>
-                            <TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />
-                          </div>
-                          {template.internal_selection_name ? (
-                            <p className="text-xs font-medium text-zinc-500">
-                              Quote name: {template.template_name}
-                            </p>
-                          ) : null}
-                          <div className="grid gap-1 text-xs text-zinc-500">
-                            <p>{brandMap.get(template.brand_id) ?? "Unknown brand"}</p>
-                            <p>
-                              {[template.template_code, template.item_code].filter(Boolean).join(" / ") || "No template or item code"}
-                            </p>
-                            <p>
-                              {[template.main_category_id ? categoryMap.get(template.main_category_id) : null, template.sub_category_id ? categoryMap.get(template.sub_category_id) : null].filter(Boolean).join(" / ") || "No category"}
-                            </p>
-                            {template.origin ? <p>Origin: {template.origin}</p> : null}
-                          </div>
-                          <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-zinc-500">
-                            <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-1">
-                              {productLibraryImageCount(template)} images
-                            </span>
-                          </div>
-                          <p className="line-clamp-3 text-sm leading-6 text-zinc-600">
-                            {template.description || template.default_specification || "No description available."}
-                          </p>
-                          <div className="mt-auto flex flex-wrap gap-2">
-                            <Link
-                              href={openHref}
-                              className="inline-flex h-9 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100"
-                            >
-                              View Details
-                            </Link>
-                            <Link
-                              href={editHref}
-                              className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                            >
-                              Edit Template
-                            </Link>
-                          </div>
-                        </div>
-                      </article>
+                        }
+                        metaLine={brandAndCategoryLine(brandMap.get(template.brand_id) ?? "Unknown brand", categoryNames)}
+                        openHref={templatesHref(params, {
+                          template: template.id,
+                          editTemplate: null,
+                          addTemplate: null,
+                        })}
+                        quoteName={template.internal_selection_name ? template.template_name : null}
+                        selected={selectedTemplate?.id === template.id}
+                        title={templateSelectionName(template)}
+                      />
                     );
                   })}
                 </div>
