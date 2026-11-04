@@ -1,3 +1,4 @@
+import { readPricingRule, wholeAedLinePricing, wholeAedTotals, type PricingRule } from "@/lib/quotation-pricing";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import {
   documentSetupRecord,
@@ -182,8 +183,12 @@ function roundedNetPriceOverrides(workspace: Pick<LocalQuotationWorkspace, "meta
   return (priceRounding.rounded_net_prices ?? {}) as Record<string, unknown>;
 }
 
-export function itemLinePricing(item: Pick<LocalQuotationItem, "qty" | "unit_price" | "discount_type" | "discount_value">) {
+export function itemLinePricing(item: Pick<LocalQuotationItem, "qty" | "unit_price" | "discount_type" | "discount_value">, pricingRule?: PricingRule) {
   const qty = normalizedLineQty(item.qty);
+  if (pricingRule === "whole_aed_v1") {
+    const whole = wholeAedLinePricing(Number.isFinite(item.unit_price) ? item.unit_price : 0, item.discount_type, Number.isFinite(item.discount_value) ? item.discount_value : 0, qty);
+    return { unitPrice: whole.unitPrice, discountValue: whole.discountValue, netPrice: whole.netPrice, netTotal: whole.netTotal };
+  }
   const unitPrice = exactMoneyValue(Number.isFinite(item.unit_price) ? item.unit_price : 0);
   const rawDiscountValue = exactMoneyValue(Number.isFinite(item.discount_value) ? item.discount_value : 0);
   const discountType = item.discount_type === "percent"
@@ -213,10 +218,10 @@ export function itemLinePricing(item: Pick<LocalQuotationItem, "qty" | "unit_pri
 }
 
 export function workspaceItemDisplayPricing(
-  workspace: Pick<LocalQuotationWorkspace, "metadata">,
+  workspace: Pick<LocalQuotationWorkspace, "metadata"> & Partial<Pick<LocalQuotationWorkspace, "layout_settings">>,
   item: Pick<LocalQuotationItem, "id" | "qty" | "unit_price" | "discount_type" | "discount_value">,
 ) {
-  const basePricing = itemLinePricing(item);
+  const basePricing = itemLinePricing(item, readPricingRule(workspace.layout_settings));
   const roundedNetPriceOverride = Number(roundedNetPriceOverrides(workspace)[item.id]);
   const hasRoundedNetOverride = Number.isFinite(roundedNetPriceOverride);
   const rawDiscountAmount = exactMoneyValue(Math.max(basePricing.unitPrice - basePricing.netPrice, 0));
@@ -258,7 +263,7 @@ function overallDiscountAmount(
   return exactMoneyValue(Math.min(base, netTotal || subtotal));
 }
 
-export function workspaceTotals(workspace: Pick<LocalQuotationWorkspace, "items" | "overall_discount_type" | "overall_discount_value" | "vat_percent" | "metadata">): LocalQuotationTotals {
+export function workspaceTotals(workspace: Pick<LocalQuotationWorkspace, "items" | "overall_discount_type" | "overall_discount_value" | "vat_percent" | "metadata"> & Partial<Pick<LocalQuotationWorkspace, "layout_settings">>): LocalQuotationTotals {
   const pricedItems = workspace.items.filter(
     (item) =>
       item.is_active !== false &&
@@ -267,6 +272,12 @@ export function workspaceTotals(workspace: Pick<LocalQuotationWorkspace, "items"
       !["note", "blank", "subtotal"].includes(item.item_type) &&
       !["heading", "note", "no_quote"].includes(item.line_style),
   );
+  if (readPricingRule(workspace.layout_settings) === "whole_aed_v1") {
+    return wholeAedTotals({
+      lines: pricedItems.map((item) => { const line = workspaceItemDisplayPricing(workspace, item); return { qty: line.qty, unitPrice: line.unitPrice, netTotal: line.netTotal }; }),
+      overallDiscountType: workspace.overall_discount_type, overallDiscountValue: workspace.overall_discount_value, vatPercent: workspace.vat_percent,
+    });
+  }
   const subtotal = exactMoneyValue(
     pricedItems.reduce((total, item) => total + exactMoneyValue(workspaceItemDisplayPricing(workspace, item).unitPrice * normalizedLineQty(item.qty)), 0),
   );
@@ -307,7 +318,7 @@ export function recalculateWorkspace(workspace: LocalQuotationWorkspace): LocalQ
       include_in_total: item.include_in_total ?? !item.is_optional,
       currency: normalizeCurrency(item.currency || workspace.currency || defaultCurrency),
       qty: normalizedQty,
-      unit_price: itemLinePricing(item).unitPrice,
+      unit_price: itemLinePricing(item, readPricingRule(workspace.layout_settings)).unitPrice,
       discount_type: item.discount_type === "percent" ? "percent" : item.discount_type === "none" ? "none" : "amount",
       discount_value: nextLinePricing.discountValue,
       net_price: nextLinePricing.netPrice,
@@ -325,6 +336,30 @@ export function recalculateWorkspace(workspace: LocalQuotationWorkspace): LocalQ
     ...updated,
     totals: workspaceTotals(updated),
   };
+}
+
+/**
+ * Price Rounding is kept in the workspace metadata while editing. To survive opening the quotation from the server it is also published in
+ * layout_settings.price_rounding. A saved quotation without it is untouched.
+ */
+export function layoutSettingsWithPriceRounding(layoutSettings: unknown, metadata: Record<string, unknown> | undefined): unknown {
+  const rounding = metadata?.price_rounding as { rounded_net_prices?: Record<string, unknown> } | undefined;
+  const hasRounding = Boolean(rounding && Object.keys(rounding.rounded_net_prices ?? {}).length);
+  const current = layoutSettings && typeof layoutSettings === "object" ? layoutSettings as Record<string, unknown> : null;
+  if (hasRounding) return { ...(current ?? {}), price_rounding: rounding };
+  if (!current || !("price_rounding" in current)) return layoutSettings;
+  const next = { ...current };
+  delete next.price_rounding;
+  return next;
+}
+/** The published rounding for an opened quotation. A line whose saved net no longer matches (edited in the shared builder) drops its rounding. */
+export function publishedPriceRounding(layoutSettings: unknown, items: Array<Pick<LocalQuotationItem, "id" | "net_price">>): Record<string, unknown> {
+  const stored = layoutSettings && typeof layoutSettings === "object" ? (layoutSettings as { price_rounding?: unknown }).price_rounding : null;
+  if (!stored || typeof stored !== "object") return {};
+  const rounding = stored as Record<string, unknown>;
+  const prices = (rounding.rounded_net_prices ?? {}) as Record<string, unknown>;
+  const kept = Object.fromEntries(items.flatMap((item) => Math.abs(Number(prices[item.id]) - Number(item.net_price)) < 0.005 ? [[item.id, Number(prices[item.id])]] : []));
+  return Object.keys(kept).length ? { price_rounding: { ...rounding, rounded_net_prices: kept } } : {};
 }
 
 export function createWorkspaceFromServerSnapshot(source: ServerQuotationWorkspaceSource): LocalQuotationWorkspace {
@@ -373,7 +408,7 @@ export function createWorkspaceFromServerSnapshot(source: ServerQuotationWorkspa
     updated_at: localNow(),
     has_unsaved_changes: false,
     last_saved_to_software_at: null,
-    metadata: {},
+    metadata: publishedPriceRounding(source.quotation.layout_settings, source.items),
   };
 
   return recalculateWorkspace(workspace);

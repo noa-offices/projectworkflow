@@ -79,7 +79,7 @@ import {
   quotationOptionLabel,
   quotationRootBaseNo,
 } from "@/lib/quotation-options";
-import { formatQuotationMoney, quotationMoneyCell, quotationMoneyValue } from "@/lib/quotation-pricing";
+import { LEGACY_PRICING_RULE, formatRuleMoney, readPricingRule, ruleConvertedPrice, ruleExactAmount, ruleMoneyCell, type PricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
   createQuotationItem,
@@ -173,6 +173,8 @@ type DisplaySection = QuotationSection & {
 };
 
 type QuotationItem = {
+  /** The quotation's pricing rule, set on each row when the page loads. */
+  pricing_rule?: PricingRule;
   id: string;
   quotation_id: string;
   section_id: string | null;
@@ -387,8 +389,8 @@ const titleSizes = [
   ["large", "Large"],
 ] as const;
 
-function money(currency: string, value: number) {
-  return formatQuotationMoney(currency, value);
+function money(currency: string, value: number, pricingRule: PricingRule = LEGACY_PRICING_RULE) {
+  return formatRuleMoney(pricingRule, currency, value);
 }
 
 function statusLabel(status: string) {
@@ -406,8 +408,8 @@ function recentChangeTimeLabel(value: string) {
   }).format(new Date(value));
 }
 
-function moneyCell(value: number) {
-  return quotationMoneyCell(value);
+function moneyCell(value: number, pricingRule: PricingRule = LEGACY_PRICING_RULE) {
+  return ruleMoneyCell(pricingRule, value);
 }
 
 function totalCell(item: QuotationItem) {
@@ -416,7 +418,7 @@ function totalCell(item: QuotationItem) {
   if (item.line_style === "no_quote") return "N/A";
   if (item.line_style === "note" || item.line_style === "heading") return "-";
 
-  return moneyCell(item.net_total);
+  return moneyCell(item.net_total, item.pricing_rule);
 }
 
 function formatNumber(value: number) {
@@ -633,10 +635,12 @@ function findById(rows: unknown, id: string | null) {
 
 function currentAccessoryTotal({
   baseCurrency,
+  pricingRule,
   selectedAddOns,
   template,
 }: {
   baseCurrency: string;
+  pricingRule?: PricingRule;
   selectedAddOns: Record<string, unknown>;
   template: ProductLibraryTemplate;
 }) {
@@ -657,19 +661,21 @@ function currentAccessoryTotal({
       const currency = normalizeCurrency(stringValue(currentItem.currency) ?? baseCurrency);
       if (currency !== baseCurrency) return null;
 
-      total += numericValue(item.qty, 1) * quotationMoneyValue(numericValue(currentItem.price));
+      total += numericValue(item.qty, 1) * ruleExactAmount(pricingRule, numericValue(currentItem.price));
     }
   }
 
-  return quotationMoneyValue(total);
+  return ruleExactAmount(pricingRule, total);
 }
 
 function currentComponentOptionsTotal({
   baseCurrency,
   components,
+  pricingRule,
   selectedOptions,
 }: {
   baseCurrency: string;
+  pricingRule?: PricingRule;
   components: ProductLibraryComponent[];
   selectedOptions: unknown;
 }) {
@@ -692,10 +698,10 @@ function currentComponentOptionsTotal({
     const currency = normalizeCurrency(component.currency);
     if (currency !== baseCurrency) return null;
 
-    total += quotationMoneyValue(component.unit_price);
+    total += ruleExactAmount(pricingRule, component.unit_price);
   }
 
-  return quotationMoneyValue(total);
+  return ruleExactAmount(pricingRule, total);
 }
 
 function currentSourcePriceForItem({
@@ -707,10 +713,11 @@ function currentSourcePriceForItem({
   item: QuotationItem;
   template: ProductLibraryTemplate;
 }) {
+  const pricingRule = item.pricing_rule;
   const sourceData = recordValue(item.source_component_data);
   if (sourceData?.currency_conversion || sourceData?.linked_products) return null;
 
-  let sourcePrice = quotationMoneyValue(template.default_unit_price);
+  let sourcePrice = ruleExactAmount(pricingRule, template.default_unit_price);
   let sourceCurrency = normalizeCurrency(template.currency);
   let sourceKind = "default";
 
@@ -720,7 +727,7 @@ function currentSourcePriceForItem({
     const currentVariant = findById(flattenBaseModelPricingRows(template.variant_pricing ?? []), variantId);
     if (!currentVariant) return null;
 
-    sourcePrice = quotationMoneyValue(numericValue(currentVariant.price));
+    sourcePrice = ruleExactAmount(pricingRule, numericValue(currentVariant.price));
     sourceCurrency = normalizeCurrency(stringValue(currentVariant.currency) ?? template.currency);
     sourceKind = "variant";
   }
@@ -734,7 +741,7 @@ function currentSourcePriceForItem({
     const prices = recordValue(currentCategory?.prices);
     if (!currentCategory || !prices) return null;
 
-    sourcePrice = quotationMoneyValue(numericValue(prices[selectedCategory]));
+    sourcePrice = ruleExactAmount(pricingRule, numericValue(prices[selectedCategory]));
     sourceCurrency = normalizeCurrency(stringValue(currentCategory.currency) ?? template.currency);
     sourceKind = "category";
   }
@@ -752,7 +759,7 @@ function currentSourcePriceForItem({
     if (!match) return null;
     const currentSize = match.row;
     sourceCurrency = normalizeCurrency(stringValue(currentSize.currency) ?? template.currency);
-    sourcePrice = quotationMoneyValue(
+    sourcePrice = ruleExactAmount(pricingRule, 
       numericValue(currentSize.default_price) +
       numericValue(currentSize.additional_price) * numericValue(deskingData?.additional_qty),
     );
@@ -760,6 +767,7 @@ function currentSourcePriceForItem({
   }
 
   const componentOptionsTotal = currentComponentOptionsTotal({
+    pricingRule,
     baseCurrency: sourceCurrency,
     components,
     selectedOptions: sourceData?.selected_options,
@@ -768,6 +776,7 @@ function currentSourcePriceForItem({
 
   const accessoryTotal = sourceData?.add_ons
     ? currentAccessoryTotal({
+        pricingRule,
         baseCurrency: sourceCurrency,
         selectedAddOns: recordValue(sourceData.add_ons) ?? {},
         template,
@@ -781,14 +790,14 @@ function currentSourcePriceForItem({
   let systemTotal = 0;
   if (systemPricing.kind === "ok") {
     if (normalizeCurrency(systemPricing.currency ?? template.currency) !== sourceCurrency) return null;
-    systemTotal = quotationMoneyValue(systemPricing.total);
+    systemTotal = ruleExactAmount(pricingRule, systemPricing.total);
   }
 
   return {
     canApplyCurrentSourcePrice: true,
     sourceCurrency,
     sourceKind,
-    sourcePrice: quotationMoneyValue(sourcePrice + systemTotal + componentOptionsTotal + accessoryTotal),
+    sourcePrice: ruleConvertedPrice(pricingRule, sourcePrice + systemTotal + componentOptionsTotal + accessoryTotal),
   };
 }
 
@@ -842,7 +851,7 @@ function sourceLabelFromReference(reference: Record<string, unknown>) {
   ].filter(Boolean).join(" / ") || null;
 }
 
-function singleOriginalCurrencyTotal(conversionData: Record<string, unknown> | null | undefined) {
+function singleOriginalCurrencyTotal(conversionData: Record<string, unknown> | null | undefined, pricingRule?: PricingRule) {
   const totals = recordValue(conversionData?.original_totals);
   if (!totals) return null;
 
@@ -854,7 +863,7 @@ function singleOriginalCurrencyTotal(conversionData: Record<string, unknown> | n
 
   return {
     currency: entries[0][0],
-    price: quotationMoneyValue(entries[0][1]),
+    price: ruleExactAmount(pricingRule, entries[0][1]),
   };
 }
 
@@ -901,7 +910,7 @@ function sourcePriceReferenceForItem({
     const originalCurrency = stringValue(storedReference.original_source_currency);
 
     if (originalPrice !== null && originalCurrency) {
-      reference.originalPrice = quotationMoneyValue(originalPrice);
+      reference.originalPrice = ruleExactAmount(item.pricing_rule, originalPrice);
       reference.originalCurrency = normalizeCurrency(originalCurrency);
     }
   }
@@ -914,13 +923,13 @@ function sourcePriceReferenceForItem({
     reference.sourceType = "Manual currency conversion";
     reference.sourceLabel = reference.sourceLabel ?? "Manual row";
     if (manualConvertedPrice !== null) {
-      reference.convertedPrice = quotationMoneyValue(manualConvertedPrice);
+      reference.convertedPrice = ruleExactAmount(item.pricing_rule, manualConvertedPrice);
       reference.convertedCurrency = normalizeCurrency(manualConvertedCurrency ?? "AED");
     }
   }
 
   if (reference.originalPrice === null) {
-    const singleTotal = singleOriginalCurrencyTotal(conversionData);
+    const singleTotal = singleOriginalCurrencyTotal(conversionData, item.pricing_rule);
     if (singleTotal) {
       reference.originalPrice = singleTotal.price;
       reference.originalCurrency = singleTotal.currency;
@@ -935,7 +944,7 @@ function sourcePriceReferenceForItem({
       // Native System / Base adds its own priced row to the reference (same currency only; mixed currency is covered by conversion totals).
       const systemRow = recordValue(recordValue(sourceData?.system_pricing)?.row);
       const systemPrice = systemRow && normalizeCurrency(stringValue(systemRow.currency) ?? variantCurrency) === variantCurrency ? (optionalNumericValue(systemRow.price) ?? 0) * systemPricingQuantity(sourceData) : 0;
-      reference.originalPrice = quotationMoneyValue(price + systemPrice);
+      reference.originalPrice = ruleExactAmount(item.pricing_rule, price + systemPrice);
       reference.originalCurrency = variantCurrency;
       reference.sourceType = reference.sourceType ?? sourceTypeLabel("variant_pricing");
       reference.sourceLabel = reference.sourceLabel ?? [
@@ -950,7 +959,7 @@ function sourcePriceReferenceForItem({
   if (reference.originalPrice === null && categoryData && categoryRow) {
     const price = optionalNumericValue(categoryData.selected_price);
     if (price !== null) {
-      reference.originalPrice = quotationMoneyValue(price);
+      reference.originalPrice = ruleExactAmount(item.pricing_rule, price);
       reference.originalCurrency = normalizeCurrency(stringValue(categoryRow.currency) ?? template?.currency ?? quotationCurrency);
       reference.sourceType = reference.sourceType ?? sourceTypeLabel("category_pricing");
       reference.sourceLabel = reference.sourceLabel ?? [
@@ -964,7 +973,7 @@ function sourcePriceReferenceForItem({
   if (reference.originalPrice === null && deskingData && !conversionData) {
     const price = optionalNumericValue(deskingData.final_price);
     if (price !== null) {
-      reference.originalPrice = quotationMoneyValue(price);
+      reference.originalPrice = ruleExactAmount(item.pricing_rule, price);
       reference.originalCurrency = quotationCurrency;
       reference.sourceType = reference.sourceType ?? sourceTypeLabel("desking_size_pricing");
       reference.sourceLabel = reference.sourceLabel ?? [
@@ -1011,7 +1020,7 @@ function manualLibrarySourceDefaults(item?: QuotationItem) {
       }
     : {
         currency: normalizeCurrency(item?.currency ?? defaultCurrency),
-        price: quotationMoneyValue(item?.unit_price ?? 0),
+        price: ruleExactAmount(item?.pricing_rule, item?.unit_price ?? 0),
       };
 }
 
@@ -1053,7 +1062,7 @@ function SourceLibraryPriceReference({
               {reference.originalPrice !== null && reference.originalCurrency
                 ? (reference.isManualConversion
                     ? formatSourceMoney(reference.originalCurrency, reference.originalPrice)
-                    : formatQuotationMoney(reference.originalCurrency, reference.originalPrice))
+                    : formatRuleMoney(item.pricing_rule, reference.originalCurrency, reference.originalPrice))
                 : "Not available for this row"}
             </p>
           </div>
@@ -1069,7 +1078,7 @@ function SourceLibraryPriceReference({
               <p className="text-[10px] font-semibold uppercase text-zinc-500">Current source price</p>
               <p className="font-semibold text-zinc-900">
                 {reference.currentSourcePrice !== null && reference.currentSourceCurrency
-                  ? formatQuotationMoney(reference.currentSourceCurrency, reference.currentSourcePrice)
+                  ? formatRuleMoney(item.pricing_rule, reference.currentSourceCurrency, reference.currentSourcePrice)
                   : "Not available for this row"}
               </p>
             </div>
@@ -1077,7 +1086,7 @@ function SourceLibraryPriceReference({
           <div>
             <p className="text-[10px] font-semibold uppercase text-zinc-500">Quotation row price</p>
             <p className="font-semibold text-zinc-900">
-              {formatQuotationMoney(normalizeCurrency(item.currency), item.unit_price)}
+              {formatRuleMoney(item.pricing_rule, normalizeCurrency(item.currency), item.unit_price)}
             </p>
           </div>
           <div className="md:col-span-2">
@@ -1094,7 +1103,7 @@ function SourceLibraryPriceReference({
             <div>
               <p className="text-[10px] font-semibold uppercase text-zinc-500">Converted quotation price</p>
               <p className="text-zinc-800">
-                {formatQuotationMoney(reference.convertedCurrency, reference.convertedPrice)}
+                {formatRuleMoney(item.pricing_rule, reference.convertedCurrency, reference.convertedPrice)}
               </p>
             </div>
           ) : null}
@@ -1123,8 +1132,8 @@ function sourcePriceWarning(
   });
   if (!currentSource) return null;
 
-  const quotedPrice = quotationMoneyValue(item.unit_price);
-  const sourcePrice = quotationMoneyValue(currentSource.sourcePrice);
+  const quotedPrice = ruleExactAmount(item.pricing_rule, item.unit_price);
+  const sourcePrice = ruleExactAmount(item.pricing_rule, currentSource.sourcePrice);
   const quotedCurrency = normalizeCurrency(item.currency);
   const sourceCurrency = normalizeCurrency(currentSource.sourceCurrency);
   const priceChanged = Math.abs(quotedPrice - sourcePrice) >= 0.01;
@@ -1168,7 +1177,7 @@ function SourcePriceWarning({
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
             <span className="font-semibold">Source price changed</span>
             <span>
-              Quoted: {formatQuotationMoney(warning.quotedCurrency, warning.quotedPrice)} / Current source: {formatQuotationMoney(warning.sourceCurrency, warning.sourcePrice)}
+              Quoted: {formatRuleMoney(item.pricing_rule, warning.quotedCurrency, warning.quotedPrice)} / Current source: {formatRuleMoney(item.pricing_rule, warning.sourceCurrency, warning.sourcePrice)}
             </span>
             <span>Existing quotation price is unchanged.</span>
           </div>
@@ -1205,8 +1214,10 @@ function historyChangeTypeLabel(changeType: string) {
 
 function PriceChangeHistory({
   history,
+  pricingRule,
 }: {
   history: QuotationItemPriceHistoryEntry[];
+  pricingRule?: PricingRule;
 }) {
   return (
     <fieldset className="border border-zinc-300 bg-zinc-50 p-3">
@@ -1219,12 +1230,12 @@ function PriceChangeHistory({
                 {new Intl.DateTimeFormat("en-US", {
                   dateStyle: "medium",
                 }).format(new Date(entry.changed_at))} - {entry.changed_by_name || "Unknown user"} - {historyChangeTypeLabel(entry.change_type)} - {entry.old_unit_price !== null
-                  ? formatQuotationMoney(
+                  ? formatRuleMoney(pricingRule, 
                       normalizeCurrency(entry.old_currency ?? entry.new_currency ?? defaultCurrency),
                       entry.old_unit_price,
                     )
                   : "-"}{" "}
-                -&gt; {formatQuotationMoney(normalizeCurrency(entry.new_currency ?? entry.old_currency ?? defaultCurrency), entry.new_unit_price)}
+                -&gt; {formatRuleMoney(pricingRule, normalizeCurrency(entry.new_currency ?? entry.old_currency ?? defaultCurrency), entry.new_unit_price)}
               </p>
               {entry.note ? <p className="mt-1 text-zinc-500">{entry.note}</p> : null}
             </div>
@@ -1635,10 +1646,12 @@ function InsertSectionControl({
 }
 
 function SectionTotalRow({
+  pricingRule,
   currency,
   total,
   totalColumns,
 }: {
+  pricingRule?: PricingRule;
   currency: string;
   total: number;
   totalColumns: number;
@@ -1650,18 +1663,20 @@ function SectionTotalRow({
         className="border border-zinc-300 bg-zinc-50 px-3 py-2 text-right text-xs font-bold uppercase tracking-wide text-zinc-700"
       >
         <span className="mr-4 text-zinc-500">Section Total</span>
-        <span className="text-zinc-950">{money(currency, total)}</span>
+        <span className="text-zinc-950">{money(currency, total, pricingRule)}</span>
       </td>
     </tr>
   );
 }
 
 function MainSectionTotalRow({
+  pricingRule,
   currency,
   label,
   total,
   totalColumns,
 }: {
+  pricingRule?: PricingRule;
   currency: string;
   label: string;
   total: number;
@@ -1674,7 +1689,7 @@ function MainSectionTotalRow({
         className="border border-zinc-950 bg-zinc-950 px-3 py-2 text-right text-sm font-bold uppercase tracking-wide text-white"
       >
         <span className="mr-4">{label || "Main Section"} Total</span>
-        <span>{money(currency, total)}</span>
+        <span>{money(currency, total, pricingRule)}</span>
       </td>
     </tr>
   );
@@ -1920,6 +1935,7 @@ function LineForm({
           sourceCurrencyDefault={manualConversion.sourceCurrency}
           sourcePriceDefault={manualConversion.sourcePrice}
           conversionRateDefault={manualConversion.conversionRate}
+          pricingRule={manualItem.pricing_rule}
         />
       ) : null}
 
@@ -1985,7 +2001,7 @@ function LineForm({
                 item={item}
                 productTemplates={productTemplates}
               />
-              {showInternal ? <PriceChangeHistory history={priceHistory} /> : null}
+              {showInternal ? <PriceChangeHistory history={priceHistory} pricingRule={item?.pricing_rule} /> : null}
             </>
           )}
           item={item ?? {}}
@@ -2378,7 +2394,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     className: "w-24 text-center",
     defaultWidth: 90,
     render: (item, _serial, formId, canEdit) =>
-      isPriceHiddenLine(item) ? "-" : canEdit ? <CellInput formId={formId} name="unit_price" type="number" step="5" defaultValue={item.unit_price} align="center" /> : moneyCell(item.unit_price),
+      isPriceHiddenLine(item) ? "-" : canEdit ? <CellInput formId={formId} name="unit_price" type="number" step={item.pricing_rule === "whole_aed_v1" ? "any" : "5"} defaultValue={item.unit_price} align="center" /> : moneyCell(item.unit_price, item.pricing_rule),
   };
   const discount: Column = {
     key: "discount",
@@ -2392,7 +2408,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
           ? <CellInput formId={formId} name="discount_value" type="number" step="0.01" defaultValue={item.discount_value} align="center" />
           : item.discount_type === "percent"
             ? `${formatNumber(item.discount_value)}%`
-            : moneyCell(item.discount_value),
+            : moneyCell(item.discount_value, item.pricing_rule),
   };
   const discountPercentage: Column = {
     key: "discount_percentage",
@@ -2419,7 +2435,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     render: (item) => (
       isPriceHiddenLine(item)
         ? "-"
-        : <QuotationRowComputedValue field="discount_amount" fallback={moneyCell(discountAmount(item))} />
+        : <QuotationRowComputedValue field="discount_amount" fallback={moneyCell(discountAmount(item), item.pricing_rule)} />
     ),
   };
   const netPrice: Column = {
@@ -2430,7 +2446,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     render: (item) => (
       isPriceHiddenLine(item)
         ? "-"
-        : <QuotationRowComputedValue field="net_price" fallback={moneyCell(item.net_price)} />
+        : <QuotationRowComputedValue field="net_price" fallback={moneyCell(item.net_price, item.pricing_rule)} />
     ),
   };
   const netTotal: Column = {
@@ -2462,7 +2478,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     label: "Internal Cost",
     className: "w-28 text-right",
     defaultWidth: 112,
-    render: (item) => moneyCell(item.internal_cost),
+    render: (item) => moneyCell(item.internal_cost, item.pricing_rule),
   };
   const margin: Column = {
     key: "margin",
@@ -2470,7 +2486,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     className: "w-24 text-right",
     defaultWidth: 96,
     render: (item) =>
-      item.margin_type === "percent" ? `${item.margin_value}%` : moneyCell(item.margin_value),
+      item.margin_type === "percent" ? `${item.margin_value}%` : moneyCell(item.margin_value, item.pricing_rule),
   };
   const notes: Column = {
     key: "supplier_notes",
@@ -3505,6 +3521,9 @@ export default async function QuotationBuilderPage({
     ]);
   }
 
+  const pricingRule = readPricingRule(quotation.layout_settings);
+  for (const item of items ?? []) item.pricing_rule = pricingRule;
+
   for (const item of items ?? []) {
     const key = item.section_id ?? "unsectioned";
     const sectionItems = itemsBySection.get(key) ?? [];
@@ -3595,7 +3614,7 @@ export default async function QuotationBuilderPage({
       {canManageRecords ? <CellFormattingToolbar /> : null}
       <header className="sticky top-0 z-20 border-b border-zinc-300 bg-white">
         <MobileBuilderHeader
-          finalTotal={money(quotation.currency, quotation.grand_total)}
+          finalTotal={money(quotation.currency, quotation.grand_total, pricingRule)}
           quotationNo={builderDisplayQuotationNo ?? quotation.quotation_no ?? "Draft quotation"}
         >
         <div className="grid min-w-0 gap-2 px-3 py-2.5">
@@ -3850,7 +3869,7 @@ export default async function QuotationBuilderPage({
               </Link>
             </div>
             <div className="border border-emerald-900 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-950">
-              Final Total: {money(quotation.currency, quotation.grand_total)}
+              Final Total: {money(quotation.currency, quotation.grand_total, pricingRule)}
             </div>
           </div>
         </div>
@@ -4098,6 +4117,7 @@ export default async function QuotationBuilderPage({
                         ) : null}
                         {!childSections.length ? (
                           <MainSectionTotalRow
+                            pricingRule={pricingRule}
                             currency={quotation.currency}
                             label={section.section_title}
                             total={mainSectionTotal}
@@ -4219,6 +4239,7 @@ export default async function QuotationBuilderPage({
 
                           return (
                             <QuotationRowEditorProvider
+                              pricingRule={item.pricing_rule}
                               key={`${item.id}-${item.qty}-${item.unit_price}-${item.discount_value}`}
                               formId={inlineFormId}
                               row={{
@@ -4316,6 +4337,7 @@ export default async function QuotationBuilderPage({
 
                           return (
                             <QuotationRowEditorProvider
+                              pricingRule={item.pricing_rule}
                               key={`${item.id}-${item.qty}-${item.unit_price}-${item.discount_value}`}
                               formId={inlineFormId}
                               row={{
@@ -4380,6 +4402,7 @@ export default async function QuotationBuilderPage({
 
                           return (
                             <QuotationRowEditorProvider
+                              pricingRule={item.pricing_rule}
                               key={`${item.id}-${item.qty}-${item.unit_price}-${item.discount_value}`}
                               formId={inlineFormId}
                               row={{
@@ -4453,6 +4476,7 @@ export default async function QuotationBuilderPage({
                         if (item.line_style === "no_quote" && !mergedText) {
                           return (
                             <QuotationRowEditorProvider
+                              pricingRule={item.pricing_rule}
                               key={`${item.id}-${item.qty}-${item.unit_price}-${item.discount_value}`}
                               formId={inlineFormId}
                               row={{
@@ -4493,6 +4517,7 @@ export default async function QuotationBuilderPage({
 
                         return (
                           <QuotationRowEditorProvider
+                              pricingRule={item.pricing_rule}
                             key={`${item.id}-${item.qty}-${item.unit_price}-${item.discount_value}`}
                             formId={inlineFormId}
                             row={{
@@ -4581,6 +4606,7 @@ export default async function QuotationBuilderPage({
                       })}
 
                       <SectionTotalRow
+                            pricingRule={pricingRule}
                         currency={quotation.currency}
                         total={sectionTotals.get(section.id) ?? 0}
                         totalColumns={totalColumns}
@@ -4635,6 +4661,7 @@ export default async function QuotationBuilderPage({
                       mainSectionIds.has(section.parent_section_id) &&
                       nextSection?.parent_section_id !== section.parent_section_id ? (
                         <MainSectionTotalRow
+                            pricingRule={pricingRule}
                           currency={quotation.currency}
                           label={sectionById.get(section.parent_section_id)?.section_title ?? ""}
                           total={mainSectionTotals.get(section.parent_section_id) ?? 0}
@@ -4696,7 +4723,7 @@ export default async function QuotationBuilderPage({
               <span className="block text-xs font-semibold uppercase text-zinc-500">Final Total</span>
               <span className="mt-1 flex min-w-0 items-end justify-between gap-3">
                 <span className="min-w-0 break-words text-lg font-bold text-emerald-950">
-                  {money(quotation.currency, quotation.grand_total)}
+                  {money(quotation.currency, quotation.grand_total, pricingRule)}
                 </span>
                 <span className="shrink-0 text-xs font-semibold text-emerald-900 group-open:hidden">View summary</span>
                 <span className="hidden shrink-0 text-xs font-semibold text-emerald-900 group-open:inline">Hide summary</span>
@@ -4710,11 +4737,11 @@ export default async function QuotationBuilderPage({
             ) : null}
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">Total Price</span>
-              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.subtotal)}</span>
+              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.subtotal, pricingRule)}</span>
             </div>
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">Total Discount</span>
-              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.discount_total + overallDiscountAmount(quotation))}</span>
+              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.discount_total + overallDiscountAmount(quotation), pricingRule)}</span>
             </div>
             {canManageRecords ? (
               <div className="border-b border-zinc-300 bg-zinc-50 px-3 py-3">
@@ -4723,11 +4750,11 @@ export default async function QuotationBuilderPage({
             ) : null}
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">VAT {quotation.vat_percent}%</span>
-              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.vat_amount)}</span>
+              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.vat_amount, pricingRule)}</span>
             </div>
             <div className="flex justify-between bg-emerald-950 px-3 py-3 text-base font-bold text-white">
               <span>Final Total</span>
-              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.grand_total)}</span>
+              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.grand_total, pricingRule)}</span>
             </div>
             </div>
           </details>

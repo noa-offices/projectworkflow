@@ -23,6 +23,7 @@ import {
   quotationStatusBadgeClassName,
   quotationStatusLabel,
 } from "@/lib/quotation-status";
+// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";

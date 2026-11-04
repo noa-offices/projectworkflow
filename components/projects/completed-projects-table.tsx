@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 
 export type CompletedProjectFileItem = {

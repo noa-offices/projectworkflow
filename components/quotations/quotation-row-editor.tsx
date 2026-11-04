@@ -14,7 +14,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { autosaveQuotationItemInline } from "@/app/quotations/actions";
-import { quotationMoneyCell, quotationMoneyValue } from "@/lib/quotation-pricing";
+import { quotationLinePricing, ruleMoneyCell, type PricingRule } from "@/lib/quotation-pricing";
 
 type SaveStatus = "saved" | "unsaved" | "saving" | "failed";
 
@@ -62,27 +62,6 @@ function parseNumber(value: string, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function roundedLinePricing(unitPriceValue: number, discountType: string, discountValueInput: number, qty = 1) {
-  const unitPrice = quotationMoneyValue(unitPriceValue);
-  const discountValue = discountType === "percent"
-    ? discountValueInput
-    : quotationMoneyValue(discountValueInput);
-  const discountAmount = quotationMoneyValue(
-    discountType === "percent"
-      ? (unitPrice * discountValue) / 100
-      : discountValue,
-  );
-  const netPrice = quotationMoneyValue(Math.max(unitPrice - discountAmount, 0));
-
-  return {
-    discountAmount,
-    discountValue,
-    netPrice,
-    netTotal: quotationMoneyValue(qty * netPrice),
-    unitPrice,
-  };
-}
-
 function valueFromResult(
   result: SaveResult,
   fallback: number,
@@ -97,10 +76,12 @@ function valueFromResult(
 export function QuotationRowEditorProvider({
   children,
   formId,
+  pricingRule,
   row,
 }: {
   children: ReactNode;
   formId: string;
+  pricingRule?: PricingRule;
   row: RowSnapshot;
 }) {
   const [status, setStatus] = useState<SaveStatus>("saved");
@@ -208,7 +189,7 @@ export function QuotationRowEditorProvider({
     const qty = parseNumber(fieldValues.qty ?? "", row.qty);
     const unitPrice = parseNumber(fieldValues.unit_price ?? "", row.unitPrice);
     const discountValue = parseNumber(fieldValues.discount_value ?? "", row.discountValue);
-    return roundedLinePricing(unitPrice, row.discountType, discountValue, qty);
+    return quotationLinePricing(pricingRule, unitPrice, row.discountType, discountValue, qty);
   }, [fieldValues.discount_value, fieldValues.qty, fieldValues.unit_price, row.discountType, row.discountValue, row.qty, row.unitPrice]);
 
   useEffect(() => {
@@ -232,9 +213,9 @@ export function QuotationRowEditorProvider({
   const contextValue = useMemo<RowEditorContextValue>(() => ({
     discountPercentageText: row.discountType === "percent" ? `${fieldValues.discount_value ?? row.discountValue}%` : "-",
     formatComputedValue(field) {
-      if (field === "discount_amount") return quotationMoneyCell(computed.discountAmount);
-      if (field === "net_price") return quotationMoneyCell(computed.netPrice);
-      return quotationMoneyCell(computed.netTotal);
+      if (field === "discount_amount") return ruleMoneyCell(pricingRule, computed.discountAmount);
+      if (field === "net_price") return ruleMoneyCell(pricingRule, computed.netPrice);
+      return ruleMoneyCell(pricingRule, computed.netTotal);
     },
     getInputValue(field, fallback) {
       return fieldValues[field] ?? fallback;

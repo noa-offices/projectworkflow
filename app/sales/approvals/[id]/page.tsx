@@ -7,6 +7,7 @@ import {
   clientApprovalDraftFromLayoutSettings,
   isCancelledClientApprovalStatus,
 } from "@/lib/quotations/client-approval-draft";
+// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 

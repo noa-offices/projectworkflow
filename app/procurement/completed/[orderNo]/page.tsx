@@ -6,6 +6,7 @@ import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
+// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { vendorReceivingStatusLabel, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useMemo, useState, useTransition } from "react";
 import { ChevronDown, ChevronRight, SlidersHorizontal } from "lucide-react";
+// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import {

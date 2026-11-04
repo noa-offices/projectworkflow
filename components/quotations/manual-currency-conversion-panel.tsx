@@ -4,7 +4,7 @@ import { useState } from "react";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { applyManualCurrencyConversion } from "@/app/quotations/actions";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
-import { quotationMoneyValue } from "@/lib/quotation-pricing";
+import { ruleConvertedPrice, type PricingRule } from "@/lib/quotation-pricing";
 
 function parseNumber(value: string, fallback = 0) {
   const parsed = Number.parseFloat(value);
@@ -27,6 +27,7 @@ export function ManualCurrencyConversionPanel({
   sourceCurrencyDefault,
   sourcePriceDefault,
   conversionRateDefault,
+  pricingRule,
 }: {
   hasStoredConversion: boolean;
   itemCurrency: string;
@@ -36,6 +37,7 @@ export function ManualCurrencyConversionPanel({
   sourceCurrencyDefault: string;
   sourcePriceDefault: number;
   conversionRateDefault: number;
+  pricingRule?: PricingRule;
 }) {
   const [sourcePrice, setSourcePrice] = useState(String(sourcePriceDefault));
   const [sourceCurrency, setSourceCurrency] = useState(normalizeCurrency(sourceCurrencyDefault));
@@ -44,7 +46,8 @@ export function ManualCurrencyConversionPanel({
   const normalizedSourceCurrency = normalizeCurrency(sourceCurrency || defaultCurrency);
   const numericSourcePrice = parseNumber(sourcePrice);
   const numericRate = normalizedSourceCurrency === "AED" ? 1 : parseNumber(conversionRate);
-  const convertedPrice = quotationMoneyValue(
+  const convertedPrice = ruleConvertedPrice(
+    pricingRule,
     normalizedSourceCurrency === "AED"
       ? numericSourcePrice
       : numericSourcePrice * numericRate,

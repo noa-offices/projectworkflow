@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createProjectFileFromQuotation } from "@/app/quotations/actions";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { requireActiveUser } from "@/lib/auth";
+// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { quotationStatusLabel } from "@/lib/quotation-status";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";

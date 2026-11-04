@@ -57,7 +57,8 @@ import {
   formatQuotationNumber,
 } from "@/lib/projectworkflow-numbering";
 import { allowedQuotationStatuses, quotationStatusLabel } from "@/lib/quotation-status";
-import { quotationMoneyValue } from "@/lib/quotation-pricing";
+import { NEW_QUOTATION_PRICING_RULE, LEGACY_PRICING_RULE, quotationLinePricing, quotationMoneyValue, readPricingRule, ruleConvertedPrice, ruleExactAmount, wholeAedTotals, withPricingRule, type PricingRule } from "@/lib/quotation-pricing";
+import { branchLayoutSettings, newEnquiryCopyLayoutSettings } from "@/lib/quotations/quotation-layout-copy";
 import {
   clientApprovalDraftFromLayoutSettings,
   isCancelledClientApprovalStatus,
@@ -217,25 +218,16 @@ function money(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-function roundedLinePricing(unitPriceValue: number, discountType: string, discountValueInput: number, qty = 1) {
-  const unitPrice = quotationMoneyValue(unitPriceValue);
-  const discountValue = discountType === "percent"
-    ? discountValueInput
-    : quotationMoneyValue(discountValueInput);
-  const discountAmount = quotationMoneyValue(
-    discountType === "percent"
-      ? (unitPrice * discountValue) / 100
-      : discountValue,
-  );
-  const netPrice = quotationMoneyValue(Math.max(unitPrice - discountAmount, 0));
+function roundedLinePricing(unitPriceValue: number, discountType: string, discountValueInput: number, qty = 1, pricingRule: PricingRule = LEGACY_PRICING_RULE) {
+  return quotationLinePricing(pricingRule, unitPriceValue, discountType, discountValueInput, qty);
+}
 
-  return {
-    discountAmount,
-    discountValue,
-    netPrice,
-    netTotal: quotationMoneyValue(qty * netPrice),
-    unitPrice,
-  };
+/** The pricing rule stored on a quotation. A quotation without one, or one that cannot be read, is legacy. */
+async function quotationPricingRule(supabase: Awaited<ReturnType<typeof createSupabaseClient>>, quotationId: string): Promise<PricingRule> {
+  if (!quotationId) return LEGACY_PRICING_RULE;
+  const { data, error } = await supabase.from("quotations").select("layout_settings").eq("id", quotationId).maybeSingle<{ layout_settings: unknown }>();
+  if (error) console.error("QUOTATION PRICING RULE READ ERROR", error.message);
+  return readPricingRule(data?.layout_settings);
 }
 
 function splitRelativePath(path: string) {
@@ -1486,10 +1478,12 @@ function findRecordById(rows: unknown, id: string | null) {
 
 function currentAccessorySourceTotal({
   baseCurrency,
+  pricingRule,
   selectedAddOns,
   template,
 }: {
   baseCurrency: string;
+  pricingRule?: PricingRule;
   selectedAddOns: Record<string, unknown>;
   template: SourcePriceTemplate;
 }) {
@@ -1510,20 +1504,22 @@ function currentAccessorySourceTotal({
       const currency = normalizeCurrency(stringRecordValue(currentItem.currency) ?? baseCurrency);
       if (currency !== baseCurrency) return null;
 
-      total += calculationNumber(item.qty, 1) * quotationMoneyValue(calculationNumber(currentItem.price));
+      total += calculationNumber(item.qty, 1) * ruleExactAmount(pricingRule, calculationNumber(currentItem.price));
     }
   }
 
-  return quotationMoneyValue(total);
+  return ruleExactAmount(pricingRule, total);
 }
 
 function currentComponentSourceTotal({
   baseCurrency,
   components,
+  pricingRule,
   selectedOptions,
 }: {
   baseCurrency: string;
   components: ProductComponentSnapshotSource[];
+  pricingRule?: PricingRule;
   selectedOptions: unknown;
 }) {
   let total = 0;
@@ -1545,25 +1541,27 @@ function currentComponentSourceTotal({
     const currency = normalizeCurrency(component.currency);
     if (currency !== baseCurrency) return null;
 
-    total += quotationMoneyValue(component.unit_price);
+    total += ruleExactAmount(pricingRule, component.unit_price);
   }
 
-  return quotationMoneyValue(total);
+  return ruleExactAmount(pricingRule, total);
 }
 
 function currentSourcePriceFromSnapshot({
   components,
+  pricingRule,
   sourceData,
   template,
 }: {
   components: ProductComponentSnapshotSource[];
+  pricingRule?: PricingRule;
   sourceData: unknown;
   template: SourcePriceTemplate;
 }) {
   const data = recordValue(sourceData);
   if (data?.currency_conversion || data?.linked_products) return null;
 
-  let sourcePrice = quotationMoneyValue(template.default_unit_price);
+  let sourcePrice = ruleExactAmount(pricingRule, template.default_unit_price);
   let sourceCurrency = normalizeCurrency(template.currency);
 
   const variantData = recordValue(data?.variant_pricing);
@@ -1572,7 +1570,7 @@ function currentSourcePriceFromSnapshot({
     const currentVariant = findRecordById(flattenBaseModelPricingRows(template.variant_pricing ?? []), variantId);
     if (!currentVariant) return null;
 
-    sourcePrice = quotationMoneyValue(calculationNumber(currentVariant.price));
+    sourcePrice = ruleExactAmount(pricingRule, calculationNumber(currentVariant.price));
     sourceCurrency = normalizeCurrency(stringRecordValue(currentVariant.currency) ?? template.currency);
   }
 
@@ -1585,7 +1583,7 @@ function currentSourcePriceFromSnapshot({
     const prices = recordValue(currentCategory?.prices);
     if (!currentCategory || !prices) return null;
 
-    sourcePrice = quotationMoneyValue(calculationNumber(prices[selectedCategory]));
+    sourcePrice = ruleExactAmount(pricingRule, calculationNumber(prices[selectedCategory]));
     sourceCurrency = normalizeCurrency(stringRecordValue(currentCategory.currency) ?? template.currency);
   }
 
@@ -1602,7 +1600,7 @@ function currentSourcePriceFromSnapshot({
     if (!match) return null;
     const currentSize = match.row;
     sourceCurrency = normalizeCurrency(stringRecordValue(currentSize.currency) ?? template.currency);
-    sourcePrice = quotationMoneyValue(
+    sourcePrice = ruleExactAmount(pricingRule, 
       calculationNumber(currentSize.default_price) +
       calculationNumber(currentSize.additional_price) * calculationNumber(deskingData?.additional_qty),
     );
@@ -1611,6 +1609,7 @@ function currentSourcePriceFromSnapshot({
   const componentTotal = currentComponentSourceTotal({
     baseCurrency: sourceCurrency,
     components,
+    pricingRule,
     selectedOptions: data?.selected_options,
   });
   if (componentTotal === null) return null;
@@ -1618,6 +1617,7 @@ function currentSourcePriceFromSnapshot({
   const accessoryTotal = data?.add_ons
     ? currentAccessorySourceTotal({
         baseCurrency: sourceCurrency,
+        pricingRule,
         selectedAddOns: recordValue(data.add_ons) ?? {},
         template,
       })
@@ -1630,12 +1630,12 @@ function currentSourcePriceFromSnapshot({
   let systemTotal = 0;
   if (systemPricing.kind === "ok") {
     if (normalizeCurrency(systemPricing.currency ?? template.currency) !== sourceCurrency) return null;
-    systemTotal = quotationMoneyValue(systemPricing.total);
+    systemTotal = ruleExactAmount(pricingRule, systemPricing.total);
   }
 
   return {
     currency: sourceCurrency,
-    price: quotationMoneyValue(sourcePrice + systemTotal + componentTotal + accessoryTotal),
+    price: ruleConvertedPrice(pricingRule, sourcePrice + systemTotal + componentTotal + accessoryTotal),
   };
 }
 
@@ -1652,10 +1652,18 @@ type QuotationItemPriceState = {
   unit_price: number;
 };
 
+/** The value compared and recorded in the price history and audit log. Legacy: rounded up to 5, as before. Whole AED: exact. */
+function priceHistoryValue(pricingRule: PricingRule | undefined) {
+  return (value: unknown) => ruleExactAmount(pricingRule, value);
+}
+
 function quotationItemPriceChanged(
   current: QuotationItemPriceState,
   next: Pick<QuotationItemPriceState, "currency" | "discount_value" | "net_price" | "net_total" | "unit_price">,
+  pricingRule?: PricingRule,
 ) {
+  // Whole AED compares exact numbers: 1,401 to 1,403 is a change. The legacy comparison is unchanged.
+  const quotationMoneyValue = priceHistoryValue(pricingRule);
   return (
     Math.abs(quotationMoneyValue(current.unit_price) - quotationMoneyValue(next.unit_price)) >= 0.01 ||
     normalizeCurrency(current.currency) !== normalizeCurrency(next.currency) ||
@@ -1698,12 +1706,14 @@ function manualConversionSourceComponentData({
   convertedPrice,
   conversionRate,
   currentSourceData,
+  pricingRule,
   sourceCurrency,
   sourcePrice,
 }: {
   convertedPrice: number;
   conversionRate: number;
   currentSourceData: unknown;
+  pricingRule?: PricingRule;
   sourceCurrency: string;
   sourcePrice: number;
 }) {
@@ -1712,7 +1722,7 @@ function manualConversionSourceComponentData({
   const normalizedSourceCurrency = normalizeCurrency(sourceCurrency);
   const normalizedSourcePrice = preciseDecimalValue(sourcePrice, 2);
   const normalizedRate = preciseDecimalValue(conversionRate, 4);
-  const normalizedConvertedPrice = quotationMoneyValue(convertedPrice);
+  const normalizedConvertedPrice = ruleExactAmount(pricingRule, convertedPrice);
 
   return {
     ...(currentData ?? {}),
@@ -1757,6 +1767,7 @@ async function insertQuotationItemPriceHistory({
   current,
   newValues,
   note,
+  pricingRule,
   supabase,
 }: {
   changeType: "manual" | "use_current_source_price" | "revision_adjustment" | "other";
@@ -1765,9 +1776,11 @@ async function insertQuotationItemPriceHistory({
   current: QuotationItemPriceState;
   newValues: Pick<QuotationItemPriceState, "currency" | "discount_value" | "net_price" | "net_total" | "unit_price">;
   note: string | null;
+  pricingRule?: PricingRule;
   supabase: Awaited<ReturnType<typeof createSupabaseClient>>;
 }) {
-  if (!quotationItemPriceChanged(current, newValues)) {
+  const quotationMoneyValue = priceHistoryValue(pricingRule);
+  if (!quotationItemPriceChanged(current, newValues, pricingRule)) {
     return;
   }
 
@@ -2018,12 +2031,12 @@ function finishSnapshotValue(
   return lines.length ? lines.join("\n") : fallback;
 }
 
-function itemPayload(formData: FormData, userId?: string) {
+function itemPayload(formData: FormData, userId: string | undefined, pricingRule: PricingRule) {
   const qty = numberValue(formData, "qty", 1);
   const rawUnitPrice = numberValue(formData, "unit_price", 0);
   const discountType = textValue(formData, "discount_type") || "amount";
   const rawDiscountValue = numberValue(formData, "discount_value", 0);
-  const linePricing = roundedLinePricing(rawUnitPrice, discountType, rawDiscountValue, qty);
+  const linePricing = roundedLinePricing(rawUnitPrice, discountType, rawDiscountValue, qty, pricingRule);
   const payload = {
     quotation_id: textValue(formData, "quotation_id"),
     section_id: optionalTextValue(formData, "section_id"),
@@ -2081,9 +2094,10 @@ export async function recalculateQuotationTotals(quotationId: string) {
   const supabase = await createSupabaseClient();
   const { data: quotation, error: quotationError } = await supabase
     .from("quotations")
-    .select("vat_percent,overall_discount_type,overall_discount_value")
+    .select("vat_percent,overall_discount_type,overall_discount_value,layout_settings")
     .eq("id", quotationId)
     .single<{
+      layout_settings: unknown;
       vat_percent: number;
       overall_discount_type: string;
       overall_discount_value: number;
@@ -2124,6 +2138,16 @@ export async function recalculateQuotationTotals(quotationId: string) {
       !excludedTotalLineStyles.has(item.line_style) &&
       !["note", "blank", "subtotal"].includes(item.item_type),
   );
+
+  if (readPricingRule(quotation.layout_settings) === "whole_aed_v1") {
+    const totals = wholeAedTotals({
+      lines: pricedItems.map((item) => ({ qty: item.qty, unitPrice: item.unit_price, netTotal: item.net_total })),
+      overallDiscountType: quotation.overall_discount_type, overallDiscountValue: quotation.overall_discount_value, vatPercent: quotation.vat_percent,
+    });
+    const { error } = await supabase.from("quotations").update({ subtotal: totals.subtotal, discount_total: totals.discount_total, vat_amount: totals.vat_amount, grand_total: totals.grand_total }).eq("id", quotationId);
+    if (error) console.error("QUOTATION TOTAL UPDATE ERROR", error.message);
+    return;
+  }
 
   const subtotal = quotationMoneyValue(
     pricedItems.reduce((total, item) => total + quotationMoneyValue(item.qty * item.unit_price), 0),
@@ -2284,7 +2308,7 @@ export async function createQuotation(formData: FormData) {
       project_id: payload.project_id || null,
       salesperson_id: salespersonId || null,
       layout_settings: mergeDocumentSetupIntoLayoutSettings(
-        {},
+        withPricingRule({}, NEW_QUOTATION_PRICING_RULE),
         documentSetupFromCreateForm({ client: { ...client, client_number: clientNumber }, formData, payload }),
       ),
     };
@@ -3122,33 +3146,6 @@ function nextDirectChildSequence(
       .map((quotation) => directChildSequence(quotation.quotation_no, parentQuotationNo, type))
       .filter((value): value is number => value !== null && Number.isFinite(value)),
   ) + 1;
-}
-
-function branchLayoutSettings(
-  layoutSettings: unknown,
-  branch: Record<string, unknown>,
-) {
-  return {
-    ...(recordValue(layoutSettings) ?? {}),
-    quotationBranch: {
-      ...(recordValue(recordValue(layoutSettings)?.quotationBranch) ?? {}),
-      ...branch,
-    },
-  };
-}
-
-function newEnquiryCopyLayoutSettings(layoutSettings: unknown) {
-  const nextLayoutSettings = { ...(recordValue(layoutSettings) ?? {}) };
-
-  delete nextLayoutSettings.clientApprovalDraft;
-  delete nextLayoutSettings.projectFile;
-  delete nextLayoutSettings.quotationBranch;
-  delete nextLayoutSettings.procurementRfq;
-  delete nextLayoutSettings.purchaseOrder;
-  delete nextLayoutSettings.orderConfirmation;
-  delete nextLayoutSettings.deliveryNote;
-
-  return nextLayoutSettings;
 }
 
 function baseRevisionTitle(title: string) {
@@ -4113,7 +4110,8 @@ export async function createClientApprovalDraft(formData: FormData) {
     clientName: client.company_name?.trim() || "Client",
     reference,
     projectName: project?.project_name?.trim() || null,
-    total: quotationMoneyValue(quotation.grand_total ?? 0),
+    // Whole AED stores the exact total. Legacy keeps the round up to 5.
+    total: ruleExactAmount(readPricingRule(quotation.layout_settings), quotation.grand_total ?? 0),
     vatAmount: quotation.vat_amount ?? 0,
     currency: normalizeCurrency(quotation.currency),
     quotationFolderKey: quotationSalesFolderKey(quotation),
@@ -4674,7 +4672,8 @@ export async function createProjectFileFromQuotation(formData: FormData) {
     clientId: client.id,
     clientName: client.company_name?.trim() || "Client",
     reference,
-    total: quotationMoneyValue(quotation.grand_total ?? 0),
+    // Whole AED stores the exact total. Legacy keeps the round up to 5.
+    total: ruleExactAmount(readPricingRule(quotation.layout_settings), quotation.grand_total ?? 0),
     vatAmount: quotation.vat_amount ?? 0,
     currency: normalizeCurrency(quotation.currency),
     quotationFolderKey: quotationSalesFolderKey(quotation),
@@ -5762,7 +5761,7 @@ export async function deactivateQuotationSection(formData: FormData) {
 
 export async function createQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
-  const payload = itemPayload(formData, user.id);
+  const payload = itemPayload(formData, user.id, await quotationPricingRule(await createSupabaseClient(), textValue(formData, "quotation_id")));
   payload.currency = "AED";
   const redirectPath = returnPath(formData, `/quotations/${payload.quotation_id}`);
 
@@ -6608,7 +6607,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const rawUnitPrice = nonAedCurrencies.length
     ? convertedUnitPrice
     : money(sameCurrencyUnitSum({ base: baseUnitPrice, system: matchingSystemTotal, workstationVariant: matchingWorkstationVariantTotal, accessories: matchingAccessoryTotal, linked: matchingLinkedProductsTotal }) + announcedDelta);
-  const unitPrice = quotationMoneyValue(rawUnitPrice);
+  const pricingRule = await quotationPricingRule(supabase, quotationId);
+  const unitPrice = ruleConvertedPrice(pricingRule, rawUnitPrice);
   const rowOutputCurrency = nonAedCurrencies.length ? "AED" : rowCurrency;
   const currencyConversionData = nonAedCurrencies.length
     ? {
@@ -6630,7 +6630,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const rawDiscountValueForType = discountType === "percent"
     ? Math.min(rawDiscountValue, 100)
     : rawDiscountValue;
-  const linePricing = roundedLinePricing(unitPrice, discountType, rawDiscountValueForType);
+  const linePricing = roundedLinePricing(unitPrice, discountType, rawDiscountValueForType, 1, pricingRule);
   const discountValue = linePricing.discountValue;
   const unitDiscountAmount = linePricing.discountAmount;
   const netPrice = linePricing.netPrice;
@@ -7154,7 +7154,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
 export async function updateQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
-  const payload = itemPayload(formData);
+  const updatePricingRule = await quotationPricingRule(await createSupabaseClient(), textValue(formData, "quotation_id"));
+  const payload = itemPayload(formData, undefined, updatePricingRule);
   const redirectPath = returnPath(formData, `/quotations/${payload.quotation_id}/builder#item-${id}`);
 
   if (!id || !payload.quotation_id) {
@@ -7203,6 +7204,7 @@ export async function updateQuotationItem(formData: FormData) {
   }
 
   await insertQuotationItemPriceHistory({
+    pricingRule: updatePricingRule,
     changeType: "manual",
     changedBy: user.id,
     actorName: displayName,
@@ -7289,14 +7291,17 @@ export async function applyManualCurrencyConversion(formData: FormData) {
     redirectWithMessage(redirectPath, "Manual currency conversion is available for manual quotation rows only.");
   }
 
-  const convertedUnitPrice = quotationMoneyValue(sourcePrice * conversionRate);
+  const conversionPricingRule = await quotationPricingRule(supabase, quotationId);
+  const convertedUnitPrice = ruleConvertedPrice(conversionPricingRule, sourcePrice * conversionRate);
   const linePricing = roundedLinePricing(
     convertedUnitPrice,
     currentItem.discount_type,
     currentItem.discount_value,
     currentItem.qty,
+    conversionPricingRule,
   );
   const nextSourceComponentData = manualConversionSourceComponentData({
+    pricingRule: conversionPricingRule,
     convertedPrice: linePricing.unitPrice,
     conversionRate,
     currentSourceData: currentItem.source_component_data,
@@ -7329,6 +7334,7 @@ export async function applyManualCurrencyConversion(formData: FormData) {
   }
 
   await insertQuotationItemPriceHistory({
+    pricingRule: conversionPricingRule,
     changeType: "other",
     changedBy: user.id,
     actorName: displayName,
@@ -7346,7 +7352,7 @@ export async function applyManualCurrencyConversion(formData: FormData) {
     parentEntityId: quotationId,
     action: "manual_currency_converted",
     title: "Manual row currency converted",
-    description: `${quotationItemAuditLabel(currentItem.item_name_snapshot)} - ${sourceCurrency} ${quotationMoneyValue(sourcePrice)} -> AED ${linePricing.unitPrice}`,
+    description: `${quotationItemAuditLabel(currentItem.item_name_snapshot)} - ${sourceCurrency} ${ruleExactAmount(conversionPricingRule, sourcePrice)} -> AED ${linePricing.unitPrice}`,
     metadata: {
       manual_conversion_rate: preciseDecimalValue(conversionRate, 4),
       manual_converted_currency: "AED",
@@ -7432,7 +7438,8 @@ export async function updateQuotationItemInline(formData: FormData) {
   const rawDiscountValue = formData.has("discount_value")
     ? numberValue(formData, "discount_value", currentItem.discount_value)
     : currentItem.discount_value;
-  const linePricing = roundedLinePricing(rawUnitPrice, currentItem.discount_type, rawDiscountValue, qty);
+  const inlinePricingRule = await quotationPricingRule(supabase, currentItem.quotation_id);
+  const linePricing = roundedLinePricing(rawUnitPrice, currentItem.discount_type, rawDiscountValue, qty, inlinePricingRule);
 
   if (formData.has("qty")) payload.qty = qty;
   if (formData.has("unit_price")) payload.unit_price = linePricing.unitPrice;
@@ -7463,6 +7470,7 @@ export async function updateQuotationItemInline(formData: FormData) {
   }
 
   await insertQuotationItemPriceHistory({
+    pricingRule: inlinePricingRule,
     changeType: "manual",
     changedBy: user.id,
     actorName: displayName,
@@ -7569,8 +7577,10 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
     redirectWithMessage(redirectPath, "Current source component prices could not be loaded.");
   }
 
+  const useSourcePricingRule = await quotationPricingRule(supabase, item.quotation_id);
   const currentSourcePrice = currentSourcePriceFromSnapshot({
     components: components ?? [],
+    pricingRule: useSourcePricingRule,
     sourceData: item.source_component_data,
     template,
   });
@@ -7584,6 +7594,7 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
     item.discount_type,
     item.discount_value,
     item.qty,
+    useSourcePricingRule,
   );
   const updatedCurrency = normalizeCurrency(currentSourcePrice.currency || defaultCurrency);
   const nextPriceValues = {
@@ -7611,6 +7622,7 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
   }
 
   await insertQuotationItemPriceHistory({
+    pricingRule: useSourcePricingRule,
     changeType: "use_current_source_price",
     changedBy: user.id,
     actorName: displayName,
@@ -7997,7 +8009,7 @@ function booleanOr(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
 }
 
-function sanitizeCopiedRowSnapshot(value: unknown) {
+function sanitizeCopiedRowSnapshot(value: unknown, pricingRule: PricingRule) {
   const source = objectValue(value);
   const qty = numberOr(source.qty, 1);
   const unitPrice = numberOr(source.unit_price, 0);
@@ -8005,7 +8017,7 @@ function sanitizeCopiedRowSnapshot(value: unknown) {
     ? String(source.discount_type)
     : "amount";
   const discountValue = numberOr(source.discount_value, 0);
-  const linePricing = roundedLinePricing(unitPrice, discountType, discountValue, qty);
+  const linePricing = roundedLinePricing(unitPrice, discountType, discountValue, qty, pricingRule);
 
   return {
     item_type: itemTypes.has(String(source.item_type)) ? String(source.item_type) : "custom",
@@ -8078,8 +8090,8 @@ export async function pasteCopiedQuotationItem(formData: FormData) {
     redirectWithMessage(redirectPath, "Copied row data is invalid.");
   }
 
-  const payload = sanitizeCopiedRowSnapshot(parsedSnapshot);
   const supabase = await createSupabaseClient();
+  const payload = sanitizeCopiedRowSnapshot(parsedSnapshot, await quotationPricingRule(supabase, quotationId));
   await prepareSharedSnapshotImages(supabase, [payload]);
   const { data: createdItem, error } = await supabase
     .from("quotation_items")
@@ -8191,7 +8203,8 @@ export async function autosaveQuotationItemInline(formData: FormData) {
   const rawDiscountValue = formData.has("discount_value")
     ? numberValue(formData, "discount_value", currentItem.discount_value)
     : currentItem.discount_value;
-  const linePricing = roundedLinePricing(rawUnitPrice, discountType, rawDiscountValue, qty);
+  const autosavePricingRule = await quotationPricingRule(supabase, currentItem.quotation_id);
+  const linePricing = roundedLinePricing(rawUnitPrice, discountType, rawDiscountValue, qty, autosavePricingRule);
 
   if (formData.has("discount_type")) payload.discount_type = discountType;
   if (formData.has("line_style")) {
@@ -8230,6 +8243,7 @@ export async function autosaveQuotationItemInline(formData: FormData) {
   }
 
   await insertQuotationItemPriceHistory({
+    pricingRule: autosavePricingRule,
     changeType: "manual",
     changedBy: user.id,
     actorName: displayName,

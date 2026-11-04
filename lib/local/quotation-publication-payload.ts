@@ -1,4 +1,5 @@
-import { recalculateWorkspace, type LocalQuotationWorkspace, type LocalQuotationItem } from "./quotation-workspace";
+import { readPricingRule } from "@/lib/quotation-pricing";
+import { layoutSettingsWithPriceRounding, recalculateWorkspace, type LocalQuotationWorkspace, type LocalQuotationItem } from "./quotation-workspace";
 
 const allowedSectionTypes = new Set(["option", "floor", "room", "category", "section"]);
 const allowedSectionKinds = new Set(["main", "sub"]);
@@ -180,9 +181,10 @@ export function preparePublication(workspaceInput: LocalQuotationWorkspace, user
     quotation: {
       quotation_date: textOrNull(workspace.quotation_date), title: workspace.title, status: workspace.status,
       currency: workspace.currency, vat_percent: workspace.vat_percent, layout_mode: workspace.layout_mode,
-      layout_settings: workspace.layout_settings, overall_discount_type: workspace.overall_discount_type,
+      layout_settings: layoutSettingsWithPriceRounding(workspace.layout_settings, workspace.metadata), overall_discount_type: workspace.overall_discount_type,
       overall_discount_value: workspace.overall_discount_value, subtotal: workspace.totals.subtotal,
-      discount_total: workspace.totals.discount_total + workspace.totals.overall_discount_amount,
+      // Whole AED: the item discount only, the same number the shared builder stores. The legacy sum is unchanged.
+      discount_total: readPricingRule(workspace.layout_settings) === "whole_aed_v1" ? workspace.totals.discount_total : workspace.totals.discount_total + workspace.totals.overall_discount_amount,
       vat_amount: workspace.totals.vat_amount, grand_total: workspace.totals.grand_total,
     },
     project: {
