@@ -1443,7 +1443,7 @@ export function ProductLibrarySelector({
   const updateTemplateRecord = (nextTemplate: ProductLibraryTemplate) => {
     // The server's copy of a saved template has no Supplier status; keep the one this page computed.
     setTemplateRecords((current) =>
-      current.map((template) => (template.id === nextTemplate.id ? { ...keepSupplierStatus(nextTemplate, template), announced_price_change: template.announced_price_change } : template)),
+      current.map((template) => (template.id === nextTemplate.id ? keepSupplierStatus(nextTemplate, template) : template)),
     );
     setTemplateActionMessageById((current) => ({
       ...current,
@@ -2274,11 +2274,12 @@ export function ProductLibrarySelector({
                     announcedChange ? announcedQuotationDelta(announcedChange.delta, templateExchangeRates) : 0,
                   );
                   const previewCurrency = nonAedCurrencies.length ? "AED" : rowCurrency;
-                  const rawPreviewUnitPriceWithConversion = nonAedCurrencies.length
+                  const previewBeforeAnnounced = nonAedCurrencies.length
                     ? convertedPreviewTotal
                     : totalPreviewUnitPrice + (announcedChange ? announcedQuotationDelta(announcedChange.delta, templateExchangeRates) : 0);
                   // The ticked amount is rounded to 2 decimals first, so a binary fraction cannot push the round-up-to-5 one step too far.
-                  const previewUnitPriceWithConversion = quotationMoneyValue(announcedChange ? roundSourceAmount(rawPreviewUnitPriceWithConversion) : rawPreviewUnitPriceWithConversion);
+                  const rawPreviewUnitPriceWithConversion = announcedChange ? roundSourceAmount(previewBeforeAnnounced) : previewBeforeAnnounced;
+                  const previewUnitPriceWithConversion = quotationMoneyValue(rawPreviewUnitPriceWithConversion);
                   const effectiveQuoteUnitPrice = quotationMoneyValue(
                     templatePriceOverrides[template.id] ?? previewUnitPriceWithConversion,
                   );

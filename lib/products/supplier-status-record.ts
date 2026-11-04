@@ -3,7 +3,7 @@
  * A save returns a fresh template from the server that does not carry it, so these helpers keep it. Without them the Product
  * would fall back to the old price check text ("No current price list") right after a save.
  */
-export const supplierStatusKeys = ["supplier_family_price_presentation", "supplier_family_price_load_state", "supplier_family_price_loading"] as const;
+export const supplierStatusKeys = ["supplier_family_price_presentation", "supplier_family_price_load_state", "supplier_family_price_loading", "announced_price_change"] as const;
 
 /** The updated record, with the Supplier status of the record it replaces. */
 export function keepSupplierStatus<T extends object>(next: T, previous: object | undefined): T {
