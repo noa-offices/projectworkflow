@@ -6,8 +6,8 @@ import {
   normalizeImageDisplaySettings,
   type ImageDisplaySettings,
 } from "@/lib/image-display-settings";
-// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
-import { formatQuotationMoney, quotationMoneyCell } from "@/lib/quotation-pricing";
+import { formatRuleMoney, readPricingRule, ruleMoneyCell, type PricingRule } from "@/lib/quotation-pricing";
+import { pdfLineAmounts, pdfTotals } from "@/lib/quotations/quotation-pdf-pricing";
 import {
   formatBrandOriginSupplier,
   specificationWithoutDuplicateCode,
@@ -342,30 +342,12 @@ function revisionLabel(quotation: Quotation) {
   return quotation.revision_no > 0 ? `R${quotation.revision_no}` : "Original";
 }
 
-function discountAmount(item: QuotationItem) {
-  if (item.discount_type === "percent") {
-    return item.unit_price * item.qty - item.net_total;
-  }
-
-  return item.discount_value;
+function tableNumber(rule: PricingRule, value: number) {
+  return ruleMoneyCell(rule, value);
 }
 
-function tableNumber(value: number) {
-  return quotationMoneyCell(value);
-}
-
-function money(currency: string, value: number) {
-  return formatQuotationMoney(currency, value);
-}
-
-function overallDiscountAmount(quotation: Quotation) {
-  const itemNetTotal = Math.max(quotation.subtotal - quotation.discount_total, 0);
-
-  if (quotation.overall_discount_type === "percent") {
-    return (itemNetTotal * quotation.overall_discount_value) / 100;
-  }
-
-  return quotation.overall_discount_value;
+function money(rule: PricingRule, currency: string, value: number) {
+  return formatRuleMoney(rule, currency, value);
 }
 
 function InfoLine({ label, value }: { label: string; value?: string | number | null }) {
@@ -777,6 +759,7 @@ function renderPdfCell({
   column,
   item,
   serial,
+  pricingRule,
   proposedImageUrlByItemId,
   specifiedImageUrlByItemId,
   finishImageUrlByItemAndFinishId,
@@ -788,6 +771,7 @@ function renderPdfCell({
   column: PdfColumn;
   item: QuotationItem;
   serial: number;
+  pricingRule: PricingRule;
   proposedImageUrlByItemId: Map<string, string | null>;
   specifiedImageUrlByItemId: Map<string, string | null>;
   finishImageUrlByItemAndFinishId: Map<string, string | null>;
@@ -864,17 +848,17 @@ function renderPdfCell({
     case "qty":
       return `${item.qty}`;
     case "unit_price":
-      return tableNumber(item.unit_price);
+      return tableNumber(pricingRule, item.unit_price);
     case "discount":
-      return item.discount_type === "percent" ? `${item.discount_value}%` : tableNumber(item.discount_value);
+      return item.discount_type === "percent" ? `${item.discount_value}%` : tableNumber(pricingRule, item.discount_value);
     case "discount_percentage":
       return item.discount_type === "percent" ? `${item.discount_value}%` : "-";
     case "discount_amount":
-      return tableNumber(discountAmount(item));
+      return tableNumber(pricingRule, pdfLineAmounts(pricingRule, item).discountAmount);
     case "net_price":
-      return tableNumber(item.net_price);
+      return tableNumber(pricingRule, item.net_price);
     case "net_total":
-      return <span className={`font-semibold ${itemCountsInTotals(item) ? "" : item.is_rate_only || item.line_style === "rate_only" ? "text-sky-700" : "text-red-700"}`}>{itemCountsInTotals(item) ? tableNumber(item.net_total) : netTotalDisplayLabel(item)}</span>;
+      return <span className={`font-semibold ${itemCountsInTotals(item) ? "" : item.is_rate_only || item.line_style === "rate_only" ? "text-sky-700" : "text-red-700"}`}>{itemCountsInTotals(item) ? tableNumber(pricingRule, item.net_total) : netTotalDisplayLabel(item)}</span>;
     case "supplier_name":
       return item.supplier_name_snapshot ?? "-";
     case "supplier_notes":
@@ -1307,6 +1291,8 @@ function ItemRowsTable({
 }) {
   const columnCount = data.pdfColumns.length;
   const layout = quotationPdfLayoutMetrics(settings);
+  // The source quotation carries the pricing rule for every PDF amount.
+  const pricingRule = readPricingRule(data.quotation.layout_settings);
 
   return (
     <table className={`w-full max-w-full table-fixed border-collapse leading-tight ${layout.tableTextClassName}`}>
@@ -1395,6 +1381,7 @@ function ItemRowsTable({
                       proposedImageUrlByItemId: data.proposedImageUrlByItemId,
                       serial: row.serial,
                       pdfSettings: settings,
+                      pricingRule,
                       settings: data.metadataSettings,
                       specifiedImageUrlByItemId: data.specifiedImageUrlByItemId,
                       visibleColumnKeys: data.visibleColumnKeys,
@@ -1414,7 +1401,7 @@ function ItemRowsTable({
                   Section Subtotal
                 </td>
                 <td className="border border-zinc-300 px-1 py-1 text-right font-bold text-zinc-950">
-                  {money(data.quotation.currency, row.subtotal)}
+                  {money(pricingRule, data.quotation.currency, row.subtotal)}
                 </td>
               </tr>
             </tbody>
@@ -1425,7 +1412,7 @@ function ItemRowsTable({
           <tbody key={`main-total-${index}`}>
             <tr className="bg-zinc-950">
               <td colSpan={columnCount} className="border border-zinc-950 px-3 py-1.5 text-right font-bold uppercase tracking-wide text-white">
-                {row.label}: {money(data.quotation.currency, row.total)}
+                {row.label}: {money(pricingRule, data.quotation.currency, row.total)}
               </td>
             </tr>
           </tbody>
@@ -1443,6 +1430,8 @@ function NotesTermsSummaryPage({
   settings: QuotationPdfSettings;
 }) {
   const resolvedNotes = settings.notesOverride?.trim() || data.documentSetup.notes.clientIntroNote || data.defaultQuotationNotes || DEFAULT_QUOTATION_NOTES;
+  const pricingRule = readPricingRule(data.quotation.layout_settings);
+  const totals = pdfTotals(pricingRule, data.quotation);
 
   return (
     <div className="grid h-full grid-cols-[minmax(0,1.4fr)_minmax(320px,0.9fr)] gap-5">
@@ -1474,25 +1463,25 @@ function NotesTermsSummaryPage({
         <div className="mt-3 overflow-hidden border border-zinc-900 bg-white">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
             <span>Total Price</span>
-            <span className="whitespace-nowrap font-semibold">{money(data.quotation.currency, data.quotation.subtotal)}</span>
+            <span className="whitespace-nowrap font-semibold">{money(pricingRule, data.quotation.currency, totals.subtotal)}</span>
           </div>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
             <span>Item Discount</span>
-            <span className="whitespace-nowrap font-semibold">{money(data.quotation.currency, data.quotation.discount_total)}</span>
+            <span className="whitespace-nowrap font-semibold">{money(pricingRule, data.quotation.currency, totals.itemDiscount)}</span>
           </div>
-          {Number(overallDiscountAmount(data.quotation) || 0) > 0 ? (
+          {Number(totals.overallDiscount || 0) > 0 ? (
             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
               <span>Extra Discount</span>
-              <span className="whitespace-nowrap font-semibold">{money(data.quotation.currency, overallDiscountAmount(data.quotation))}</span>
+              <span className="whitespace-nowrap font-semibold">{money(pricingRule, data.quotation.currency, totals.overallDiscount)}</span>
             </div>
           ) : null}
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
             <span>VAT {data.quotation.vat_percent}%</span>
-            <span className="whitespace-nowrap font-semibold">{money(data.quotation.currency, data.quotation.vat_amount)}</span>
+            <span className="whitespace-nowrap font-semibold">{money(pricingRule, data.quotation.currency, totals.vat)}</span>
           </div>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 bg-zinc-50 px-4 py-4 text-lg font-black text-zinc-950">
             <span>Final Total</span>
-            <span className="whitespace-nowrap">{money(data.quotation.currency, data.quotation.grand_total)}</span>
+            <span className="whitespace-nowrap">{money(pricingRule, data.quotation.currency, totals.grandTotal)}</span>
           </div>
         </div>
 

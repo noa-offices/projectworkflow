@@ -23,8 +23,7 @@ import {
   quotationStatusBadgeClassName,
   quotationStatusLabel,
 } from "@/lib/quotation-status";
-// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, readPricingRule, roundExact2 } from "@/lib/quotation-pricing";
 import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
@@ -696,16 +695,16 @@ function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
 
 function overallDiscountAmount(quotation: Quotation) {
   const itemNetTotal = Math.max(quotation.subtotal - quotation.discount_total, 0);
-
-  if (quotation.overall_discount_type === "percent") {
-    return (itemNetTotal * quotation.overall_discount_value) / 100;
-  }
-
-  return quotation.overall_discount_value;
+  const amount = quotation.overall_discount_type === "percent"
+    ? (itemNetTotal * quotation.overall_discount_value) / 100
+    : quotation.overall_discount_value;
+  return readPricingRule(quotation.layout_settings) === "whole_aed_v1"
+    ? roundExact2(Math.min(Math.max(amount, 0), itemNetTotal))
+    : amount;
 }
 
-function money(currency: string, value: number) {
-  return formatQuotationMoney(currency, value);
+function money(layoutSettings: unknown, currency: string, value: number) {
+  return formatRuleMoney(readPricingRule(layoutSettings), currency, value);
 }
 
 function validUuidOrNull(value: string | null | undefined) {
@@ -1374,7 +1373,7 @@ export default async function QuotationDetailPage({
                   <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-emerald-50 px-3 py-2 sm:hidden">
                     <span className="text-xs font-semibold uppercase text-zinc-500">Current total</span>
                     <span className="min-w-0 break-words text-right text-lg font-semibold text-zinc-950">
-                      {money(quotation.currency, quotation.grand_total)}
+                      {money(quotation.layout_settings, quotation.currency, quotation.grand_total)}
                     </span>
                   </div>
                 </div>
@@ -1637,7 +1636,7 @@ export default async function QuotationDetailPage({
                       <InfoValue label="Active items" value={activeItemCount} />
                     </div>
                     <div className="min-w-0 p-3 sm:p-4">
-                      <InfoValue label="Final total" value={money(quotation.currency, quotation.grand_total)} />
+                      <InfoValue label="Final total" value={money(quotation.layout_settings, quotation.currency, quotation.grand_total)} />
                     </div>
                   </section>
 
@@ -1735,7 +1734,7 @@ export default async function QuotationDetailPage({
                           </h3>
                           <p className="mt-0.5 text-sm text-zinc-500">{formatFolderDate(folderQuotation.quotation_date)}</p>
                           <p className="mt-2 break-words text-lg font-semibold text-zinc-950">
-                            {money(folderQuotation.currency, folderQuotation.grand_total)}
+                            {money(folderQuotation.layout_settings, folderQuotation.currency, folderQuotation.grand_total)}
                           </p>
                           <div className="mt-3 flex items-center justify-between gap-3">
                             <Link href={`/quotations/${folderQuotation.id}`} className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800">
@@ -1809,7 +1808,7 @@ export default async function QuotationDetailPage({
                             <div className="shrink-0 text-right">
                               <p className="text-xs font-semibold uppercase text-zinc-500">Total</p>
                               <p className="mt-1 text-lg font-semibold text-zinc-950">
-                                {money(folderQuotation.currency, folderQuotation.grand_total)}
+                                {money(folderQuotation.layout_settings, folderQuotation.currency, folderQuotation.grand_total)}
                               </p>
                             </div>
                           </div>
@@ -1925,7 +1924,7 @@ export default async function QuotationDetailPage({
                               </h3>
                               <p className="mt-0.5 text-sm text-zinc-500">{formatFolderDate(folderQuotation.quotation_date)}</p>
                               <p className="mt-2 break-words text-lg font-semibold text-zinc-800">
-                                {money(folderQuotation.currency, folderQuotation.grand_total)}
+                                {money(folderQuotation.layout_settings, folderQuotation.currency, folderQuotation.grand_total)}
                               </p>
                               <div className="mt-3 flex items-center justify-between gap-3">
                                 <Link href={`/quotations/${folderQuotation.id}`} className="inline-flex h-10 items-center rounded-md bg-zinc-800 px-4 text-sm font-semibold text-white transition hover:bg-zinc-700">
@@ -1970,7 +1969,7 @@ export default async function QuotationDetailPage({
                               <div className="shrink-0 text-right">
                                 <p className="text-xs font-semibold uppercase text-zinc-500">Total</p>
                                 <p className="mt-1 text-lg font-semibold text-zinc-800">
-                                  {money(folderQuotation.currency, folderQuotation.grand_total)}
+                                  {money(folderQuotation.layout_settings, folderQuotation.currency, folderQuotation.grand_total)}
                                 </p>
                               </div>
                             </div>
@@ -2083,16 +2082,16 @@ export default async function QuotationDetailPage({
               <div className="mt-4 space-y-3 text-sm">
                 <div className="flex justify-between gap-4">
                   <span className="text-zinc-500">Total Price</span>
-                  <span className="font-medium text-zinc-950">{money(quotation.currency, quotation.subtotal)}</span>
+                  <span className="font-medium text-zinc-950">{money(quotation.layout_settings, quotation.currency, quotation.subtotal)}</span>
                 </div>
                 <div className="flex justify-between gap-4">
                   <span className="text-zinc-500">Item Discount</span>
-                  <span className="font-medium text-red-700">{money(quotation.currency, quotation.discount_total)}</span>
+                  <span className="font-medium text-red-700">{money(quotation.layout_settings, quotation.currency, quotation.discount_total)}</span>
                 </div>
                 {Number(overallDiscountAmount(quotation) || 0) > 0 ? (
                   <div className="flex justify-between gap-4">
                     <span className="text-zinc-500">Extra Discount</span>
-                    <span className="font-medium text-zinc-950">{money(quotation.currency, overallDiscountAmount(quotation))}</span>
+                    <span className="font-medium text-zinc-950">{money(quotation.layout_settings, quotation.currency, overallDiscountAmount(quotation))}</span>
                   </div>
                 ) : null}
                 {canManageRecords ? (
@@ -2102,12 +2101,12 @@ export default async function QuotationDetailPage({
                 ) : null}
                 <div className="flex justify-between gap-4">
                   <span className="text-zinc-500">VAT {quotation.vat_percent}%</span>
-                  <span className="font-medium text-zinc-950">{money(quotation.currency, quotation.vat_amount)}</span>
+                  <span className="font-medium text-zinc-950">{money(quotation.layout_settings, quotation.currency, quotation.vat_amount)}</span>
                 </div>
                 <div className="rounded-lg bg-emerald-50 p-4">
                   <p className="text-xs font-semibold uppercase text-zinc-500">Final Total</p>
                   <p className="mt-1 text-2xl font-semibold text-zinc-950">
-                    {money(quotation.currency, quotation.grand_total)}
+                    {money(quotation.layout_settings, quotation.currency, quotation.grand_total)}
                   </p>
                 </div>
               </div>

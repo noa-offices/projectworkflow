@@ -5,6 +5,7 @@ import { CompletedProjectsTable, type CompletedProjectFileItem } from "@/compone
 import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { readPricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +68,7 @@ async function CompletedProjectsContent() {
           reference: projectFile.reference,
           currency: projectFile.currency,
           total: projectFile.total,
+          pricingRule: readPricingRule(quotation.layout_settings),
           createdAt: projectFile.createdAt,
           completedAt,
         }];
@@ -83,6 +85,7 @@ async function CompletedProjectsContent() {
           reference: o.reference,
           currency: o.currency,
           total: o.total,
+          pricingRule: readPricingRule(quotation.layout_settings),
           createdAt: o.createdAt,
           completedAt,
         }];

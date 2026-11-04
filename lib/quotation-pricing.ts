@@ -32,7 +32,6 @@ export function formatQuotationMoney(currency: string | null | undefined, value:
 
 // ---- Pricing rule of one quotation. Everything below takes the rule as an input; a quotation without a rule is legacy and behaves as above. ----
 // whole_aed_v1: converted price and discount amount are whole AED (half up), a typed price is kept as typed, and nothing rounds up to 5.
-// Part 2 still to do: PDF, lists, project and procurement pages call formatQuotationMoney directly and do not read the rule yet.
 export type PricingRule = "round_up_5_legacy" | "whole_aed_v1";
 export const LEGACY_PRICING_RULE: PricingRule = "round_up_5_legacy";
 /** The rule every new quotation starts with. Revisions and copies keep their source's rule instead. */

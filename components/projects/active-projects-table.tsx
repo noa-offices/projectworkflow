@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, type PricingRule } from "@/lib/quotation-pricing";
 
 export type ActiveProjectFileItem = {
   orderNo: string;
@@ -13,6 +12,7 @@ export type ActiveProjectFileItem = {
   reference: string;
   currency: string;
   total: number;
+  pricingRule: PricingRule;
   createdAt: string;
 };
 
@@ -251,7 +251,7 @@ export function ActiveProjectsTable({
                     <td className="px-4 py-3 text-zinc-700">{order.resolvedClientName}</td>
                     <td className="px-4 py-3 text-zinc-600">{order.reference || "-"}</td>
                     <td className="px-4 py-3 text-right font-semibold text-zinc-950">
-                      {formatQuotationMoney(order.currency, order.total)}
+                      {formatRuleMoney(order.pricingRule, order.currency, order.total)}
                     </td>
                     <td className="px-4 py-3 text-zinc-500">{formatDate(order.createdAt)}</td>
                     <td className="px-4 py-3">

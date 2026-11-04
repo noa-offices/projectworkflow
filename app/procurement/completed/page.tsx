@@ -6,8 +6,7 @@ import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
-// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, readPricingRule, type PricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -78,6 +77,7 @@ async function CompletedProcurementContent() {
     reference: string;
     currency: string;
     total: number;
+    pricingRule: PricingRule;
     completedAt: string;
   };
 
@@ -99,6 +99,7 @@ async function CompletedProcurementContent() {
           reference: projectFile.reference,
           currency: projectFile.currency,
           total: projectFile.total,
+          pricingRule: readPricingRule(quotation.layout_settings),
           completedAt,
         }];
       }
@@ -113,6 +114,7 @@ async function CompletedProcurementContent() {
           reference: o.reference,
           currency: o.currency,
           total: o.total,
+          pricingRule: readPricingRule(quotation.layout_settings),
           completedAt,
         }];
       }
@@ -181,7 +183,7 @@ async function CompletedProcurementContent() {
                         {order.reference || "-"}
                       </td>
                       <td className="px-4 py-3 text-right font-semibold text-zinc-950">
-                        {formatQuotationMoney(order.currency, order.total)}
+                        {formatRuleMoney(order.pricingRule, order.currency, order.total)}
                       </td>
                       <td className="px-4 py-3 text-zinc-500">
                         {formatDate(order.completedAt)}

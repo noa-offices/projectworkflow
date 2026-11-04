@@ -9,13 +9,13 @@ import {
   createQuotationRevisionOptimistic,
   updateQuotationStatus,
 } from "@/app/quotations/actions";
-// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
 import { quotationStatusBadgeClassName, quotationStatusLabel } from "@/lib/quotation-status";
 
 export type OptimisticFolderQuotation = {
   currency: string;
   grand_total: number;
+  layout_settings?: unknown;
   id: string;
   is_active?: boolean;
   option_no: number;
@@ -176,7 +176,7 @@ export function QuotationFolderOptimisticPanel({
         return;
       }
 
-      setItems((current) => current.map((item) => item.id === tempId ? result.data : item));
+      setItems((current) => current.map((item) => item.id === tempId ? { ...result.data, layout_settings: parent.layout_settings } : item));
       setMessage(result.message);
       refreshQuietly();
     } catch (caught) {
@@ -380,7 +380,7 @@ function CardContent({ folderQuotation, isCurrent, isTemp }: { folderQuotation: 
       </div>
       <div className="shrink-0 text-right">
         <p className="text-xs font-semibold uppercase text-zinc-500">Total</p>
-        <p className="mt-1 text-lg font-semibold text-zinc-950">{formatQuotationMoney(folderQuotation.currency, folderQuotation.grand_total)}</p>
+        <p className="mt-1 text-lg font-semibold text-zinc-950">{formatRuleMoney(readPricingRule(folderQuotation.layout_settings), folderQuotation.currency, folderQuotation.grand_total)}</p>
       </div>
     </div>
   );

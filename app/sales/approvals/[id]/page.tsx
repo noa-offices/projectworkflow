@@ -7,8 +7,7 @@ import {
   clientApprovalDraftFromLayoutSettings,
   isCancelledClientApprovalStatus,
 } from "@/lib/quotations/client-approval-draft";
-// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -137,7 +136,7 @@ export default async function ApprovalDetailPage({ params, searchParams }: Appro
             <DetailValue label="Folder no" value={approval.draft.folderNo} />
             <DetailValue label="Opportunity no" value={approval.draft.opportunityNo ?? "Not linked"} />
             <DetailValue label="Reference" value={approval.draft.reference} />
-            <DetailValue label="Total" value={formatQuotationMoney(approval.draft.currency, approval.draft.total)} />
+            <DetailValue label="Total" value={formatRuleMoney(readPricingRule(approval.quotation.layout_settings), approval.draft.currency, approval.draft.total)} />
             <DetailValue label="Created" value={formatDate(approval.draft.createdAt)} />
             <DetailValue label="Source" value="Selected quotation" />
             <DetailValue label="CO no" value={approval.draft.confirmedOrder?.orderNo ?? "-"} />

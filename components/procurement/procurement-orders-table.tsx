@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, type PricingRule } from "@/lib/quotation-pricing";
 
 export type ProcurementOrderItem = {
   orderNo: string;
@@ -13,6 +12,7 @@ export type ProcurementOrderItem = {
   reference: string;
   currency: string;
   total: number;
+  pricingRule: PricingRule;
   createdAt: string;
 };
 
@@ -173,7 +173,7 @@ export function ProcurementOrdersTable({
               <span className="block truncate text-sm font-medium text-zinc-800" title={order.resolvedClientName}>{order.resolvedClientName}</span>
               <span className="mt-0.5 block truncate text-xs text-zinc-500" title={order.reference || "No reference"}>{order.reference || "No reference"}</span>
             </span>
-            <span className="whitespace-nowrap text-right text-[11px] font-semibold text-zinc-700">{formatQuotationMoney(order.currency, order.total)}</span>
+            <span className="whitespace-nowrap text-right text-[11px] font-semibold text-zinc-700">{formatRuleMoney(order.pricingRule, order.currency, order.total)}</span>
             <span aria-hidden="true" className="text-lg text-zinc-400">&gt;</span>
           </Link>
         ))}
@@ -221,7 +221,7 @@ export function ProcurementOrdersTable({
                     <td className="px-4 py-3 text-zinc-700">{order.resolvedClientName}</td>
                     <td className="px-4 py-3 text-zinc-600">{order.reference || "-"}</td>
                     <td className="px-4 py-3 text-right font-semibold text-zinc-950">
-                      {formatQuotationMoney(order.currency, order.total)}
+                      {formatRuleMoney(order.pricingRule, order.currency, order.total)}
                     </td>
                     <td className="px-4 py-3 text-zinc-500">{formatDate(order.createdAt)}</td>
                     <td className="px-4 py-3">

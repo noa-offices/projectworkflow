@@ -4,8 +4,7 @@ import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useMemo, useState, useTransition } from "react";
 import { ChevronDown, ChevronRight, SlidersHorizontal } from "lucide-react";
-// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import {
   quotationStatusBadgeClassName,
@@ -680,7 +679,7 @@ export function QuotationListLiveFilter({
                         <p className="mt-1 text-[11px] text-zinc-400">{folder.quotationCount} versions</p>
                       ) : null}
                     </td>
-                    <td className="px-4 py-3 font-semibold text-zinc-950">{formatQuotationMoney(quotation.currency, quotation.grand_total)}</td>
+                    <td className="px-4 py-3 font-semibold text-zinc-950">{formatRuleMoney(readPricingRule(quotation.layout_settings), quotation.currency, quotation.grand_total)}</td>
                     <td className="px-4 py-3 text-zinc-500">{formatListDate(quotation.quotation_date)}</td>
                     <td className="px-4 py-3">
                       {canDeleteFolders ? (

@@ -84,6 +84,22 @@ test("legacy displays and amounts are unchanged", () => {
   assert.equal(ruleExactAmount(LEGACY_PRICING_RULE, 1469.48), 1470);
 });
 
+test("mixed quotation list rows use their own saved pricing rule", () => {
+  const rows = [
+    { currency: "AED", grand_total: 1468.95, layout_settings: null },
+    { currency: "AED", grand_total: 1468.95, layout_settings: { pricing_rule: "whole_aed_v1" } },
+    { currency: "AED", grand_total: 1468.95, layout_settings: { pricing_rule: "unknown" } },
+  ];
+  assert.deepEqual(rows.map((row) => formatRuleMoney(readPricingRule(row.layout_settings), row.currency, row.grand_total)), [
+    formatRuleMoney(LEGACY_PRICING_RULE, "AED", 1468.95),
+    formatRuleMoney(WHOLE, "AED", 1468.95),
+    formatRuleMoney(LEGACY_PRICING_RULE, "AED", 1468.95),
+  ]);
+  assert.equal(ruleMoneyCell(WHOLE, 1468.95), "1,468.95");
+  assert.equal(ruleMoneyCell(undefined, 1468.95), "1,470");
+  assert.equal(ruleMoneyCell(WHOLE, 1_234_567_890.55), "1,234,567,890.55");
+});
+
 test("revisions, options and copies keep the source's rule; a legacy source stays legacy", () => {
   const whole = withPricingRule({ documentSetup: { a: 1 }, projectFile: { orderNo: "x" } }, WHOLE);
   assert.equal(readPricingRule(branchLayoutSettings(whole, { quotationType: "revision" })), WHOLE);

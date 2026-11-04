@@ -6,8 +6,7 @@ import { ProjectExecutionStatus } from "@/components/projects/project-execution-
 import { canAccessProcurement, canManageClientPaymentReceiptAttachments, canViewClientPayments, canVoidClientPaymentReceipts, requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
-// Part 2 (whole_aed_v1): this display still rounds up to 5. It must read the quotation's pricing rule.
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import type React from "react";
 import { DocumentRow, ProjectDocumentsDirectory, type VendorDocEntry } from "@/components/projects/project-document-row";
@@ -141,6 +140,8 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
   if (!entry) {
     notFound();
   }
+  // Project amounts use the rule on the source quotation that owns the Project File.
+  const pricingRule = readPricingRule(entry.quotationRow.layout_settings);
 
   const { data: items, error: itemsError } = await supabase
     .from("quotation_items")
@@ -302,7 +303,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
       vendorKey: group.dedupeKey,
       vendorLabel: group.displayLabel,
       itemCount: groupItems.filter((item) => item.line_style !== "heading").length,
-      formattedTotal: formatQuotationMoney(currency, totalValue),
+      formattedTotal: formatRuleMoney(pricingRule, currency, totalValue),
       currentStage: PROCUREMENT_STAGE_LABELS[activeStep],
       activeStep,
       etd: progress?.etd ?? null,
@@ -766,7 +767,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
             sourceFolder={entry.order.folderNo}
             status="Completed"
             schedule={scheduleSection}
-            total={formatQuotationMoney(entry.order.currency, entry.order.total)}
+            total={formatRuleMoney(pricingRule, entry.order.currency, entry.order.total)}
             vendors={vendorsSection}
             payments={paymentsSection}
           />
@@ -815,7 +816,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
             sourceFolder={entry.order.folderNo}
             status="Cancelled"
             schedule={scheduleSection}
-            total={formatQuotationMoney(entry.order.currency, entry.order.total)}
+            total={formatRuleMoney(pricingRule, entry.order.currency, entry.order.total)}
             vendors={vendorsSection}
             payments={paymentsSection}
           />
@@ -859,7 +860,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
           sourceFolder={entry.order.folderNo}
           status="Confirmed"
           schedule={scheduleSection}
-          total={formatQuotationMoney(entry.order.currency, entry.order.total)}
+          total={formatRuleMoney(pricingRule, entry.order.currency, entry.order.total)}
           vendors={vendorsSection}
           payments={paymentsSection}
         />
