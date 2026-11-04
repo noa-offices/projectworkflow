@@ -61,6 +61,7 @@ import { NEW_QUOTATION_PRICING_RULE, LEGACY_PRICING_RULE, quotationLinePricing, 
 import { branchLayoutSettings, newEnquiryCopyLayoutSettings } from "@/lib/quotations/quotation-layout-copy";
 import { isLockedQuotationUpdateAllowed, isQuotationLocked, lockedSourceCopySettings, quotationLockReason } from "@/lib/quotations/quotation-lock";
 import { quotationWriteLockReason } from "@/lib/quotations/quotation-write-lock";
+import { projectSnapshotNotice, saveProjectSnapshot } from "@/lib/quotations/project-snapshot";
 import {
   clientApprovalDraftFromLayoutSettings,
   isCancelledClientApprovalStatus,
@@ -4760,6 +4761,9 @@ export async function createProjectFileFromQuotation(formData: FormData) {
     createdBy: user.id,
   });
 
+  // The Project File is saved. Its frozen copy must never block or undo that: a miss is logged and picked up by backfill.
+  const snapshotAttempt = await saveProjectSnapshot(supabase, quotation.id);
+
   revalidatePath("/quotations");
   revalidatePath(`/quotations/${quotation.id}`);
   revalidatePath(`/projects/orders/${orderNo}`);
@@ -4768,7 +4772,7 @@ export async function createProjectFileFromQuotation(formData: FormData) {
   if (quotation.project_id) {
     revalidatePath(`/clients/projects/${quotation.project_id}`);
   }
-  redirectWithMessage(`/projects/orders/${orderNo}`, `Project File ${orderNo} created.`);
+  redirectWithMessage(`/projects/orders/${orderNo}`, `Project File ${orderNo} created.${projectSnapshotNotice(snapshotAttempt)}`);
 }
 
 export async function updateQuotation(formData: FormData) {
