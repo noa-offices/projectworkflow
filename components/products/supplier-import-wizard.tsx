@@ -13,9 +13,10 @@ import {
 } from "@/lib/products/supplier-import-wizard";
 import {
   attachSupplierWorkingFile, cancelSupplierImport, compactSupplierSourceChunks, confirmSupplierCoverage, continueSupplierImportCleanup, createSupplierSource, createSupplierSourceDefinition,
-  archiveBlockingSupplierSource, describeSupplierImport, finalizeSupplierSource, prepareSupplierSourceReview, linkSupplierSourceDefinition, listIncompleteSupplierImports, listSupplierTemplateFamilies, saveSupplierProfile, setSupplierTemplateFamilies, supplierProfileForImport, supplierSourceUploadStatus, uploadSupplierChunk, validateSupplierReplacement, verifySupplierReplacement,
+  archiveBlockingSupplierSource, checkSupplierImportFile, completeSupplierReplacement, describeSupplierImport, finalizeSupplierSource, prepareSupplierSourceReview, linkSupplierSourceDefinition, listIncompleteSupplierImports, listSupplierTemplateFamilies, saveSupplierProfile, setSupplierTemplateFamilies, supplierProfileForImport, supplierSourceUploadStatus, uploadSupplierChunk, validateSupplierReplacement, verifySupplierReplacement,
 } from "@/app/products/price-updates/supplier-sources/actions";
 import { SupplierImportResult, type ReviewUiState } from "@/components/products/supplier-import-result";
+import { dayText, defaultListTitle, planReplacement, replacementConfirmText, type FileCheck } from "@/lib/products/supplier-live-list";
 import { blockingSourceFromError, previewReplacement, replacementMismatchWarning, type ReplaceContext, type ReplacementVerdict } from "@/lib/products/supplier-replacement";
 import { finalizeSupplierImport, resolveImportDefinition, runSupplierImportUpload, type SupplierUploadDeps } from "@/lib/products/supplier-import-resume";
 import type { IncompleteSupplierImport } from "@/lib/products/supplier-import-cancel";
@@ -30,7 +31,8 @@ export const wizardSteps = ["Upload", "Match columns", "Details", "Families", "R
 type Step = 1 | 2 | 3 | 4 | 5;
 type Preview = ReturnType<typeof previewImport>;
 
-export function SupplierImportWizard({ brandId, brandName, profiles, definitions, families, suggestedTitle, advancedHref, approver, replace = null }: {
+export function SupplierImportWizard({ brandId, brandName, profiles, definitions, families, suggestedTitle, advancedHref, approver, replace = null, destinations = {} }: {
+  /** For each Supplier source that already has a live list: "This will replace <title> (effective <date>).". Importing into it is a replacement, never a second list. */ destinations?: Record<string, string>;
   /** "Replace Price List": the supplier price list being replaced. Same importer; Families are not asked again. */ replace?: ReplaceContext | null;
   brandId: string; brandName: string; profiles: WizardProfileOption[]; definitions: WizardDefinition[]; families: Array<{ id: string; name: string }>;
   suggestedTitle: string; advancedHref: string; approver: boolean;
@@ -42,12 +44,16 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
   const [saved, setSaved] = useState<WizardProfileOption | null>(null), [useSaved, setUseSaved] = useState(false);
   const [mapping, setMapping] = useState<WizardMapping | null>(null);
   const [priceMode, setPriceMode] = useState<WizardPriceMode>("single"), [multiplePriceColumnsDetected, setMultiplePriceColumnsDetected] = useState(false);
-  const [title, setTitle] = useState(suggestedTitle), [effective, setEffective] = useState("");
+  const [typedTitle, setTypedTitle] = useState<string | null>(null), [effective, setEffective] = useState("");
+  const [fileHash, setFileHash] = useState(""), [fileCheck, setFileCheck] = useState<FileCheck | null>(null), [reimportConfirmed, setReimportConfirmed] = useState(false);
   const [unfinished, setUnfinished] = useState<string | null>(null), [phase, setPhase] = useState<"" | "Uploading" | "Processing" | "Finalizing" | "Complete">(""), [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [conflict, setConflict] = useState<{ sourceId: string; hash: string } | null>(null), [replaced, setReplaced] = useState<(ReplacementVerdict & { existing: boolean }) | null>(null);
   const [importedSourceId, setImportedSourceId] = useState<string | null>(null), [review, setReview] = useState<ReviewUiState>({ state: "idle" });
   const [confirmedFor, setConfirmedFor] = useState("");
   const [definitionId, setDefinitionId] = useState(replace?.definitionId ?? ""), [newName, setNewName] = useState(`${brandName} price list`), [selected, setSelected] = useState<string[]>([]);
+  // The name defaults to the file name and the effective date; typing a name keeps it.
+  const title = typedTitle ?? defaultListTitle(file?.name, effective) ?? suggestedTitle;
+  const setTitle = (value: string) => setTypedTitle(value);
   const headers = rows.length ? Object.keys(rows[0].values) : [];
   const fileKey = file ? `${file.name}:${file.size}` : "";
   const destinationConfirmed = Boolean(fileKey) && confirmedFor === fileKey;
@@ -138,6 +144,8 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       const parsed = await parseSupplierFile(chosen); if (!parsed.length) throw Error("The price list has no data rows.");
       const names = Object.keys(parsed[0].values), match = compatibleProfile(profiles, names);
       const initial = initialPriceSelection(names, match ? mappingFromProfile(match.config) : suggestMapping(names), Boolean(match));
+      const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await chosen.arrayBuffer())), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      setFileHash(digest); setReimportConfirmed(false); setFileCheck(await checkSupplierImportFile(brandId, digest, chosen.name).catch(() => null));
       setFile(chosen); setRows(parsed); setFamilyEdits({}); setSaved(match); setUseSaved(false); setMapping(initial.mapping); setPriceMode(initial.mode); setMultiplePriceColumnsDetected(initial.multipleDetected);
       const suggestion = suggestDefinition(definitions, match?.id ?? null);
       if (suggestion) chooseDefinition(suggestion.id); else { setDefinitionId(definitions.length ? "" : "new"); setSelected([]); }
@@ -163,17 +171,18 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       if (replace) await validateSupplierReplacement(brandId, replace.definitionId, effective, hash);
       const resolved = replace ? { id: replace.definitionId, created: createdDefinition.current } : await resolveImportDefinition({ definitionId, newName: newName.trim(), fileHash: hash, incomplete: await listIncompleteSupplierImports(brandId), created: createdDefinition.current, create: async () => (await createSupplierSourceDefinition(brandId, newName.trim(), profileId)).id });
       createdDefinition.current = resolved.created; const coverageId = resolved.id;
-      const created = await createSupplierSource({ profile_id: profileId, expected_profile: stored, title: title.trim(), filename: file.name, file_hash: hash, source_type: sourceType, expected_rows: importRows.length, expected_cells: importRows.length * stored.price_columns.length, expected_chunks: chunks.length, original_reference: "", effective_from: effective, received_at: "" }).catch((error: unknown) => { const blocking = blockingSourceFromError(error instanceof Error ? error.message : ""); if (!blocking) throw error; setConflict({ sourceId: blocking, hash }); return null; });
+      const created = await createSupplierSource({ profile_id: profileId, expected_profile: stored, title: title.trim(), filename: file.name, file_hash: hash, source_type: sourceType, expected_rows: importRows.length, expected_cells: importRows.length * stored.price_columns.length, expected_chunks: chunks.length, original_reference: "", effective_from: effective, received_at: "", allow_reimport: reimportConfirmed }).catch((error: unknown) => { const blocking = blockingSourceFromError(error instanceof Error ? error.message : ""); if (!blocking) throw error; setConflict({ sourceId: blocking, hash }); return null; });
       if (!created) return;
       const result = created;
       if (result.status !== "imported") {
         setUnfinished(result.id);
-        if (coverageId) await linkSupplierSourceDefinition(result.id, coverageId);
+        if (coverageId) await linkSupplierSourceDefinition(result.id, coverageId, { replaceConfirmed: Boolean(replace) });
         await runSupplierImportUpload(uploadDeps(file), { sourceId: result.id, brandId, hash, sourceType, rowCount: importRows.length, chunks });
         setUnfinished(null); setPhase("Complete");
       }
       if (replace) {
         // Success is reported only after the new source is fully imported, and says honestly whether it is current.
+        if (!result.existing) await completeSupplierReplacement(result.id, true);
         const verdict = await verifySupplierReplacement(brandId, replace.definitionId, result.id);
         setReplaced({ ...verdict, existing: result.existing }); setFile(null); setRows([]); setStep(1); router.refresh(); return;
       }
@@ -234,6 +243,10 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
   const familiesReady = selected.length > 0 && (definitionId !== "new" || newName.trim() !== "") && definitionId !== "";
   const definitionReady = definitionId === "new" ? Boolean(newName.trim()) : Boolean(definition);
   const noFamilies = selected.length === 0 || families.length === 0;
+  const replacesMessage = !replace && definitionId && definitionId !== "new" ? destinations[definitionId] ?? "" : "";
+  const fileNotice = fileCheck && (fileCheck.exact || fileCheck.sameName) ? <div role="status" className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 sm:col-span-2">{fileCheck.exact ? <><p className="font-semibold">{fileCheck.exact.message}</p><label className="flex items-start gap-2 text-xs font-medium"><input type="checkbox" checked={reimportConfirmed} onChange={(event) => setReimportConfirmed(event.target.checked)} className="mt-0.5" />Import it again on purpose.</label></> : null}{fileCheck.sameName ? <p className="text-xs">{fileCheck.sameName.message}</p> : null}</div> : null;
+  const replacePlanLines = replace?.live ? replacementConfirmText(planReplacement({ versions: replace.live.versions, batches: replace.live.batches, definitionId: replace.definitionId, newList: { id: "__new__", effective_from: effective || null, created_at: "9999-12-31T00:00:00Z" }, businessDate: replace.live.businessDate })) : [];
+  const reimportBlocked = Boolean(fileCheck?.exact) && !reimportConfirmed;
   const conflictNotice = conflict ? <div role="alert" className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm"><p className="font-semibold text-amber-950">This exact file was already imported with different settings.</p><p className="text-xs text-amber-900">You can import it again with the settings you chose. The earlier import is archived, not deleted.</p><button type="button" className={button} disabled={busy} onClick={() => void importWithNewSettings()}>Import with New Settings</button></div> : null;
 
   return <section className={`${card} space-y-4 p-4`} aria-label="Import new price list">
@@ -279,6 +292,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
 
     {step === 3 && mapping ? <div className="space-y-3"><div className="grid gap-3 sm:grid-cols-2">
       <label className="grid gap-1 text-xs sm:col-span-2"><span className="font-medium">Price list name</span><input value={title} onChange={(event) => setTitle(event.target.value)} className={input} /></label>
+      {fileNotice}
       <label className="grid gap-1 text-xs"><span className="font-medium">{replace ? "Effective from (required)" : "Effective from (optional)"}</span><input type="date" value={effective} onChange={(event) => setEffective(event.target.value)} className={input} /></label>
       {known && saved ? <><div className="grid gap-1 text-xs"><span className="font-medium">Currency</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{saved.config.currency}</span></div>
         <div className="grid gap-1 text-xs"><span className="font-medium">Price basis</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{saved.config.basis === "net" ? "Net" : "List"}</span></div></>
@@ -299,8 +313,9 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
             <div className="flex flex-wrap gap-x-4 gap-y-1">{fileFamilies.map((item) => <label key={item.key} className="flex items-center gap-1.5 text-sm"><input type="checkbox" className="accent-emerald-900" checked={choiceFor(family.id).includes(item.key)} onChange={(event) => chooseFamily(family.id, item.key, event.target.checked)} />{item.family}</label>)}</div>
             <p className="text-xs text-zinc-600">Choose one. Choose more only if this product is sold under more than one family. If you choose none, the lines show Needs mapping until you choose a family.</p></fieldset> : null}</li>)}</ul></fieldset>
       {conflictNotice}
-      <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={busy} onClick={() => setStep(3)}>Back</button><button type="button" className={primary} disabled={busy || !familiesReady} onClick={() => setStep(5)}>Next: review</button>
-        {noFamilies ? <button type="button" className={button} disabled={busy || !definitionReady || !profile || !file} onClick={() => void startReview(true)}>Finish import without review</button> : null}</div>
+      {replacesMessage ? <div role="alert" className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><p className="font-semibold">{replacesMessage}</p><p className="text-xs">A Supplier source keeps one live price list, so this file cannot be added as another list of the same source. Use Replace price list, or choose a different Supplier source or a new one.</p><Link className={button} href={`/products/price-updates/supplier-sources?brand=${brandId}&tab=import&replace=${definitionId}`}>Replace this price list</Link></div> : null}
+      <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={busy} onClick={() => setStep(3)}>Back</button><button type="button" className={primary} disabled={busy || !familiesReady || Boolean(replacesMessage)} onClick={() => setStep(5)}>Next: review</button>
+        {noFamilies && !replacesMessage ? <button type="button" className={button} disabled={busy || !definitionReady || !profile || !file} onClick={() => void startReview(true)}>Finish import without review</button> : null}</div>
       {noFamilies ? <p className="text-xs text-zinc-500">No products yet. You can add products later. Smart Setup will use this price list.</p> : null}
       {progress && (busy || unfinished) ? <p role="status" className="text-xs text-zinc-700">{phase}: {progress.done} / {progress.total} parts</p> : null}
     </div> : null}
@@ -312,14 +327,15 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       {replace && file ? (() => { const proposedCurrency = known && saved ? saved.config.currency : mapping.currency, proposedBasis = known && saved ? saved.config.basis : mapping.basis; const preview = previewReplacement({ versions: replace.versions, current: replace.current, proposed: { effectiveFrom: effective, currency: proposedCurrency, basis: proposedBasis } });
         const profileColumns = (() => { const profileId = definitions.find((item) => item.id === replace.definitionId)?.profileId; const config = profiles.find((item) => item.id === profileId)?.config; return config ? profileRequiredColumns(config) : null; })();
         const mismatch = replacementMismatchWarning({ definitionName: replace.definitionName, requiredColumns: profileColumns, fileHeaders: headers });
-        return <div className="space-y-1 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm" aria-label="Replacement preview"><p className="font-semibold">Replacing: {replace.definitionName}</p><p>Selected file: {file.name}</p>
+        return <div className="space-y-1 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm" aria-label="Replacement preview"><p className="font-semibold">Replacing: {replace.definitionName}</p>{replace.current ? <p className="font-semibold text-amber-900">This will replace {replace.current.title} (effective {replace.current.effectiveFrom ? dayText(replace.current.effectiveFrom) : "immediately"}).</p> : null}<p>Selected file: {file.name}</p>
           {mismatch ? <p role="alert" className="font-semibold text-amber-900">{mismatch}</p> : null}
-          <label className="flex items-start gap-2 text-xs font-medium"><input type="checkbox" checked={destinationConfirmed} onChange={(event) => setConfirmedFor(event.target.checked ? fileKey : "")} className="mt-0.5" />I confirm this file is the new version of {replace.definitionName}.</label><p><span className="text-xs text-zinc-500">Current: </span>{replace.current ? `${replace.current.title} · ${replace.current.filename} · effective ${replace.current.effectiveFrom ?? "immediately"} · ${replace.current.currency} · ${replace.current.basis} price` : "none"}</p>
+          <label className="flex items-start gap-2 text-xs font-medium"><input type="checkbox" checked={destinationConfirmed} onChange={(event) => setConfirmedFor(event.target.checked ? fileKey : "")} className="mt-0.5" />I confirm this file is the new version of {replace.definitionName}, and I understand what is archived.</label><p><span className="text-xs text-zinc-500">Current: </span>{replace.current ? `${replace.current.title} · ${replace.current.filename} · effective ${replace.current.effectiveFrom ?? "immediately"} · ${replace.current.currency} · ${replace.current.basis} price` : "none"}</p>
           <p><span className="text-xs text-zinc-500">Replacement: </span>{title} · {file.name} · effective {effective || "—"} · {proposedCurrency} · {proposedBasis} price</p>
           <p className={preview.becomesCurrent ? "font-semibold text-emerald-900" : "font-semibold text-amber-900"}>{preview.headline}</p>{preview.warnings.map((warning) => <p key={warning} className="text-amber-900">{warning}</p>)}
-          <p className="text-xs text-zinc-500">The earlier price list stays in History. This replacement changes no prices.</p></div>; })() : null}
+          {replacePlanLines.length ? <ul className="list-disc space-y-0.5 pl-5 text-xs text-zinc-700" aria-label="What the replacement does">{replacePlanLines.map((line) => <li key={line}>{line}</li>)}</ul> : null}<p className="text-xs text-zinc-500">The earlier price list stays in History. This replacement changes no prices.</p></div>; })() : null}
+      {fileNotice}
       {conflictNotice}
-      <div className="flex gap-2"><button type="button" className={button} disabled={busy} onClick={() => setStep(replace ? 3 : 4)}>Back</button><button type="button" className={primary} disabled={busy || !profile || (Boolean(replace) && !destinationConfirmed)} onClick={() => void startReview()}>{busy ? "Working…" : unfinished ? (phase === "Finalizing" ? "Resume Finalization" : "Resume Import") : replace ? "Confirm Replacement" : "Start review"}</button>{unfinished && !busy ? <button type="button" className={button} onClick={() => void cancelImport()}>Cancel Import</button> : null}</div>{progress && (busy || unfinished) ? <p role="status" className="text-xs text-zinc-700">{phase}: {progress.done} / {progress.total} parts{unfinished && !busy ? " — the import is not finished. Resume it or cancel it." : ""}</p> : null}</div> : null}
+      <div className="flex gap-2"><button type="button" className={button} disabled={busy} onClick={() => setStep(replace ? 3 : 4)}>Back</button><button type="button" className={primary} disabled={busy || !profile || reimportBlocked || Boolean(replacesMessage) || (Boolean(replace) && !destinationConfirmed)} onClick={() => void startReview()}>{busy ? "Working…" : unfinished ? (phase === "Finalizing" ? "Resume Finalization" : "Resume Import") : replace ? "Confirm Replacement" : "Start review"}</button>{unfinished && !busy ? <button type="button" className={button} onClick={() => void cancelImport()}>Cancel Import</button> : null}</div>{progress && (busy || unfinished) ? <p role="status" className="text-xs text-zinc-700">{phase}: {progress.done} / {progress.total} parts{unfinished && !busy ? " — the import is not finished. Resume it or cancel it." : ""}</p> : null}</div> : null}
 
     <p className="text-xs text-zinc-500">Technical import profiles, vocabulary and coverage tools are under <Link href={advancedHref} className="underline">Advanced import settings</Link>.</p>
   </section>;

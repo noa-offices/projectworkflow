@@ -10,6 +10,7 @@ import { assertSupplierProfile, type RawSupplierRow, type SourceScope, type Supp
 import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
 import { archiveBlockingSource, describeImportedSource, findSourceReviewBatch, validateReplacementRequest, verifyReplacement } from "@/lib/products/supplier-replacement";
 import { cancelIncompleteSupplierImport, continueIncompleteSupplierCleanup, supplierIncompleteImports, supplierSourceUploadProgress } from "@/lib/products/supplier-import-cancel";
+import { assertFileNotAlreadyImported, assertLinkAllowed, assertNoOtherOpenReview, checkImportFileForBrand, completeReplacement } from "@/lib/products/supplier-live-list-server";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
 import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierFamilyUnchangedMatchKeys, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
 
@@ -54,9 +55,13 @@ export async function updateSupplierBrandBasis(brandId: string, basis: string) {
   const result = await supplierWrite(client, "brand_basis_update", { brand_id: brandId, basis });
   revalidatePath(workspacePath); return result;
 }
-export async function createSupplierSource(payload: { profile_id: string; expected_profile: SupplierProfile; title: string; filename: string; file_hash: string; source_type: string; expected_rows: number; expected_cells: number; expected_chunks: number; original_reference?: string; effective_from?: string; received_at?: string }) {
+export async function createSupplierSource(input: { allow_reimport?: boolean; profile_id: string; expected_profile: SupplierProfile; title: string; filename: string; file_hash: string; source_type: string; expected_rows: number; expected_cells: number; expected_chunks: number; original_reference?: string; effective_from?: string; received_at?: string }) {
   const { client } = await reviewer();
+  const { allow_reimport: allowReimport, ...payload } = input;
   if (!payload.title.trim() || !/^[a-f0-9]{64}$/.test(payload.file_hash) || !["xlsx", "csv", "json"].includes(payload.source_type)) throw Error("Source title, hash and structured format required.");
+  // An exact copy of this file is already a live list: stop here unless a deliberate re-import was confirmed.
+  const profile = await client.from("supplier_price_profiles").select("brand_id").eq("id", payload.profile_id).maybeSingle<{ brand_id: string }>();
+  if (profile.data) await assertFileNotAlreadyImported(client, { brandId: profile.data.brand_id, fileHash: payload.file_hash, fileName: payload.filename, expectedProfile: payload.expected_profile, confirmed: allowReimport === true });
   const result = await supplierWrite(client, "source", payload); const source = await supplierSource(client, result.id); revalidatePath(workspacePath); return { ...result, status: source.status, existing: source.status === "imported" };
 }
 export async function attachSupplierWorkingFile(sourceId: string, path: string) {
@@ -95,6 +100,7 @@ export async function archiveSupplierSource(sourceId: string) {
 }
 export async function createSupplierReviewBatch(sourceId: string, scope: SourceScope, selectedIds: string[], brandListId?: string) {
   const { client } = await reviewer();
+  await assertNoOtherOpenReview(client, sourceId); // one open review per Supplier source
   if (!["complete", "partial", "selected_templates"].includes(scope)) throw Error("Invalid review scope.");
   const result = await supplierCreateReviewBatch(client, sourceId, scope, selectedIds, brandListId); revalidatePath(workspacePath); return result;
 }
@@ -254,8 +260,10 @@ export async function confirmSupplierCoverage(definitionId: string, templateIds:
   if (!Array.isArray(templateIds) || templateIds.some((id) => typeof id !== "string")) throw Error("Choose the Families this Supplier source covers.");
   const result = await supplierConfirmCoverage(client, definitionId, templateIds); revalidatePath(workspacePath); return result;
 }
-export async function linkSupplierSourceDefinition(sourceId: string, definitionId: string | null) {
-  const { client } = await approver(); const result = await supplierLinkSourceDefinition(client, sourceId, definitionId); revalidatePath(workspacePath); return result;
+export async function linkSupplierSourceDefinition(sourceId: string, definitionId: string | null, options: { replaceConfirmed?: boolean } = {}) {
+  const { client } = await approver();
+  await assertLinkAllowed(client, sourceId, definitionId, options.replaceConfirmed === true); // one live price list per Supplier source
+  const result = await supplierLinkSourceDefinition(client, sourceId, definitionId); revalidatePath(workspacePath); return result;
 }
 export async function assignFamilyToSupplierSource(definitionId: string, templateId: string) {
   const { client } = await approver(); const result = await supplierAssignFamilyToSource(client, definitionId, templateId); revalidatePath(workspacePath); return result;
@@ -414,7 +422,23 @@ export async function prepareSupplierSourceReview(sourceId: string) {
   const { client } = await reviewer();
   const existing = await findSourceReviewBatch(client, sourceId);
   if (existing.state === "exists") return { batchId: existing.batchId!, created: false };
+  await assertNoOtherOpenReview(client, sourceId); // one open review per Supplier source
   const batch = await supplierCreateReviewBatch(client, sourceId, "complete", [], undefined);
   revalidatePath(workspacePath);
   return { batchId: (batch as { id: string }).id, created: true };
+}
+
+/** Read-only: has this exact file (by content hash) or this file name been imported for the Brand before? */
+export async function checkSupplierImportFile(brandId: string, fileHash: string, fileName: string) {
+  const { client } = await reviewer();
+  if (typeof brandId !== "string" || !brandId || !/^[a-f0-9]{64}$/.test(fileHash) || typeof fileName !== "string") throw Error("Brand, file hash and file name are required.");
+  return checkImportFileForBrand(client, brandId, fileHash, fileName);
+}
+/** After a replacement is fully imported: closes the older lists' unfinished reviews and archives them (never deletes). The plan is recomputed here. */
+export async function completeSupplierReplacement(newSourceId: string, confirmed: boolean) {
+  const { client } = await approver();
+  const result = await completeReplacement(client, { newSourceId, confirmed });
+  revalidatePath(workspacePath);
+  revalidatePath("/products/price-updates");
+  return result;
 }

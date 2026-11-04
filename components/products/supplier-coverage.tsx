@@ -1,4 +1,5 @@
 "use client";
+import { previousListsLine } from "@/lib/products/supplier-live-list";
 import { priceListLabels, priceListReviewState } from "@/lib/products/supplier-list-presentation";
 
 import Link from "next/link";
@@ -228,7 +229,7 @@ const priceListStates: Record<SupplierPriceListState, [string, string, string]> 
   ready_to_complete: ["Ready to complete", "Complete review", "border-emerald-200 bg-emerald-50 text-emerald-900"],
   completed: ["Completed", "View completed review", "border-emerald-200 bg-emerald-50 text-emerald-900"],
 };
-export function SupplierPriceListCards({ cards, importHref, approver }: { cards: PriceListCardView[]; importHref: string; approver: boolean }) {
+export function SupplierPriceListCards({ cards, importHref, approver, previousCounts = {}, historyHref = "", cleanupHref = "" }: { cards: PriceListCardView[]; importHref: string; approver: boolean; /** Older lists of each Supplier source (by definition id) that are not shown as cards. */ previousCounts?: Record<string, number>; historyHref?: string; cleanupHref?: string }) {
   const groups = [
     { state: "current", title: "Current price list" },
     { state: "update_in_progress", title: "Updates in progress" },
@@ -252,6 +253,7 @@ export function SupplierPriceListCards({ cards, importHref, approver }: { cards:
       <dl className="grid grid-cols-3 gap-2 text-xs"><div><dt className="text-zinc-500">Families</dt><dd className="font-semibold tabular-nums text-zinc-950">{item.families ?? "—"}</dd></div>
         <div><dt className="text-zinc-500">Source rows</dt><dd className="font-semibold tabular-nums text-zinc-950">{item.compacted ? "Detail archived" : item.sourceRows.toLocaleString("en-US")}</dd></div>
         <div><dt className="text-zinc-500">Supplier items</dt><dd className="font-semibold tabular-nums text-zinc-950">{item.items.toLocaleString("en-US")}</dd></div></dl>
+      {item.definitionId && previousCounts[item.definitionId] && item.priceListState !== "upcoming" ? <p className="text-xs text-zinc-600" data-testid="previous-lists">{previousListsLine(previousCounts[item.definitionId])} - see <Link className="underline" href={historyHref}>History</Link> or <Link className="underline" href={cleanupHref}>Clean up</Link></p> : null}
       {item.batchId ? <p className="text-xs text-zinc-600">{item.unresolved ? `${item.unresolved} ${item.unresolved === 1 ? "item needs" : "items need"} attention` : "Nothing needs attention"}{item.unchanged ? ` · ${item.unchanged} unchanged` : ""}</p> : null}
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-zinc-100 pt-3">
         <div className="flex flex-wrap items-center gap-2"><Link href={item.openHref} className={primary}>{action}</Link>
