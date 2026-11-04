@@ -15,7 +15,7 @@ const panel = async (extra: Record<string, unknown> = {}) => {
 test("an approver sees the banner and Cancel notice; adding another is blocked with the plain reason", async () => {
   const html = await panel();
   assert.match(html, /Price rise of about 3% announced from 1 Dec 2026 \(approximate\)\. New price list not received yet\./);
-  assert.match(html, /Cancel notice/);
+  assert.match(html, /Cancel notice/); assert.match(html, /Close notice/);
   assert.match(html, /disabled=""[^>]*title="This Brand already has an open notice/);
 });
 

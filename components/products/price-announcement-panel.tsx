@@ -32,7 +32,7 @@ export function BrandPriceAnnouncementPanel({ brandId, brandName, announcement, 
   return <div className="space-y-2 text-xs" aria-label={`Price change notice for ${brandName}`}>
     {announcement?.state === "active" ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-sky-200 bg-sky-50 px-2 py-1.5 text-sky-950">
       <p className="min-w-0 font-medium" data-testid="announcement-banner">{announcementBanner(announcement)}{announcement.note ? ` ${announcement.note}` : ""}</p>
-      {canManage ? <button type="button" disabled={pending} className={button} onClick={() => end("cancel")}>Cancel notice</button> : null}
+      {canManage ? <span className="flex flex-wrap gap-2"><button type="button" disabled={pending} className={button} onClick={() => end("cancel")}>Cancel notice</button><button type="button" disabled={pending} className={button} onClick={() => end("close")}>Close notice</button></span> : null}
     </div> : null}
     {announcement?.state === "official_list_received" ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-zinc-700">
       <p className="min-w-0 font-medium" data-testid="announcement-official">{officialListText}</p>
