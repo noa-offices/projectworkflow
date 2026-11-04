@@ -16,7 +16,7 @@ import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
 import { deleteFolderAction } from "@/lib/quotations/delete-folder-action";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
-import { variationLabel, variationLinkFromLayoutSettings } from "@/lib/quotations/project-variation";
+import { folderProjectOrderNoFrom, folderProjectOrderNos, variationLabel, variationLinkFromLayoutSettings } from "@/lib/quotations/project-variation";
 
 type Client = { id: string; company_name: string };
 
@@ -66,6 +66,7 @@ type QuotationListLiveFilterProps = {
 };
 
 type QuotationFolder = {
+  projectOrderNo: string | null;
   activeCount: number;
   allQuotationIds: string[];
   archiveAnchorId: string;
@@ -130,8 +131,9 @@ function folderDisplayNo(quotations: Quotation[]) {
 
 function statusSummary(quotations: Quotation[]) {
   const counts = new Map<string, number>();
+  const folderOrders = folderProjectOrderNos(quotations);
   for (const quotation of quotations) {
-    const label = quotation.is_active ? quotationListStatusLabel(quotation) : "Archived";
+    const label = quotation.is_active ? quotationListStatusLabel(quotation, folderProjectOrderNoFrom(folderOrders, quotation.quotation_no)) : "Archived";
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
 
@@ -140,13 +142,13 @@ function statusSummary(quotations: Quotation[]) {
     .join(", ");
 }
 
-function quotationListStatusLabel(quotation: Quotation) {
-  return quotationApprovalDisplay(quotation)?.label ?? quotationStatusLabel(quotation.status);
+function quotationListStatusLabel(quotation: Quotation, folderOrderNo?: string | null) {
+  return quotationApprovalDisplay(quotation, folderOrderNo)?.label ?? quotationStatusLabel(quotation.status);
 }
 
-function quotationListStatusBadgeClassName(quotation: Quotation) {
+function quotationListStatusBadgeClassName(quotation: Quotation, folderOrderNo?: string | null) {
   return (
-    quotationApprovalDisplay(quotation)?.badgeClassName ??
+    quotationApprovalDisplay(quotation, folderOrderNo)?.badgeClassName ??
     quotationStatusBadgeClassName(quotation.status)
   );
 }
@@ -255,6 +257,7 @@ export function QuotationListLiveFilter({
           key,
           latestQuotation: latest,
           projectName: project?.project_name ?? latest.legacy_reference ?? "Opportunity reference",
+          projectOrderNo: folderProjectOrderNoFrom(folderProjectOrderNos(folderQuotations), latest.quotation_no),
           quotationCount: folderQuotations.length,
           salespersonName: latest.salesperson_id ? (salespersonMap.get(latest.salesperson_id) ?? null) : null,
           statusSummary: statusSummary(folderQuotations),
@@ -287,7 +290,7 @@ export function QuotationListLiveFilter({
               folder.folderNo,
               quotation.title,
               quotation.status,
-              quotationListStatusLabel(quotation),
+              quotationListStatusLabel(quotation, folder.projectOrderNo),
               folder.clientName,
               folder.projectName,
               quotation.legacy_reference,
@@ -682,8 +685,8 @@ export function QuotationListLiveFilter({
                       <VariationBadge layoutSettings={quotation.layout_settings} />
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${quotationListStatusBadgeClassName(quotation)}`}>
-                        {quotationListStatusLabel(quotation)}
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${quotationListStatusBadgeClassName(quotation, folder.projectOrderNo)}`}>
+                        {quotationListStatusLabel(quotation, folder.projectOrderNo)}
                       </span>
                       {folder.quotationCount > 1 ? (
                         <p className="mt-1 text-[11px] text-zinc-400">{folder.quotationCount} versions</p>

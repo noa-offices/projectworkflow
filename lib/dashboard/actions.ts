@@ -4,6 +4,7 @@ import { requireActiveUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
+import { folderProjectOrderNoFrom, folderProjectOrderNos } from "@/lib/quotations/project-variation";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
@@ -169,9 +170,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   // need a Client name resolved below. `null` means "already resolved, skip".
   const pendingItemFallbackClientIds: Array<string | null> = [];
 
+  const folderOrders = folderProjectOrderNos(quotations ?? []);
   for (const quotation of quotationFolders.values()) {
     if (!quotation.is_active) continue;
-    const approvalDisplay = quotationApprovalDisplay(quotation);
+    const approvalDisplay = quotationApprovalDisplay(quotation, folderProjectOrderNoFrom(folderOrders, quotation.quotation_no));
     const isPending =
       PENDING_STATUSES.includes(quotation.status) ||
       approvalDisplay?.state === "project_file_pending" ||

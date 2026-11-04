@@ -530,3 +530,18 @@ test("13c. existing Active/Completed Project Value KPIs are untouched by this re
   assert.ok(dashboardComponentSource.includes('label: "Completed Project Value",'));
   assert.ok(dashboardComponentSource.includes("value: formatAED(stats.completedProjectValue),"));
 });
+
+test("an old revision or option in a folder that already has a Project is not counted as Project File Pending", async () => {
+  reset();
+  const projectFile = { orderNo: "CO-0001-001", quotationId: "q1", quotationNo: "QN-0001-001", clientId: "c", clientName: "Client", reference: "Office", total: 100, currency: "AED", createdAt: "2026-01-01T00:00:00Z", createdBy: "u" };
+  const row = (id: string, quotation_no: string, quotation_date: string, layout_settings: unknown) => ({ id, project_id: null, quotation_no, quotation_date, status: "client_confirmed", is_active: true, approved_salesperson_id: "u1", layout_settings, title: null });
+  quotationsFixture = [
+    row("q1", "QN-0001-001", "2026-01-01", { projectFile }),
+    row("q2", "QN-0001-001-R2", "2026-02-01", {}), // the latest row of a folder that has a Project
+    row("q3", "QN-0002-001", "2026-01-01", {}), // a folder with no Project keeps its current behavior
+  ];
+  const stats = await getDashboardStats();
+  assert.equal(stats.quotationWorkflow.clientConfirmedPending, 1);
+  assert.equal(stats.pendingQuotations.count, 1);
+  assert.deepEqual(stats.pendingQuotations.items.map((item) => item.id), ["q3"]);
+});

@@ -11,6 +11,7 @@ export type QuotationApprovalDisplayInput = {
 export type QuotationApprovalState =
   | "project_file_pending"
   | "owner_attribution_pending"
+  | "folder_has_project"
   | "approved";
 
 export function hasQualifyingProjectFile(layoutSettings: unknown) {
@@ -20,8 +21,13 @@ export function hasQualifyingProjectFile(layoutSettings: unknown) {
   );
 }
 
+/**
+ * folderOrderNo: the Project number of the quotation's folder, when the caller knows it (folderProjectOrderNo). An old revision or option that is
+ * Client Confirmed in a folder that already has a Project is not waiting for a Project File.
+ */
 export function quotationApprovalDisplay(
   quotation: QuotationApprovalDisplayInput,
+  folderOrderNo?: string | null,
 ): {
   badgeClassName: string;
   label: string;
@@ -35,6 +41,13 @@ export function quotationApprovalDisplay(
   }
 
   if (!hasQualifyingProjectFile(quotation.layout_settings)) {
+    if (folderOrderNo) {
+      return {
+        badgeClassName: "border-zinc-200 bg-zinc-100 text-zinc-600",
+        label: `Client Confirmed · Folder has Project ${folderOrderNo}`,
+        state: "folder_has_project",
+      };
+    }
     return {
       badgeClassName: "border-amber-200 bg-amber-50 text-amber-800",
       label: "Client Confirmed · Project File Pending",

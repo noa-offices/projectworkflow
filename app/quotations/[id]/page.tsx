@@ -270,11 +270,13 @@ function SubmitButton({ label }: { label: string }) {
 }
 
 function StatusBadge({
+  folderOrderNo,
   quotation,
 }: {
+  folderOrderNo?: string | null;
   quotation: Pick<Quotation, "approved_salesperson_id" | "layout_settings" | "status">;
 }) {
-  const approvalDisplay = quotationApprovalDisplay(quotation);
+  const approvalDisplay = quotationApprovalDisplay(quotation, folderOrderNo);
 
   return (
     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${approvalDisplay?.badgeClassName ?? quotationStatusBadgeClassName(quotation.status)}`}>
@@ -1207,7 +1209,8 @@ export default async function QuotationDetailPage({
     projectFileFromLayoutSettings(quotation.layout_settings) ??
     currentClientApprovalDraft?.confirmedOrder ??
     null;
-  const currentApprovalDisplay = quotationApprovalDisplay(quotation);
+  const folderOrderNo = folderProjectOrderNo(folderQuotations ?? [], quotation.quotation_no);
+  const currentApprovalDisplay = quotationApprovalDisplay(quotation, folderOrderNo);
   const workflowReturnTo = `/quotations/${quotation.id}`;
   const projectFileNo = currentProjectFile?.orderNo ?? confirmedOrderNo ?? "CO pending";
   console.log("[DEBUG canCreateProjectFile]", {
@@ -1217,7 +1220,6 @@ export default async function QuotationDetailPage({
     canManageRecords,
     currentProjectFile: Boolean(currentProjectFile),
   });
-  const folderOrderNo = folderProjectOrderNo(folderQuotations ?? [], quotation.quotation_no);
   const variationLink = variationLinkFromLayoutSettings(quotation.layout_settings);
   const projectCardState = projectFileCardState({ id: quotation.id, status: quotation.status, layoutSettings: quotation.layout_settings, folderOrderNo });
   const canCreateProjectFile =
@@ -1370,7 +1372,7 @@ export default async function QuotationDetailPage({
                   {variationLink ? <p className="mt-1 text-sm font-medium text-violet-800">{variationLine(variationLink)}</p> : null}
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     {showOptionNumber ? <OptionBadge optionNo={quotation.option_no} quotationNo={quotation.quotation_no} /> : null}
-                    <StatusBadge quotation={quotation} />
+                    <StatusBadge folderOrderNo={folderOrderNo} quotation={quotation} />
                     <LocalDraftLink quotationId={quotation.id} showLink={false} />
                   </div>
                   <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-emerald-50 px-3 py-2 sm:hidden">
@@ -1558,7 +1560,7 @@ export default async function QuotationDetailPage({
                     <div>
                       <h2 className="text-lg font-semibold text-zinc-950">Quotation Status</h2>
                     </div>
-                    <StatusBadge quotation={quotation} />
+                    <StatusBadge folderOrderNo={folderOrderNo} quotation={quotation} />
                   </div>
                   {quotation.status_note ? (
                     <p className="mt-3 text-sm text-zinc-600">Note: {quotation.status_note}</p>
@@ -1732,7 +1734,7 @@ export default async function QuotationDetailPage({
                                 Current
                               </span>
                             ) : null}
-                            <StatusBadge quotation={folderQuotation} />
+                            <StatusBadge folderOrderNo={folderOrderNo} quotation={folderQuotation} />
                           </div>
                           <h3 className="mt-2 truncate text-base font-semibold text-zinc-950">
                             {folderQuotation.quotation_no ?? "Older quotation"}
@@ -1802,7 +1804,7 @@ export default async function QuotationDetailPage({
                                   <span className="inline-flex rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700">
                                     {folderTypeLabel}
                                   </span>
-                                  <StatusBadge quotation={folderQuotation} />
+                                  <StatusBadge folderOrderNo={folderOrderNo} quotation={folderQuotation} />
                                   {isCurrentFolderQuotation ? (
                                     <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-900">
                                       Current
@@ -1926,7 +1928,7 @@ export default async function QuotationDetailPage({
                                     Current
                                   </span>
                                 ) : null}
-                                <StatusBadge quotation={folderQuotation} />
+                                <StatusBadge folderOrderNo={folderOrderNo} quotation={folderQuotation} />
                               </div>
                               <h3 className="mt-2 truncate text-base font-semibold text-zinc-700">
                                 {folderQuotation.quotation_no ?? "Older quotation"}
@@ -1961,7 +1963,7 @@ export default async function QuotationDetailPage({
                                   <span className="inline-flex rounded-full border border-zinc-200 bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-600">
                                     Archived
                                   </span>
-                                  <StatusBadge quotation={folderQuotation} />
+                                  <StatusBadge folderOrderNo={folderOrderNo} quotation={folderQuotation} />
                                   {isCurrentFolderQuotation ? (
                                     <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-900">
                                       Current

@@ -13,6 +13,7 @@ import {
 import { resolveDateRange } from "@/lib/insights/date-ranges";
 import { latestPrimaryQuotationsByFolder } from "@/lib/quotations/sales-attribution";
 import { hasQualifyingProjectFile } from "@/lib/quotations/approval-display";
+import { folderProjectOrderNoFrom, folderProjectOrderNos } from "@/lib/quotations/project-variation";
 import {
   userRoleLabel,
   userStatusBadgeClass,
@@ -153,13 +154,14 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
     company_name: { company_name: string | null } | null;
   };
 
-  const allRows = latestPrimaryQuotationsByFolder(
-    (allQuotationsResult.data as AllQuotationRow[] | null) ?? [],
-  );
+  const allFetchedRows = (allQuotationsResult.data as AllQuotationRow[] | null) ?? [];
+  const allRows = latestPrimaryQuotationsByFolder(allFetchedRows);
+  const folderOrders = folderProjectOrderNos(allFetchedRows);
 
   const allQuotations = allRows.map((quotation) => ({
     status: quotation.status === "client_confirmed"
-      ? (hasQualifyingProjectFile(quotation.layout_settings) ? "client_approved" : "client_confirmed_pending")
+      // An old revision or option whose folder already has a Project is not waiting for a Project File.
+      ? (hasQualifyingProjectFile(quotation.layout_settings) || folderProjectOrderNoFrom(folderOrders, quotation.quotation_no) ? "client_approved" : "client_confirmed_pending")
       : quotation.status,
   }));
 
