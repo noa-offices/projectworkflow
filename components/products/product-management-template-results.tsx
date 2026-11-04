@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { Ellipsis, LayoutGrid, List } from "lucide-react";
 import { createContext, type ReactNode, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -8,6 +7,8 @@ import { archiveProductTemplate, bulkArchiveProductTemplates, markProductTemplat
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { ProductTemplateImageUploader } from "@/components/products/product-template-image-uploader";
+import { ProductCompactCard, productCardGridClass } from "@/components/products/product-compact-card";
+import { brandAndCategoryLine } from "@/lib/products/product-card-text";
 import { pruneSelectionToVisibleIds } from "@/lib/products/product-management-bulk-lifecycle";
 
 type PriceStatusTone = "ok" | "notice" | "warning" | "neutral";
@@ -202,31 +203,6 @@ function TemplateLifecycleBadge({
   );
 }
 
-function TemplateRowActions({
-  editHref,
-  openHref,
-}: {
-  editHref: string;
-  openHref: string;
-}) {
-  return (
-    <div className="grid grid-cols-2 gap-2">
-      <Link
-        href={openHref}
-        className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100"
-      >
-        View Details
-      </Link>
-      <Link
-        href={editHref}
-        className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-lg border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-      >
-        Edit Template
-      </Link>
-    </div>
-  );
-}
-
 function TemplateMoreMenu({
   returnTo,
   templateId,
@@ -236,7 +212,7 @@ function TemplateMoreMenu({
 }) {
   return (
     <details className="relative z-30 shrink-0">
-      <summary aria-label="More actions" className="inline-flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800">
+      <summary aria-label="More actions" className="-mt-1 inline-flex h-7 w-7 cursor-pointer list-none items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">
         <Ellipsis aria-hidden="true" className="h-4 w-4" />
       </summary>
       <div className="absolute right-0 z-[80] mt-2 w-56 rounded-lg border border-zinc-200 bg-white p-2 shadow-lg">
@@ -347,11 +323,11 @@ function CompactPriceCheckStatus({
       : "border-amber-200 bg-amber-50 text-amber-900";
 
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-      <span className={`inline-flex rounded-full border px-2 py-0.5 font-semibold ${className}`}>
+    <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-zinc-500">
+      <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 font-semibold ${className}`}>
         {label}
       </span>
-      <span>{detail}</span>
+      {detail ? <span className="min-w-0 truncate" title={detail}>{detail}</span> : null}
     </div>
   );
 }
@@ -479,81 +455,54 @@ export function ProductManagementTemplateResults({
       </div>
 
       {filteredTemplates.length ? (
-        <div
-          className="grid gap-4"
-          style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 280px), 1fr))" }}
-        >
+        <div className={productCardGridClass}>
           {filteredTemplates.map((template) => (
-            <article
+            <ProductCompactCard
               key={template.id}
-              className={`flex h-full flex-col overflow-visible rounded-2xl border bg-white shadow-sm transition hover:border-zinc-300 hover:shadow-md ${
-                template.isSelected
-                  ? "border-emerald-200 bg-emerald-50/30"
-                  : "border-zinc-200"
-              }`}
-            >
-              <div className="p-3 pb-0">
-                <div className="relative flex h-40 items-center justify-center overflow-hidden rounded-xl border border-zinc-100 bg-zinc-50">
-                  <ProductTemplateImageUploader
-                    imageSettings={template.imageSettings}
-                    label={template.templateName}
-                    templateId={template.id}
-                    value={template.imageValue}
-                  />
-                  <input
-                    type="checkbox"
-                    aria-label={`Select ${template.templateName}`}
-                    checked={checkedIds.has(template.id)}
-                    onChange={(event) => {
-                      setCheckedIds((previousCheckedIds) => {
-                        const nextCheckedIds = new Set(previousCheckedIds);
-                        if (event.target.checked) {
-                          nextCheckedIds.add(template.id);
-                        } else {
-                          nextCheckedIds.delete(template.id);
-                        }
-                        return nextCheckedIds;
-                      });
-                    }}
-                    className="absolute left-2 top-2 z-10 h-4 w-4 rounded border-zinc-300 text-emerald-900"
-                  />
-                  <span className="pointer-events-none absolute right-2 top-2 z-10">
-                    <TemplateLifecycleBadge status={template.lifecycleStatus} />
-                  </span>
-                  <span className="pointer-events-none absolute bottom-2 left-2 z-10 rounded-full border border-zinc-200 bg-white/90 px-2 py-0.5 text-[11px] font-semibold text-zinc-600">
-                    {template.imageCount} {template.imageCount === 1 ? "image" : "images"}
-                  </span>
-                </div>
-              </div>
-              <div className="flex flex-1 flex-col gap-2 p-4">
-                <div className="flex items-start gap-2">
-                  <h3 className="min-w-0 flex-1 text-sm font-bold text-zinc-950">
-                    {template.templateName}
-                  </h3>
-                  <TemplateMoreMenu returnTo={returnTo} templateId={template.id} />
-                </div>
-                {template.templateName !== template.quoteName ? (
-                  <p className="text-xs font-medium text-zinc-500">
-                    Quote name: {template.quoteName}
-                  </p>
-                ) : null}
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">{template.brandName}</p>
-                <p className="text-xs leading-5 text-zinc-500">{template.categoryText}</p>
-                <div>
-                  <CompactPriceCheckStatus
-                    detail={template.priceStatusDetail}
-                    label={template.priceStatusLabel}
-                    tone={template.priceStatusTone}
-                  />
-                </div>
-                <div className="mt-auto pt-2">
-                  <TemplateRowActions
-                    editHref={template.editHref}
-                    openHref={template.openHref}
-                  />
-                </div>
-              </div>
-            </article>
+              badge={<TemplateLifecycleBadge status={template.lifecycleStatus} />}
+              checkbox={
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${template.templateName}`}
+                  checked={checkedIds.has(template.id)}
+                  onChange={(event) => {
+                    setCheckedIds((previousCheckedIds) => {
+                      const nextCheckedIds = new Set(previousCheckedIds);
+                      if (event.target.checked) {
+                        nextCheckedIds.add(template.id);
+                      } else {
+                        nextCheckedIds.delete(template.id);
+                      }
+                      return nextCheckedIds;
+                    });
+                  }}
+                  className="absolute left-1.5 top-1.5 z-10 h-4 w-4 rounded border-zinc-300 text-emerald-900"
+                />
+              }
+              editHref={template.editHref}
+              imageCount={template.imageCount}
+              media={
+                <ProductTemplateImageUploader
+                  imageSettings={template.imageSettings}
+                  label={template.templateName}
+                  templateId={template.id}
+                  value={template.imageValue}
+                />
+              }
+              menu={<TemplateMoreMenu returnTo={returnTo} templateId={template.id} />}
+              metaLine={brandAndCategoryLine(template.brandName, [template.categoryText])}
+              openHref={template.openHref}
+              quoteName={template.templateName !== template.quoteName ? template.quoteName : null}
+              selected={template.isSelected}
+              status={
+                <CompactPriceCheckStatus
+                  detail={template.priceStatusDetail}
+                  label={template.priceStatusLabel}
+                  tone={template.priceStatusTone}
+                />
+              }
+              title={template.templateName}
+            />
           ))}
         </div>
       ) : (
