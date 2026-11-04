@@ -1,3 +1,4 @@
+import { loadBrandPriceAnnouncements, type AnnouncementView } from "@/lib/products/price-announcements";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment, type CSSProperties, type ReactNode } from "react";
@@ -3421,8 +3422,10 @@ export default async function QuotationBuilderPage({
       .filter((entry): entry is readonly [string, NonNullable<(typeof entry)[1]>] => Boolean(entry[1])),
   );
   const brandById = new Map((productBrands ?? []).map((brand) => [brand.id, brand]));
+  const announcements = await loadBrandPriceAnnouncements(supabase, (productTemplates ?? []).map((template) => template.brand_id)).catch(() => new Map<string, AnnouncementView>());
   const productTemplatesWithPriceChecks = (productTemplates ?? []).map((template) => ({
     ...template,
+    announced_price_change: announcements.get(template.brand_id) ?? null,
     brand_latest_price_list_at: brandPriceBaselineDate({
       fallbackCheckedAt: brandById.get(template.brand_id)?.last_price_list_checked_at ?? null,
       latestBrandPriceListUpdate: latestPriceListUpdateByBrand.get(template.brand_id) ?? null,

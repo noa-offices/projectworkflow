@@ -6,10 +6,14 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { chipCounts, filterPriceUpdates, noPriceUpdatesText, priceUpdatesChips, priceUpdatesCountText, priceUpdatesFilterQuery, toggleStatusChip, type PriceUpdatesFilters, type PriceUpdatesMethod } from "@/lib/products/price-updates-filter";
 import { PriceCheckModeLabel } from "./brand-price-check-method";
 import { ManualPriceCheckPanel } from "./manual-price-check-panel";
+import { BrandPriceAnnouncementPanel } from "./price-announcement-panel";
+import type { AnnouncementView } from "@/lib/products/price-announcements";
 import { badge, brandTone } from "./price-updates-brands";
 
 export type PriceUpdatesCardData = {
   brandId: string; name: string; state: string; stateLabel: string; method: "codes" | "manual"; href: string; failed?: boolean;
+  /** The Brand's open price change notice; `today` is the default date of its form. */
+  announcement?: AnnouncementView | null; today?: string;
   /** Brands with supplier codes only. */
   coded?: { priceLists: number; inProgress: number; upcoming: number; checked: number; applicable: number; needReview: number };
   /** Manual Brands only. Nothing from the supplier numbers is shown for them. */
@@ -43,6 +47,7 @@ export function PriceUpdatesCard({ card, canEditBrand, onChanged }: { card: Pric
       <p>Families checked {coded.applicable ? `${coded.checked} / ${coded.applicable}` : "—"} · Need review {coded.needReview}</p>
       <p>Current lists {coded.priceLists} · In progress {coded.inProgress}{coded.upcoming ? ` · Upcoming ${coded.upcoming}` : ""}</p>
     </div> : null}
+    <BrandPriceAnnouncementPanel brandId={card.brandId} brandName={card.name} announcement={card.announcement} canManage={canEditBrand} today={card.today ?? manual?.today ?? ""} />
     <div className="mt-auto flex items-center justify-between gap-2 pt-1">
       {canEditBrand ? <Link href={`/products/brands?brand=${card.brandId}&editBrand=${card.brandId}`} className={`text-xs font-semibold text-emerald-900 underline ${focusRing}`}>Edit brand</Link> : <span />}
       <Link href={card.href} aria-label={`Open ${card.name}`} className={`inline-flex h-8 items-center rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 ${focusRing}`}>Open Brand</Link>

@@ -1,5 +1,6 @@
 "use client";
 
+import { announcedSnapshotOf } from "@/lib/products/price-announcements";
 import Link from "next/link";
 import { prepareQuotationSharedImages } from "@/app/quotations/shared-image-actions";
 import { useRouter } from "next/navigation";
@@ -2915,6 +2916,7 @@ export function LocalQuotationBuilder({
       { label: "Source label", value: snapshotDetails.sourcePriceLabel },
       { label: "Source currency", value: snapshotDetails.sourceCurrency },
       { label: "Source total", value: snapshotDetails.sourcePrice },
+      { label: "Announced change", value: announcedSnapshotOf(item.source_component_data)?.note_text ?? "" },
       { label: "Exchange rate", value: snapshotDetails.exchangeRatesSummary.join(" | ") || (snapshotDetails.convertedTotalAed ? `AED total: ${snapshotDetails.convertedTotalAed}` : "") },
       {
         label: "Converted quote price",

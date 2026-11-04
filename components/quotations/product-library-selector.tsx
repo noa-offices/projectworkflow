@@ -70,6 +70,9 @@ import { variantOptionLabel } from "@/lib/products/variant-option-label";
 import { productTemplateRowReferenceKey, selectedRowReferencePreview, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import { missingExchangeRateCurrencies, roundSourceAmount } from "@/lib/quotations/source-price-components";
+import { announcedQuotationDelta, announcedSnapshot, announcedTotals, type AnnouncementView } from "@/lib/products/price-announcements";
+import { AnnouncedPriceBadge } from "@/components/products/announced-price-badge";
+import { AnnouncedPriceTick } from "@/components/quotations/announced-price-tick";
 import { keepDimensionLine } from "@/lib/quotations/final-specification-ai-check";
 import { buildFinalSpecificationRequest, specificationForAi } from "@/lib/quotations/final-specification-ai-selection";
 import {
@@ -170,6 +173,8 @@ export type ProductLibraryTemplate = {
   supplier_family_price_load_state?: "loaded" | "unavailable";
   // True until the (streamed) supplier status has arrived; shows a neutral placeholder instead of the legacy label.
   supplier_family_price_loading?: boolean;
+  // The Brand's open price change notice. Information only until someone ticks it for one quotation item.
+  announced_price_change?: AnnouncementView | null;
 };
 
 type DeskingSizePricingRow = {
@@ -1297,6 +1302,7 @@ export function ProductLibrarySelector({
   const [discountValues, setDiscountValues] = useState<Record<string, string>>({});
   const [selectedFinishesByTemplate, setSelectedFinishesByTemplate] = useState<Record<string, FinishSelectionEditorRow[]>>({});
   const [templatePriceOverrides, setTemplatePriceOverrides] = useState<Record<string, number | undefined>>({});
+  const [announcedTicks, setAnnouncedTicks] = useState<Record<string, boolean>>({});
   const [templateEditor, setTemplateEditor] = useState<
     | { currentPreviewUnitPrice: number; mode: "edit" | "price_check"; templateId: string }
     | { defaultBrandId?: string; mode: "create" }
@@ -1725,6 +1731,7 @@ export function ProductLibrarySelector({
                             {template.item_code ?? template.template_code ?? "No code"}
                           </span>
                           <PriceCheckBadge compact template={template} />
+                          <AnnouncedPriceBadge announcement={template.announced_price_change} className="mt-1" />
                         </span>
                         <span className="shrink-0 text-right text-xs font-bold text-zinc-700">
                           {formatMoney(template.currency, numberValue(template.default_unit_price))}
@@ -2227,17 +2234,32 @@ export function ProductLibrarySelector({
                   for (const line of selectedPricingAccessories) {
                     addCurrencyTotal(line.accessory.currency ?? rowCurrency, line.qty * line.unitPrice);
                   }
+                  const otherBrandTotals: Record<string, number> = {};
+                  const addOtherBrandTotal = (currency: string | undefined, amount: number) => {
+                    const normalizedCurrency = normalizeCurrency(currency ?? "AED");
+                    otherBrandTotals[normalizedCurrency] = (otherBrandTotals[normalizedCurrency] ?? 0) + amount;
+                  };
                   for (const line of selectedLinkedProducts) {
                     if (line.qty > 0 && line.link.add_to_parent_price) {
+                      const otherBrand = line.childTemplate.brand_id !== template.brand_id;
                       addCurrencyTotal(line.currency, line.baseLineTotal);
+                      if (otherBrand) addOtherBrandTotal(line.currency, line.baseLineTotal);
                       for (const accessoryLine of line.selectedAccessories) {
                         addCurrencyTotal(
                           accessoryLine.accessory.currency ?? line.currency,
                           accessoryLine.qty * numberValue(accessoryLine.accessory.price),
                         );
+                        if (otherBrand) addOtherBrandTotal(accessoryLine.accessory.currency ?? line.currency, accessoryLine.qty * numberValue(accessoryLine.accessory.price));
                       }
                     }
                   }
+
+                  // Announced price change: added to the supplier totals, before conversion, rounding and discount. A fixed quote price (override) is left alone.
+                  const activeAnnouncement = template.announced_price_change?.state === "active" ? template.announced_price_change : null;
+                  const announcedBlocked = Boolean(activeAnnouncement) && templatePriceOverrides[template.id] !== undefined;
+                  const announcedChange = activeAnnouncement && announcedTicks[template.id] && !announcedBlocked
+                    ? announcedTotals({ totals: Object.fromEntries(originalCurrencyTotals), excluded: otherBrandTotals, percent: activeAnnouncement.percent })
+                    : null;
 
                   const templateExchangeRates = exchangeRates[template.id] ?? {};
                   const nonAedCurrencies = Array.from(originalCurrencyTotals.keys())
@@ -2249,12 +2271,14 @@ export function ProductLibrarySelector({
                       currency === "AED"
                         ? total + amount
                         : total + amount * numberValue(templateExchangeRates[currency]),
-                    0,
+                    announcedChange ? announcedQuotationDelta(announcedChange.delta, templateExchangeRates) : 0,
                   );
                   const previewCurrency = nonAedCurrencies.length ? "AED" : rowCurrency;
-                  const rawPreviewUnitPriceWithConversion = nonAedCurrencies.length
+                  const previewBeforeAnnounced = nonAedCurrencies.length
                     ? convertedPreviewTotal
-                    : totalPreviewUnitPrice;
+                    : totalPreviewUnitPrice + (announcedChange ? announcedQuotationDelta(announcedChange.delta, templateExchangeRates) : 0);
+                  // The ticked amount is rounded to 2 decimals first, so a binary fraction cannot push the round-up-to-5 one step too far.
+                  const rawPreviewUnitPriceWithConversion = announcedChange ? roundSourceAmount(previewBeforeAnnounced) : previewBeforeAnnounced;
                   const previewUnitPriceWithConversion = quotationMoneyValue(rawPreviewUnitPriceWithConversion);
                   const effectiveQuoteUnitPrice = quotationMoneyValue(
                     templatePriceOverrides[template.id] ?? previewUnitPriceWithConversion,
@@ -2686,6 +2710,7 @@ export function ProductLibrarySelector({
                         ? modularItemSnapshots
                         : systemOptionSnapshot ? [systemOptionSnapshot, ...selectedOptionSnapshots] : selectedOptionSnapshots,
                       source_price_reference: sourcePriceReference,
+                      ...(announcedChange && activeAnnouncement ? { announced_price_change: announcedSnapshot(activeAnnouncement, announcedChange) } : {}),
                       ...(derivedDesking
                         ? {
                             desking: {
@@ -2765,7 +2790,7 @@ export function ProductLibrarySelector({
                         ? {
                             currency_conversion: {
                               exchange_rates: templateExchangeRates,
-                              source_totals: sourceCurrencyTotals,
+                              source_totals: announcedChange ? announcedChange.uplifted : sourceCurrencyTotals,
                               converted_total_aed: effectiveQuoteUnitPrice,
                             },
                           }
@@ -3026,6 +3051,7 @@ export function ProductLibrarySelector({
                             </p>
                           ) : null}
                           <PriceCheckBadge inline template={template} onSupplierStatus={updateSupplierStatus} />
+                          <AnnouncedPriceBadge announcement={template.announced_price_change} />
                         </div>
                       </div>
                       <form
@@ -4332,6 +4358,8 @@ export function ProductLibrarySelector({
                           <p className="font-bold uppercase text-zinc-500">
                             {usesWorkstationFlow ? "6. Pricing / Discount" : "Pricing / Discount"}
                           </p>
+                          <AnnouncedPriceTick announcement={activeAnnouncement} checked={Boolean(announcedChange)} upliftedTotals={announcedChange?.uplifted} blockedReason={announcedBlocked ? "You kept the current quote price, so the announced change is not added." : null} formatAmount={(currency, amount) => formatMoney(currency, amount)} onChange={(checked) => setAnnouncedTicks((current) => ({ ...current, [template.id]: checked }))} />
+                          {announcedChange && activeAnnouncement ? <input type="hidden" name="announced_notice_id" value={activeAnnouncement.id} /> : null}
                           <p>{missingExchangeRate ? "Quotation unit price: awaiting exchange rate" : "U.Price: " + formatQuotationMoney(previewCurrency, effectiveQuoteUnitPrice)}</p>
                           {needsUpdatedPriceDecision ? (
                             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
@@ -4712,6 +4740,7 @@ export function ProductLibrarySelector({
                                 {formatQuotationMoney(previewCurrency, effectiveQuoteUnitPrice)}
                               </p>
                               <PriceCheckBadge template={template} onSupplierStatus={updateSupplierStatus} />
+                              <AnnouncedPriceBadge announcement={template.announced_price_change} />
                               {!template.supplier_family_price_loading && (!template.supplier_family_price_presentation || Boolean(template.supplier_family_price_presentation.actionHref)) && priceCheckState(template).tone === "warning" ? (
                                 <>
                                   <p className="max-w-52 text-[11px] leading-4 text-amber-700">

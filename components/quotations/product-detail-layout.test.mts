@@ -64,7 +64,7 @@ test("the same handlers and calculations are still wired, exactly as often as be
   const before: Record<string, number> = {
     setExchangeRates: 2, setDiscountTypes: 2, setDiscountValues: 2, setFinalSpecifications: 4, setFinalSpecificationEditedByTemplate: 4, FinalSpecificationAiControl: 2,
     setConfiguredDimensions: 4, setConfiguredDimensionEditedByTemplate: 3, setDimensionBeforeEditing: 2, setQuotationBrands: 3, setQuotationOrigins: 3, setTemplatePriceOverrides: 3,
-    setPendingPriceUpdateChoice: 4, sourceTotalsList: 2, originalCurrencyTotals: 14, nonAedCurrencies: 7, missingExchangeRate: 5, unitDiscountAmount: 3, netPricePreview: 4, netTotalPreview: 3,
+    setPendingPriceUpdateChoice: 4, sourceTotalsList: 2, originalCurrencyTotals: 15, nonAedCurrencies: 7, missingExchangeRate: 5, unitDiscountAmount: 3, netPricePreview: 4, netTotalPreview: 3,
     keepDimensionLine: 2, generatedFinalSpecification: 3,
   };
   for (const [name, count] of Object.entries(before)) assert.equal((source.match(new RegExp(`\\b${name}\\b`, "g")) ?? []).length, count, name);

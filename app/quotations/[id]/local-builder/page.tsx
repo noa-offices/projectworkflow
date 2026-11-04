@@ -1,3 +1,4 @@
+import { loadBrandPriceAnnouncements, type AnnouncementView } from "@/lib/products/price-announcements";
 import { notFound } from "next/navigation";
 import { DocumentSetupDialog } from "@/components/quotations/document-setup-dialog";
 import { LocalQuotationBuilder } from "@/components/quotations/local-quotation-builder";
@@ -242,9 +243,11 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
     return presentations;
   }));
 
+  const announcements = await loadBrandPriceAnnouncements(supabase, (productTemplates ?? []).map((template) => template.brand_id)).catch(() => new Map<string, AnnouncementView>());
   const productTemplatesWithPriceChecks = (productTemplates ?? []).map((template) => {
     return {
       ...template,
+      announced_price_change: announcements.get(template.brand_id) ?? null,
       brand_latest_price_list_at: brandPriceBaselineDate({
         fallbackCheckedAt: brandById.get(template.brand_id)?.last_price_list_checked_at ?? null,
         latestBrandPriceListUpdate: latestBrandPriceListUpdate(updatesByBrand.get(template.brand_id) ?? []) ?? null,

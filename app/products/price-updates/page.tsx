@@ -9,6 +9,7 @@ import { parsePriceUpdatesFilters, type PriceUpdatesFilters } from "@/lib/produc
 import { requireProductPricingManager } from "@/lib/auth";
 import { canApproveBrandPrices, canReviewBrandPrices } from "@/lib/products/brand-price-permissions";
 import { loadManualPriceState } from "@/lib/products/manual-price-check";
+import { loadBrandPriceAnnouncements, type AnnouncementView } from "@/lib/products/price-announcements";
 import { buildSupplierPriceUpdatesView, loadSupplierPriceUpdatesInputs, summarizePriceUpdates, supplierBrandStateLabels } from "@/lib/products/supplier-price-updates-view";
 import { readProductPages, supplierBusinessDate, supplierPriceListLifecycleCounts } from "@/lib/products/supplier-price-repository";
 import { createClient } from "@/lib/supabase/server";
@@ -100,7 +101,7 @@ async function PriceUpdatesContent({ searchParams, auth }: PriceUpdatesPageProps
           ))}
         </ul>
       }>
-        <PriceUpdatesBrowserLoader brandList={brandList} resultPromise={resultPromise} filters={filters} canEditBrand={canManageManual} />
+        <PriceUpdatesBrowserLoader brandList={brandList} resultPromise={resultPromise} filters={filters} canEditBrand={canManageManual} announcementsPromise={loadBrandPriceAnnouncements(supabase, brandList.map((brand) => brand.id)).catch(() => new Map<string, AnnouncementView>())} />
       </Suspense>
     </div>
   );
@@ -117,8 +118,9 @@ async function settle(resultPromise: Promise<PriceUpdatesResult>) {
   }
 }
 
-async function PriceUpdatesBrowserLoader({ brandList, resultPromise, filters, canEditBrand }: { brandList: Brand[]; resultPromise: Promise<PriceUpdatesResult>; filters: PriceUpdatesFilters; canEditBrand: boolean }) {
+async function PriceUpdatesBrowserLoader({ brandList, resultPromise, filters, canEditBrand, announcementsPromise }: { brandList: Brand[]; resultPromise: Promise<PriceUpdatesResult>; filters: PriceUpdatesFilters; canEditBrand: boolean; announcementsPromise: Promise<Map<string, AnnouncementView>> }) {
   const result = await settle(resultPromise);
+  const announcements = await announcementsPromise;
   const failedBrands = result ? result.failedBrands : new Set(brandList.map((brand) => brand.id));
   const today = supplierBusinessDate();
   const byId = new Map((result?.summaries ?? []).map((summary) => [summary.view.brandId, summary]));
@@ -126,7 +128,7 @@ async function PriceUpdatesBrowserLoader({ brandList, resultPromise, filters, ca
     const summary = byId.get(brand.id);
     if (!summary || failedBrands.has(brand.id)) return { brandId: brand.id, name: brand.name, state: "", stateLabel: "", method: "codes", href: workspaceHref(brand.id), failed: true };
     const { view } = summary, p = view.progress;
-    const base = { brandId: brand.id, name: view.brandName, state: view.state, stateLabel: view.stateLabel, href: summary.href };
+    const base = { brandId: brand.id, name: view.brandName, state: view.state, stateLabel: view.stateLabel, href: summary.href, announcement: announcements.get(brand.id) ?? null, today };
     if (summary.manual?.manual) {
       const latest = summary.manual.releases.find((release) => release.effectiveFrom <= today) ?? null; // releases are newest first
       const count = (key: string) => view.families.filter((status) => status.status === key).length;
