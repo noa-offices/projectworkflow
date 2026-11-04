@@ -2511,7 +2511,7 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
             ) : null}
           </div>
 
-          <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+          <section>
             <div className="flex flex-col gap-3">
               <ProductManagementFilterBar
                 addBrandHref={manageBrandsHref}

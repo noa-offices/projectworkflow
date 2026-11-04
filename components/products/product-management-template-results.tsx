@@ -305,7 +305,7 @@ function BulkArchiveBar({
   );
 }
 
-function CompactPriceCheckStatus({
+function PriceStatusBadge({
   detail,
   label,
   tone,
@@ -322,13 +322,12 @@ function CompactPriceCheckStatus({
         ? "border-zinc-200 bg-zinc-50 text-zinc-700"
       : "border-amber-200 bg-amber-50 text-amber-900";
 
+  // The long note ("Checked on ... by ...") is the tooltip; screen readers get it as hidden text.
   return (
-    <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-zinc-500">
-      <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 font-semibold ${className}`}>
-        {label}
-      </span>
-      {detail ? <span className="min-w-0 truncate" title={detail}>{detail}</span> : null}
-    </div>
+    <span className={`inline-block max-w-full truncate rounded-full border px-2 py-0.5 align-top text-[11px] font-semibold shadow-sm ${className}`} title={detail ? `${label} - ${detail}` : label}>
+      {label}
+      {detail ? <span className="sr-only">: {detail}</span> : null}
+    </span>
   );
 }
 
@@ -494,8 +493,8 @@ export function ProductManagementTemplateResults({
               openHref={template.openHref}
               quoteName={template.templateName !== template.quoteName ? template.quoteName : null}
               selected={template.isSelected}
-              status={
-                <CompactPriceCheckStatus
+              statusBadge={
+                <PriceStatusBadge
                   detail={template.priceStatusDetail}
                   label={template.priceStatusLabel}
                   tone={template.priceStatusTone}

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Search } from "lucide-react";
+import { toolbarControl as control, toolbarFocusRing as focusRing, toolbarSecondaryButton } from "./product-toolbar-styles";
 
 type BrowseOption = {
   id: string;
@@ -21,8 +22,6 @@ type ProductLibraryBrowseControlsProps = {
   resultCount: number;
 };
 
-const focusRing = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800";
-const control = `h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10 ${focusRing}`;
 const chipClass = (active: boolean) => `inline-flex h-8 items-center rounded-full border px-3 text-xs font-semibold transition ${focusRing} ${
   active ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50"
 }`;
@@ -118,7 +117,7 @@ export function ProductLibraryBrowseControls({
       </select>
       <a
         href="/products/manage"
-        className={`inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 sm:ml-auto ${focusRing}`}
+        className={`${toolbarSecondaryButton} sm:ml-auto`}
       >
         Open Product Management
       </a>

@@ -6,7 +6,7 @@ const focusRing = "focus-visible:outline focus-visible:outline-2 focus-visible:o
 /**
  * The compact product card shared by Product Library and Product Management: a short image frame with the status badge and image count on
  * its corners, a title, ONE line for brand and category, optional code / description lines, and two small buttons side by side.
- * The pages pass in the image, badge, checkbox, menu and price status; this component only lays them out.
+ * The pages pass in the image, badges, checkbox and menu; this component only lays them out.
  */
 export function ProductCompactCard({
   badge,
@@ -21,7 +21,7 @@ export function ProductCompactCard({
   openHref,
   quoteName,
   selected = false,
-  status,
+  statusBadge,
   title,
 }: {
   badge: ReactNode;
@@ -36,8 +36,8 @@ export function ProductCompactCard({
   openHref: string;
   quoteName?: string | null;
   selected?: boolean;
-  /** Page B: the price status badge and its one-line note. */
-  status?: ReactNode;
+  /** Page B: the price status badge, shown on the top-left of the image next to the checkbox. Its long note belongs in the badge tooltip. */
+  statusBadge?: ReactNode;
   title: string;
 }) {
   return (
@@ -46,6 +46,7 @@ export function ProductCompactCard({
         <div className="relative flex h-28 items-center justify-center overflow-hidden rounded-md border border-zinc-100 bg-zinc-50">
           {media}
           {checkbox}
+          {statusBadge ? <span className="absolute left-7 top-1.5 z-10 max-w-[55%]">{statusBadge}</span> : null}
           <span className="pointer-events-none absolute right-1.5 top-1.5 z-10">{badge}</span>
           <span className="pointer-events-none absolute bottom-1.5 left-1.5 z-10 rounded-full border border-zinc-200 bg-white/90 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-600">
             {imageCount} {imageCount === 1 ? "image" : "images"}
@@ -61,7 +62,6 @@ export function ProductCompactCard({
         <p className="truncate text-xs text-zinc-500" title={metaLine}>{metaLine}</p>
         {codeLine ? <p className="truncate text-xs text-zinc-500" title={codeLine}>{codeLine}</p> : null}
         {descriptionLine ? <p className="truncate text-xs text-zinc-600" title={descriptionLine}>{descriptionLine}</p> : null}
-        {status}
         <div className="mt-auto grid grid-cols-2 gap-2 pt-2">
           <Link href={openHref} className={`inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100 ${focusRing}`}>View Details</Link>
           <Link href={editHref} className={`inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 ${focusRing}`}>Edit Template</Link>
