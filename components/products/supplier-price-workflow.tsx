@@ -67,10 +67,10 @@ export function SupplierImportDetails({ source, workingFileUrl }: { source: Sour
     <p className="mt-2 break-words text-zinc-500">SHA-256 {source.file_hash}. {source.original_reference ? `Original reference: ${source.original_reference}` : ""}</p></details>;
 }
 
-export type PriceListTab = "current" | "import" | "history";
+export type PriceListTab = "current" | "import" | "history" | "cleanup";
 /** Current price list / Import new / History: the three areas of this screen. */
 export function SupplierTabs({ tab, hrefs }: { tab: PriceListTab; hrefs: Record<PriceListTab, string> }) {
-  const items: Array<[PriceListTab, string]> = [["current", "Current price list"], ["import", "Import new"], ["history", "History"]];
+  const items: Array<[PriceListTab, string]> = [["current", "Current price list"], ["import", "Import new"], ["history", "History"], ["cleanup", "Clean up"]];
   return <nav aria-label="Price list sections" className="inline-flex flex-wrap gap-1 rounded-lg border border-zinc-200 bg-white p-1 shadow-sm">{items.map(([key, label]) =>
     <Link key={key} href={hrefs[key]} aria-current={tab === key ? "page" : undefined} className={`rounded-md px-4 py-1.5 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800 ${tab === key ? "bg-emerald-900 text-white" : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950"}`}>{label}</Link>)}</nav>;
 }
