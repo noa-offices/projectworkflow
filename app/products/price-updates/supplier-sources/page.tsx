@@ -11,6 +11,8 @@ import { suggestedImportTitle } from "@/lib/products/supplier-import-wizard";
 import { SupplierAdvancedImportSettings, SupplierCompletionControls, SupplierPriceBasisPanel, SupplierReviewControls, SupplierStartReview } from "@/components/products/supplier-price-workspace-controls";
 import { SupplierCompleteSummary, SupplierFinishScreen, SupplierImportDetails, SupplierHistoryTable, SupplierImportSummary, SupplierTabs, SupplierWorkflowHeader, type HistoryRow, type PriceListTab, type WorkflowStep } from "@/components/products/supplier-price-workflow";
 import { importDestination, selectLiveCards, type LiveBatch, type LiveVersion } from "@/lib/products/supplier-live-list";
+import { BrandPriceAnnouncementPanel } from "@/components/products/price-announcement-panel";
+import { loadBrandPriceAnnouncements, type AnnouncementView } from "@/lib/products/price-announcements";
 import { SupplierCleanupPanel } from "@/components/products/supplier-cleanup";
 import { loadSupplierCleanup } from "@/lib/products/supplier-cleanup-loader";
 import type { SupplierCleanup } from "@/lib/products/supplier-cleanup";
@@ -44,6 +46,8 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
   const brand = brands.find((item) => item.id === text(params.brand)) ?? brands[0];
   // A manual price check Brand gets its own screen. Brands with supplier codes continue below, unchanged.
   const manualBrandState = brand ? (await loadManualPriceState(client, [brand.id])).get(brand.id) : undefined;
+  const announcement = brand ? (await loadBrandPriceAnnouncements(client, [brand.id]).catch(() => new Map<string, AnnouncementView>())).get(brand.id) ?? null : null;
+  const announcementPanel = brand ? <div className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm empty:hidden"><BrandPriceAnnouncementPanel brandId={brand.id} brandName={brand.name} announcement={announcement} canManage={canApproveBrandPrices(profile?.role, profile?.account_status)} today={supplierBusinessDate()} /></div> : null;
   if (brand && manualBrandState) {
     const manualData = await loadManualBrandScreenData(client, brand.id, manualBrandState);
     return <ErpAppShell title="Manual price check" description="Check this Brand's products by hand when a new price list is released." role={profile?.role ?? null} userDisplayName={displayName} userEmail={user.email} userAvatarUrl={profile?.avatar_url ?? null} userRole={profile?.role ?? null}>
@@ -53,6 +57,7 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
             <p className="mt-2 text-lg font-semibold text-zinc-950">{brand.name}</p></div>
           <form className="flex flex-wrap items-end gap-2"><label className="grid gap-1 text-xs font-semibold text-zinc-700">Brand <select name="brand" defaultValue={brand.id} className="h-9 min-w-48 rounded-md border border-zinc-200 bg-white px-3 text-sm font-normal outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10">{brands.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">Open Brand</button></form>
         </div>
+        {announcementPanel}
         <ManualBrandPriceUpdates brandId={brand.id} brandName={brand.name} initialRows={manualData.rows} releases={manualData.releases} latest={manualData.latest} canManage={canApproveBrandPrices(profile?.role, profile?.account_status)} today={manualData.today} truncated={manualData.truncated} limit={MANUAL_PRODUCT_LIMIT} />
       </div>
     </ErpAppShell>;
@@ -272,6 +277,7 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
           <p className="mt-2 max-w-xl text-xs text-zinc-500">Import a Supplier price list, check it Family by Family, then complete the review to set the Brand price baseline.</p></div>
         <form className="flex flex-wrap items-end gap-2"><label className="grid gap-1 text-xs font-semibold text-zinc-700">Brand <select name="brand" defaultValue={brand?.id} className="h-9 min-w-48 rounded-md border border-zinc-200 bg-white px-3 text-sm font-normal outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10">{brands.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">Open Brand</button></form>
       </div>
+      {announcementPanel}
       {errorMessage ? <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-950">{errorMessage}. The Phase 1b migration must be deployed before using this workspace.</p> : null}
       {brand ? <div className="space-y-4">
         <SupplierTabs tab={tab} hrefs={{ current: href({ tab: "current", replace: "", source: "", batch: "", view: "", family: "", section: "", status: "", code: "", template: "", offset: "0" }), import: href({ tab: "import", setup: "", replace: "" }), history: href({ tab: "history" }), cleanup: href({ tab: "cleanup", source: "", batch: "" }) }} />

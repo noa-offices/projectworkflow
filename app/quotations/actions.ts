@@ -31,6 +31,7 @@ import type { AccessoryConditionalConfiguration } from "@/lib/products/accessory
 import { evaluateProductAccessorySelection, parseSubmittedAccessoryQuantities } from "@/lib/quotations/product-accessory-configuration";
 import { baseModelPriceOrDefault, sameCurrencyUnitSum } from "@/lib/quotations/source-price-components";
 import { requiredComponentOverrideReport } from "@/lib/quotations/required-component-overrides";
+import { announcedQuotationDelta, announcedSnapshot, announcedTotals, loadBrandPriceAnnouncements } from "@/lib/products/price-announcements";
 import { activeBaseModelPricingGroups, composeSystemAndMainSpecification, currentSystemPricing, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, remapBaseModelTargetsToOwnerGroups, strictSystemQuantity, systemPriceContribution, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
 import {
   isDirectModularPricingGroup,
@@ -6502,6 +6503,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         family_total: familyTotal,
         accessories: selectedAccessories,
         specification,
+        brand_id: linkedTemplate.brand_id,
         add_to_parent_price: link.add_to_parent_price,
         append_to_specification: link.append_to_specification,
       };
@@ -6575,16 +6577,37 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     }
   }
 
+  // Announced price change: only when ticked, and only while the Brand's notice is still active. The percent comes from the database, not the browser.
+  const announcedNoticeId = textValue(formData, "announced_notice_id");
+  const announcedNotice = announcedNoticeId ? (await loadBrandPriceAnnouncements(supabase, [template.brand_id])).get(template.brand_id) : null;
+  if (announcedNoticeId && (announcedNotice?.id !== announcedNoticeId || announcedNotice.state !== "active")) {
+    redirectWithMessage(redirectPath, "The announced price change is no longer open. Add the product again without it.");
+  }
+  const announcedOtherBrandTotals: Record<string, number> = {};
+  for (const linkedProduct of selectedLinkedProducts) {
+    if (!linkedProduct.add_to_parent_price || linkedProduct.brand_id === template.brand_id) continue;
+    const linkedCurrency = normalizeCurrency(linkedProduct.currency || defaultCurrency);
+    announcedOtherBrandTotals[linkedCurrency] = (announcedOtherBrandTotals[linkedCurrency] ?? 0) + linkedProduct.line_total;
+    for (const accessory of linkedProduct.accessories) {
+      const accessoryCurrency = normalizeCurrency(accessory.currency || defaultCurrency);
+      announcedOtherBrandTotals[accessoryCurrency] = (announcedOtherBrandTotals[accessoryCurrency] ?? 0) + accessory.qty * accessory.price;
+    }
+  }
+  const announcedChange = announcedNotice
+    ? announcedTotals({ totals: Object.fromEntries(originalCurrencyTotals), excluded: announcedOtherBrandTotals, percent: announcedNotice.percent })
+    : null;
+  const announcedDelta = announcedChange ? announcedQuotationDelta(announcedChange.delta, exchangeRateByCurrency) : 0;
+
   const convertedUnitPrice = money(
     Array.from(originalCurrencyTotals.entries()).reduce((total, [currency, amount]) => {
       if (currency === "AED") return total + amount;
 
       return total + amount * (exchangeRateByCurrency.get(currency) ?? 0);
-    }, 0),
+    }, announcedDelta),
   );
   const rawUnitPrice = nonAedCurrencies.length
     ? convertedUnitPrice
-    : sameCurrencyUnitSum({ base: baseUnitPrice, system: matchingSystemTotal, workstationVariant: matchingWorkstationVariantTotal, accessories: matchingAccessoryTotal, linked: matchingLinkedProductsTotal });
+    : money(sameCurrencyUnitSum({ base: baseUnitPrice, system: matchingSystemTotal, workstationVariant: matchingWorkstationVariantTotal, accessories: matchingAccessoryTotal, linked: matchingLinkedProductsTotal }) + announcedDelta);
   const unitPrice = quotationMoneyValue(rawUnitPrice);
   const rowOutputCurrency = nonAedCurrencies.length ? "AED" : rowCurrency;
   const currencyConversionData = nonAedCurrencies.length
@@ -6981,6 +7004,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       selected_options: finalSelectedOptionsWithLinkedProducts,
       selected_options_price: sourceSelectedOptionsPrice,
       source_price_reference: sourcePriceReference,
+      ...(announcedChange && announcedNotice ? { announced_price_change: announcedSnapshot(announcedNotice, announcedChange) } : {}),
       ...(deskingSourceData ? { desking: deskingSourceData } : {}),
       ...(selectedVariantPricingRow ? { variant_pricing: selectedVariantPricingRow } : {}),
       ...(nativeSystemOption ? { system_pricing: systemPricingSnapshot(nativeSystemOption.group.id, nativeSystemOption.row, systemQuantity) } : {}),

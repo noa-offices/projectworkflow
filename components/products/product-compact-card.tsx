@@ -1,5 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import type { AnnouncementView } from "@/lib/products/price-announcements";
+import { AnnouncedPriceBadge } from "./announced-price-badge";
 import { cardGridColumns } from "./product-toolbar-styles";
 
 const focusRing = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800";
@@ -10,6 +12,7 @@ const focusRing = "focus-visible:outline focus-visible:outline-2 focus-visible:o
  * The pages pass in the image, badges, checkbox and menu; this component only lays them out.
  */
 export function ProductCompactCard({
+  announcement,
   badge,
   checkbox,
   codeLine,
@@ -25,6 +28,8 @@ export function ProductCompactCard({
   statusBadge,
   title,
 }: {
+  /** The Brand's active price change notice: a small badge, information only. */
+  announcement?: AnnouncementView | null;
   badge: ReactNode;
   checkbox?: ReactNode;
   codeLine?: string | null;
@@ -61,6 +66,7 @@ export function ProductCompactCard({
         </div>
         {quoteName ? <p className="truncate text-xs font-medium text-zinc-500" title={`Quote name: ${quoteName}`}>Quote name: {quoteName}</p> : null}
         <p className="truncate text-xs text-zinc-500" title={metaLine}>{metaLine}</p>
+        <AnnouncedPriceBadge announcement={announcement} className="self-start" />
         {codeLine ? <p className="truncate text-xs text-zinc-500" title={codeLine}>{codeLine}</p> : null}
         {descriptionLine ? <p className="truncate text-xs text-zinc-600" title={descriptionLine}>{descriptionLine}</p> : null}
         <div className="mt-auto grid grid-cols-2 gap-2 pt-2">

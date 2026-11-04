@@ -38,6 +38,7 @@ import {
 } from "@/components/products/template-category-fields";
 import { ProductLibraryBrowseControls } from "@/components/products/product-library-browse-controls";
 import { ProductCompactCard, productCardGridClass } from "@/components/products/product-compact-card";
+import { loadBrandPriceAnnouncements, type AnnouncementView } from "@/lib/products/price-announcements";
 import { brandAndCategoryLine, oneLineText, templateCodeLine } from "@/lib/products/product-card-text";
 import { TemplateMaterialGroupSelectionPanel } from "@/components/products/template-material-group-selection-panel";
 import { ProductTemplateForm } from "@/components/products/product-template-form";
@@ -1833,6 +1834,7 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
   const templatePriceHistoryList = templatePriceHistory ?? [];
   const templateDetailPriceHistoryList = templateDetailPriceHistory ?? [];
   const brandMap = new Map(brandList.map((brand) => [brand.id, brand.name]));
+  const announcementByBrand = await loadBrandPriceAnnouncements(supabase, brandList.map((brand) => brand.id)).catch(() => new Map<string, AnnouncementView>());
   const toArchivedTemplateResult = (
     template: ProductTemplate,
     lifecycleStatus: "archived" | "discontinued",
@@ -2048,6 +2050,7 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
     };
 
     return {
+      announcement: announcementByBrand.get(template.brand_id) ?? null,
       id: template.id,
       brandId: template.brand_id,
       mainCategoryId: template.main_category_id ?? "",
@@ -2402,6 +2405,7 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
                     return (
                       <ProductCompactCard
                         key={template.id}
+                        announcement={announcementByBrand.get(template.brand_id) ?? null}
                         badge={<TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />}
                         codeLine={templateCodeLine(template.template_code, template.item_code)}
                         descriptionLine={oneLineText(template.description, template.default_specification)}

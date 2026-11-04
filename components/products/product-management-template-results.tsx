@@ -9,11 +9,13 @@ import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { ProductTemplateImageUploader } from "@/components/products/product-template-image-uploader";
 import { ProductCompactCard, productCardGridClass } from "@/components/products/product-compact-card";
 import { brandAndCategoryLine } from "@/lib/products/product-card-text";
+import type { AnnouncementView } from "@/lib/products/price-announcements";
 import { pruneSelectionToVisibleIds } from "@/lib/products/product-management-bulk-lifecycle";
 
 type PriceStatusTone = "ok" | "notice" | "warning" | "neutral";
 
 export type ProductManagementTemplateResult = {
+  announcement?: AnnouncementView | null;
   id: string;
   editHref: string;
   imageSettings?: {
@@ -458,6 +460,7 @@ export function ProductManagementTemplateResults({
           {filteredTemplates.map((template) => (
             <ProductCompactCard
               key={template.id}
+              announcement={template.announcement}
               badge={<TemplateLifecycleBadge status={template.lifecycleStatus} />}
               checkbox={
                 <input
