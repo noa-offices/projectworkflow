@@ -229,3 +229,65 @@ test("the Project documents ask for the Project scope; the quotation's own expor
   }
   assert.ok(read("app/api/export-quotation/route.ts").includes("loadQuotationDerivedDocumentData(quotationId)"));
 });
+
+// ---- Step C2a: the current scope ----
+
+function withVariation(base: Record<string, Row[]>): Record<string, Row[]> {
+  const rows = [item(1, { qty: 7, net_total: 700 }), item(9, { id: "new-row" })];
+  return {
+    ...base,
+    project_variations: [{ id: "var-1", snapshot_id: "snap-1", variation_no: 1, variation_quotation_id: "v-q", variation_quotation_no: "QN-0002-001-V1", base_revision_no: 5, previous_contract_total: 1470, new_contract_total: 2000, contract_delta: 530, currency: "AED", pricing_rule: "whole_aed_v1", change_summary: { added: [], removed: [], changed: [], unchanged_count: 0 }, applied_by_name: "Sara", applied_at: "2026-11-05", layout_settings: { variationOf: {} }, quotation_data: { ...quotation, id: "v-q", title: "Office - Variation 1", grand_total: 2000, quotation_no: "QN-0002-001-V1" } }],
+    project_variation_sections: [{ variation_id: "var-1", variation_section_id: "v-section", sort_order: 10, data: section(1, { id: "v-section" }) }],
+    project_variation_items: rows.map((row, index) => ({ variation_id: "var-1", variation_item_id: index ? "new-row" : "v-row-1", original_item_id: index ? null : item(1).id, sort_order: Number(row.sort_order), data: { ...row, id: index ? "new-row" : "v-row-1", section_id: "v-section", parent_item_id: index ? "v-row-1" : null } })),
+  };
+}
+const scopeOptions = { itemColumns: "id,section_id,parent_item_id,qty,net_total", sectionColumns: "id,section_title", headerColumns: "id,title,grand_total,quotation_no,layout_settings" };
+
+test("one applied variation is the current scope: lines keep their previous ids, a new line uses its own, and the header stays the Project's", async () => {
+  const scope = await loadProjectScope(fakeClient(newDb(withVariation(tables(true)))), Q, scopeOptions);
+  assert.equal(scope.source, "snapshot"); assert.equal(scope.appliedVariationNo, 1);
+  assert.equal(scope.contractTotal, 2000); assert.equal(scope.originalContractTotal, 1470); assert.equal(scope.pricingRule, "whole_aed_v1");
+  assert.deepEqual(scope.items.map((row) => row.id), [item(1).id, "new-row"]);
+  assert.equal((scope.items[0] as Row).qty, 7);
+  assert.equal((scope.items[1] as Row).parent_item_id, item(1).id, "a parent reference follows the line id");
+  assert.equal((scope.items[0] as Row).section_id, "v-section"); assert.deepEqual(scope.sections.map((row) => row.id), ["v-section"]);
+  assert.equal(scope.header?.id, Q); assert.equal(scope.header?.title, "Office"); assert.equal(scope.header?.grand_total, 2000); assert.equal(scope.header?.quotation_no, "QN-0002-001-V1");
+  assert.deepEqual((scope.header?.layout_settings as Row).projectFile, { orderNo: "CO-0002-001" });
+  assert.equal(scope.originalHeader?.grand_total, 1468.95);
+});
+
+test("the latest of two applied variations is the current scope, and both are listed in order", async () => {
+  const base = withVariation(tables(true));
+  const second = { ...base.project_variations[0], id: "var-2", variation_no: 2, new_contract_total: 2500, quotation_data: { ...quotation, grand_total: 2500 } };
+  base.project_variations = [second, base.project_variations[0]];
+  base.project_variation_items = [...base.project_variation_items, { variation_id: "var-2", variation_item_id: "v2-row", original_item_id: item(1).id, sort_order: 1, data: item(1, { id: "v2-row", qty: 9 }) }];
+  const scope = await loadProjectScope(fakeClient(newDb(base)), Q, { itemColumns: "id,qty" });
+  assert.equal(scope.appliedVariationNo, 2); assert.equal(scope.contractTotal, 2500);
+  assert.deepEqual(scope.appliedVariations.map((row) => row.variationNo), [1, 2]);
+  assert.deepEqual(scope.items, [{ id: item(1).id, qty: 9 }]);
+});
+
+test("a variation that cannot be read falls back to the original copy, not a half scope; no copy still means live", async (t) => {
+  t.mock.method(console, "error", () => {});
+  const original = await loadProjectScope(fakeClient(newDb(tables(true))), Q, scopeOptions);
+  for (const breakIt of [
+    (db: Db) => db.failures.add("project_variations"),
+    (db: Db) => db.failures.add("project_variation_items"),
+    (db: Db) => db.failures.add("project_variation_sections"),
+    (db: Db) => { db.countOffset.project_variation_items = 1; },
+  ]) {
+    const db = newDb(withVariation(tables(true))); breakIt(db);
+    const scope = await loadProjectScope(fakeClient(db), Q, scopeOptions);
+    assert.deepEqual(scope, original);
+  }
+  assert.equal((await loadProjectScope(fakeClient(newDb(tables(false))), Q, scopeOptions)).source, "live");
+});
+
+test("before the migration is applied the missing table is silent, and the original copy is unchanged", async (t) => {
+  const logged = t.mock.method(console, "error", () => {});
+  const real = fakeClient(newDb(tables(true)));
+  const client = { from(table: string) { if (table !== "project_variations") return real.from(table); const query: Record<string, unknown> = { select: () => query, eq: () => query, order: () => query, then(resolve: (value: unknown) => void) { resolve({ data: null, error: { code: "PGRST205", message: "no table" } }); } }; return query; } };
+  const scope = await loadProjectScope(client, Q, scopeOptions);
+  assert.equal(scope.source, "snapshot"); assert.equal(scope.appliedVariationNo, null); assert.deepEqual(scope.appliedVariations, []);
+  assert.equal(logged.mock.callCount(), 0);
+});

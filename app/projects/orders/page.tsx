@@ -7,6 +7,7 @@ import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-a
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { readPricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { loadRevisedContractTotals } from "@/lib/projects/project-variations";
 
 export const dynamic = "force-dynamic";
 
@@ -50,13 +51,14 @@ async function ActiveProjectsContent() {
     (clients ?? []).map((c) => [c.id, c.company_name ?? "-"]),
   );
 
+  const revisedTotals = await loadRevisedContractTotals(supabase, quotations ?? []);
   const projectFiles = (quotations ?? [])
     .flatMap((quotation) => {
       const settings = quotation.layout_settings as Record<string, unknown> | null;
       if (typeof settings?.projectCompletedAt === "string") return [];
       if (typeof settings?.projectCancelledAt === "string") return [];
       const projectFile = projectFileFromLayoutSettings(quotation.layout_settings);
-      if (projectFile) return [{ ...projectFile, pricingRule: readPricingRule(quotation.layout_settings) }];
+      if (projectFile) return [{ ...projectFile, total: revisedTotals.get(projectFile.orderNo) ?? projectFile.total, pricingRule: readPricingRule(quotation.layout_settings) }];
       const draft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
       return draft?.confirmedOrder ? [{ ...draft.confirmedOrder, pricingRule: readPricingRule(quotation.layout_settings) }] : [];
     })

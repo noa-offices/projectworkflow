@@ -9,6 +9,7 @@ import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping
 import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { loadProjectScope } from "@/lib/projects/project-scope";
+import { currentScopeNote } from "@/lib/projects/project-variations";
 import { vendorReceivingStatusLabel, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 
 export const dynamic = "force-dynamic";
@@ -198,6 +199,7 @@ export default async function CompletedProcurementDetailPage({
               </p>
               <h2 className="mt-1 text-xl font-semibold text-zinc-950">{decodedOrderNo}</h2>
               <p className="mt-1 text-sm text-zinc-500">{entry.order.reference}</p>
+              {scope.appliedVariationNo ? <p className="mt-1 text-xs text-zinc-500">{currentScopeNote(scope.appliedVariations)}</p> : null}
             </div>
             <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900">
               Completed
@@ -211,7 +213,7 @@ export default async function CompletedProcurementDetailPage({
             <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
               <dt className="text-xs font-semibold uppercase text-zinc-500">Total Value</dt>
               <dd className="mt-1 text-sm font-semibold text-zinc-950">
-                {formatRuleMoney(entry.pricingRule, entry.order.currency, entry.order.total)}
+                {formatRuleMoney(scope.pricingRule ?? entry.pricingRule, entry.order.currency, scope.contractTotal ?? entry.order.total)}
               </dd>
             </div>
             <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">

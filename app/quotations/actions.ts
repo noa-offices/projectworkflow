@@ -65,6 +65,7 @@ import { projectSnapshotNotice, saveProjectSnapshot } from "@/lib/quotations/pro
 import {
   folderProjectOrderNo,
   formatVariationNumber,
+  applyVariationErrorMessage,
   noSnapshotMessage,
   revisionRefusal,
   variationCreationDecision,
@@ -3769,7 +3770,7 @@ export async function createProjectVariation(formData: FormData) {
 
   const { data: existing, error: existingError } = await supabase
     .from("quotations")
-    .select("quotation_no,status,is_active")
+    .select("quotation_no,status,is_active,layout_settings")
     .eq("client_id", source.client_id)
     .ilike("quotation_no", `${workflowParts.baseNo}-V%`)
     .returns<ExistingVariation[]>();
@@ -3780,9 +3781,32 @@ export async function createProjectVariation(formData: FormData) {
   const decision = variationCreationDecision(existing ?? []);
   if (!decision.ok) redirectWithMessage(redirectPath, decision.message);
 
+  // A new variation starts from the current scope: the latest applied variation when there is one, otherwise the original frozen copy.
+  const { data: latestApplied, error: latestAppliedError } = await supabase
+    .from("project_variations")
+    .select("id,currency,vat_percent,subtotal,discount_total,overall_discount_type,overall_discount_value,vat_amount,grand_total,layout_settings,quotation_data")
+    .eq("snapshot_id", snapshot.id)
+    .order("variation_no", { ascending: false })
+    .limit(1)
+    .maybeSingle<{
+      id: string; currency: string; vat_percent: number; subtotal: number; discount_total: number; overall_discount_type: string | null; overall_discount_value: number;
+      vat_amount: number; grand_total: number; layout_settings: unknown; quotation_data: { payment_terms?: string | null; validity?: string | null; delivery_terms?: string | null; warranty_terms?: string | null; notes?: string | null; legacy_reference?: string | null; layout_mode?: string | null };
+    }>();
+  // The table is missing only before the migration is applied; then no variation has been applied either.
+  if (latestAppliedError && latestAppliedError.code !== "42P01" && latestAppliedError.code !== "PGRST205") {
+    console.error("VARIATION CURRENT SCOPE READ ERROR", latestAppliedError.message);
+    redirectWithMessage(redirectPath, "The Project's frozen copy could not be read. Nothing was created.");
+  }
+  const scopeSource = latestApplied
+    ? { ...latestApplied.quotation_data, ...latestApplied, order_no: snapshot.order_no, revision_no: snapshot.revision_no, quotation_title: snapshot.quotation_title }
+    : snapshot;
   const [{ data: sections, error: sectionsError, count: sectionCount }, { data: items, error: itemsError, count: itemCount }] = await Promise.all([
-    supabase.from("project_snapshot_sections").select("original_section_id,sort_order,data", { count: "exact" }).eq("snapshot_id", snapshot.id).order("sort_order", { ascending: true }).returns<SnapshotSectionRow[]>(),
-    supabase.from("project_snapshot_items").select("original_item_id,sort_order,data", { count: "exact" }).eq("snapshot_id", snapshot.id).order("sort_order", { ascending: true }).returns<SnapshotItemRow[]>(),
+    latestApplied
+      ? supabase.from("project_variation_sections").select("original_section_id:variation_section_id,sort_order,data", { count: "exact" }).eq("variation_id", latestApplied.id).order("sort_order", { ascending: true }).returns<SnapshotSectionRow[]>()
+      : supabase.from("project_snapshot_sections").select("original_section_id,sort_order,data", { count: "exact" }).eq("snapshot_id", snapshot.id).order("sort_order", { ascending: true }).returns<SnapshotSectionRow[]>(),
+    latestApplied
+      ? supabase.from("project_variation_items").select("original_item_id:variation_item_id,sort_order,data", { count: "exact" }).eq("variation_id", latestApplied.id).order("sort_order", { ascending: true }).returns<SnapshotItemRow[]>()
+      : supabase.from("project_snapshot_items").select("original_item_id,sort_order,data", { count: "exact" }).eq("snapshot_id", snapshot.id).order("sort_order", { ascending: true }).returns<SnapshotItemRow[]>(),
   ]);
   // A partial read would silently drop approved scope.
   if (sectionsError || itemsError || !sections || !items || sectionCount !== sections.length || itemCount !== items.length) {
@@ -3809,23 +3833,23 @@ export async function createProjectVariation(formData: FormData) {
       title: `${snapshot.quotation_title ?? snapshot.order_no} - Variation ${decision.variationNo}`,
       quotation_date: new Date().toISOString().slice(0, 10),
       status: "draft",
-      currency: snapshot.currency,
-      vat_percent: snapshot.vat_percent,
-      payment_terms: snapshot.payment_terms,
-      validity: snapshot.validity,
-      delivery_terms: snapshot.delivery_terms,
-      warranty_terms: snapshot.warranty_terms,
-      notes: snapshot.notes,
-      legacy_reference: snapshot.legacy_reference,
-      layout_mode: snapshot.layout_mode,
-      layout_settings: variationLayoutSettings(snapshot.layout_settings, link, rows.idMap),
-      overall_discount_type: snapshot.overall_discount_type,
-      overall_discount_value: snapshot.overall_discount_value,
+      currency: scopeSource.currency ?? null,
+      vat_percent: scopeSource.vat_percent ?? null,
+      payment_terms: scopeSource.payment_terms ?? null,
+      validity: scopeSource.validity ?? null,
+      delivery_terms: scopeSource.delivery_terms ?? null,
+      warranty_terms: scopeSource.warranty_terms ?? null,
+      notes: scopeSource.notes ?? null,
+      legacy_reference: scopeSource.legacy_reference ?? null,
+      layout_mode: scopeSource.layout_mode ?? null,
+      layout_settings: variationLayoutSettings(scopeSource.layout_settings, link, rows.idMap),
+      overall_discount_type: scopeSource.overall_discount_type ?? null,
+      overall_discount_value: scopeSource.overall_discount_value ?? null,
       // Starts at the approved totals, not recalculated. The first edit recalculates under the Project's pricing rule.
-      subtotal: snapshot.subtotal,
-      discount_total: snapshot.discount_total,
-      vat_amount: snapshot.vat_amount,
-      grand_total: snapshot.grand_total,
+      subtotal: scopeSource.subtotal ?? null,
+      discount_total: scopeSource.discount_total ?? null,
+      vat_amount: scopeSource.vat_amount ?? null,
+      grand_total: scopeSource.grand_total ?? null,
       is_active: true,
       created_by: user.id,
     })
@@ -3868,6 +3892,37 @@ export async function createProjectVariation(formData: FormData) {
   revalidatePath(`/quotations/${source.id}`);
   revalidatePath(`/projects/orders/${snapshot.order_no}`);
   redirectWithMessage(`/quotations/${newQuotationId}`, `Variation V${decision.variationNo} created.`);
+}
+
+/** Update Project File: the database applies the confirmed variation to its Project, all or nothing. */
+export async function applyProjectVariation(formData: FormData) {
+  await requireRecordsManager();
+  const variationQuotationId = actionQuotationId(formData);
+  const redirectPath = returnPath(formData, "/quotations");
+  if (!variationQuotationId) redirectWithMessage(redirectPath, "Quotation is required.");
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase.rpc("apply_project_variation", { p_variation_quotation_id: variationQuotationId });
+  if (error) {
+    console.error("APPLY VARIATION ERROR", { variationQuotationId, code: error.code, message: error.message });
+    redirectWithMessage(redirectPath, applyVariationErrorMessage(error));
+  }
+
+  const { data: quotation } = await supabase.from("quotations").select("layout_settings").eq("id", variationQuotationId).maybeSingle<{ layout_settings: unknown }>();
+  const link = variationLinkFromLayoutSettings(quotation?.layout_settings);
+  revalidatePath("/quotations");
+  revalidatePath(`/quotations/${variationQuotationId}`);
+  revalidatePath("/projects/orders");
+  revalidatePath("/projects/completed");
+  revalidatePath("/procurement/orders");
+  revalidatePath("/procurement/completed");
+  if (link) {
+    revalidatePath(`/quotations/${link.projectQuotationId}`);
+    revalidatePath(`/projects/orders/${link.orderNo}`);
+    revalidatePath(`/procurement/orders/${link.orderNo}`);
+    revalidatePath(`/procurement/completed/${link.orderNo}`);
+  }
+  redirectWithMessage(link ? `/projects/orders/${link.orderNo}` : redirectPath, link ? `Project File ${link.orderNo} updated with variation V${link.variationNo}.` : "Project File updated.");
 }
 
 export async function deactivateQuotation(formData: FormData) {

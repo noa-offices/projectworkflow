@@ -31,6 +31,8 @@ import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { VariationApplyConfirm } from "@/components/projects/variation-apply-confirm";
+import { loadVariationPreview } from "@/lib/projects/project-variations";
 import { folderProjectOrderNo, projectFileCardState, variationLine, variationLinkFromLayoutSettings } from "@/lib/quotations/project-variation";
 import { QuotationStatusSelector } from "@/components/quotations/quotation-status-selector";
 import {
@@ -1222,6 +1224,7 @@ export default async function QuotationDetailPage({
   });
   const variationLink = variationLinkFromLayoutSettings(quotation.layout_settings);
   const projectCardState = projectFileCardState({ id: quotation.id, status: quotation.status, layoutSettings: quotation.layout_settings, folderOrderNo });
+  const variationPreview = projectCardState.kind === "variation_confirmed" && canManageRecords ? await loadVariationPreview(supabase, quotation.id) : null;
   const canCreateProjectFile =
     canManageRecords &&
     projectCardState.kind === "before_project" &&
@@ -1603,6 +1606,9 @@ export default async function QuotationDetailPage({
                             : "Available after the selected quotation is Client Confirmed."}
                       </p>
                     </div>
+                    {variationPreview && variationLink ? (
+                      <VariationApplyConfirm preview={variationPreview} returnTo={workflowReturnTo} variationNo={variationLink.variationNo} variationQuotationId={quotation.id} />
+                    ) : null}
                     {projectCardState.kind !== "before_project" ? (
                       <Link
                         href={`/projects/orders/${projectCardState.orderNo}`}
