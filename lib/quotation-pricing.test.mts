@@ -115,7 +115,7 @@ test("the create action gives a new quotation the new rule, and a copy uses the 
   const actions = readFileSync(new URL("../app/quotations/actions.ts", import.meta.url), "utf8");
   assert.match(actions, /mergeDocumentSetupIntoLayoutSettings\(\s*withPricingRule\(\{\}, NEW_QUOTATION_PRICING_RULE\),/);
   assert.equal(actions.split("NEW_QUOTATION_PRICING_RULE").length - 1, 2); // the import and the one create path
-  assert.match(actions, /: source\.layout_settings \?\? \{\}\),/); // a locked source is stripped of its Project File by lockedSourceCopySettings; the rule stays
+  assert.match(actions, /: source\.layout_settings \?\? \{\}\)\),/); // a locked source is stripped of its Project File by lockedSourceCopySettings; the rule stays
   assert.match(actions, /total: ruleExactAmount\(readPricingRule\(quotation\.layout_settings\), quotation\.grand_total \?\? 0\)/);
 });
 

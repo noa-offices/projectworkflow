@@ -31,6 +31,7 @@ import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { folderProjectOrderNo, projectFileCardState, variationLine, variationLinkFromLayoutSettings } from "@/lib/quotations/project-variation";
 import { QuotationStatusSelector } from "@/components/quotations/quotation-status-selector";
 import {
   formatConfirmedOrderNumber,
@@ -1216,13 +1217,17 @@ export default async function QuotationDetailPage({
     canManageRecords,
     currentProjectFile: Boolean(currentProjectFile),
   });
+  const folderOrderNo = folderProjectOrderNo(folderQuotations ?? [], quotation.quotation_no);
+  const variationLink = variationLinkFromLayoutSettings(quotation.layout_settings);
+  const projectCardState = projectFileCardState({ id: quotation.id, status: quotation.status, layoutSettings: quotation.layout_settings, folderOrderNo });
   const canCreateProjectFile =
     canManageRecords &&
+    projectCardState.kind === "before_project" &&
     !currentProjectFile &&
     Boolean(workflowSequences) &&
     !currentQuotationArchived &&
     currentApprovalDisplay?.state === "project_file_pending";
-  const projectFileBlockedReason = currentApprovalDisplay?.state === "project_file_pending" && !workflowSequences
+  const projectFileBlockedReason = projectCardState.kind === "before_project" && currentApprovalDisplay?.state === "project_file_pending" && !workflowSequences
     ? "Prepare this older quotation before creating a Project File."
     : null;
   const folderWorkflowHelper = currentProjectFile
@@ -1362,6 +1367,7 @@ export default async function QuotationDetailPage({
                   <h1 className="mt-1 text-xl font-semibold leading-tight text-zinc-950 sm:text-2xl">
                     {folderTitle}
                   </h1>
+                  {variationLink ? <p className="mt-1 text-sm font-medium text-violet-800">{variationLine(variationLink)}</p> : null}
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     {showOptionNumber ? <OptionBadge optionNo={quotation.option_no} quotationNo={quotation.quotation_no} /> : null}
                     <StatusBadge quotation={quotation} />
@@ -1427,7 +1433,7 @@ export default async function QuotationDetailPage({
                           <QuotationTermsForm quotation={quotation} mode="terms" />
                         </QuotationFolderActionDialog>
                       ) : null}
-                      {canUseQuotationActions && !currentQuotationArchived ? (
+                      {folderOrderNo ? null : canUseQuotationActions && !currentQuotationArchived ? (
                         <FolderMutationForm
                           action={createQuotationRevision}
                           className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -1440,7 +1446,7 @@ export default async function QuotationDetailPage({
                       ) : (
                         <DisabledWorkflowButton label="Create Revision" />
                       )}
-                      {canUseQuotationActions && !currentQuotationArchived ? (
+                      {variationLink ? null : canUseQuotationActions && !currentQuotationArchived ? (
                         <FolderMutationForm
                           action={createQuotationOption}
                           className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -1584,7 +1590,9 @@ export default async function QuotationDetailPage({
                     <div>
                       <h2 className="text-lg font-semibold text-zinc-950">Project File</h2>
                       <p className="mt-1 text-sm text-zinc-500">
-                        {currentProjectFile
+                        {"message" in projectCardState
+                          ? projectCardState.message
+                          : currentProjectFile
                           ? currentApprovalDisplay?.state === "owner_attribution_pending"
                             ? `Project File ${currentProjectFile.orderNo} exists, but approved Sales Manager attribution is pending.`
                             : `Project File ${currentProjectFile.orderNo} has been created from this approved quotation.`
@@ -1593,12 +1601,12 @@ export default async function QuotationDetailPage({
                             : "Available after the selected quotation is Client Confirmed."}
                       </p>
                     </div>
-                    {currentProjectFile ? (
+                    {projectCardState.kind !== "before_project" ? (
                       <Link
-                        href={`/projects/orders/${currentProjectFile.orderNo}`}
+                        href={`/projects/orders/${projectCardState.orderNo}`}
                         className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
                       >
-                        Open Project File
+                        Open Project
                       </Link>
                     ) : canCreateProjectFile ? (
                       <CreateProjectFileForm
@@ -1616,7 +1624,7 @@ export default async function QuotationDetailPage({
                     </p>
                   ) : null}
                   <dl className="mt-4 grid gap-3 text-sm">
-                    <InfoValue label="Project file no" value={currentProjectFile?.orderNo ?? projectFileNo} />
+                    <InfoValue label="Project file no" value={projectCardState.kind !== "before_project" ? projectCardState.orderNo : projectFileNo} />
                     <InfoValue label="Source quotation" value={quotation.quotation_no ?? "Older quotation"} />
                   </dl>
                 </article>
@@ -1696,7 +1704,7 @@ export default async function QuotationDetailPage({
                     const isCurrentFolderQuotation = folderQuotation.id === quotation.id;
                     const tokens = quotationBranchTokens(folderQuotation.quotation_no);
                     const folderTypeLabel = tokens.length
-                      ? tokens.map((token) => token.type === "OPT" ? `Option ${token.sequence}` : `Revision ${token.sequence}`).join(" / ")
+                      ? tokens.map((token) => token.type === "OPT" ? `Option ${token.sequence}` : token.type === "V" ? `Variation ${token.sequence}` : `Revision ${token.sequence}`).join(" / ")
                       : (folderQuotation.option_no ?? 1) > 1
                         ? `Option ${Math.max((folderQuotation.option_no ?? 1) - 1, 1)}`
                         : "Original";
@@ -1745,6 +1753,7 @@ export default async function QuotationDetailPage({
                               <SecondaryPendingActionLink href={`/quotations/${folderQuotation.id}/download-pdf`} label="Download PDF" pendingLabel="Preparing PDF..." />
                               {canUseQuotationActions ? (
                                 <>
+                                  {folderOrderNo ? null : (
                                   <FolderMutationForm
                                     action={createQuotationRevision}
                                     className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -1754,6 +1763,8 @@ export default async function QuotationDetailPage({
                                     quotationId={folderQuotation.id}
                                     returnTo={cardReturnTo}
                                   />
+                                  )}
+                                  {variationLinkFromLayoutSettings(folderQuotation.layout_settings) ? null : (
                                   <FolderMutationForm
                                     action={createQuotationOption}
                                     className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -1763,6 +1774,7 @@ export default async function QuotationDetailPage({
                                     quotationId={folderQuotation.id}
                                     returnTo={cardReturnTo}
                                   />
+                                  )}
                                   <CopyQuotationDestinationForm
                                     destinationFolders={copyDestinationFolders}
                                     quotationId={folderQuotation.id}
@@ -1824,7 +1836,7 @@ export default async function QuotationDetailPage({
                               More actions
                             </summary>
                             <div className="absolute right-0 z-20 mt-2 grid min-w-52 gap-2 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
-                              {canUseQuotationActions ? (
+                              {folderOrderNo ? null : canUseQuotationActions ? (
                                 <FolderMutationForm
                                   action={createQuotationRevision}
                                   className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -1837,7 +1849,7 @@ export default async function QuotationDetailPage({
                               ) : (
                                 <span className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400">Create Revision</span>
                               )}
-                              {canUseQuotationActions ? (
+                              {variationLinkFromLayoutSettings(folderQuotation.layout_settings) ? null : canUseQuotationActions ? (
                                 <FolderMutationForm
                                   action={createQuotationOption}
                                   className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -1888,7 +1900,7 @@ export default async function QuotationDetailPage({
                         const isCurrentFolderQuotation = folderQuotation.id === quotation.id;
                         const tokens = quotationBranchTokens(folderQuotation.quotation_no);
                         const folderTypeLabel = tokens.length
-                          ? tokens.map((token) => token.type === "OPT" ? `Option ${token.sequence}` : `Revision ${token.sequence}`).join(" / ")
+                          ? tokens.map((token) => token.type === "OPT" ? `Option ${token.sequence}` : token.type === "V" ? `Variation ${token.sequence}` : `Revision ${token.sequence}`).join(" / ")
                           : (folderQuotation.option_no ?? 1) > 1
                             ? `Option ${Math.max((folderQuotation.option_no ?? 1) - 1, 1)}`
                             : "Original";
@@ -2204,8 +2216,8 @@ export default async function QuotationDetailPage({
 }
 
 function quotationBranchTokens(quotationNo: string | null | undefined) {
-  return Array.from(quotationNo?.trim().matchAll(/-(R|OPT)(\d+)/gi) ?? [])
-    .map((match) => ({ type: match[1].toUpperCase() as "R" | "OPT", sequence: Number(match[2]) }))
+  return Array.from(quotationNo?.trim().matchAll(/-(R|OPT|V)(\d+)/gi) ?? [])
+    .map((match) => ({ type: match[1].toUpperCase() as "R" | "OPT" | "V", sequence: Number(match[2]) }))
     .filter((token) => Number.isFinite(token.sequence));
 }
 
@@ -2225,14 +2237,14 @@ function quotationDestinationFolderKey(quotation: Pick<Quotation, "id" | "projec
 function quotationBranchSortKey(quotationNo: string | null | undefined) {
   const root = quotationNo?.trim().match(/^(QN-\d{4}-\d{3})/i)?.[1] ?? quotationNo ?? "";
   const suffix = quotationBranchTokens(quotationNo)
-    .map((token) => `${token.type === "OPT" ? "1" : "2"}-${String(token.sequence).padStart(4, "0")}`)
+    .map((token) => `${token.type === "OPT" ? "1" : token.type === "R" ? "2" : "3"}-${String(token.sequence).padStart(4, "0")}`)
     .join("/");
 
   return `${root}/${suffix}`;
 }
 
 function quotationWorkflowSequences(quotationNo: string | null | undefined) {
-  const match = quotationNo?.trim().match(/^QN-(\d{4})-(\d{3})(?:-(?:R\d+|OPT\d+))*$/i);
+  const match = quotationNo?.trim().match(/^QN-(\d{4})-(\d{3})(?:-(?:R\d+|OPT\d+|V\d+))*$/i);
   if (!match) return null;
 
   return {

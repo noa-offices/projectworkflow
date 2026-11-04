@@ -10,6 +10,7 @@ import {
   updateQuotationStatus,
 } from "@/app/quotations/actions";
 import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
+import { folderProjectOrderNo } from "@/lib/quotations/project-variation";
 import { quotationStatusBadgeClassName, quotationStatusLabel } from "@/lib/quotation-status";
 
 export type OptimisticFolderQuotation = {
@@ -53,15 +54,15 @@ function formatFolderDate(value?: string | null) {
 }
 
 function branchTokens(quotationNo: string | null | undefined) {
-  return Array.from(quotationNo?.trim().matchAll(/-(R|OPT)(\d+)/gi) ?? [])
-    .map((match) => ({ type: match[1].toUpperCase() as "R" | "OPT", sequence: Number(match[2]) }))
+  return Array.from(quotationNo?.trim().matchAll(/-(R|OPT|V)(\d+)/gi) ?? [])
+    .map((match) => ({ type: match[1].toUpperCase() as "R" | "OPT" | "V", sequence: Number(match[2]) }))
     .filter((token) => Number.isFinite(token.sequence));
 }
 
 function folderTypeLabel(quotation: OptimisticFolderQuotation) {
   const tokens = branchTokens(quotation.quotation_no);
   if (tokens.length) {
-    return tokens.map((token) => token.type === "OPT" ? `Option ${token.sequence}` : `Revision ${token.sequence}`).join(" / ");
+    return tokens.map((token) => token.type === "OPT" ? `Option ${token.sequence}` : token.type === "V" ? `Variation ${token.sequence}` : `Revision ${token.sequence}`).join(" / ");
   }
   if ((quotation.option_no ?? 1) > 1) return `Option ${Math.max((quotation.option_no ?? 1) - 1, 1)}`;
   return "Original";
@@ -70,7 +71,7 @@ function folderTypeLabel(quotation: OptimisticFolderQuotation) {
 function branchSortKey(quotationNo: string | null | undefined) {
   const root = quotationNo?.trim().match(/^(QN-\d{4}-\d{3})/i)?.[1] ?? quotationNo ?? "";
   const suffix = branchTokens(quotationNo)
-    .map((token) => `${token.type === "OPT" ? "1" : "2"}-${String(token.sequence).padStart(4, "0")}`)
+    .map((token) => `${token.type === "OPT" ? "1" : token.type === "R" ? "2" : "3"}-${String(token.sequence).padStart(4, "0")}`)
     .join("/");
   return `${root}/${suffix}`;
 }
@@ -79,7 +80,7 @@ function isDirectChild(candidateNo: string | null | undefined, parentNo: string 
   const parent = parentNo?.trim();
   const candidate = candidateNo?.trim();
   if (!parent || !candidate) return false;
-  return new RegExp(`^${parent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-(?:R\\d+|OPT\\d+)$`, "i").test(candidate);
+  return new RegExp(`^${parent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-(?:R\\d+|OPT\\d+|V\\d+)$`, "i").test(candidate);
 }
 
 function childSequence(candidateNo: string | null | undefined, parentNo: string, type: "revision" | "option") {
@@ -339,9 +340,9 @@ export function QuotationFolderOptimisticPanel({
                   <ActionLink disabled={isTemp} href={`/quotations/${folderQuotation.id}/download-pdf`} label="Download PDF" />
                   {canManageRecords && variantsAvailable ? (
                     <>
-                      <button type="button" disabled={isTemp || Boolean(pending)} onClick={() => createChild(folderQuotation, "revision")} className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-400">
+                      {folderProjectOrderNo(items, folderQuotation.quotation_no) ? null : <button type="button" disabled={isTemp || Boolean(pending)} onClick={() => createChild(folderQuotation, "revision")} className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-400">
                         {pending === "revision" ? "Creating revision..." : "Create Revision"}
-                      </button>
+                      </button>}
                       <button type="button" disabled={isTemp || Boolean(pending)} onClick={() => createChild(folderQuotation, "option")} className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-400">
                         {pending === "option" ? "Creating option..." : "Create Option"}
                       </button>

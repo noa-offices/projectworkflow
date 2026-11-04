@@ -1,3 +1,5 @@
+import { createProjectVariation } from "@/app/quotations/actions";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
@@ -352,13 +354,31 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
   const rowCounter = numberedItems.filter(({ rowNumber }) => rowNumber !== null).length;
 
   // ── Shared JSX blocks (used in both active and completed layouts) ──────
+  // A confirmed order with no Project File has no frozen copy, and a cancelled Project has no job left to change.
+  const canCreateVariation = entry.draft === null && !cancelledAt && (
+    profile?.role === "system_owner" || profile?.role === "admin_manager" || profile?.role === "procurement_manager" ||
+    profile?.role === "sales_designer" || profile?.role === "sales_coordinator" || profile?.role === "designer"
+  );
+  const variationForm = canCreateVariation ? (
+    <form action={createProjectVariation}>
+      <input type="hidden" name="quotation_id" value={entry.quotationId} />
+      <input type="hidden" name="return_to" value={`/projects/orders/${encodeURIComponent(decodedOrderNo)}`} />
+      <PendingSubmitButton className="inline-flex h-10 items-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50" pendingLabel="Creating variation...">Create variation</PendingSubmitButton>
+    </form>
+  ) : null;
+
   const lockedItemsSection = (
     <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
       <div className="border-b border-zinc-100 px-3 py-3 xl:px-5 xl:py-4">
-        <h2 className="text-lg font-semibold text-zinc-950">Locked Items</h2>
-        <p className="mt-1 text-sm text-zinc-500">
-          Snapshot from the approved quotation {entry.order.quotationNo ?? entry.order.orderNo}.
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-950">Locked Items</h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              Snapshot from the approved quotation {entry.order.quotationNo ?? entry.order.orderNo}.
+            </p>
+          </div>
+          {variationForm}
+        </div>
       </div>
       <div className="px-3 py-2 xl:px-5 xl:py-3">
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950">
@@ -678,6 +698,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
 
   const projectActions = (
     <>
+      {variationForm}
       <Link href={`/quotations/${entry.quotationId}`} className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800">
         Open Quotation
       </Link>

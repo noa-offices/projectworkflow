@@ -1,3 +1,4 @@
+import { variationLine, variationLinkFromLayoutSettings } from "@/lib/quotations/project-variation";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
@@ -358,6 +359,11 @@ function InfoLine({ label, value }: { label: string; value?: string | number | n
       <dd className="mt-0.5 text-xs text-zinc-900">{value || "-"}</dd>
     </div>
   );
+}
+
+function VariationHeaderLine({ layoutSettings }: { layoutSettings: unknown }) {
+  const link = variationLinkFromLayoutSettings(layoutSettings);
+  return link ? <p className="mt-1 text-right text-[10px] font-medium text-zinc-700">{variationLine(link)}</p> : null;
 }
 
 function MetaLine({ label, value }: { label: string; value?: string | number | null }) {
@@ -1226,6 +1232,7 @@ function QuotationFirstPageHeader({
               <MetaLine label="Date" value={quotation.quotation_date} />
               {quotation.revision_no ? <MetaLine label="Revision" value={revisionLabel(quotation)} /> : null}
             </dl>
+            <VariationHeaderLine layoutSettings={quotation.layout_settings} />
           </div>
         </div>
       </header>

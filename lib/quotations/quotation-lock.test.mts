@@ -76,6 +76,6 @@ test("a locked quotation can move only to statuses that do not make it editable 
 test("copyQuotation strips Project metadata through the locked-source helper", async () => {
   const { readFileSync } = await import("node:fs");
   const actions = readFileSync(new URL("../../app/quotations/actions.ts", import.meta.url), "utf8");
-  assert.ok(actions.includes("layout_settings: lockedSourceCopySettings(source, "));
+  assert.ok(actions.includes("lockedSourceCopySettings(source, "));
   assert.ok(!actions.includes("unlockedQuotationCopyLayoutSettings"));
 });

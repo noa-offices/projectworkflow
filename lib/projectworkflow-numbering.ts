@@ -87,14 +87,14 @@ export function opportunitySequenceFromNumber(opportunityNo: string | null | und
 }
 
 export function opportunityNumberFromQuotationNumber(quotationNo: string | null | undefined): string | null {
-  const match = quotationNo?.trim().match(/^QN-(\d{4})-(\d{3})(?:-(?:R\d+|OPT\d+))*$/i);
+  const match = quotationNo?.trim().match(/^QN-(\d{4})-(\d{3})(?:-(?:R\d+|OPT\d+|V\d+))*$/i);
   if (!match) return null;
 
   return formatOpportunityNumber(Number(match[1]), Number(match[2]));
 }
 
 export function quotationFolderNumberFromQuotationNumber(quotationNo: string | null | undefined): string | null {
-  const match = quotationNo?.trim().match(/^QN-(\d{4})-(\d{3})(?:-(?:R\d+|OPT\d+))*$/i);
+  const match = quotationNo?.trim().match(/^QN-(\d{4})-(\d{3})(?:-(?:R\d+|OPT\d+|V\d+))*$/i);
   if (!match) return null;
 
   return `QF-${match[1]}-${match[2]}`;

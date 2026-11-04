@@ -27,7 +27,7 @@ export function quotationRevisionBaseNo(quotationNo: string | null | undefined) 
 }
 
 export function quotationRootBaseNo(quotationNo: string | null | undefined) {
-  const revisionBase = quotationRevisionBaseNo(quotationNo);
+  const revisionBase = quotationRevisionBaseNo(quotationNo?.trim().replace(/-V\d+$/i, ""));
 
   if (!revisionBase) return null;
 

@@ -50,7 +50,7 @@ function loadPage(path: string, locked: boolean, role = "designer") {
 async function renderLockedView(role: string) {
   const PdfDocument = () => null;
   const actions = {
-    createQuotationRevision: async () => undefined,
+    createProjectVariation: async () => undefined,
     createQuotationOption: async () => undefined,
     duplicateQuotation: async () => undefined,
   };
