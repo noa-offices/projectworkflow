@@ -132,7 +132,7 @@ export async function findSourceReviewBatch(client: SupabaseClient, sourceId: st
 }
 
 /** Context for "Replace Price List" on one supplier price list: its current version and the definition's imported versions. */
-export type ReplaceContext = { definitionId: string; definitionName: string; current: { title: string; filename: string; effectiveFrom: string | null; currency: string; basis: string } | null; versions: Array<{ id: string; effective_from: string | null; created_at: string }> };
+export type ReplaceContext = { /** The stored lists and reviews of this source, so the screen can say what the replacement archives. */ live?: { versions: import("./supplier-live-list").LiveVersion[]; batches: import("./supplier-live-list").LiveBatch[]; businessDate: string }; definitionId: string; definitionName: string; current: { title: string; filename: string; effectiveFrom: string | null; currency: string; basis: string } | null; versions: Array<{ id: string; effective_from: string | null; created_at: string }> };
 
 /**
  * Whether a price-list card offers "Replace Price List": an approver, a card tied to a supplier price list (its link carries the definition),
