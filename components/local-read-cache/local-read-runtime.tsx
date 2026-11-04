@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { readCacheDb, readSnapshot, rememberDraftAccess } from "@/lib/local-read-cache/db";
 import { isProductEditor, readEntity, type CacheLease, type ReadEntity, type ReadSnapshot } from "@/lib/local-read-cache/types";
 import { clearReadSession, establishReadSession, fetchReadProjection, notifyReadCache, ReadFailure, setReadHealth } from "@/lib/local-read-cache/runtime";
+import { manualRefreshAction } from "@/lib/local-read-cache/manual-refresh";
 import { CachedReadSurface } from "./read-surface";
 
 type Preview = { entity: ReadEntity; snapshot?: ReadSnapshot; message: string; sourcePath: string };
@@ -143,7 +144,11 @@ export function LocalReadRuntime({ userId }: { userId: string | null }) {
     const focus = () => { void probe(); };
     const manual = () => {
       const entity = previewEntity ?? readEntity(window.location.pathname, window.location.search);
-      if (entity) { void openPreview(entity); } else { void probe(true); }
+      // Online: refresh quietly, no overlay. The saved read view opens only offline (or when it is already open).
+      const action = manualRefreshAction(navigator.onLine, entity, Boolean(previewEntity));
+      if (entity && action === "preview") void openPreview(entity);
+      else if (entity && action === "refresh") void refresh(entity);
+      else void probe(true);
     };
     const locked = () => { leaseRef.current = undefined; setLease(undefined); setPreview(undefined); };
     const changed = async () => {
