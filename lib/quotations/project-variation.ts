@@ -41,16 +41,26 @@ export function variationLine(link: VariationLink) {
 
 export type FolderQuotationRow = { id: string; quotation_no: string | null; layout_settings?: unknown };
 
+/** Folder root number -> the Project number of the folder, from every row that holds one. Build it once for a list, then look each row up. */
+export function folderProjectOrderNos(rows: FolderQuotationRow[]) {
+  const orders = new Map<string, string>();
+  for (const row of rows) {
+    const root = quotationRootBaseNo(row.quotation_no)?.toUpperCase();
+    if (!root || orders.has(root)) continue;
+    const order = projectFileFromLayoutSettings(row.layout_settings) ?? clientApprovalDraftFromLayoutSettings(row.layout_settings)?.confirmedOrder ?? null;
+    if (order?.orderNo) orders.set(root, order.orderNo);
+  }
+  return orders;
+}
+
+export function folderProjectOrderNoFrom(orders: Map<string, string>, quotationNo: string | null | undefined) {
+  const root = quotationRootBaseNo(quotationNo)?.toUpperCase();
+  return root ? orders.get(root) ?? null : null;
+}
+
 /** The Project of a quotation's folder, whichever row of the folder holds it. */
 export function folderProjectOrderNo(rows: FolderQuotationRow[], quotationNo: string | null | undefined) {
-  const root = quotationRootBaseNo(quotationNo)?.toUpperCase();
-  if (!root) return null;
-  for (const row of rows) {
-    if (quotationRootBaseNo(row.quotation_no)?.toUpperCase() !== root) continue;
-    const order = projectFileFromLayoutSettings(row.layout_settings) ?? clientApprovalDraftFromLayoutSettings(row.layout_settings)?.confirmedOrder ?? null;
-    if (order?.orderNo) return order.orderNo;
-  }
-  return null;
+  return folderProjectOrderNoFrom(folderProjectOrderNos(rows), quotationNo);
 }
 
 /** Why this quotation cannot have a new revision, or null. R numbers are only for quotations before approval. */

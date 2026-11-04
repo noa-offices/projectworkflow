@@ -41,3 +41,11 @@ test("completed/cancelled grouping preserved without caching heavy snapshots", (
   assert.equal(completed.length, 1); assert.equal(completed[0].status, "Completed");
   assert.ok(!JSON.stringify(completed).includes("private"));
 });
+test("an old revision in a folder that has a Project is labelled by its folder, not as Project File Pending", () => {
+  const projectFile = { orderNo: "CO-2026-001", quotationId: "q1", quotationNo: "QN-2026-001", clientId: "c", clientName: "Client", reference: "Office", total: 100, currency: "AED", createdAt: "2026-01-01", createdBy: "u" };
+  const rows = quotationSummaries([
+    { ...base, id: "q1", status: "client_confirmed", approved_salesperson_id: "s", layout_settings: { projectFile } },
+    { ...base, id: "q2", quotation_no: "QN-2026-001-R1", status: "client_confirmed", layout_settings: {} },
+  ], names, new Map());
+  assert.match(rows[0].status, /Folder has Project CO-2026-001/); assert.doesNotMatch(rows[0].status, /Project File Pending/);
+});

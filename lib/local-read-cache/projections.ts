@@ -1,6 +1,7 @@
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import { quotationStatusLabel } from "@/lib/quotation-status";
 import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
+import { folderProjectOrderNoFrom, folderProjectOrderNos } from "@/lib/quotations/project-variation";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { minimizedRows, type ReadRow } from "./types";
@@ -29,8 +30,9 @@ export function quotationSummaries(rows: SummaryQuotation[], clients: Map<string
     const active = group.filter(r => r.is_active);
     const latest = (active.length ? active : group).reduce((a, b) => new Date(b.quotation_date).getTime() > new Date(a.quotation_date).getTime() ? b : a);
     const counts = new Map<string, number>();
+    const folderOrders = folderProjectOrderNos(group);
     for (const r of group) {
-      const status = r.is_active ? quotationApprovalDisplay(r)?.label ?? quotationStatusLabel(r.status) : "Archived";
+      const status = r.is_active ? quotationApprovalDisplay(r, folderProjectOrderNoFrom(folderOrders, r.quotation_no))?.label ?? quotationStatusLabel(r.status) : "Archived";
       counts.set(status, (counts.get(status) ?? 0) + 1);
     }
     const project = latest.project_id ? projects.get(latest.project_id) : undefined;
