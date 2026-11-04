@@ -5,7 +5,7 @@ import {
   announcedQuotationDelta, announcedSnapshot, announcedSnapshotOf, announcedTotals, announcementBadge, announcementBanner, announcementItemNote, announcementTickText, announcementView,
   announcementViewsFromRows, officialListReceived, oneOpenNoticeText, parseAnnouncementPercent, roundHalfUp2, signedPercent, withAnnouncedPercent, type AnnouncementFacts, type AnnouncementRow,
 } from "./price-announcements.js";
-import { quotationMoneyValue } from "../quotation-pricing.js";
+import { quotationMoneyValue, ruleConvertedPrice } from "../quotation-pricing.js";
 
 const notice: AnnouncementRow = { id: "n1", brandId: "b1", percent: 3, effectiveFrom: "2026-12-01", note: "Supplier email", approximate: true };
 const coded = (latest: string | null): AnnouncementFacts => ({ priceCheckMode: "supplier_codes", latestSupplierList: latest, latestManualRelease: "2030-01-01" });
@@ -84,6 +84,16 @@ test("an AED item: the price is raised before the company's round up to 5; un-ti
   assert.equal(ticked, 328.57);
   assert.equal(quotationMoneyValue(ticked), 330);
   assert.equal(quotationMoneyValue(base), 320);
+});
+
+test("a whole AED quotation: 319.00 at +3% is 328.57, then the nearest whole AED, not 330", () => {
+  const ticked = 319 + announcedQuotationDelta(announcedTotals({ totals: { AED: 319 }, percent: 3 }).delta, {});
+  assert.equal(ruleConvertedPrice("whole_aed_v1", ticked), 329);
+  assert.equal(ruleConvertedPrice("whole_aed_v1", 319), 319);
+  assert.equal(ruleConvertedPrice("round_up_5_legacy", ticked), 330); // legacy is unchanged
+  const eur = announcedTotals({ totals: { EUR: 379.04 }, percent: 3 });
+  assert.deepEqual(eur.uplifted, { EUR: 390.41 }); // the supplier price keeps 2 decimals until it is converted
+  assert.equal(ruleConvertedPrice("whole_aed_v1", 379.04 * 4.1 + announcedQuotationDelta(eur.delta, { EUR: 4.1 })), 1601);
 });
 
 test("the item record explains the price; items and drafts without it stay valid", () => {

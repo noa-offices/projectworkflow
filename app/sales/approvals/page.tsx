@@ -2,7 +2,7 @@ import Link from "next/link";
 import { createProjectFileFromQuotation } from "@/app/quotations/actions";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { requireActiveUser } from "@/lib/auth";
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
 import { quotationStatusLabel } from "@/lib/quotation-status";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { documentSetupRecord } from "@/lib/quotations/document-setup";
@@ -165,7 +165,7 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
                       </div>
                       <div className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)] gap-2">
                         <dt className="font-semibold text-zinc-500">Value</dt>
-                        <dd className="font-semibold text-zinc-950">{formatQuotationMoney(quotation.currency, quotation.grand_total ?? 0)}</dd>
+                        <dd className="font-semibold text-zinc-950">{formatRuleMoney(readPricingRule(quotation.layout_settings), quotation.currency, quotation.grand_total ?? 0)}</dd>
                       </div>
                       <div className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)] gap-2">
                         <dt className="font-semibold text-zinc-500">Project</dt>
@@ -233,7 +233,7 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
                       <td className="py-3 pr-4 text-zinc-700">{quotation.clientName}</td>
                       <td className="max-w-xs py-3 pr-4 text-zinc-600">{quotation.reference}</td>
                       <td className="py-3 pr-4 font-medium text-zinc-950">
-                        {formatQuotationMoney(quotation.currency, quotation.grand_total ?? 0)}
+                        {formatRuleMoney(readPricingRule(quotation.layout_settings), quotation.currency, quotation.grand_total ?? 0)}
                       </td>
                       <td className="py-3 pr-4 text-zinc-600">{formatDate(quotation.status_updated_at ?? quotation.updated_at ?? quotation.quotation_date)}</td>
                       <td className="py-3 pr-4 font-medium text-zinc-950">

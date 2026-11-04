@@ -4,7 +4,7 @@ import test from "node:test";
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { announcedQuotationDelta, announcedSnapshot, announcedTotals, type AnnouncementView } from "@/lib/products/price-announcements";
-import { quotationMoneyValue } from "@/lib/quotation-pricing";
+import { quotationLinePricing, quotationMoneyValue, ruleConvertedPrice } from "@/lib/quotation-pricing";
 import { AnnouncedPriceTick } from "./announced-price-tick";
 
 const notice: AnnouncementView = { id: "n1", brandId: "b1", percent: 3, effectiveFrom: "2026-12-01", note: "", approximate: true, state: "active" };
@@ -57,6 +57,12 @@ test("ticking raises the item price and records the uplift; un-ticking restores 
   assert.equal(itemWithTick(319, ticked).source_component_data.announced_price_change, undefined);
 });
 
+test("on a whole AED quotation the tick raises the item to whole AED, and un-ticking restores it", () => {
+  const price = (ticked: boolean) => ruleConvertedPrice("whole_aed_v1", 319 + (ticked ? announcedQuotationDelta(announcedTotals({ totals: { AED: 319 }, percent: notice.percent }).delta, {}) : 0));
+  assert.equal(price(true), 329); assert.equal(price(false), 319);
+  assert.deepEqual(quotationLinePricing("whole_aed_v1", price(true), "percent", 10, 1), { unitPrice: 329, discountValue: 10, discountAmount: 33, netPrice: 296, netTotal: 296 });
+});
+
 test("when ticked it says what is included", () => {
   const html = renderToStaticMarkup(<AnnouncedPriceTick announcement={notice} checked onChange={() => {}} upliftedTotals={{ EUR: 328.57 }} formatAmount={format} />);
   assert.match(html, /checked=""/); assert.match(html, /Includes announced \+3% \(approximate\)/); assert.match(html, /EUR 328\.57/); assert.match(html, /library price is not changed/);
@@ -74,4 +80,5 @@ test("the selector applies it before conversion and rounding, and records it on 
   assert.match(source, /announced_price_change: announcedSnapshot\(activeAnnouncement, announcedChange\)/);
   assert.ok(source.indexOf("const announcedChange =") < source.indexOf("const previewUnitPriceWithConversion ="), "before the quotation rounding");
   assert.ok(source.indexOf("const previewUnitPriceWithConversion =") < source.indexOf("const unitDiscountAmount ="), "before the discount");
+  assert.ok(source.includes("const previewUnitPriceWithConversion = ruleConvertedPrice(pricingRule, rawPreviewUnitPriceWithConversion);"));
 });

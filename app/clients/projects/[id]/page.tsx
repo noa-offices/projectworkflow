@@ -25,7 +25,7 @@ import {
   quotationStatusBadgeClassName,
   quotationStatusLabel,
 } from "@/lib/quotation-status";
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -88,6 +88,7 @@ type Quotation = {
   status: string;
   currency: string;
   grand_total: number;
+  layout_settings: unknown;
   is_active: boolean;
 };
 
@@ -435,7 +436,7 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
 
   const { data: quotations, error: quotationsError } = await supabase
     .from("quotations")
-    .select("id,quotation_no,option_no,revision_no,title,quotation_date,status,currency,grand_total,is_active")
+    .select("id,quotation_no,option_no,revision_no,title,quotation_date,status,currency,grand_total,is_active,layout_settings")
     .eq("project_id", project.id)
     .order("quotation_date", { ascending: false })
     .order("created_at", { ascending: false })
@@ -666,7 +667,7 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                         <QuotationStatusBadge status={quotation.status} />
                       </td>
                       <td className="py-3 pr-4 font-medium text-zinc-950">
-                        {formatQuotationMoney(quotation.currency, quotation.grand_total)}
+                        {formatRuleMoney(readPricingRule(quotation.layout_settings), quotation.currency, quotation.grand_total)}
                       </td>
                       <td className="py-3 pr-4">
                         <Link

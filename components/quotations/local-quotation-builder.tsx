@@ -1,6 +1,7 @@
 "use client";
 
 import { announcedSnapshotOf } from "@/lib/products/price-announcements";
+import { readPricingRule } from "@/lib/quotation-pricing";
 import Link from "next/link";
 import { prepareQuotationSharedImages } from "@/app/quotations/shared-image-actions";
 import { useRouter } from "next/navigation";
@@ -4977,6 +4978,7 @@ export function LocalQuotationBuilder({
                               materialGroups={materialGroups}
                               materials={materials}
                               onAddLocalItem={(item) => addProductItem(section.id, item)}
+                              pricingRule={readPricingRule(workspace.layout_settings)}
                               quotationId={workspace.server_quotation_id}
                               returnTo={`/quotations/${workspace.server_quotation_id}/local-builder`}
                               sectionId={section.id}
@@ -5089,6 +5091,7 @@ export function LocalQuotationBuilder({
                     materialGroups={materialGroups}
                     materials={materials}
                     onAddLocalItem={(item) => addProductItem(section.id, item)}
+                    pricingRule={readPricingRule(workspace.layout_settings)}
                     quotationId={workspace.server_quotation_id}
                     returnTo={`/quotations/${workspace.server_quotation_id}/local-builder`}
                     sectionId={section.id}
@@ -5437,7 +5440,7 @@ export function LocalQuotationBuilder({
                   </button>
                 </div>
                 <p className="text-[11px] leading-5 text-zinc-500">
-                  Rounding is applied only when you click Apply. It rounds the final net selling price by adjusting the quotation U.Price, without changing discount inputs, quantity, source price, or exchange details.
+                  Rounding is applied only when you click Apply. It rounds each line&apos;s net selling price to the nearest step. The saved unit price, discount, quantity, source price and exchange details are kept.
                 </p>
               </div>
             </div>

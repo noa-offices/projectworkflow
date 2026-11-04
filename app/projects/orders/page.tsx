@@ -5,6 +5,7 @@ import { ActiveProjectsTable } from "@/components/projects/active-projects-table
 import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { readPricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -55,9 +56,9 @@ async function ActiveProjectsContent() {
       if (typeof settings?.projectCompletedAt === "string") return [];
       if (typeof settings?.projectCancelledAt === "string") return [];
       const projectFile = projectFileFromLayoutSettings(quotation.layout_settings);
-      if (projectFile) return [projectFile];
+      if (projectFile) return [{ ...projectFile, pricingRule: readPricingRule(quotation.layout_settings) }];
       const draft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
-      return draft?.confirmedOrder ? [draft.confirmedOrder] : [];
+      return draft?.confirmedOrder ? [{ ...draft.confirmedOrder, pricingRule: readPricingRule(quotation.layout_settings) }] : [];
     })
     .filter((order, index, all) => all.findIndex((o) => o.orderNo === order.orderNo) === index)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());

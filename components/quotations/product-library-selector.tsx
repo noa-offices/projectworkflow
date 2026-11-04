@@ -68,7 +68,7 @@ import { accessoryOptionLabel } from "@/lib/quotations/accessory-option-label";
 import { flattenWorkstationPricingRows, workstationPricingGroups } from "@/lib/products/workstation-pricing-groups";
 import { variantOptionLabel } from "@/lib/products/variant-option-label";
 import { productTemplateRowReferenceKey, selectedRowReferencePreview, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
-import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
+import { formatRuleMoney, quotationLinePricing, ruleConvertedPrice, ruleExactAmount, type PricingRule } from "@/lib/quotation-pricing";
 import { missingExchangeRateCurrencies, roundSourceAmount } from "@/lib/quotations/source-price-components";
 import { announcedQuotationDelta, announcedSnapshot, announcedTotals, type AnnouncementView } from "@/lib/products/price-announcements";
 import { AnnouncedPriceBadge } from "@/components/products/announced-price-badge";
@@ -1221,6 +1221,7 @@ export function ProductLibrarySelector({
   materialGroups,
   materials,
   onAddLocalItem,
+  pricingRule,
   quotationId,
   returnTo,
   sectionId,
@@ -1238,6 +1239,8 @@ export function ProductLibrarySelector({
   materialGroups: FinishMaterialGroup[];
   materials: FinishMaterial[];
   onAddLocalItem?: (item: LocalQuotationItem) => void;
+  /** The quotation's pricing rule. Without one the item is priced by the legacy rule. */
+  pricingRule?: PricingRule;
   quotationId: string;
   returnTo: string;
   sectionId: string;
@@ -2279,8 +2282,9 @@ export function ProductLibrarySelector({
                     : totalPreviewUnitPrice + (announcedChange ? announcedQuotationDelta(announcedChange.delta, templateExchangeRates) : 0);
                   // The ticked amount is rounded to 2 decimals first, so a binary fraction cannot push the round-up-to-5 one step too far.
                   const rawPreviewUnitPriceWithConversion = announcedChange ? roundSourceAmount(previewBeforeAnnounced) : previewBeforeAnnounced;
-                  const previewUnitPriceWithConversion = quotationMoneyValue(rawPreviewUnitPriceWithConversion);
-                  const effectiveQuoteUnitPrice = quotationMoneyValue(
+                  const previewUnitPriceWithConversion = ruleConvertedPrice(pricingRule, rawPreviewUnitPriceWithConversion);
+                  const effectiveQuoteUnitPrice = ruleExactAmount(
+                    pricingRule,
                     templatePriceOverrides[template.id] ?? previewUnitPriceWithConversion,
                   );
                   const previousQuotedPrice =
@@ -2289,7 +2293,7 @@ export function ProductLibrarySelector({
                       : null;
                   const pendingUpdatedPrice =
                     pendingPriceUpdateChoice?.templateId === template.id
-                      ? quotationMoneyValue(previewUnitPriceWithConversion)
+                      ? ruleExactAmount(pricingRule, previewUnitPriceWithConversion)
                       : null;
                   const needsUpdatedPriceDecision = pendingUpdatedPrice !== null &&
                     previousQuotedPrice !== null &&
@@ -2301,15 +2305,10 @@ export function ProductLibrarySelector({
                     : selectedDiscountType === "amount"
                       ? rawDiscountValue
                       : 0;
-                  const unitDiscountAmount = quotationMoneyValue(
-                    selectedDiscountType === "percent"
-                      ? effectiveQuoteUnitPrice * selectedDiscountValue / 100
-                      : selectedDiscountType === "amount"
-                        ? selectedDiscountValue
-                        : 0,
-                  );
-                  const netPricePreview = quotationMoneyValue(Math.max(effectiveQuoteUnitPrice - unitDiscountAmount, 0));
-                  const netTotalPreview = quotationMoneyValue(netPricePreview);
+                  const linePreview = quotationLinePricing(pricingRule, effectiveQuoteUnitPrice, selectedDiscountType === "percent" ? "percent" : "amount", selectedDiscountValue);
+                  const unitDiscountAmount = linePreview.discountAmount;
+                  const netPricePreview = linePreview.netPrice;
+                  const netTotalPreview = linePreview.netTotal;
                   const proposedImageFields = [
                     "proposed_image_url_1",
                     "proposed_image_url_2",
@@ -2499,7 +2498,7 @@ export function ProductLibrarySelector({
                   const sourceCurrencyTotals = Object.fromEntries(
                     Array.from(originalCurrencyTotals.entries()).map(([currency, amount]) => [
                       normalizeCurrency(currency),
-                      quotationMoneyValue(amount),
+                      ruleExactAmount(pricingRule, amount),
                     ]),
                   );
                   const sourcePriceReference = {
@@ -2648,8 +2647,8 @@ export function ProductLibrarySelector({
                     ...(line.row.importantRequirements?.length ? { importantRequirements: line.row.importantRequirements } : {}),
                     dimension: line.row.dimension ?? null,
                     qty: line.qty,
-                    unit_price: quotationMoneyValue(line.unitPrice),
-                    total: quotationMoneyValue(line.total),
+                    unit_price: ruleExactAmount(pricingRule, line.unitPrice),
+                    total: ruleExactAmount(pricingRule, line.total),
                     currency: normalizeCurrency(line.row.currency ?? rowCurrency),
                   }));
                   const localProductItem: LocalQuotationItem = {
@@ -4349,7 +4348,7 @@ export function ProductLibrarySelector({
                               <p>Enter an exchange rate for {missingExchangeRateCurrencyList.join(", ")} to calculate the AED total.</p>
                             ) : (
                               <p className="font-semibold">
-                                Converted final: {formatQuotationMoney("AED", convertedPreviewTotal)}
+                                Converted final: {formatRuleMoney(pricingRule, "AED", convertedPreviewTotal)}
                               </p>
                             )}
                           </div>
@@ -4360,17 +4359,17 @@ export function ProductLibrarySelector({
                           </p>
                           <AnnouncedPriceTick announcement={activeAnnouncement} checked={Boolean(announcedChange)} upliftedTotals={announcedChange?.uplifted} blockedReason={announcedBlocked ? "You kept the current quote price, so the announced change is not added." : null} formatAmount={(currency, amount) => formatMoney(currency, amount)} onChange={(checked) => setAnnouncedTicks((current) => ({ ...current, [template.id]: checked }))} />
                           {announcedChange && activeAnnouncement ? <input type="hidden" name="announced_notice_id" value={activeAnnouncement.id} /> : null}
-                          <p>{missingExchangeRate ? "Quotation unit price: awaiting exchange rate" : "U.Price: " + formatQuotationMoney(previewCurrency, effectiveQuoteUnitPrice)}</p>
+                          <p>{missingExchangeRate ? "Quotation unit price: awaiting exchange rate" : "U.Price: " + formatRuleMoney(pricingRule, previewCurrency, effectiveQuoteUnitPrice)}</p>
                           {needsUpdatedPriceDecision ? (
                             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
                               <p className="font-semibold">
                                 Price updated. Apply updated price to this selected quotation item?
                               </p>
                               <p className="mt-1">
-                                Current quote price: {formatQuotationMoney(previewCurrency, previousQuotedPrice ?? effectiveQuoteUnitPrice)}
+                                Current quote price: {formatRuleMoney(pricingRule, previewCurrency, previousQuotedPrice ?? effectiveQuoteUnitPrice)}
                               </p>
                               <p>
-                                Updated source price: {formatQuotationMoney(previewCurrency, pendingUpdatedPrice)}
+                                Updated source price: {formatRuleMoney(pricingRule, previewCurrency, pendingUpdatedPrice)}
                               </p>
                               <div className="mt-2 flex flex-wrap gap-2">
                                 <button
@@ -4439,10 +4438,10 @@ export function ProductLibrarySelector({
                           </label>
                           <p>
                             Discount: {selectedDiscountType === "percent" ? `${selectedDiscountValue}% / ` : ""}
-                            {formatQuotationMoney(previewCurrency, unitDiscountAmount)}
+                            {formatRuleMoney(pricingRule, previewCurrency, unitDiscountAmount)}
                           </p>
-                          <p>Net Price: {formatQuotationMoney(previewCurrency, netPricePreview)}</p>
-                          <p>Net Total: {formatQuotationMoney(previewCurrency, netTotalPreview)}</p>
+                          <p>Net Price: {formatRuleMoney(pricingRule, previewCurrency, netPricePreview)}</p>
+                          <p>Net Total: {formatRuleMoney(pricingRule, previewCurrency, netTotalPreview)}</p>
                         </div>
                               </div>
                               <div className="min-w-0 space-y-3">
@@ -4737,7 +4736,7 @@ export function ProductLibrarySelector({
                             </div>
                             <div className="grid gap-1">
                               <p className="text-sm font-semibold text-zinc-950">
-                                {formatQuotationMoney(previewCurrency, effectiveQuoteUnitPrice)}
+                                {formatRuleMoney(pricingRule, previewCurrency, effectiveQuoteUnitPrice)}
                               </p>
                               <PriceCheckBadge template={template} onSupplierStatus={updateSupplierStatus} />
                               <AnnouncedPriceBadge announcement={template.announced_price_change} />

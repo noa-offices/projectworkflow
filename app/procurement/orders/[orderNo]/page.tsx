@@ -5,7 +5,7 @@ import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { type VendorCardItem, type VendorCardProps } from "@/components/procurement/vendor-card";
 import { type VendorDocRecord } from "@/lib/procurement/vendor-docs-action";
@@ -91,11 +91,11 @@ export default async function ProcurementWorkspacePage({
     .map((quotation) => {
       const projectFile = projectFileFromLayoutSettings(quotation.layout_settings);
       if (projectFile?.orderNo === decodedOrderNo) {
-        return { quotationId: quotation.id, order: projectFile };
+        return { quotationId: quotation.id, order: projectFile, pricingRule: readPricingRule(quotation.layout_settings) };
       }
       const draft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
       return draft?.confirmedOrder?.orderNo === decodedOrderNo
-        ? { quotationId: quotation.id, order: draft.confirmedOrder }
+        ? { quotationId: quotation.id, order: draft.confirmedOrder, pricingRule: readPricingRule(quotation.layout_settings) }
         : null;
     })
     .find((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
@@ -228,7 +228,7 @@ export default async function ProcurementWorkspacePage({
         </div>
         <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
           <dt className="text-xs font-semibold uppercase text-zinc-500">Total Value</dt>
-          <dd className="mt-1 text-sm font-semibold text-zinc-950">{formatQuotationMoney(entry.order.currency, entry.order.total)}</dd>
+          <dd className="mt-1 text-sm font-semibold text-zinc-950">{formatRuleMoney(entry.pricingRule, entry.order.currency, entry.order.total)}</dd>
         </div>
         <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
           <dt className="text-xs font-semibold uppercase text-zinc-500">Vendor Groups</dt>
@@ -264,7 +264,7 @@ export default async function ProcurementWorkspacePage({
           orderNo={decodedOrderNo}
           reference={entry.order.reference}
           status="Procurement Active"
-          total={formatQuotationMoney(entry.order.currency, entry.order.total)}
+          total={formatRuleMoney(entry.pricingRule, entry.order.currency, entry.order.total)}
           vendorCards={vendorCards}
         />
 

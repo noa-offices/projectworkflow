@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, type PricingRule } from "@/lib/quotation-pricing";
 
 export type CompletedProjectFileItem = {
   orderNo: string;
@@ -12,6 +12,7 @@ export type CompletedProjectFileItem = {
   reference: string;
   currency: string;
   total: number;
+  pricingRule: PricingRule;
   createdAt: string;
   completedAt: string;
 };
@@ -171,7 +172,7 @@ export function CompletedProjectsTable({
                     <td className="px-4 py-3 text-zinc-700">{order.resolvedClientName}</td>
                     <td className="px-4 py-3 text-zinc-600">{order.reference || "-"}</td>
                     <td className="px-4 py-3 text-right font-semibold text-zinc-950">
-                      {formatQuotationMoney(order.currency, order.total)}
+                      {formatRuleMoney(order.pricingRule, order.currency, order.total)}
                     </td>
                     <td className="px-4 py-3 text-zinc-500">{formatDate(order.completedAt)}</td>
                     <td className="px-4 py-3">

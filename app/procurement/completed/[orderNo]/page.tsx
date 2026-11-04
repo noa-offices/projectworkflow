@@ -6,7 +6,7 @@ import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
-import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { vendorReceivingStatusLabel, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 
@@ -104,11 +104,11 @@ export default async function CompletedProcurementDetailPage({
 
       const projectFile = projectFileFromLayoutSettings(quotation.layout_settings);
       if (projectFile?.orderNo === decodedOrderNo) {
-        return { quotationId: quotation.id, order: projectFile, completedAt };
+        return { quotationId: quotation.id, order: projectFile, completedAt, pricingRule: readPricingRule(quotation.layout_settings) };
       }
       const draft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
       if (draft?.confirmedOrder?.orderNo === decodedOrderNo) {
-        return { quotationId: quotation.id, order: draft.confirmedOrder, completedAt };
+        return { quotationId: quotation.id, order: draft.confirmedOrder, completedAt, pricingRule: readPricingRule(quotation.layout_settings) };
       }
       return null;
     })
@@ -218,7 +218,7 @@ export default async function CompletedProcurementDetailPage({
             <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
               <dt className="text-xs font-semibold uppercase text-zinc-500">Total Value</dt>
               <dd className="mt-1 text-sm font-semibold text-zinc-950">
-                {formatQuotationMoney(entry.order.currency, entry.order.total)}
+                {formatRuleMoney(entry.pricingRule, entry.order.currency, entry.order.total)}
               </dd>
             </div>
             <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
