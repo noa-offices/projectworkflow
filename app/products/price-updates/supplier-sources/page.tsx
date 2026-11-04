@@ -10,6 +10,9 @@ import { loadReplacementContext, type ReplaceContext } from "@/lib/products/supp
 import { suggestedImportTitle } from "@/lib/products/supplier-import-wizard";
 import { SupplierAdvancedImportSettings, SupplierCompletionControls, SupplierPriceBasisPanel, SupplierReviewControls, SupplierStartReview } from "@/components/products/supplier-price-workspace-controls";
 import { SupplierCompleteSummary, SupplierFinishScreen, SupplierImportDetails, SupplierHistoryTable, SupplierImportSummary, SupplierTabs, SupplierWorkflowHeader, type HistoryRow, type PriceListTab, type WorkflowStep } from "@/components/products/supplier-price-workflow";
+import { SupplierCleanupPanel } from "@/components/products/supplier-cleanup";
+import { loadSupplierCleanup } from "@/lib/products/supplier-cleanup-loader";
+import type { SupplierCleanup } from "@/lib/products/supplier-cleanup";
 import { SupplierCoverageContext, SupplierCoverageSetup, SupplierFamilyCoverageSetup, SupplierPreviousPriceList, SupplierPriceListCards, SupplierSourceSummary, type OtherCoverage, type PriceListCardView } from "@/components/products/supplier-coverage";
 import { supplierBusinessDate, resolveSupplierPriceListLifecycleState } from "@/lib/products/supplier-price-repository";
 import { priceListReviewState } from "@/lib/products/supplier-list-presentation";
@@ -56,7 +59,7 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
   const base = "/products/price-updates/supplier-sources";
   const href = (changes: Record<string, string>) => { const query = new URLSearchParams(Object.fromEntries(Object.entries(params).map(([key, value]) => [key, text(value)]))); if (brand) query.set("brand", brand.id); for (const [key, value] of Object.entries(changes)) query.set(key, value); return `${base}?${query}`; };
   const sourceOffset = offset(params.sourceOffset), batchOffset = offset(params.batchOffset), from = offset(params.offset);
-  const tab: PriceListTab = text(params.tab) === "import" ? "import" : text(params.tab) === "history" ? "history" : "current";
+  const tab: PriceListTab = text(params.tab) === "import" ? "import" : text(params.tab) === "history" ? "history" : text(params.tab) === "cleanup" ? "cleanup" : "current";
   const requestedView = text(params.view);
   const technicalDeepLink = !requestedView && ["status", "code", "template", "offset", "unitOffset"].some((key) => text(params[key]) !== "");
   const view = technicalDeepLink ? "advanced" : (["advanced", "summary", "details", "complete", "start"].includes(requestedView) ? requestedView : "family");
@@ -181,6 +184,9 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
         hasCompletedHistory: Boolean(finished) || reviewRows.some((review) => review.source_id === item.id && review.brand_price_list_update_id !== null) };
     });
   }
+  // Clean up tab: a read-only preview of old price lists, stale reviews and unused definitions (coded Brands only; manual Brands returned above).
+  let cleanup: SupplierCleanup | null = null;
+  if (brand && tab === "cleanup") { try { cleanup = await loadSupplierCleanup(client, brand.id); } catch (error) { errorMessage ||= error instanceof Error ? error.message : "Clean up preview unavailable"; } }
   const summary: { families: number | null; warnings: number | null } = { families: null, warnings: null };
   if (source?.status === "imported" && view === "summary") {
     try {
@@ -255,8 +261,9 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
       </div>
       {errorMessage ? <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-950">{errorMessage}. The Phase 1b migration must be deployed before using this workspace.</p> : null}
       {brand ? <div className="space-y-4">
-        <SupplierTabs tab={tab} hrefs={{ current: href({ tab: "current", replace: "", source: "", batch: "", view: "", family: "", section: "", status: "", code: "", template: "", offset: "0" }), import: href({ tab: "import", setup: "", replace: "" }), history: href({ tab: "history" }) }} />
-        {tab === "import" ? <>{importArea}</>
+        <SupplierTabs tab={tab} hrefs={{ current: href({ tab: "current", replace: "", source: "", batch: "", view: "", family: "", section: "", status: "", code: "", template: "", offset: "0" }), import: href({ tab: "import", setup: "", replace: "" }), history: href({ tab: "history" }), cleanup: href({ tab: "cleanup", source: "", batch: "" }) }} />
+        {tab === "cleanup" ? (cleanup ? <SupplierCleanupPanel brandId={brand.id} brandName={brand.name} cleanup={cleanup} canDeleteLists={canManageSupplierCapacity(profile?.role, profile?.account_status)} canLeaveReviews={approver} canDeleteDefinitions={approver} /> : <p className="rounded-lg border border-zinc-200 bg-white p-4 text-sm text-zinc-600">The clean up preview is not available right now.</p>)
+          : tab === "import" ? <>{importArea}</>
           : tab === "history" ? <SupplierHistoryTable rows={historyRows} showArchived={text(params.showArchived) === "1"} archivedCount={historyRows.filter((row) => row.status === "archived").length} toggleHref={href({ showArchived: text(params.showArchived) === "1" ? "" : "1" })} canArchive={approver} canUnarchive={approver} canLeaveReview={approver} canPermanentlyDelete={canManageSupplierCapacity(profile?.role, profile?.account_status)}
               reviewPagerHrefs={source ? { previous: href({ batchOffset: String(Math.max(0, batchOffset - 20)) }), next: href({ batchOffset: String(batchOffset + 20) }) } : undefined}
               pagerHrefs={{ previous: href({ sourceOffset: String(Math.max(0, sourceOffset - 20)) }), next: href({ sourceOffset: String(sourceOffset + 20) }) }} reviews={source ? batchResult.data ?? [] : []} currentBatchId={batch?.id} reviewHref={(id) => href({ tab: "current", source: source?.id ?? "", batch: id, view: "family", offset: "0", template: "", status: "" })} newReviewHref={source?.status === "imported" ? href({ tab: "current", view: "start" }) : undefined} />
