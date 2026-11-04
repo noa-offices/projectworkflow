@@ -17,12 +17,12 @@ const badgeTone: Record<SupplierFamilyPriceStatusKey, string> = {
   no_price_list: "border-zinc-200 bg-zinc-50 text-zinc-700",
   legacy_manual: "border-zinc-200 bg-zinc-50 text-zinc-700",
 };
-const brandTone: Record<PriceUpdatesBrandView["state"], string> = {
+export const brandTone: Record<PriceUpdatesBrandView["state"], string> = {
   current: "border-emerald-200 bg-emerald-50 text-emerald-900", partially_checked: "border-amber-200 bg-amber-50 text-amber-900", update_available: "border-amber-200 bg-amber-50 text-amber-900",
   needs_attention: "border-red-200 bg-red-50 text-red-900", in_review: "border-sky-200 bg-sky-50 text-sky-900", ready_to_complete: "border-sky-200 bg-sky-50 text-sky-900", legacy_manual: "border-zinc-200 bg-zinc-50 text-zinc-700",
 };
-const badge = "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold";
-const button = "inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50";
+export const badge = "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold";
+export const button = "inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50";
 
 export type FamilyActionLink = { label: string; href: string };
 export type PriceUpdatesHrefs = {

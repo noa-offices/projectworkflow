@@ -13,7 +13,7 @@ const button = "inline-flex h-8 items-center justify-center rounded-md border bo
  * Everyone who can read the card sees the release history of a manual Brand; only price approvers (canManage) get the buttons.
  * All rules live in the database functions.
  */
-export function ManualPriceCheckPanel({ brandId, brandName, manual, releases, canManage, today }: { brandId: string; brandName: string; manual: boolean; releases: ManualReleaseRow[]; canManage: boolean; today: string }) {
+export function ManualPriceCheckPanel({ brandId, brandName, manual, releases, canManage, today, compact = false, onChanged }: { brandId: string; brandName: string; manual: boolean; releases: ManualReleaseRow[]; canManage: boolean; today: string; /** Small card use: no method line and no release history, only the release button, its form and the message. */ compact?: boolean; /** Called after a release is saved, so the page can refresh in place. */ onChanged?: () => void }) {
   const [open, setOpen] = useState(false);
   const [date, setDate] = useState(today);
   const [note, setNote] = useState("");
@@ -24,18 +24,18 @@ export function ManualPriceCheckPanel({ brandId, brandName, manual, releases, ca
     try { await work(); setMessage(done); } catch (error) { setMessage(error instanceof Error ? error.message : "Could not save."); }
   });
   return <div className="space-y-2 border-t border-zinc-100 pt-3 text-xs" aria-label={`Manual price check for ${brandName}`}>
-    <p className="text-zinc-700" data-testid="price-check-method">Price check method: <span className="font-semibold text-zinc-900">{manual ? "Manual" : "Codes"}</span>{canManage ? <> · <Link href={`/products/brands?brand=${brandId}&editBrand=${brandId}`} className="font-semibold text-emerald-900 underline">Edit brand</Link></> : null}</p>
+    {compact ? null : <p className="text-zinc-700" data-testid="price-check-method">Price check method: <span className="font-semibold text-zinc-900">{manual ? "Manual" : "Codes"}</span>{canManage ? <> · <Link href={`/products/brands?brand=${brandId}&editBrand=${brandId}`} className="font-semibold text-emerald-900 underline">Edit brand</Link></> : null}</p>}
     {manual ? <>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="font-semibold text-zinc-800">Manual price check</p>
         {canManage ? <button type="button" className={button} onClick={() => setOpen((value) => !value)}>New price list released</button> : null}
       </div>
-      {open && canManage ? <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); run(async () => { await releaseManualPriceListAction(brandId, date, note); setOpen(false); setNote(""); }, "Release recorded. Products show Price update due from that date."); }}>
+      {open && canManage ? <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); run(async () => { await releaseManualPriceListAction(brandId, date, note); setOpen(false); setNote(""); onChanged?.(); }, "Release recorded. Products show Price update due from that date."); }}>
         <label className="grid gap-1 font-semibold text-zinc-700">Effective date<input type="date" required value={date} onChange={(event) => setDate(event.target.value)} className={field} /></label>
         <label className="grid min-w-40 flex-1 gap-1 font-semibold text-zinc-700">Note<input type="text" maxLength={200} value={note} placeholder="For example: Colan 2026.1.15 list" onChange={(event) => setNote(event.target.value)} className={field} /></label>
         <button type="submit" disabled={pending} className={button}>{pending ? "Saving…" : "Save release"}</button>
       </form> : null}
-      {releases.length ? <ul className="space-y-0.5 text-zinc-600">{releases.slice(0, 5).map((release) => <li key={release.id}>{release.effectiveFrom}{release.note ? ` · ${release.note}` : ""}{release.createdByName ? ` · by ${release.createdByName}` : ""}{release.effectiveFrom > today ? " · not started yet" : ""}</li>)}{releases.length > 5 ? <li>and {releases.length - 5} older</li> : null}</ul> : <p className="text-zinc-500">No price list released yet.</p>}
+      {releases.length && !compact ? <ul className="space-y-0.5 text-zinc-600">{releases.slice(0, 5).map((release) => <li key={release.id}>{release.effectiveFrom}{release.note ? ` · ${release.note}` : ""}{release.createdByName ? ` · by ${release.createdByName}` : ""}{release.effectiveFrom > today ? " · not started yet" : ""}</li>)}{releases.length > 5 ? <li>and {releases.length - 5} older</li> : null}</ul> : <p className="text-zinc-500">No price list released yet.</p>}
     </> : null}
     {message ? <p role="status" className="text-zinc-700">{message}</p> : null}
   </div>;
