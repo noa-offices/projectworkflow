@@ -28,7 +28,7 @@ test("cards show name, code, status, method, origin, counts and the same actions
   assert.match(html, /Origin: China/); assert.match(html, /10 categories · 42 subcategories/);
   assert.match(html, />Open</); assert.match(html, />Edit</); assert.match(html, />Archive</); assert.match(html, />Restore</);
   assert.match(html, /2 of 2 brands/);
-  assert.match(html, /md:grid-cols-2/); assert.match(html, /2xl:grid-cols-3/); assert.match(html, /auto-rows-fr/);
+  assert.match(html, /@min-.640px.:grid-cols-2/); assert.match(html, /@min-.1200px.:grid-cols-3/); assert.match(html, /auto-rows-fr/);
 });
 
 test("the toolbar has a live search, the two filters, and no Search button", async () => {

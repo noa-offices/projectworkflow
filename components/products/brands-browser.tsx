@@ -9,6 +9,7 @@ import { PriceCheckModeLabel } from "./brand-price-check-method";
 
 export type BrandCardRow = BrandListRow & { mainCount: number; subCount: number; openHref: string; editHref: string };
 
+import { toolbarActions, toolbarRow, toolbarSearch, toolbarSelectWidth } from "./product-toolbar-styles";
 const control = "h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
 const focusRing = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800";
 const actionLink = `inline-flex h-8 items-center justify-center rounded-md border px-3 text-xs font-semibold transition ${focusRing}`;
@@ -93,19 +94,19 @@ export function BrandsBrowser({ rows, initialFilters, selectedBrandId, drawer, c
   const open = (id: string) => (event: { currentTarget: HTMLElement }) => { triggerRef.current = event.currentTarget; setActiveId(id); };
   const clearSearch = () => { setTyped(""); setFilters((current) => ({ ...current, q: "" })); };
 
-  return <div className="px-5 py-5 sm:px-8">
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+  return <div className="@container px-5 py-5 sm:px-8">
+    <div className={toolbarRow}>
       <label className="sr-only" htmlFor="brand-search">Search brands</label>
-      <input id="brand-search" type="search" value={typed} onChange={(event) => setTyped(event.target.value)} placeholder="Search by name, code or origin" className={`${control} w-full lg:max-w-sm`} />
+      <input id="brand-search" type="search" value={typed} onChange={(event) => setTyped(event.target.value)} placeholder="Search by name, code or origin" className={`${control} ${toolbarSearch}`} />
       <label className="sr-only" htmlFor="brand-status">Status</label>
-      <select id="brand-status" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value as BrandStatusFilter }))} className={control}>
+      <select id="brand-status" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value as BrandStatusFilter }))} className={`${control} ${toolbarSelectWidth}`}>
         <option value="all">All statuses</option><option value="active">Active</option><option value="archived">Archived</option>
       </select>
       <label className="sr-only" htmlFor="brand-method">Price check method</label>
-      <select id="brand-method" value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value as BrandMethodFilter }))} className={control}>
+      <select id="brand-method" value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value as BrandMethodFilter }))} className={`${control} ${toolbarSelectWidth}`}>
         <option value="all">All price check methods</option><option value="codes">Codes</option><option value="manual">Manual</option>
       </select>
-      <div className="flex flex-wrap items-center gap-3 lg:ml-auto">
+      <div className={toolbarActions}>
         <Link href={backHref} className={`inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 ${focusRing}`}>Back to products</Link>
         <Link href={addHref} className={`inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 ${focusRing}`}>+ Add Brand</Link>
       </div>
@@ -114,7 +115,7 @@ export function BrandsBrowser({ rows, initialFilters, selectedBrandId, drawer, c
     {message ? <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">{message}</p> : null}
     {addForm ? <div className="mt-4">{addForm}</div> : null}
 
-    {shown.length ? <div className="mt-4 grid auto-rows-fr gap-4 md:grid-cols-2 2xl:grid-cols-3">
+    {shown.length ? <div className="mt-4 grid auto-rows-fr gap-4 @min-[640px]:grid-cols-2 @min-[1200px]:grid-cols-3">
       {shown.map((brand) => <article key={brand.id} className={`flex h-full flex-col rounded-lg border bg-white p-4 shadow-sm ${brand.id === activeId ? "border-emerald-200 bg-emerald-50/70" : "border-zinc-200"}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">

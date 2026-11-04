@@ -38,10 +38,11 @@ export type MaterialLibraryBrand = { code: string | null; id: string; isActive: 
 type FormAction = (formData: FormData) => void | Promise<void>;
 type BrandRow = LibraryBrandRow<MaterialLibraryGroup, MaterialLibraryBrand>;
 
+import { cardGridColumns, toolbarActions, toolbarRow, toolbarSearch, toolbarSelectWidth } from "./product-toolbar-styles";
 const focusRing = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800";
 const fieldClass = `h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10 ${focusRing}`;
 const labelClass = "grid gap-1 text-xs font-semibold text-zinc-600";
-const gridClass = "grid auto-rows-fr gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
+const gridClass = cardGridColumns;
 const primaryButton = `inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 ${focusRing}`;
 const secondaryButton = `inline-flex h-8 items-center justify-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50 ${focusRing}`;
 const chipBase = `inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold ${focusRing}`;
@@ -277,7 +278,7 @@ export function MaterialLibraryOverview({
   const infoChip = `${chipBase} border-zinc-200 bg-white text-zinc-700`;
 
   return (
-    <div className="space-y-4">
+    <div className="@container space-y-4">
       <Link href="/products" className={`inline-block text-sm font-semibold text-emerald-900 transition hover:text-emerald-800 ${focusRing}`}>Back to products</Link>
 
       {openBrand && !showBrands ? (
@@ -300,27 +301,27 @@ export function MaterialLibraryOverview({
         </li>
       </ul>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[12rem] flex-1 sm:max-w-sm">
+      <div className={toolbarRow}>
+        <div className={toolbarSearch}>
           <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
           <input type="search" aria-label="Search groups" value={typed} onChange={(event) => setTyped(event.target.value)} placeholder="Search groups, materials, or keywords..." className={`${fieldClass} w-full pl-9 pr-3`} />
         </div>
-        <select aria-label="Brand" value={filters.brand} onChange={(event) => set({ brand: event.target.value, level: "brands" })} className={fieldClass}>
+        <select aria-label="Brand" value={filters.brand} onChange={(event) => set({ brand: event.target.value, level: "brands" })} className={`${fieldClass} ${toolbarSelectWidth}`}>
           <option value="">All brands</option>
           {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
         </select>
-        <select aria-label="Group / Category" value={filters.group} onChange={(event) => set({ group: event.target.value })} className={fieldClass}>
+        <select aria-label="Group / Category" value={filters.group} onChange={(event) => set({ group: event.target.value })} className={`${fieldClass} ${toolbarSelectWidth}`}>
           <option value="">All groups</option>
           {groupNames.map((name) => <option key={name} value={name}>{name}</option>)}
         </select>
-        <select aria-label="Status" value={filters.status} onChange={(event) => set({ status: event.target.value })} className={fieldClass}>
+        <select aria-label="Status" value={filters.status} onChange={(event) => set({ status: event.target.value })} className={`${fieldClass} ${toolbarSelectWidth}`}>
           <option value="">All status</option>
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
           <option value="needs_review">Needs review</option>
         </select>
         {showBrands ? null : (
-          <select aria-label="Sort by" value={filters.sort} onChange={(event) => set({ sort: event.target.value })} className={fieldClass}>
+          <select aria-label="Sort by" value={filters.sort} onChange={(event) => set({ sort: event.target.value })} className={`${fieldClass} ${toolbarSelectWidth}`}>
             <option value="updated">Recently updated</option>
             <option value="name">Name A-Z</option>
             <option value="materials">Most materials</option>
@@ -334,7 +335,7 @@ export function MaterialLibraryOverview({
           <button type="button" aria-label="Grid view" aria-pressed={filters.view === "grid"} onClick={() => set({ view: "grid" })} className={iconSegment(filters.view === "grid")}><LayoutGrid aria-hidden="true" className="h-4 w-4" /></button>
           <button type="button" aria-label="List view" aria-pressed={filters.view === "list"} onClick={() => set({ view: "list" })} className={iconSegment(filters.view === "list")}><List aria-hidden="true" className="h-4 w-4" /></button>
         </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className={toolbarActions}>
           <details className="relative" open={addOpen} onToggle={(event) => setAddOpen(event.currentTarget.open)}>
             <summary className={`inline-flex h-10 cursor-pointer list-none items-center justify-center rounded-md border border-emerald-900 bg-white px-4 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-50 ${focusRing}`}>+ Add Group</summary>
             <form action={createGroupAction} className="absolute right-0 z-30 mt-2 grid w-[min(420px,calc(100vw-3rem))] gap-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-lg">

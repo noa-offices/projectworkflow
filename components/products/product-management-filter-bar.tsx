@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Search } from "lucide-react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { useProductManagementFilters } from "@/components/products/product-management-template-results";
-import { toolbarControl, toolbarPrimaryButton, toolbarSecondaryButton } from "@/components/products/product-toolbar-styles";
+import { toolbarActions, toolbarContainer, toolbarControl, toolbarPrimaryButton, toolbarRow, toolbarSearch, toolbarSecondaryButton, toolbarSelectWidth } from "@/components/products/product-toolbar-styles";
 
 type ProductManagementFilterBarProps = {
   addBrandHref: string;
@@ -23,9 +23,9 @@ export function ProductManagementFilterBar({ addBrandHref, addTemplateHref, bran
   const { filteredRows, filters, mainOptions, resetFilters, setBrand, setMain, setPriceStatus, setSearch, setSub, subOptions, summary } = context;
 
   return (
-    <div className="grid gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[12rem] flex-1 sm:max-w-sm">
+    <div className={`${toolbarContainer} grid gap-3`}>
+      <div className={toolbarRow}>
+        <div className={toolbarSearch}>
           <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
           <input
             type="search"
@@ -37,25 +37,25 @@ export function ProductManagementFilterBar({ addBrandHref, addTemplateHref, bran
             className={`${toolbarControl} w-full pl-9 pr-3`}
           />
         </div>
-        <select aria-label="Brand" name="brand" value={filters.brand} onChange={(event) => setBrand(event.target.value)} className={toolbarControl}>
+        <select aria-label="Brand" name="brand" value={filters.brand} onChange={(event) => setBrand(event.target.value)} className={`${toolbarControl} ${toolbarSelectWidth}`}>
           <option value="">All brands</option>
           {brandOptions.map((brand) => (
             <option key={brand.id} value={brand.id}>{brand.name}</option>
           ))}
         </select>
-        <select aria-label="Main category" name="main" value={filters.main} onChange={(event) => setMain(event.target.value)} className={toolbarControl}>
+        <select aria-label="Main category" name="main" value={filters.main} onChange={(event) => setMain(event.target.value)} className={`${toolbarControl} ${toolbarSelectWidth}`}>
           <option value="">All main categories</option>
           {mainOptions.map((category) => (
             <option key={category.id} value={category.id}>{category.name}</option>
           ))}
         </select>
-        <select aria-label="Sub category" name="sub" value={filters.sub} onChange={(event) => setSub(event.target.value)} className={toolbarControl}>
+        <select aria-label="Sub category" name="sub" value={filters.sub} onChange={(event) => setSub(event.target.value)} className={`${toolbarControl} ${toolbarSelectWidth}`}>
           <option value="">All sub categories</option>
           {subOptions.map((category) => (
             <option key={category.id} value={category.id}>{category.name}</option>
           ))}
         </select>
-        <select aria-label="Price status" name="priceStatus" value={filters.priceStatus} onChange={(event) => setPriceStatus(event.target.value)} className={toolbarControl}>
+        <select aria-label="Price status" name="priceStatus" value={filters.priceStatus} onChange={(event) => setPriceStatus(event.target.value)} className={`${toolbarControl} ${toolbarSelectWidth}`}>
           <option value="">All price statuses</option>
           <option value="current">Price current</option>
           <option value="needs_check">Needs price check</option>
@@ -64,7 +64,7 @@ export function ProductManagementFilterBar({ addBrandHref, addTemplateHref, bran
           <option value="scheduled">New price list scheduled</option>
           <option value="checked">Price checked</option>
         </select>
-        <div className="flex flex-wrap items-center gap-2 lg:ml-auto">
+        <div className={toolbarActions}>
           {filteredRows.length ? (
             <form action={markVisibleAction}>
               {filteredRows.map((row) => (

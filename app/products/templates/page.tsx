@@ -2394,7 +2394,7 @@ async function ProductTemplatesContent({ searchParams, auth, bodyOnly }: Product
             ) : null}
 
             {libraryResultTemplates.length ? (
-              <section className="mt-6">
+              <section className="@container mt-6">
                 <div className={productCardGridClass}>
                   {libraryResultTemplates.map((template) => {
                     const categoryNames = [template.main_category_id ? categoryMap.get(template.main_category_id) : null, template.sub_category_id ? categoryMap.get(template.sub_category_id) : null];

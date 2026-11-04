@@ -52,7 +52,7 @@ test("the starting filters from the address apply, and an empty result has a mes
 
 test("cards use a responsive grid of 1, 2, 3 and 4 columns", async () => {
   const html = await render();
-  assert.match(html, /md:grid-cols-2/); assert.match(html, /xl:grid-cols-3/); assert.match(html, /2xl:grid-cols-4/);
+  assert.match(html, /@min-.576px.:grid-cols-2/); assert.match(html, /@min-.896px.:grid-cols-3/); assert.match(html, /@min-.1040px.:grid-cols-4/); assert.match(html, /@container/);
 });
 
 test("the page has padding around the import button and no Apply form or big tiles", () => {
