@@ -66,7 +66,7 @@ async function renderLockedView(role: string) {
       if (name === "@/app/quotations/actions") return actions;
       if (name === "next/link") return { default: "a" };
       if (name.endsWith("/project-file")) return { projectFileFromLayoutSettings: () => ({ orderNo: "CO-0001-001" }) };
-      if (name.endsWith("/quotation-lock")) return { quotationLockReason: () => "Project already created. Create a revision to make changes." };
+      if (name.endsWith("/quotation-lock")) return { quotationLockReason: () => "Project already created. Create a revision to make changes.", variationAppliedFromLayoutSettings: () => null };
       if (name.endsWith("/quotation-pdf-document-data")) return { loadQuotationPdfDocumentData: async () => ({}) };
       if (name.endsWith("/quotation-pdf-settings-store")) return { loadQuotationPdfSettings: async () => ({ success: true, settings: {} }) };
       if (name.endsWith("/quotation-pdf-settings")) return { DEFAULT_QUOTATION_PDF_SETTINGS: {} };

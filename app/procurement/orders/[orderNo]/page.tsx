@@ -8,6 +8,7 @@ import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping
 import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { loadProjectScope } from "@/lib/projects/project-scope";
+import { currentScopeNote } from "@/lib/projects/project-variations";
 import { type VendorCardItem, type VendorCardProps } from "@/components/procurement/vendor-card";
 import { type VendorDocRecord } from "@/lib/procurement/vendor-docs-action";
 import type { VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
@@ -212,6 +213,7 @@ export default async function ProcurementWorkspacePage({
           <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Procurement Workspace</p>
           <h2 className="mt-1 text-xl font-semibold text-zinc-950">{decodedOrderNo}</h2>
           <p className="mt-1 text-sm text-zinc-500">{entry.order.reference}</p>
+              {scope.appliedVariationNo ? <p className="mt-1 text-xs text-zinc-500">{currentScopeNote(scope.appliedVariations)}</p> : null}
         </div>
         <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-800">Procurement Active</span>
       </div>
@@ -222,7 +224,7 @@ export default async function ProcurementWorkspacePage({
         </div>
         <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
           <dt className="text-xs font-semibold uppercase text-zinc-500">Total Value</dt>
-          <dd className="mt-1 text-sm font-semibold text-zinc-950">{formatRuleMoney(entry.pricingRule, entry.order.currency, entry.order.total)}</dd>
+          <dd className="mt-1 text-sm font-semibold text-zinc-950">{formatRuleMoney(scope.pricingRule ?? entry.pricingRule, entry.order.currency, scope.contractTotal ?? entry.order.total)}</dd>
         </div>
         <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
           <dt className="text-xs font-semibold uppercase text-zinc-500">Vendor Groups</dt>
@@ -258,7 +260,7 @@ export default async function ProcurementWorkspacePage({
           orderNo={decodedOrderNo}
           reference={entry.order.reference}
           status="Procurement Active"
-          total={formatRuleMoney(entry.pricingRule, entry.order.currency, entry.order.total)}
+          total={formatRuleMoney(scope.pricingRule ?? entry.pricingRule, entry.order.currency, scope.contractTotal ?? entry.order.total)}
           vendorCards={vendorCards}
         />
 

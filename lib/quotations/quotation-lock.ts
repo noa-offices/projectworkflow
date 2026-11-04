@@ -3,11 +3,19 @@ import { projectFileFromLayoutSettings } from "./project-file";
 type Quotation = { layout_settings?: unknown; status?: unknown };
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
+/** Written by apply_project_variation when a variation reaches its Project. */
+export function variationAppliedFromLayoutSettings(layoutSettings: unknown) {
+  const applied = record(record(layoutSettings).variationApplied);
+  return typeof applied.orderNo === "string" && applied.orderNo.trim() && typeof applied.variationNo === "number" ? { orderNo: applied.orderNo, variationNo: applied.variationNo } : null;
+}
+
 export function isQuotationLocked(quotation: Quotation) {
-  return Boolean(projectFileFromLayoutSettings(quotation.layout_settings));
+  return Boolean(projectFileFromLayoutSettings(quotation.layout_settings) || variationAppliedFromLayoutSettings(quotation.layout_settings));
 }
 
 export function quotationLockReason(quotation: Quotation): string | null {
+  const applied = variationAppliedFromLayoutSettings(quotation.layout_settings);
+  if (applied) return `Locked: Variation V${applied.variationNo} was applied to Project ${applied.orderNo}.`;
   const project = projectFileFromLayoutSettings(quotation.layout_settings);
   return project ? `Locked: Project ${project.orderNo} was created from this quotation. Create a revision or a variation to change it.` : null;
 }
@@ -50,7 +58,7 @@ export function isLockedQuotationUpdateAllowed(quotation: Quotation, patch: Reco
 /** Only the new row loses execution metadata; the source quotation and its pricing rule are preserved. */
 export function unlockedQuotationCopyLayoutSettings(layoutSettings: unknown) {
   const copy = { ...record(layoutSettings) };
-  for (const key of ["projectFile", "clientApprovalDraft", "projectCompletedAt", "projectCancelledAt", "folderArchivedAt"]) delete copy[key];
+  for (const key of ["projectFile", "clientApprovalDraft", "projectCompletedAt", "projectCancelledAt", "folderArchivedAt", "variationApplied"]) delete copy[key];
   return copy;
 }
 

@@ -8,7 +8,7 @@ import { isQuotationLocked } from "./quotation-lock";
 import { latestPrimaryQuotationsByFolder, quotationSalesFolderKey } from "./sales-attribution";
 import { quotationApprovalDisplay } from "./approval-display";
 import {
-  applyInNextStepMessage, folderProjectOrderNo, formatVariationNumber, isOpenVariation, noSnapshotMessage, oneOpenVariationMessage, projectFileCardState, revisionRefusal,
+  applyFirstMessage, folderProjectOrderNo, formatVariationNumber, isOpenVariation, noSnapshotMessage, oneOpenVariationMessage, projectFileCardState, revisionRefusal,
   variationCreationDecision, variationLabel, variationLayoutSettings, variationLine, variationLinkFromLayoutSettings, variationNoFromQuotationNo, variationRowsFromSnapshot, withoutVariationLink,
   type VariationLink,
 } from "./project-variation";
@@ -65,7 +65,7 @@ test("the card: every row of the table", () => {
   const state = (id: string, status: string, layoutSettings: unknown, folderOrderNo: string | null) => projectFileCardState({ id, status, layoutSettings, folderOrderNo });
   assert.deepEqual(state("q", "client_confirmed", {}, null), { kind: "before_project" });
   assert.deepEqual(state("q", "client_confirmed", { projectFile: projectFile("q") }, "CO-0002-001"), { kind: "open_project", orderNo: "CO-0002-001" });
-  assert.deepEqual(state("v", "client_confirmed", { variationOf: { ...link, variationNo: 1 } }, "CO-0002-001"), { kind: "variation_confirmed", orderNo: "CO-0002-001", message: "Variation V1 is confirmed. Updating the Project comes in the next step." });
+  assert.deepEqual(state("v", "client_confirmed", { variationOf: { ...link, variationNo: 1 } }, "CO-0002-001"), { kind: "variation_confirmed", orderNo: "CO-0002-001", message: "Variation V1 is confirmed. Update the Project File to apply it." });
   const old = { kind: "folder_has_project", orderNo: "CO-0002-001", message: "This folder already has Project CO-0002-001. Use Create variation from the Project to change it." };
   assert.deepEqual(state("r2", "client_confirmed", {}, "CO-0002-001"), old);
   assert.deepEqual(state("r1", "draft", {}, "CO-0002-001"), old);
@@ -93,14 +93,13 @@ test("Create revision is refused for a locked quotation and for any quotation wh
   assert.equal(revisionRefusal({ layout_settings: {} }, null), null);
 });
 
-test("one open variation; V2 waits for Step C2; a rejected one frees the next number", () => {
+test("one open variation; a confirmed one must be applied first; a rejected one frees the next number", () => {
   const row = (quotation_no: string, status: string, is_active = true) => ({ quotation_no, status, is_active });
   assert.deepEqual(variationCreationDecision([]), { ok: true, variationNo: 1 });
   for (const status of ["draft", "internal_review", "revision_required", "ready_to_send", "sent_to_client", "on_hold"]) {
     assert.deepEqual(variationCreationDecision([row("QN-0002-001-V1", status)]), { ok: false, message: oneOpenVariationMessage(1) }, status);
   }
-  assert.deepEqual(variationCreationDecision([row("QN-0002-001-V1", "client_confirmed")]), { ok: false, message: applyInNextStepMessage });
-  assert.equal(applyInNextStepMessage, "Applying variations comes in the next step.");
+  assert.deepEqual(variationCreationDecision([row("QN-0002-001-V1", "client_confirmed")]), { ok: false, message: applyFirstMessage(1) });
   assert.deepEqual(variationCreationDecision([row("QN-0002-001-V1", "cancelled")]), { ok: true, variationNo: 2 });
   assert.deepEqual(variationCreationDecision([row("QN-0002-001-V1", "archived")]), { ok: true, variationNo: 2 });
   assert.deepEqual(variationCreationDecision([row("QN-0002-001-V1", "draft", false)]), { ok: true, variationNo: 2 });
@@ -157,7 +156,7 @@ test("a copy of a variation is an ordinary quotation", () => {
 // ---- The action ----
 
 const actions = read("app/quotations/actions.ts");
-const body = actions.slice(actions.indexOf("export async function createProjectVariation"), actions.indexOf("export async function deactivateQuotation"));
+const body = actions.slice(actions.indexOf("export async function createProjectVariation"), actions.indexOf("export async function applyProjectVariation"));
 
 test("the action reads the frozen copy, never live rows, and takes pricing, VAT and terms from it", () => {
   assert.match(body, /\.from\("project_snapshots"\)/);
@@ -166,7 +165,7 @@ test("the action reads the frozen copy, never live rows, and takes pricing, VAT 
   assert.doesNotMatch(body, /\.from\("quotation_(items|sections)"\)\s*\.select/);
   assert.equal(noSnapshotMessage, "This Project has no frozen copy yet, so a variation cannot be created.");
   assert.match(body, /if \(!snapshot\) redirectWithMessage\(redirectPath, noSnapshotMessage\)/);
-  for (const line of ["currency: snapshot.currency", "vat_percent: snapshot.vat_percent", "payment_terms: snapshot.payment_terms", "validity: snapshot.validity", "delivery_terms: snapshot.delivery_terms", "warranty_terms: snapshot.warranty_terms", "notes: snapshot.notes", "overall_discount_value: snapshot.overall_discount_value", "grand_total: snapshot.grand_total", 'status: "draft"', "variationLayoutSettings(snapshot.layout_settings, link, rows.idMap)"]) {
+  for (const line of ["currency: scopeSource.currency", "vat_percent: scopeSource.vat_percent", "payment_terms: scopeSource.payment_terms", "validity: scopeSource.validity", "delivery_terms: scopeSource.delivery_terms", "warranty_terms: scopeSource.warranty_terms", "notes: scopeSource.notes", "overall_discount_value: scopeSource.overall_discount_value", "grand_total: scopeSource.grand_total", 'status: "draft"', "variationLayoutSettings(scopeSource.layout_settings, link, rows.idMap)"]) {
     assert.ok(body.includes(line), line);
   }
   assert.ok(!body.includes("recalculateQuotationTotals"), "it starts at the approved totals");

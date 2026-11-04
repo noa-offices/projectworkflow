@@ -1,7 +1,7 @@
 import { clientApprovalDraftFromLayoutSettings } from "./client-approval-draft";
 import { projectFileFromLayoutSettings } from "./project-file";
 import { newEnquiryCopyLayoutSettings } from "./quotation-layout-copy";
-import { unlockedQuotationCopyLayoutSettings } from "./quotation-lock";
+import { unlockedQuotationCopyLayoutSettings, variationAppliedFromLayoutSettings } from "./quotation-lock";
 import { quotationRootBaseNo } from "../quotation-options";
 
 // Step C1 of variations: after a Project File exists, a change to the job is a variation inside the same Project, not a new revision.
@@ -74,14 +74,16 @@ export type ProjectFileCardState =
   | { kind: "open_project"; orderNo: string }
   | { kind: "variation_open"; orderNo: string; message: string }
   | { kind: "variation_confirmed"; orderNo: string; message: string }
+  | { kind: "variation_applied"; orderNo: string; message: string }
   | { kind: "folder_has_project"; orderNo: string; message: string };
 
 /** The Project File card. "before_project" is the only state that can offer Create Project File. */
 export function projectFileCardState(input: { id: string; status: string; layoutSettings: unknown; folderOrderNo: string | null }): ProjectFileCardState {
   const link = variationLinkFromLayoutSettings(input.layoutSettings);
   if (link) {
+    if (variationAppliedFromLayoutSettings(input.layoutSettings)) return { kind: "variation_applied", orderNo: link.orderNo, message: `Variation V${link.variationNo} is applied to Project ${link.orderNo}.` };
     return input.status === "client_confirmed"
-      ? { kind: "variation_confirmed", orderNo: link.orderNo, message: `Variation V${link.variationNo} is confirmed. Updating the Project comes in the next step.` }
+      ? { kind: "variation_confirmed", orderNo: link.orderNo, message: `Variation V${link.variationNo} is confirmed. Update the Project File to apply it.` }
       : { kind: "variation_open", orderNo: link.orderNo, message: `${variationLine(link)}.` };
   }
   const own = projectFileFromLayoutSettings(input.layoutSettings) ?? clientApprovalDraftFromLayoutSettings(input.layoutSettings)?.confirmedOrder ?? null;
@@ -95,9 +97,9 @@ export function projectFileCardState(input: { id: string; status: string; layout
 
 export const noSnapshotMessage = "This Project has no frozen copy yet, so a variation cannot be created.";
 export const oneOpenVariationMessage = (no: number) => `Variation V${no} is still open for this Project. Finish it before creating another.`;
-export const applyInNextStepMessage = "Applying variations comes in the next step.";
+export const applyFirstMessage = (no: number) => `Variation V${no} is confirmed. Update the Project File before creating another.`;
 
-export type ExistingVariation = { quotation_no: string | null; status: string; is_active: boolean };
+export type ExistingVariation = { quotation_no: string | null; status: string; is_active: boolean; layout_settings?: unknown };
 
 /** Open: not yet Client Confirmed, not rejected or cancelled, not archived. */
 export function isOpenVariation(variation: ExistingVariation) {
@@ -112,8 +114,9 @@ export function variationCreationDecision(existing: ExistingVariation[]): { ok: 
   });
   const open = numbered.find(isOpenVariation);
   if (open) return { ok: false, message: oneOpenVariationMessage(open.no) };
-  // Until Step C2 a confirmed variation cannot reach the Project, so a later one would be built on a scope that is out of date.
-  if (numbered.some((variation) => variation.is_active && variation.status === "client_confirmed")) return { ok: false, message: applyInNextStepMessage };
+  // A confirmed variation that has not reached the Project yet: a later one would be built on a scope that is out of date.
+  const waiting = numbered.find((variation) => variation.is_active && variation.status === "client_confirmed" && !variationAppliedFromLayoutSettings(variation.layout_settings));
+  if (waiting) return { ok: false, message: applyFirstMessage(waiting.no) };
   return { ok: true, variationNo: Math.max(0, ...numbered.map((variation) => variation.no)) + 1 };
 }
 
@@ -155,8 +158,22 @@ export function variationLayoutSettings(snapshotLayoutSettings: unknown, link: V
 /** A copy of a variation to another folder or a new enquiry is an ordinary quotation. */
 export function withoutVariationLink(layoutSettings: unknown) {
   const settings = record(layoutSettings);
-  if (!settings || !("variationOf" in settings)) return layoutSettings;
-  const { variationOf: _link, ...rest } = settings;
-  void _link;
+  if (!settings || !("variationOf" in settings || "variationApplied" in settings)) return layoutSettings;
+  const { variationOf: _link, variationApplied: _applied, ...rest } = settings;
+  void _link; void _applied;
   return rest;
+}
+
+/** The words apply_project_variation raises, as a person would read them. */
+export function applyVariationErrorMessage(error: { code?: string | null; message?: string | null }) {
+  const text = error.message ?? "";
+  if (error.code === "PGRST202" || error.code === "42883") return "Updating the Project File is not available yet. The database step has not been applied.";
+  if (error.code === "42501" || text.includes("insufficient_privilege")) return "You do not have permission to update this Project File.";
+  if (text.includes("not Client Confirmed")) return "This variation is not Client Confirmed yet.";
+  if (text.includes("out of order")) return "An earlier variation of this Project must be applied, rejected or cancelled first.";
+  if (text.includes("cancelled or completed")) return "This Project is cancelled or completed, so it cannot be updated.";
+  if (text.includes("do not add up")) return "This variation's items do not add up to its total. Open it, save it again and retry.";
+  if (text.includes("no frozen copy")) return noSnapshotMessage;
+  if (text.includes("not a variation")) return "This quotation is not a variation.";
+  return "The Project File could not be updated. Nothing was changed.";
 }

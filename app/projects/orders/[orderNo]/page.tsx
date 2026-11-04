@@ -22,6 +22,8 @@ import { ReopenProjectButton } from "@/components/projects/reopen-project-button
 import { NotifyButton } from "@/components/notifications/notify-button";
 import { ProjectFileResponsiveLayout } from "@/components/projects/project-file-responsive-layout";
 import { loadProjectScope } from "@/lib/projects/project-scope";
+import { ProjectVariationsPanel } from "@/components/projects/project-variations-panel";
+import { currentScopeNote, loadConfirmedVariations, vendorsWithChangedLines } from "@/lib/projects/project-variations";
 import { ProjectVendorOperations, type ProjectVendorOperationsSummary } from "@/components/projects/project-vendor-operations";
 import type { VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 import { ClientPaymentNoAccess, ClientPaymentPanel } from "@/components/projects/client-payment-panel";
@@ -151,6 +153,8 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
   const items = scope.items;
   // Totals and terms come from the copy. The lifecycle flags (completed, cancelled) stay on the live quotation, where they are written.
   const commercial = { ...entry.quotationRow, ...scope.header };
+  // The revised contract once variations are applied. Payments keep following the original total (entry.order.total) until the next step.
+  const revisedContractTotal = scope.contractTotal ?? entry.order.total;
   const pricingRule = scope.pricingRule ?? readPricingRule(entry.quotationRow.layout_settings);
 
   const procurementVendorGroups = buildEffectiveDocumentGroups(items ?? []);
@@ -383,6 +387,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
         {scope.source === "live" && scope.fallback === "no_snapshot" ? (
           <p className="mt-2 text-xs text-zinc-500">Older Project: no frozen copy yet</p>
         ) : null}
+        {scope.appliedVariationNo ? <p className="mt-2 text-xs text-zinc-500">{currentScopeNote(scope.appliedVariations)}</p> : null}
       </div>
       <div className="min-w-0 xl:hidden">
         {numberedItems.length === 0 ? (
@@ -647,7 +652,24 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
     </ProjectDocumentsDirectory>
   );
 
+  const canApplyVariation = profile?.role === "system_owner" || profile?.role === "admin_manager" || profile?.role === "sales_designer" || profile?.role === "sales_coordinator" || profile?.role === "designer";
+  const confirmedVariations = canApplyVariation && entry.draft === null && entry.order.quotationNo ? await loadConfirmedVariations(supabase, entry.order.quotationNo, entry.order.clientId) : [];
+  const variationsPanel = scope.source === "snapshot" && (scope.appliedVariations.length > 0 || confirmedVariations.length > 0) ? (
+    <ProjectVariationsPanel
+      applied={scope.appliedVariations}
+      confirmed={confirmedVariations}
+      contractCurrency={entry.order.currency}
+      originalContractTotal={scope.originalContractTotal ?? entry.order.total}
+      originalPricingRule={readPricingRule(entry.quotationRow.layout_settings)}
+      returnTo={`/projects/orders/${encodeURIComponent(decodedOrderNo)}`}
+      revisedContractTotal={revisedContractTotal}
+      vendorWarnings={vendorsWithChangedLines(scope.appliedVariations, new Set((rawVendorProgress ?? []).map((row) => row.vendor_key)))}
+    />
+  ) : null;
+
   const overviewHighlights = (
+    <>
+    {variationsPanel}
     <section className="mt-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm xl:p-5">
       <h2 className="text-sm font-semibold text-zinc-950">Operational Summary</h2>
       <dl className="mt-3 grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2 xl:grid-cols-3">
@@ -673,11 +695,19 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
       </dl>
       <ProcurementReadinessSummary readiness={procurementReadiness} />
     </section>
+    </>
   );
 
   const vendorsSection = <ProjectVendorOperations mode="vendors" orderNo={decodedOrderNo} vendors={vendorOperations} />;
   const scheduleSection = <ProjectVendorOperations mode="schedule" orderNo={decodedOrderNo} vendors={vendorOperations} />;
+  const paymentsNote = scope.appliedVariationNo ? (
+    <p className="mb-3 text-xs text-zinc-500">
+      The payment schedule still follows the original contract total ({formatRuleMoney(readPricingRule(entry.quotationRow.layout_settings), entry.order.currency, entry.order.total)}). Updating it for variations comes in the next step.
+    </p>
+  ) : null;
   const paymentsSection = mayViewClientPayments ? (
+    <>
+    {paymentsNote}
     <ClientPaymentPanel
       schedule={clientPaymentSchedule}
       installments={clientPaymentInstallments}
@@ -687,12 +717,13 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
       orderNo={decodedOrderNo}
       contractTotal={String(entry.order.total)}
       currency={entry.order.currency}
-      paymentTerms={commercial.payment_terms}
+      paymentTerms={(scope.originalHeader ?? commercial).payment_terms}
       scheduleReadOnly={Boolean(completedAt || cancelledAt)}
       receiptsAllowed={!cancelledAt}
       canVoid={canVoidClientPaymentReceipts(profile?.role)}
       canManageAttachments={canManageClientPaymentReceiptAttachments(profile?.role)}
     />
+    </>
   ) : <ClientPaymentNoAccess />;
 
   const projectActions = (
@@ -787,7 +818,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
             sourceFolder={entry.order.folderNo}
             status="Completed"
             schedule={scheduleSection}
-            total={formatRuleMoney(pricingRule, entry.order.currency, entry.order.total)}
+            total={formatRuleMoney(pricingRule, entry.order.currency, revisedContractTotal)}
             vendors={vendorsSection}
             payments={paymentsSection}
           />
@@ -836,7 +867,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
             sourceFolder={entry.order.folderNo}
             status="Cancelled"
             schedule={scheduleSection}
-            total={formatRuleMoney(pricingRule, entry.order.currency, entry.order.total)}
+            total={formatRuleMoney(pricingRule, entry.order.currency, revisedContractTotal)}
             vendors={vendorsSection}
             payments={paymentsSection}
           />
@@ -880,7 +911,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
           sourceFolder={entry.order.folderNo}
           status="Confirmed"
           schedule={scheduleSection}
-          total={formatRuleMoney(pricingRule, entry.order.currency, entry.order.total)}
+          total={formatRuleMoney(pricingRule, entry.order.currency, revisedContractTotal)}
           vendors={vendorsSection}
           payments={paymentsSection}
         />
