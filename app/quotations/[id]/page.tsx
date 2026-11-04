@@ -23,7 +23,8 @@ import {
   quotationStatusBadgeClassName,
   quotationStatusLabel,
 } from "@/lib/quotation-status";
-import { formatRuleMoney, readPricingRule, roundExact2 } from "@/lib/quotation-pricing";
+import { formatRuleMoney, readPricingRule } from "@/lib/quotation-pricing";
+import { displayedTotals, formatRoundingDifference, roundingAdjustmentFromLayout } from "@/lib/quotations/quotation-total-display";
 import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
@@ -693,16 +694,6 @@ function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
   );
 }
 
-function overallDiscountAmount(quotation: Quotation) {
-  const itemNetTotal = Math.max(quotation.subtotal - quotation.discount_total, 0);
-  const amount = quotation.overall_discount_type === "percent"
-    ? (itemNetTotal * quotation.overall_discount_value) / 100
-    : quotation.overall_discount_value;
-  return readPricingRule(quotation.layout_settings) === "whole_aed_v1"
-    ? roundExact2(Math.min(Math.max(amount, 0), itemNetTotal))
-    : amount;
-}
-
 function money(layoutSettings: unknown, currency: string, value: number) {
   return formatRuleMoney(readPricingRule(layoutSettings), currency, value);
 }
@@ -1030,6 +1021,7 @@ export default async function QuotationDetailPage({
   if (quotationError || !quotation) {
     notFound();
   }
+  const summaryTotals = displayedTotals(readPricingRule(quotation.layout_settings), quotation, roundingAdjustmentFromLayout(quotation.layout_settings));
 
   const { data: client } = await supabase
     .from("clients")
@@ -2088,15 +2080,25 @@ export default async function QuotationDetailPage({
                   <span className="text-zinc-500">Item Discount</span>
                   <span className="font-medium text-red-700">{money(quotation.layout_settings, quotation.currency, quotation.discount_total)}</span>
                 </div>
-                {Number(overallDiscountAmount(quotation) || 0) > 0 ? (
+                {summaryTotals.extraDiscount > 0 ? (
                   <div className="flex justify-between gap-4">
                     <span className="text-zinc-500">Extra Discount</span>
-                    <span className="font-medium text-zinc-950">{money(quotation.layout_settings, quotation.currency, overallDiscountAmount(quotation))}</span>
+                    <span className="font-medium text-zinc-950">{money(quotation.layout_settings, quotation.currency, summaryTotals.extraDiscount)}</span>
                   </div>
                 ) : null}
                 {canManageRecords ? (
                   <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
                     <ExtraDiscountForm quotation={quotation} returnTo={`/quotations/${quotation.id}`} compact />
+                  </div>
+                ) : null}
+                <div className="flex justify-between gap-4 rounded-md bg-emerald-50 px-3 py-2 font-semibold text-zinc-950">
+                  <span>Total after discount</span>
+                  <span>{money(quotation.layout_settings, quotation.currency, summaryTotals.totalAfterDiscount)}</span>
+                </div>
+                {summaryTotals.rounding !== 0 ? (
+                  <div className="flex justify-between gap-4 text-xs text-zinc-600">
+                    <span>Rounding</span>
+                    <span>{formatRoundingDifference(readPricingRule(quotation.layout_settings), quotation.currency, summaryTotals.rounding)}</span>
                   </div>
                 ) : null}
                 <div className="flex justify-between gap-4">

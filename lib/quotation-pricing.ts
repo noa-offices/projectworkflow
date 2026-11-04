@@ -66,10 +66,12 @@ export function ruleExactAmount(rule: PricingRule | null | undefined, value: unk
   return isWholeAed(rule) ? roundExact2(value) : quotationMoneyValue(value);
 }
 export function formatRuleMoney(rule: PricingRule | null | undefined, currency: string | null | undefined, value: unknown) {
-  return isWholeAed(rule) ? formatMoney(currency, roundExact2(value), { maximumFractionDigits: 2, minimumFractionDigits: 0 }) : formatQuotationMoney(currency, value);
+  const exact = roundExact2(value);
+  return isWholeAed(rule) ? formatMoney(currency, exact, { maximumFractionDigits: 2, minimumFractionDigits: Number.isInteger(exact) ? 0 : 2 }) : formatQuotationMoney(currency, value);
 }
 export function ruleMoneyCell(rule: PricingRule | null | undefined, value: unknown) {
-  return isWholeAed(rule) ? roundExact2(value).toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 0 }) : quotationMoneyCell(value);
+  const exact = roundExact2(value);
+  return isWholeAed(rule) ? exact.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: Number.isInteger(exact) ? 0 : 2 }) : quotationMoneyCell(value);
 }
 
 export type LinePricing = { unitPrice: number; discountValue: number; discountAmount: number; netPrice: number; netTotal: number };

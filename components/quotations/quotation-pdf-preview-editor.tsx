@@ -679,6 +679,13 @@ export function QuotationPdfPreviewEditor({
                     <ToggleRow checked={settings.showFullHeaderOnlyFirstPage} label="Full header only on first page" onChange={(checked) => updateSettings({ showFullHeaderOnlyFirstPage: checked })} />
                     <ToggleRow checked={settings.keepSectionTogether} label="Keep section together" onChange={(checked) => updateSettings({ keepSectionTogether: checked })} />
                     <ToggleRow checked={settings.startEachSectionOnNewPage} label="Start each section on a new page" onChange={(checked) => updateSettings({ startEachSectionOnNewPage: checked })} />
+                    <div className="mt-2 border-t border-zinc-200 pt-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">PDF totals</p>
+                      <div className="grid gap-2">
+                        <ToggleRow checked={settings.showItemDiscount} label="Show item discount" onChange={(checked) => updateSettings({ showItemDiscount: checked })} />
+                        <ToggleRow checked={settings.showExtraDiscount} label="Show extra discount" onChange={(checked) => updateSettings({ showExtraDiscount: checked })} />
+                      </div>
+                    </div>
                   </div>
                   ) : null}
 
