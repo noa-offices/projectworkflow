@@ -4,6 +4,7 @@ import { requireActiveUser } from "@/lib/auth";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createAuditLog } from "@/lib/audit-log";
 import { revalidatePath } from "next/cache";
+import { isLockedQuotationUpdateAllowed, quotationLockReason } from "@/lib/quotations/quotation-lock";
 
 export async function markProjectCompletedAction(
   quotationId: string,
@@ -32,6 +33,9 @@ export async function markProjectCompletedAction(
     projectCompletedAt: new Date().toISOString(),
   };
 
+  if (!isLockedQuotationUpdateAllowed(quotation, { layout_settings: updated })) {
+    return { ok: false, error: quotationLockReason(quotation) ?? "This quotation cannot be changed." };
+  }
   const { error: updateError } = await supabase
     .from("quotations")
     .update({ layout_settings: updated })

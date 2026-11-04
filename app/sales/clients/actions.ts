@@ -3,6 +3,7 @@
 import { requireActiveUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
+import { quotationLockReason } from "@/lib/quotations/quotation-lock";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -125,6 +126,16 @@ export async function mergeClients(primaryId: string, duplicateId: string): Prom
 
   const { client, error: initErr } = adminClient();
   if (!client) return { ok: false, error: initErr! };
+
+  const { data: quotations, error: readError, count } = await client
+    .from("quotations")
+    .select("layout_settings", { count: "exact" })
+    .eq("client_id", duplicateId);
+  if (readError || !quotations || count !== quotations.length) return { ok: false, error: "Could not verify all quotation locks before merging clients." };
+  for (const quotation of quotations) {
+    const lockReason = quotationLockReason(quotation);
+    if (lockReason) return { ok: false, error: lockReason };
+  }
 
   const { error: qErr } = await client
     .from("quotations")

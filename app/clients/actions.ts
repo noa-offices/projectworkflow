@@ -10,6 +10,7 @@ import { loadProjectQuotationDependencyCount } from "@/lib/clients/project-depen
 import { requireRecordsManager } from "@/lib/auth";
 import { createAdminClient as createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { quotationLockReason } from "@/lib/quotations/quotation-lock";
 
 const projectStatuses = new Set(["active", "on_hold", "completed", "cancelled"]);
 type ClientsMessageTone = "success" | "error" | "warning";
@@ -480,11 +481,11 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
 
   const adminSupabase = adminClientResult.client;
 
-  const { data: quotations, error: quotationsError } = await adminSupabase
+  const { data: quotations, error: quotationsError, count: quotationCount } = await adminSupabase
     .from("quotations")
-    .select("id")
+    .select("id,layout_settings", { count: "exact" })
     .eq("project_id", id)
-    .returns<Array<{ id: string }>>();
+    .returns<Array<{ id: string; layout_settings: unknown }>>();
 
   if (quotationsError) {
     const safeReason = safeSupabaseErrorReason(quotationsError);
@@ -496,7 +497,14 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
     redirectToClients(`Linked quotations could not be loaded for deletion: ${safeReason}`, { tab: "archive" }, "error");
   }
 
-  const quotationIds = (quotations ?? []).map((quotation) => quotation.id);
+  if (!quotations || quotationCount !== quotations.length) {
+    redirectToClients("Could not verify all quotation locks before deleting this project.", { tab: "archive" }, "error");
+  }
+  for (const quotation of quotations) {
+    const lockReason = quotationLockReason(quotation);
+    if (lockReason) redirectToClients(lockReason, { tab: "archive" }, "error");
+  }
+  const quotationIds = quotations.map((quotation) => quotation.id);
 
   await deleteQuotationsByIds(quotationIds, id, adminSupabase);
 

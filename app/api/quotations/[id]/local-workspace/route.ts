@@ -3,10 +3,11 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { validateWorkspace } from "@/lib/local/quotation-publication";
 import { preparePublication } from "@/lib/local/quotation-publication-payload";
+import { quotationLockReason } from "@/lib/quotations/quotation-lock";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function failure(error: string, code: string, status: number) {
-  return NextResponse.json({ ok: false, error, code }, { status, headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json({ ok: false, error, code, ...(code === "LOCKED" ? { lockReason: error } : {}) }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
 async function authorizePublisher(supabase: Awaited<ReturnType<typeof createClient>>) {
@@ -28,9 +29,11 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const supabase = await createClient();
   const auth = await authorizePublisher(supabase);
   if ("failed" in auth) return auth.failed;
-  const { data, error } = await supabase.from("quotations").select("workspace_version").eq("id", id).maybeSingle();
+  const { data, error } = await supabase.from("quotations").select("workspace_version,layout_settings").eq("id", id).maybeSingle();
   if (error) return failure("Could not read the quotation version.", "UNAVAILABLE", 503);
   if (!data?.workspace_version) return failure("Quotation not found.", "NOT_FOUND", 404);
+  const lockReason = quotationLockReason(data);
+  if (lockReason) return failure(lockReason, "LOCKED", 409);
   return NextResponse.json({ ok: true, version: data.workspace_version }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -49,6 +52,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return failure(error instanceof Error ? error.message : "Invalid workspace.", "VALIDATION", 400);
   }
   try {
+    // Read server state: a local draft cannot establish whether approval locked it.
+    const { data: quotation, error: readError } = await supabase.from("quotations").select("layout_settings").eq("id", id).maybeSingle();
+    if (readError) return failure("Could not verify the quotation lock.", "UNAVAILABLE", 503);
+    if (!quotation) return failure("Quotation not found.", "NOT_FOUND", 404);
+    const lockReason = quotationLockReason(quotation);
+    if (lockReason) return failure(lockReason, "LOCKED", 409);
     const { data, error } = await supabase.rpc("publish_local_builder_workspace", {
       p_id: id, p_base_version: body.baseVersion, p_mutation_id: body.mutationId,
       p_payload: preparePublication(body.workspace, user.id),

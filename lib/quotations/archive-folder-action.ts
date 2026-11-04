@@ -3,6 +3,7 @@
 import { requireQuotationActionUser } from "@/lib/auth";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { isLockedQuotationUpdateAllowed, quotationLockReason } from "@/lib/quotations/quotation-lock";
 
 export async function archiveFolderAction(
   quotationId: string,
@@ -32,6 +33,9 @@ export async function archiveFolderAction(
     updated = rest;
   }
 
+  if (!isLockedQuotationUpdateAllowed(quotation, { layout_settings: updated })) {
+    return { ok: false, error: quotationLockReason(quotation) ?? "This quotation cannot be changed." };
+  }
   const { error: updateError } = await supabase
     .from("quotations")
     .update({ layout_settings: updated })

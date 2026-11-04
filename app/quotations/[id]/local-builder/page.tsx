@@ -1,5 +1,7 @@
 import { loadBrandPriceAnnouncements, type AnnouncementView } from "@/lib/products/price-announcements";
 import { notFound } from "next/navigation";
+import { LockedQuotationView } from "@/components/quotations/quotation-locked-view";
+import { isQuotationLocked } from "@/lib/quotations/quotation-lock";
 import { DocumentSetupDialog } from "@/components/quotations/document-setup-dialog";
 import { LocalQuotationBuilder } from "@/components/quotations/local-quotation-builder";
 import { OpportunityQuotationLinkSync } from "@/components/quotations/opportunity-quotation-link-sync";
@@ -92,6 +94,9 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
     .single<Quotation>();
 
   if (quotationError || !quotation) notFound();
+  if (isQuotationLocked(quotation)) {
+    return <LockedQuotationView quotation={quotation} role={profile?.role} />;
+  }
 
   const projectId = validUuidOrNull(quotation.project_id);
   const [

@@ -7,6 +7,7 @@ import { requireQuotationActionUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { quotationLockReason } from "@/lib/quotations/quotation-lock";
 
 // Structural interface matching the Supabase StorageFileApi subset we use.
 // Using as unknown as StorageBucketApi below because the Supabase type
@@ -67,12 +68,14 @@ export async function deleteFolderAction(
     .in("id", quotationIds)
     .returns<Array<{ id: string; layout_settings: Record<string, unknown> | null }>>();
 
-  if (fetchError || !quotations?.length) {
+  if (fetchError || !quotations?.length || quotations.length !== new Set(quotationIds).size) {
     return { ok: false, error: "Quotations not found." };
   }
 
   // ── 2. Server-side eligibility re-check ──────────────────────────────────
   for (const q of quotations) {
+    const lockReason = quotationLockReason(q);
+    if (lockReason) return { ok: false, error: lockReason };
     const hasProjectFile =
       Boolean(projectFileFromLayoutSettings(q.layout_settings)) ||
       Boolean(clientApprovalDraftFromLayoutSettings(q.layout_settings)?.confirmedOrder);

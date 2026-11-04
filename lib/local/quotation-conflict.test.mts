@@ -157,7 +157,7 @@ test("19 the version probe uses the same permission gate and RLS-scoped read as 
   const route = readFileSync("app/api/quotations/[id]/local-workspace/route.ts", "utf8");
   assert.equal((route.match(/authorizePublisher\(supabase\)/g) ?? []).length, 2);
   assert.match(route, /export async function GET/);
-  assert.match(route, /from\("quotations"\)\.select\("workspace_version"\)/);
+  assert.match(route, /from\("quotations"\)\.select\("workspace_version,layout_settings"\)/); // the version probe also reads the lock
   assert.doesNotMatch(route, /force|ignoreVersion|overwrite/i);
   assert.match(route, /publish_local_builder_workspace/);
 });
