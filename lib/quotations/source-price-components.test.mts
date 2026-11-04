@@ -55,8 +55,8 @@ test("11-13: component lines never call quotationMoneyValue; the final quotation
   const componentRegion = selector.slice(start, end);
   assert.equal(componentRegion.includes("quotationMoneyValue("), false, "component summaries use raw source amounts");
   assert.ok(componentRegion.includes("roundSourceAmount("));
-  assert.ok(selector.includes("const previewUnitPriceWithConversion = quotationMoneyValue(rawPreviewUnitPriceWithConversion);"));
-  assert.ok(actions.includes("const unitPrice = quotationMoneyValue(rawUnitPrice);"));
+  assert.ok(selector.includes("const previewUnitPriceWithConversion = ruleConvertedPrice(pricingRule, rawPreviewUnitPriceWithConversion);"));
+  assert.ok(actions.includes("const unitPrice = ruleConvertedPrice(pricingRule, rawUnitPrice);"));
   assert.equal(QUOTE_ROUNDING_STEP, 5);
   assert.equal(quotationMoneyValue(334), 335);
   assert.equal(quotationMoneyValue(1220), 1220);
@@ -97,8 +97,8 @@ test("20-22: snapshots keep raw component prices; recompute sums raw amounts, th
   const raw = 334 + 754 + 52 + 80;
   assert.equal(quotationMoneyValue(raw), 1220);
   assert.equal(quotationMoneyValue(334) + quotationMoneyValue(754) + quotationMoneyValue(52) + quotationMoneyValue(80), 1225, "rounding lines first would inflate the total");
-  assert.ok(actions.includes("price: quotationMoneyValue(sourcePrice + systemTotal + componentTotal + accessoryTotal)"));
-  assert.ok(builder.includes("sourcePrice: quotationMoneyValue(sourcePrice + systemTotal + componentOptionsTotal + accessoryTotal)"));
+  assert.ok(actions.includes("price: ruleConvertedPrice(pricingRule, sourcePrice + systemTotal + componentTotal + accessoryTotal)"));
+  assert.ok(builder.includes("sourcePrice: ruleConvertedPrice(pricingRule, sourcePrice + systemTotal + componentOptionsTotal + accessoryTotal)"));
 });
 
 // ---- regression ----

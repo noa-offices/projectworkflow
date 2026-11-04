@@ -102,3 +102,27 @@ test("the create action gives a new quotation the new rule, and a copy uses the 
   assert.match(actions, /: source\.layout_settings \?\? \{\},/);
   assert.match(actions, /total: ruleExactAmount\(readPricingRule\(quotation\.layout_settings\), quotation\.grand_total \?\? 0\)/);
 });
+
+test("the actions use the quotation's rule; whole AED change detection and the audit log compare exact numbers", () => {
+  const actions = readFileSync(new URL("../app/quotations/actions.ts", import.meta.url), "utf8");
+  assert.ok(actions.includes("return (value: unknown) => ruleExactAmount(pricingRule, value);"));
+  assert.equal(actions.split("const quotationMoneyValue = priceHistoryValue(pricingRule);").length - 1, 2); // change detection and the writer
+  const callers = actions.split("await insertQuotationItemPriceHistory({").slice(1);
+  assert.equal(callers.length, 5);
+  for (const caller of callers) assert.match(caller.slice(0, 60), /^\s+pricingRule: /); // every caller passes the rule
+  assert.notEqual(ruleExactAmount("whole_aed_v1", 1401), ruleExactAmount("whole_aed_v1", 1403));
+  assert.equal(ruleExactAmount(undefined, 1401), ruleExactAmount(undefined, 1403)); // legacy reads them as the same, as today
+  assert.ok(actions.includes('readPricingRule(quotation.layout_settings) === "whole_aed_v1"')); // recalculateQuotationTotals
+});
+
+test("the builders pass the rule to the Product Library, the row editor and the manual conversion", () => {
+  const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const local = read("../components/quotations/local-quotation-builder.tsx"), shared = read("../app/quotations/[id]/builder/page.tsx");
+  assert.equal(local.split("pricingRule={readPricingRule(workspace.layout_settings)}").length - 1, 2);
+  assert.ok(shared.includes("const pricingRule = readPricingRule(quotation.layout_settings);"));
+  assert.ok(shared.includes("<ProductLibrarySelector\n          pricingRule={readPricingRule(quotation.layout_settings)}"));
+  assert.equal(shared.split("<QuotationRowEditorProvider\n").length - 1, shared.split("<QuotationRowEditorProvider\n                              pricingRule={item.pricing_rule}").length - 1);
+  assert.ok(shared.includes("pricingRule={manualItem.pricing_rule}"));
+  assert.ok(shared.includes('step={item.pricing_rule === "whole_aed_v1" ? "any" : "5"}')); // a typed whole-AED price is not forced to a multiple of 5
+  assert.ok(local.includes("net selling price to the nearest step. The saved unit price"));
+});

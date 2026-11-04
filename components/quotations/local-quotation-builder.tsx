@@ -5440,7 +5440,7 @@ export function LocalQuotationBuilder({
                   </button>
                 </div>
                 <p className="text-[11px] leading-5 text-zinc-500">
-                  Rounding is applied only when you click Apply. It rounds each line's net selling price to the nearest step. The saved unit price, discount, quantity, source price and exchange details are kept.
+                  Rounding is applied only when you click Apply. It rounds each line&apos;s net selling price to the nearest step. The saved unit price, discount, quantity, source price and exchange details are kept.
                 </p>
               </div>
             </div>

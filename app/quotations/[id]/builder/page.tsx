@@ -2108,6 +2108,7 @@ function RowActionPanel({
     <div className="border border-zinc-300 bg-zinc-50 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <ProductLibrarySelector
+          pricingRule={readPricingRule(quotation.layout_settings)}
           brands={brands}
           canManageProductLibrary={canManageProductLibrary}
           categories={categories}
