@@ -473,23 +473,28 @@ function priceCheckState(template: ProductLibraryTemplate) {
 
 function PriceCheckBadge({
   compact = false,
+  inline = false,
   onSupplierStatus,
   template,
 }: {
   compact?: boolean;
+  /** One-row layout for the sticky product header: badge, note and button side by side, the note cut to one line. Default look is unchanged. */
+  inline?: boolean;
   onSupplierStatus?: (templateId: string, presentation: ProductLibraryTemplate["supplier_family_price_presentation"] | null) => void;
   template: ProductLibraryTemplate;
 }) {
   const supplierPresentation = template.supplier_family_price_presentation ?? null;
+  // Inline: one wrapping row. Child buttons lose their top margin, and helper texts become 12px.
+  const wrapperClass = inline ? "flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 [&_button]:mt-0 [&_span.block]:text-xs [&_span.block]:leading-4" : compact ? "mt-1 block" : "grid gap-1";
   if (template.supplier_family_price_loading) {
     return (
-      <span className={compact ? "mt-1 block" : "grid gap-1"}>
+      <span className={wrapperClass}>
         <span className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-bold text-zinc-500">Checking price status…</span>
       </span>
     );
   }
   if (template.supplier_family_price_load_state === "unavailable") {
-    return <span className={compact ? "mt-1 block" : "grid gap-1"}><span title="Reload the page to try again" className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-bold text-zinc-700">Supplier price status unavailable</span>{!compact ? <span className="block text-[11px] font-medium text-zinc-500">Reload the page to try again</span> : null}</span>;
+    return <span className={wrapperClass}><span title="Reload the page to try again" className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-bold text-zinc-700">Supplier price status unavailable</span>{!compact && !inline ? <span className="block text-[11px] font-medium text-zinc-500">Reload the page to try again</span> : null}</span>;
   }
   const status = priceCheckState(template);
   // Same state as before, in plain words. Selecting a Product is never blocked by its health.
@@ -507,9 +512,9 @@ function PriceCheckBadge({
           : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-900";
 
   return (
-    <span className={compact ? "mt-1 block" : "grid gap-1"}>
-      <span className={badgeClass} title={supplierPresentation?.detail}>{health.label}</span>
-      {!compact ? supplierPresentation?.actionHref ? <SupplierCoverageAction brandId={template.brand_id} templateId={template.id} templateName={templateSelectionName(template)} detail={supplierPresentation.detail} /> : <span className="block text-[11px] font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : null}
+    <span className={wrapperClass}>
+      <span className={inline ? badgeClass.replace("text-[10px]", "text-xs") : badgeClass} title={supplierPresentation?.detail}>{health.label}</span>
+      {!compact ? supplierPresentation?.actionHref ? <SupplierCoverageAction brandId={template.brand_id} templateId={template.id} templateName={templateSelectionName(template)} detail={supplierPresentation.detail} /> : inline ? <span title={supplierPresentation?.detail ?? legacyHealth.helper} className="min-w-0 max-w-[32rem] truncate text-xs font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : <span className="block text-[11px] font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : null}
       {!compact && supplierPresentation?.manualCheck ? <ManualPriceLinesButton templateId={template.id} templateName={templateSelectionName(template)} onSupplierStatus={onSupplierStatus} /> : null}
       {!compact && supplierPresentation && !supplierPresentation.actionHref && !supplierPresentation.manualCheck ? <SupplierPriceLinesAction templateId={template.id} templateName={templateSelectionName(template)} onSupplierStatus={onSupplierStatus} /> : null}
     </span>
@@ -2986,22 +2991,33 @@ export function ProductLibrarySelector({
                       key={template.id}
                       className="min-h-full bg-zinc-50"
                     >
-                      <div className="sticky top-0 z-10 border-b border-zinc-200 bg-white px-4 py-4 shadow-sm lg:px-6">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedTemplateId("")}
-                          className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-700"
-                        >
-                          {"< Back to products"}
-                        </button>
-                        <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                          Product Library / {brandNameById.get(template.brand_id) ?? "Unknown brand"}
-                          {mainCategory ? ` / ${mainCategory}` : ""}
-                          {subCategory ? ` / ${subCategory}` : ""}
-                          {` / ${templateSelectionName(template)}`}
-                        </p>
-                        <div className="mt-3 flex flex-wrap items-center gap-3">
-                          <h3 className="text-lg font-semibold text-zinc-950">
+                      <div className="sticky top-0 z-10 border-b border-zinc-200 bg-white px-4 py-2 shadow-sm lg:px-6">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTemplateId("")}
+                            className="shrink-0 text-sm font-semibold text-emerald-900 transition hover:text-emerald-700"
+                          >
+                            {"< Back to products"}
+                          </button>
+                          <p
+                            className="min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-zinc-500"
+                            title={[
+                              "Product Library",
+                              brandNameById.get(template.brand_id) ?? "Unknown brand",
+                              mainCategory,
+                              subCategory,
+                              templateSelectionName(template),
+                            ].filter(Boolean).join(" / ")}
+                          >
+                            Product Library / {brandNameById.get(template.brand_id) ?? "Unknown brand"}
+                            {mainCategory ? ` / ${mainCategory}` : ""}
+                            {subCategory ? ` / ${subCategory}` : ""}
+                            {` / ${templateSelectionName(template)}`}
+                          </p>
+                        </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <h3 className="text-lg font-semibold leading-tight text-zinc-950">
                             {templateSelectionName(template)}
                           </h3>
                           {template.internal_selection_name ? (
@@ -3009,7 +3025,7 @@ export function ProductLibrarySelector({
                               Quote name: {template.template_name}
                             </p>
                           ) : null}
-                          <PriceCheckBadge template={template} onSupplierStatus={updateSupplierStatus} />
+                          <PriceCheckBadge inline template={template} onSupplierStatus={updateSupplierStatus} />
                         </div>
                       </div>
                       <form
