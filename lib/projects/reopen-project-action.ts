@@ -3,6 +3,7 @@
 import { requireActiveUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
+import { isLockedQuotationUpdateAllowed, quotationLockReason } from "@/lib/quotations/quotation-lock";
 
 export async function reopenProjectAction(
   quotationId: string,
@@ -34,6 +35,9 @@ export async function reopenProjectAction(
   const updated = { ...(quotation.layout_settings ?? {}) };
   delete updated.projectCompletedAt;
 
+  if (!isLockedQuotationUpdateAllowed(quotation, { layout_settings: updated })) {
+    return { ok: false, error: quotationLockReason(quotation) ?? "This quotation cannot be changed." };
+  }
   const { error: updateError } = await supabase
     .from("quotations")
     .update({ layout_settings: updated } as never)

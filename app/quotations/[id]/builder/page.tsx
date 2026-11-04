@@ -1,5 +1,7 @@
 import { loadBrandPriceAnnouncements, type AnnouncementView } from "@/lib/products/price-announcements";
 import Link from "next/link";
+import { LockedQuotationView } from "@/components/quotations/quotation-locked-view";
+import { isQuotationLocked } from "@/lib/quotations/quotation-lock";
 import { notFound } from "next/navigation";
 import { Fragment, type CSSProperties, type ReactNode } from "react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
@@ -3180,6 +3182,9 @@ export default async function QuotationBuilderPage({
     .single<Quotation>();
 
   if (quotationError || !quotation) notFound();
+  if (isQuotationLocked(quotation)) {
+    return <LockedQuotationView quotation={quotation} role={profile?.role} />;
+  }
 
   const { data: client } = await supabase
     .from("clients")

@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { LockedQuotationView } from "@/components/quotations/quotation-locked-view";
+import { isQuotationLocked } from "@/lib/quotations/quotation-lock";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
@@ -1020,6 +1022,9 @@ export default async function QuotationDetailPage({
 
   if (quotationError || !quotation) {
     notFound();
+  }
+  if (isQuotationLocked(quotation)) {
+    return <LockedQuotationView quotation={quotation} role={profile?.role} />;
   }
   const summaryTotals = displayedTotals(readPricingRule(quotation.layout_settings), quotation, roundingAdjustmentFromLayout(quotation.layout_settings));
 

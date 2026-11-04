@@ -59,6 +59,8 @@ import {
 import { allowedQuotationStatuses, quotationStatusLabel } from "@/lib/quotation-status";
 import { NEW_QUOTATION_PRICING_RULE, LEGACY_PRICING_RULE, quotationLinePricing, quotationMoneyValue, readPricingRule, ruleConvertedPrice, ruleExactAmount, wholeAedTotals, withPricingRule, type PricingRule } from "@/lib/quotation-pricing";
 import { branchLayoutSettings, newEnquiryCopyLayoutSettings } from "@/lib/quotations/quotation-layout-copy";
+import { isLockedQuotationUpdateAllowed, isQuotationLocked, lockedSourceCopySettings, quotationLockReason } from "@/lib/quotations/quotation-lock";
+import { quotationWriteLockReason } from "@/lib/quotations/quotation-write-lock";
 import {
   clientApprovalDraftFromLayoutSettings,
   isCancelledClientApprovalStatus,
@@ -228,6 +230,28 @@ async function quotationPricingRule(supabase: Awaited<ReturnType<typeof createSu
   const { data, error } = await supabase.from("quotations").select("layout_settings").eq("id", quotationId).maybeSingle<{ layout_settings: unknown }>();
   if (error) console.error("QUOTATION PRICING RULE READ ERROR", error.message);
   return readPricingRule(data?.layout_settings);
+}
+
+async function quotationFormLockReason(formData: FormData, target: "quotation" | "item" | "section" | "destination" = "quotation") {
+  const supabase = await createSupabaseClient();
+  const quotationId = textValue(formData, target === "destination" ? "destination_quotation_id" : "quotation_id");
+  const targets = [
+    ...(quotationId ? [{ quotationId }] : []),
+    ...(target === "quotation" && textValue(formData, "id") ? [{ quotationId: textValue(formData, "id") }] : []),
+    ...(target === "item" ? ["id", "quotation_item_id"].flatMap((key) => textValue(formData, key) ? [{ itemId: textValue(formData, key) }] : []) : []),
+    ...(target === "section" ? ["id", "quotation_section_id", "section_id"].flatMap((key) => textValue(formData, key) ? [{ sectionId: textValue(formData, key) }] : []) : []),
+  ];
+  if (!targets.length) return "Quotation is required.";
+  for (const row of targets) {
+    const reason = await quotationWriteLockReason(supabase, row);
+    if (reason) return reason;
+  }
+  return null;
+}
+
+async function requireEditableQuotationForm(formData: FormData, target: "quotation" | "item" | "section" | "destination" = "quotation") {
+  const reason = await quotationFormLockReason(formData, target);
+  if (reason) redirectWithMessage(returnPath(formData, "/quotations"), reason);
 }
 
 function splitRelativePath(path: string) {
@@ -955,6 +979,8 @@ function cellLayoutValue(formData: FormData, currentLayout?: unknown): CellLayou
 
 export async function updateQuotationItemImageSettings(formData: FormData) {
   await requireRecordsManager();
+  const lockFailure = await quotationFormLockReason(formData, "item");
+  if (lockFailure) return { ok: false as const, message: lockFailure };
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const field = textValue(formData, "image_field");
@@ -2092,6 +2118,8 @@ function itemPayload(formData: FormData, userId: string | undefined, pricingRule
 export async function recalculateQuotationTotals(quotationId: string) {
   await redirectWarehouseStaff();
   const supabase = await createSupabaseClient();
+  const lockFailure = await quotationWriteLockReason(supabase, { quotationId });
+  if (lockFailure) throw new Error(lockFailure);
   const { data: quotation, error: quotationError } = await supabase
     .from("quotations")
     .select("vat_percent,overall_discount_type,overall_discount_value,layout_settings")
@@ -2456,6 +2484,7 @@ export async function createQuotationClient(formData: FormData) {
 
 export async function saveQuotationItemToProductLibrary(formData: FormData) {
   const { user, displayName } = await requireProductLibraryManager();
+  await requireEditableQuotationForm(formData, "item");
   const quotationItemId = textValue(formData, "quotation_item_id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(
@@ -3428,11 +3457,12 @@ async function copyQuotation(
       warranty_terms: source.warranty_terms,
       notes: source.notes,
       layout_mode: source.layout_mode,
-      layout_settings: mode === "duplicate" && duplicateDestinationMode === "create_new_enquiry"
+      // A locked source keeps its Project File only on itself: the new row starts unlocked, with the same pricing rule.
+      layout_settings: lockedSourceCopySettings(source, mode === "duplicate" && duplicateDestinationMode === "create_new_enquiry"
         ? newEnquiryCopyLayoutSettings(source.layout_settings)
         : mode === "revision" || mode === "option"
           ? branchLayoutSettings(source.layout_settings, parentBranchMetadata)
-          : source.layout_settings ?? {},
+          : source.layout_settings ?? {}),
       overall_discount_type: source.overall_discount_type,
       overall_discount_value: source.overall_discount_value,
       is_active: true,
@@ -3598,7 +3628,7 @@ async function copyQuotation(
   revalidatePath("/quotations");
   revalidatePath(`/quotations/${newQuotation.id}`);
   revalidatePath(redirectPath);
-  if (mode === "duplicate" && duplicateDestinationMode === "create_new_enquiry") {
+  if ((mode === "duplicate" && duplicateDestinationMode === "create_new_enquiry") || isQuotationLocked(source)) {
     successRedirectPath = `/quotations/${newQuotation.id}`;
   }
   if (resultMode) {
@@ -3655,6 +3685,7 @@ export async function createQuotationOptionOptimistic(formData: FormData) {
 
 export async function deactivateQuotation(formData: FormData) {
   await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const quotationId = actionQuotationId(formData);
   const redirectPath = returnPath(formData, "/quotations");
 
@@ -3680,6 +3711,11 @@ export async function deactivateQuotation(formData: FormData) {
 
 export async function archiveFolderQuotation(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  const lockFailure = await quotationFormLockReason(formData, "quotation");
+  if (lockFailure) {
+    if (textValue(formData, "result_mode") === "optimistic") return { ok: false as const, error: lockFailure };
+    redirectWithMessage(returnPath(formData, "/quotations"), lockFailure);
+  }
   const quotationId = actionQuotationId(formData);
   const redirectPath = returnPath(formData, "/quotations");
   const resultMode = textValue(formData, "result_mode") === "optimistic";
@@ -3783,6 +3819,7 @@ export async function archiveFolderQuotation(formData: FormData) {
 
 export async function restoreQuotation(formData: FormData) {
   const { user } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const quotationId = actionQuotationId(formData);
   const redirectPath = returnPath(formData, "/quotations");
 
@@ -3815,6 +3852,7 @@ export async function restoreQuotation(formData: FormData) {
 
 export async function permanentlyDeleteQuotation(formData: FormData) {
   const { profile } = await requireActiveUser();
+  await requireEditableQuotationForm(formData, "quotation");
   const quotationId = actionQuotationId(formData);
   const redirectPath = returnPath(formData, "/quotations");
   const confirmText = textValue(formData, "confirmText");
@@ -3987,6 +4025,7 @@ export async function permanentlyDeleteQuotation(formData: FormData) {
 
 export async function createClientApprovalDraft(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const quotationId = actionQuotationId(formData);
   const redirectPath = returnPath(formData, quotationId ? `/quotations/${quotationId}` : "/quotations");
 
@@ -4273,6 +4312,10 @@ export async function recordClientApprovalDecision(formData: FormData) {
 
   if (!approvalEntry) {
     redirectWithMessage("/sales/approvals", "Client response could not be found.");
+  }
+
+  if (!isLockedQuotationUpdateAllowed(approvalEntry.quotation, { status: approvalDecisionStatus(rawDecision).quotationStatus })) {
+    redirectWithMessage(redirectPath, quotationLockReason(approvalEntry.quotation)!);
   }
 
   if (!isActiveClientApprovalStatus(approvalEntry.draft.approvalStatus)) {
@@ -4730,6 +4773,7 @@ export async function createProjectFileFromQuotation(formData: FormData) {
 
 export async function updateQuotation(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const id = textValue(formData, "id");
   const payload = quotationPayload(formData);
   const auditScope = textValue(formData, "audit_scope");
@@ -4792,6 +4836,7 @@ export async function updateQuotation(formData: FormData) {
 
 export async function updateQuotationEnquiryDetails(formData: FormData) {
   const { user, displayName } = await requireQuotationActionUser();
+  await requireEditableQuotationForm(formData, "quotation");
   const id = textValue(formData, "id");
   const payload = quotationPayload(formData);
   const salespersonId = optionalTextValue(formData, "salesperson_id");
@@ -4943,6 +4988,7 @@ function specificationItemImageOverridesValue(formData: FormData, quotationId: s
 
 export async function updateSpecificationSettings(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(
     formData,
@@ -5039,6 +5085,7 @@ export async function updateSpecificationSettings(formData: FormData) {
 
 export async function updateQuotationDocumentSetup(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const quotationId = textValue(formData, "quotation_id");
   const clientId = textValue(formData, "client_id");
   const projectId = validUuidOrNull(textValue(formData, "project_id"));
@@ -5183,6 +5230,7 @@ export async function updateQuotationDocumentSetup(formData: FormData) {
 
 export async function updateQuotationExtraDiscount(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const id = textValue(formData, "id");
   const redirectPath = returnPath(formData, `/quotations/${id}`);
   const overallDiscountType = allowedText(
@@ -5313,6 +5361,12 @@ export async function updateQuotationStatus(formData: FormData) {
     );
   }
 
+  if (!isLockedQuotationUpdateAllowed(quotation, updatePayload)) {
+    const reason = quotationLockReason(quotation)!;
+    if (resultMode) return fail(reason);
+    redirectWithMessage(redirectPath, reason);
+  }
+
   const { error: updateError } = await supabase
     .from("quotations")
     .update(updatePayload)
@@ -5374,6 +5428,7 @@ export async function updateQuotationStatus(formData: FormData) {
 
 export async function updateQuotationLayoutSettings(formData: FormData) {
   await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
 
@@ -5428,6 +5483,8 @@ export async function updateQuotationLayoutSettings(formData: FormData) {
 
 export async function updateQuotationColumnWidth(formData: FormData) {
   await requireRecordsManager();
+  const lockFailure = await quotationFormLockReason(formData, "quotation");
+  if (lockFailure) return { ok: false as const, message: lockFailure };
   const quotationId = textValue(formData, "quotation_id");
   const columnKey = textValue(formData, "column_key");
   const width = optionalIntegerInRange(formData, "width", 40, 800);
@@ -5481,6 +5538,8 @@ export async function updateQuotationColumnWidth(formData: FormData) {
 
 export async function updateQuotationItemRowHeight(formData: FormData) {
   await requireRecordsManager();
+  const lockFailure = await quotationFormLockReason(formData, "item");
+  if (lockFailure) return { ok: false as const, message: lockFailure };
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const rowHeight = optionalIntegerInRange(formData, "row_height", 40, 600);
@@ -5507,6 +5566,8 @@ export async function updateQuotationItemRowHeight(formData: FormData) {
 
 export async function updateQuotationSectionRowHeight(formData: FormData) {
   await requireRecordsManager();
+  const lockFailure = await quotationFormLockReason(formData, "section");
+  if (lockFailure) return { ok: false as const, message: lockFailure };
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const rowHeight = optionalIntegerInRange(formData, "row_height", 40, 600);
@@ -5607,6 +5668,7 @@ async function validParentSectionId(
 
 export async function createQuotationSection(formData: FormData) {
   const { user } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const quotationId = textValue(formData, "quotation_id");
   const sectionTitle = textValue(formData, "section_title");
   const sectionKind = allowedText(formData, "section_kind", sectionKinds, "sub");
@@ -5664,6 +5726,7 @@ export async function createQuotationSection(formData: FormData) {
 
 export async function updateQuotationSection(formData: FormData) {
   await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "section");
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const sectionTitle = textValue(formData, "section_title");
@@ -5708,6 +5771,7 @@ export async function updateQuotationSection(formData: FormData) {
 
 export async function deactivateQuotationSection(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "section");
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
@@ -5761,6 +5825,7 @@ export async function deactivateQuotationSection(formData: FormData) {
 
 export async function createQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const payload = itemPayload(formData, user.id, await quotationPricingRule(await createSupabaseClient(), textValue(formData, "quotation_id")));
   payload.currency = "AED";
   const redirectPath = returnPath(formData, `/quotations/${payload.quotation_id}`);
@@ -5814,6 +5879,7 @@ export async function createQuotationItem(formData: FormData) {
 
 export async function createBlankQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const quotationId = textValue(formData, "quotation_id");
   const sectionId = optionalTextValue(formData, "section_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
@@ -5936,6 +6002,8 @@ async function createBlankQuotationItemRecord({
 
 export async function createBlankQuotationItemOptimistic(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  const lockFailure = await quotationFormLockReason(formData, "quotation");
+  if (lockFailure) return { ok: false as const, message: lockFailure };
   const quotationId = textValue(formData, "quotation_id");
   const sectionId = optionalTextValue(formData, "section_id");
 
@@ -5967,6 +6035,7 @@ export async function createBlankQuotationItemOptimistic(formData: FormData) {
 
 export async function addProductTemplateToQuotation(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const quotationId = textValue(formData, "quotation_id");
   const sectionId = textValue(formData, "section_id");
   const templateId = textValue(formData, "template_id");
@@ -7153,6 +7222,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
 
 export async function updateQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "item");
   const id = textValue(formData, "id");
   const updatePricingRule = await quotationPricingRule(await createSupabaseClient(), textValue(formData, "quotation_id"));
   const payload = itemPayload(formData, undefined, updatePricingRule);
@@ -7234,6 +7304,7 @@ export async function updateQuotationItem(formData: FormData) {
 
 export async function applyManualCurrencyConversion(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "item");
   const quotationId = textValue(formData, "quotation_id");
   const quotationItemId = textValue(formData, "quotation_item_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${quotationItemId}`);
@@ -7371,6 +7442,7 @@ export async function applyManualCurrencyConversion(formData: FormData) {
 
 export async function updateQuotationItemInline(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "item");
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${id}`);
@@ -7504,6 +7576,7 @@ export async function updateQuotationItemInline(formData: FormData) {
 
 export async function useCurrentSourcePriceForQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "item");
   const id = textValue(formData, "quotation_item_id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${id}`);
@@ -7640,6 +7713,7 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
 
 export async function copyQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "destination");
   const id = textValue(formData, "id");
   const sourceQuotationId = textValue(formData, "quotation_id");
   const destinationQuotationId = textValue(formData, "destination_quotation_id");
@@ -7875,6 +7949,7 @@ async function nextSortOrder(quotationId: string, sectionId: string | null) {
 
 export async function duplicateQuotationItemBelow(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "item");
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${id}`);
@@ -8070,6 +8145,7 @@ function sanitizeCopiedRowSnapshot(value: unknown, pricingRule: PricingRule) {
 
 export async function pasteCopiedQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "quotation");
   const quotationId = textValue(formData, "quotation_id");
   const sectionId = textValue(formData, "section_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
@@ -8133,6 +8209,8 @@ export async function pasteCopiedQuotationItem(formData: FormData) {
 
 export async function autosaveQuotationItemInline(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  const lockFailure = await quotationFormLockReason(formData, "item");
+  if (lockFailure) return { ok: false as const, message: lockFailure };
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
 
@@ -8270,6 +8348,7 @@ export async function autosaveQuotationItemInline(formData: FormData) {
 
 async function moveQuotationItem(formData: FormData, direction: "up" | "down") {
   await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "item");
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${id}`);
@@ -8354,6 +8433,7 @@ export async function moveQuotationItemDown(formData: FormData) {
 
 export async function deactivateQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "item");
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
@@ -8414,6 +8494,7 @@ export async function deactivateQuotationItem(formData: FormData) {
 
 export async function restoreQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "item");
   const quotationItemId = textValue(formData, "quotation_item_id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${quotationItemId}`);
@@ -8471,6 +8552,7 @@ export async function restoreQuotationItem(formData: FormData) {
 
 export async function restoreQuotationSection(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
+  await requireEditableQuotationForm(formData, "section");
   const sectionId = textValue(formData, "quotation_section_id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#section-${sectionId}`);
