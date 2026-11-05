@@ -513,3 +513,34 @@ test("a definition with only a future list exposes an Upcoming card but no appli
     assert.equal(lookup.source, null); assert.equal(lookup.multiplicity, 0); // never silently the future list
   });
 });
+
+// ---- Imported list with coverage whose first price update was never started stays visible (LAS MOBILI case) ----
+test("an imported list with coverage and no batch rows shows one 'never started' card; a replaced or archived one stays hidden", async () => {
+  await withDb(async (f) => {
+    const definitions = (await supplierCoverageOverview(f.client, brand)).definitions;
+    assert.equal((await f.db.query("select id from public.supplier_price_batches where source_id=$1", [furnitureSource])).rows.length, 0);
+    let cards = await supplierPriceListCards(f.client, brand, definitions);
+    const shown = cards.filter((card) => card.sourceId === furnitureSource);
+    assert.equal(shown.length, 1);
+    assert.equal(shown[0].neverStarted, true);
+    assert.equal(shown[0].state, "ready_to_review");
+    assert.equal(shown[0].batchId, null);
+    // Two lists of two different sources both show.
+    assert.ok(cards.some((card) => card.sourceId === emptySource));
+    // Once a completed batch exists the card behaves as before: current, not "never started".
+    const batch = await supplierCreateReviewBatch(f.client, furnitureSource, "complete", []);
+    await f.db.query("update public.supplier_price_batches set status='completed',completed_at=now() where id=$1", [batch.id]);
+    cards = await supplierPriceListCards(f.client, brand, definitions);
+    assert.equal(cards.find((card) => card.sourceId === furnitureSource)?.neverStarted, false);
+    assert.equal(cards.find((card) => card.sourceId === furnitureSource)?.priceListState, "current");
+    // An older never-started list of the same source, replaced by the completed one, stays hidden.
+    await f.db.exec(`insert into public.supplier_source_versions(id,brand_id,title,filename,file_hash,source_type,currency,basis,profile,status,expected_rows,expected_cells,expected_chunks,created_by,definition_id,effective_from,created_at)
+      values('${id(38)}','${brand}','Older list','o.xlsx','${"d".repeat(64)}','xlsx','EUR','list','{}','imported',1,1,1,'${user}','${furniture}','1990-01-01', now() - interval '1 hour');`);
+    cards = await supplierPriceListCards(f.client, brand, definitions);
+    assert.equal(cards.find((card) => card.sourceId === id(38)), undefined);
+    // An archived never-started list stays hidden.
+    await f.db.exec(`update public.supplier_source_versions set status='archived' where id='${emptySource}'`);
+    cards = await supplierPriceListCards(f.client, brand, definitions);
+    assert.equal(cards.find((card) => card.sourceId === emptySource), undefined);
+  });
+});
