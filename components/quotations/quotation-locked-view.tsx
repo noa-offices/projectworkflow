@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createProjectVariation, createQuotationOption, duplicateQuotation } from "@/app/quotations/actions";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
+import { QuotationFolderVersions } from "@/components/quotations/quotation-folder-versions";
+import type { FolderVersionRow } from "@/lib/quotations/folder-versions";
 import { ExportExcelButton } from "@/components/quotations/export-excel-button";
 import { QuotationPdfDocument } from "@/components/quotations/quotation-pdf-document";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
@@ -12,9 +14,10 @@ import { loadQuotationPdfSettings } from "@/lib/quotations/quotation-pdf-setting
 type LockedQuotationViewProps = {
   quotation: { id: string; layout_settings: unknown };
   role: string | null | undefined;
+  folderVersions?: FolderVersionRow[];
 };
 
-export async function LockedQuotationView({ quotation, role }: LockedQuotationViewProps) {
+export async function LockedQuotationView({ quotation, role, folderVersions = [] }: LockedQuotationViewProps) {
   const projectFile = projectFileFromLayoutSettings(quotation.layout_settings);
   const reason = quotationLockReason(quotation);
   const applied = variationAppliedFromLayoutSettings(quotation.layout_settings);
@@ -32,6 +35,7 @@ export async function LockedQuotationView({ quotation, role }: LockedQuotationVi
   return (
     <>
       <section className="no-print border-b border-amber-200 bg-amber-50 px-5 py-5" aria-label="Quotation read-only">
+        <Link href="/sales/quotations" className="mb-2 inline-flex text-sm font-semibold text-emerald-900 hover:underline">All quotation folders</Link>
         <h1 className="text-lg font-semibold text-zinc-950">Quotation is read-only</h1>
         <p className="mt-1 text-sm text-zinc-700">{reason}</p>
         <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -65,6 +69,7 @@ export async function LockedQuotationView({ quotation, role }: LockedQuotationVi
             </>
           ) : null}
         </div>
+        {folderVersions.length ? <QuotationFolderVersions rows={folderVersions} /> : null}
       </section>
       <QuotationPdfDocument data={data} settings={settingsResult.success ? settingsResult.settings : DEFAULT_QUOTATION_PDF_SETTINGS} showToolbar={false} />
     </>

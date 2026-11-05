@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { LockedQuotationView } from "@/components/quotations/quotation-locked-view";
 import { isQuotationLocked } from "@/lib/quotations/quotation-lock";
+import { buildFolderVersionRows } from "@/lib/quotations/folder-versions";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
@@ -1028,42 +1029,8 @@ export default async function QuotationDetailPage({
   if (quotationError || !quotation) {
     notFound();
   }
-  if (isQuotationLocked(quotation)) {
-    return <LockedQuotationView quotation={quotation} role={profile?.role} />;
-  }
-  const summaryTotals = displayedTotals(readPricingRule(quotation.layout_settings), quotation, roundingAdjustmentFromLayout(quotation.layout_settings));
-
-  const { data: client } = await supabase
-    .from("clients")
-    .select("id,client_number,company_name")
-    .eq("id", quotation.client_id)
-    .single<Client>();
-
-  const { data: clients, error: clientsError } = await supabase
-    .from("clients")
-    .select("id,client_number,company_name")
-    .order("company_name", { ascending: true })
-    .returns<Client[]>();
-
   const safeProjectId = validUuidOrNull(quotation.project_id);
-  const { data: project } = safeProjectId
-    ? await supabase
-        .from("projects")
-        .select("id,project_name,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
-        .eq("id", safeProjectId)
-        .single<Project>()
-    : { data: null };
-
   const rootBaseNo = quotationRootBaseNo(quotation.quotation_no);
-  const { data: projectQuotations, error: projectQuotationsError } = safeProjectId
-    ? await supabase
-        .from("quotations")
-        .select("id,quotation_no,option_no")
-        .eq("project_id", safeProjectId)
-        .eq("is_active", true)
-        .returns<Array<{ id: string; quotation_no: string | null; option_no: number }>>()
-    : { data: [], error: null };
-
   const { data: folderQuotations, error: folderQuotationsError } = safeProjectId
     ? await supabase
         .from("quotations")
@@ -1079,6 +1046,60 @@ export default async function QuotationDetailPage({
           .order("quotation_date", { ascending: false })
           .returns<FolderQuotation[]>()
       : { data: null, error: null };
+
+  const folderQuotationList = (folderQuotations?.length ? folderQuotations : [quotation as FolderQuotation])
+    .filter((entry, index, entries) => entries.findIndex((candidate) => candidate.id === entry.id) === index)
+    .sort((left, right) => {
+      const leftActive = left.is_active !== false;
+      const rightActive = right.is_active !== false;
+      if (leftActive !== rightActive) return leftActive ? -1 : 1;
+
+      const leftSort = quotationBranchSortKey(left.quotation_no);
+      const rightSort = quotationBranchSortKey(right.quotation_no);
+      if (leftSort !== rightSort) return leftSort.localeCompare(rightSort);
+
+      const leftDate = new Date(left.quotation_date).getTime();
+      const rightDate = new Date(right.quotation_date).getTime();
+      if (leftDate !== rightDate) return rightDate - leftDate;
+
+      return (left.quotation_no ?? "").localeCompare(right.quotation_no ?? "");
+  });
+  const activeFolderQuotations = folderQuotationList.filter((entry) => !isArchivedFolderQuotation(entry));
+  const archivedFolderQuotations = folderQuotationList.filter((entry) => isArchivedFolderQuotation(entry));
+  if (isQuotationLocked(quotation)) {
+    const folderVersions = buildFolderVersionRows(activeFolderQuotations, archivedFolderQuotations, quotation.id, folderProjectOrderNo(folderQuotations ?? [], quotation.quotation_no));
+    return <LockedQuotationView quotation={quotation} role={profile?.role} folderVersions={folderVersions} />;
+  }
+  const summaryTotals = displayedTotals(readPricingRule(quotation.layout_settings), quotation, roundingAdjustmentFromLayout(quotation.layout_settings));
+
+  const { data: client } = await supabase
+    .from("clients")
+    .select("id,client_number,company_name")
+    .eq("id", quotation.client_id)
+    .single<Client>();
+
+  const { data: clients, error: clientsError } = await supabase
+    .from("clients")
+    .select("id,client_number,company_name")
+    .order("company_name", { ascending: true })
+    .returns<Client[]>();
+
+  const { data: project } = safeProjectId
+    ? await supabase
+        .from("projects")
+        .select("id,project_name,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
+        .eq("id", safeProjectId)
+        .single<Project>()
+    : { data: null };
+
+  const { data: projectQuotations, error: projectQuotationsError } = safeProjectId
+    ? await supabase
+        .from("quotations")
+        .select("id,quotation_no,option_no")
+        .eq("project_id", safeProjectId)
+        .eq("is_active", true)
+        .returns<Array<{ id: string; quotation_no: string | null; option_no: number }>>()
+    : { data: [], error: null };
 
   const { data: copyDestinationQuotations, error: copyDestinationQuotationsError } = await supabase
     .from("quotations")
@@ -1156,25 +1177,6 @@ export default async function QuotationDetailPage({
   const folderDisplayNo = quotationFolderNo ?? "Not prepared";
   const folderDisplayReference = resolvedDocumentSetup.header.reference;
   const folderTitle = folderDisplayReference || quotation.title?.trim() || "Quotation folder";
-  const folderQuotationList = (folderQuotations?.length ? folderQuotations : [quotation as FolderQuotation])
-    .filter((entry, index, entries) => entries.findIndex((candidate) => candidate.id === entry.id) === index)
-    .sort((left, right) => {
-      const leftActive = left.is_active !== false;
-      const rightActive = right.is_active !== false;
-      if (leftActive !== rightActive) return leftActive ? -1 : 1;
-
-      const leftSort = quotationBranchSortKey(left.quotation_no);
-      const rightSort = quotationBranchSortKey(right.quotation_no);
-      if (leftSort !== rightSort) return leftSort.localeCompare(rightSort);
-
-      const leftDate = new Date(left.quotation_date).getTime();
-      const rightDate = new Date(right.quotation_date).getTime();
-      if (leftDate !== rightDate) return rightDate - leftDate;
-
-      return (left.quotation_no ?? "").localeCompare(right.quotation_no ?? "");
-  });
-  const activeFolderQuotations = folderQuotationList.filter((entry) => !isArchivedFolderQuotation(entry));
-  const archivedFolderQuotations = folderQuotationList.filter((entry) => isArchivedFolderQuotation(entry));
   const currentDestinationFolderKey = quotationDestinationFolderKey(quotation);
   const copyDestinationFolders = Array.from(
     new Map(
