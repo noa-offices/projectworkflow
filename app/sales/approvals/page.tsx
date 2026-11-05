@@ -7,6 +7,7 @@ import { quotationStatusLabel } from "@/lib/quotation-status";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { documentSetupRecord } from "@/lib/quotations/document-setup";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { loadProjectContractTotals, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
 import { folderProjectOrderNo, variationLinkFromLayoutSettings } from "@/lib/quotations/project-variation";
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
@@ -77,6 +78,11 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
       .returns<Array<{ id: string; quotation_no: string | null; layout_settings: unknown }>>(),
   ]);
   const folderRows = [...(quotations ?? []), ...(projectFileRows ?? [])];
+  const contractStates = await loadProjectContractTotals(supabase, projectContractQuotationIds(folderRows));
+  const projectByOrderNo = new Map(folderRows.flatMap((row) => {
+    const file = projectFileFromLayoutSettings(row.layout_settings) ?? clientApprovalDraftFromLayoutSettings(row.layout_settings)?.confirmedOrder;
+    return file ? [[file.orderNo, row] as const] : [];
+  }));
 
   if (error) {
     console.error("APPROVED QUOTATIONS LIST ERROR", error.message);
@@ -97,9 +103,11 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
       null;
     // Never offer Create Project File when the folder already has a Project: link to that Project instead.
     const folderOrderNo = variationLinkFromLayoutSettings(quotation.layout_settings)?.orderNo ?? folderProjectOrderNo(folderRows, quotation.quotation_no);
+    const contractSource = projectFile ? quotation : folderOrderNo ? projectByOrderNo.get(folderOrderNo) : undefined;
 
     return {
       ...quotation,
+      contractValue: contractSource ? projectContractValue(contractSource, contractStates) : quotation.grand_total ?? 0,
       clientName: quotation.client_id ? clientNames.get(quotation.client_id) ?? "Client" : "Client",
       folderNo: projectFile?.folderNo ?? quotationFolderNumberFromQuotationNumber(quotation.quotation_no),
       projectFile: projectFile ?? (folderOrderNo ? { orderNo: folderOrderNo } : null),
@@ -174,7 +182,7 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
                       </div>
                       <div className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)] gap-2">
                         <dt className="font-semibold text-zinc-500">Value</dt>
-                        <dd className="font-semibold text-zinc-950">{formatRuleMoney(readPricingRule(quotation.layout_settings), quotation.currency, quotation.grand_total ?? 0)}</dd>
+                        <dd className="font-semibold text-zinc-950">{formatRuleMoney(readPricingRule(quotation.layout_settings), quotation.currency, quotation.contractValue)}</dd>
                       </div>
                       <div className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)] gap-2">
                         <dt className="font-semibold text-zinc-500">Project</dt>
@@ -242,7 +250,7 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
                       <td className="py-3 pr-4 text-zinc-700">{quotation.clientName}</td>
                       <td className="max-w-xs py-3 pr-4 text-zinc-600">{quotation.reference}</td>
                       <td className="py-3 pr-4 font-medium text-zinc-950">
-                        {formatRuleMoney(readPricingRule(quotation.layout_settings), quotation.currency, quotation.grand_total ?? 0)}
+                        {formatRuleMoney(readPricingRule(quotation.layout_settings), quotation.currency, quotation.contractValue)}
                       </td>
                       <td className="py-3 pr-4 text-zinc-600">{formatDate(quotation.status_updated_at ?? quotation.updated_at ?? quotation.quotation_date)}</td>
                       <td className="py-3 pr-4 font-medium text-zinc-950">

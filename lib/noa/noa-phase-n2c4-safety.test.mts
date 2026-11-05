@@ -15,6 +15,7 @@ import { clientApprovalDraftFromLayoutSettings } from "../quotations/client-appr
 import { buildEffectiveDocumentGroups } from "../quotations/document-grouping.js";
 import { projectFileFromLayoutSettings } from "../quotations/project-file.js";
 import { classifyNoaRoute } from "./noa-intent-router.js";
+import { loadProjectContractTotals, projectContractQuotationIds, projectContractValue } from "../projects/project-contract-total.js";
 
 const insights = readFileSync("lib/noa/noa-insights-capability.server.ts", "utf8");
 const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
@@ -81,9 +82,11 @@ const c4Source = [
 const c4 = new Function(
   "projectFileFromLayoutSettings", "clientApprovalDraftFromLayoutSettings", "buildEffectiveDocumentGroups", "vendorStepLabel", "VENDOR_STEP_LABELS",
   "calculateClientPaymentSummary", "deriveClientPaymentStatus", "formatPaymentMoney",
+  "loadProjectContractTotals", "projectContractQuotationIds", "projectContractValue",
   `${transpile(c4Source)}\nreturn { procurementAnalyticsAnswer, paymentAnalyticsAnswer };`,
 )(projectFileFromLayoutSettings, clientApprovalDraftFromLayoutSettings, buildEffectiveDocumentGroups, vendorStepLabel, VENDOR_STEP_LABELS,
-  calculateClientPaymentSummary, deriveClientPaymentStatus, formatPaymentMoney) as { paymentAnalyticsAnswer: AnswerFn; procurementAnalyticsAnswer: AnswerFn };
+  calculateClientPaymentSummary, deriveClientPaymentStatus, formatPaymentMoney,
+  loadProjectContractTotals, projectContractQuotationIds, projectContractValue) as { paymentAnalyticsAnswer: AnswerFn; procurementAnalyticsAnswer: AnswerFn };
 
 const classifierStart = insights.indexOf("function insightsQuestionKind(message: string): InsightsQuestionKind {");
 const insightsQuestionKind = new Function((sliceFunctionBody(insights, classifierStart) + "\n}").replace(

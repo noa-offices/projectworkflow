@@ -14,6 +14,7 @@ export function CachedReadSurface({ entity, snapshot, message, refresh, close }:
     [row.title, row.code, row.subtitle, row.status, row.brand, row.category, row.group].some(value => value?.toLowerCase().includes(query.toLowerCase()))
   ), [snapshot, query, filter, archived]);
   const productArea = ["products", "products:management", "brands:list", "materials:library"].includes(entity);
+  const cachedProject = entity === "projects" || entity === "completed";
   const filters = [...new Set((snapshot?.data ?? []).flatMap(r => [productArea && entity !== "brands:list" ? r.brand : r.subtitle, r.year, entity === "clients" || entity === "brands:list" ? r.status : "", entity === "materials:library" ? r.group : ""]).filter((v): v is string => !!v))].sort();
   return <section aria-label="Saved read view" className="fixed inset-0 z-[70] overflow-y-auto bg-zinc-100 p-4 sm:p-8 lg:left-[280px]">
     <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-200 pb-4">
@@ -22,6 +23,7 @@ export function CachedReadSurface({ entity, snapshot, message, refresh, close }:
     </div>
     <p role="status" className="my-3 text-sm text-zinc-600">{message}{snapshot ? " · Last refreshed " + new Date(snapshot.fetchedAt).toLocaleString() : ""}</p>
     <p className="mb-4 text-xs text-zinc-500">Recent bounded summaries. Server-only actions are unavailable in this preview.</p>
+    {cachedProject ? <p className="mb-4 text-xs text-zinc-500">Current Project contract values are available on the online Project page. Saved values are hidden because variations may have been applied since this preview was saved.</p> : null}
     {entity === "products:management" ? <p className="mb-4 text-xs text-zinc-500">Product Template details and editors are online-only and are never saved in this read cache.</p> : null}
     <div className="mb-5 flex flex-wrap gap-3">
       <input aria-label="Search saved data" placeholder="Search saved data…" value={query} onChange={e => setQuery(e.target.value)} className="min-w-60 rounded border bg-white px-3 py-2" />
@@ -37,7 +39,7 @@ export function CachedReadSurface({ entity, snapshot, message, refresh, close }:
         <p className="text-xs text-zinc-500">{row.code}{row.count ? " · " + row.count + " quotations" : ""}</p>
         <h2 className="mt-1 font-semibold">{row.title}</h2>
         <p className="mt-1 text-sm text-zinc-600">{[row.brand, row.category, row.subtitle].filter(Boolean).join(" · ")}</p>
-        <p className="mt-2 text-xs text-zinc-500">{row.status}{row.date ? " · " + row.date.slice(0, 10) : ""}{row.total !== undefined ? " · " + row.currency + " " + row.total.toLocaleString() : ""}</p>
+        <p className="mt-2 text-xs text-zinc-500">{row.status}{row.date ? " · " + row.date.slice(0, 10) : ""}{!cachedProject && row.total !== undefined ? " · " + row.currency + " " + row.total.toLocaleString() : ""}</p>
       </article></Fragment>)}
     </div>
     {!snapshot ? <p className="mt-8 rounded border border-dashed p-6">This page has not been saved on this device yet. If offline, reconnect and open it once.</p> : !rows.length ? <p className="mt-8">No matching saved results in this bounded snapshot.</p> : null}

@@ -4,6 +4,7 @@ import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
 import { folderProjectOrderNoFrom, folderProjectOrderNos } from "@/lib/quotations/project-variation";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
+import { projectContractValue, type ProjectContractStates } from "@/lib/projects/project-contract-total";
 import { minimizedRows, type ReadRow } from "./types";
 
 export type SummaryQuotation = {
@@ -49,7 +50,7 @@ export function quotationSummaries(rows: SummaryQuotation[], clients: Map<string
   }).sort((a, b) => new Date(b.date ?? "").getTime() - new Date(a.date ?? "").getTime());
   return minimizedRows("quotations", result);
 }
-export function projectSummaries(rows: Array<{ id: string; layout_settings: unknown }>, clients: Map<string, string>, completed: boolean) {
+export function projectSummaries(rows: Array<{ id: string; layout_settings: unknown }>, clients: Map<string, string>, completed: boolean, contractStates: ProjectContractStates = new Map()) {
   const seen = new Set<string>();
   const result: ReadRow[] = [];
   for (const row of rows) {
@@ -64,7 +65,7 @@ export function projectSummaries(rows: Array<{ id: string; layout_settings: unkn
       subtitle: clients.get(order.clientId) ?? order.clientName, status: completed ? "Completed" : "Confirmed",
       href: "/projects/orders/" + encodeURIComponent(order.orderNo),
       date: completedAt ?? order.createdAt, year: String(new Date(order.createdAt).getFullYear()),
-      currency: order.currency, total: order.total, clientId: order.clientId,
+      currency: order.currency, total: projectContractValue(row, contractStates), clientId: order.clientId,
     });
   }
   return minimizedRows(completed ? "completed" : "projects", result.sort((a, b) => new Date(b.date ?? "").getTime() - new Date(a.date ?? "").getTime()));

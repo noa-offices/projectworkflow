@@ -4,6 +4,7 @@ import { requireActiveUser } from "@/lib/auth";
 import { findNoaBusinessIdentifierVariants } from "@/lib/noa/noa-business-identifier";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { loadProjectContractTotals, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
 import { createClient } from "@/lib/supabase/server";
 import type { NoaSemanticEntity } from "./noa-semantic-request";
 import type { NoaCapabilityResult, NoaPageContext } from "./noa-types";
@@ -308,6 +309,8 @@ export async function allProjectFiles(
     .limit(PROJECT_FILE_SCAN_LIMIT)
     .returns<(QuotationLayoutRow & { id: string })[]>();
 
+  const contractStates = await loadProjectContractTotals(supabase, projectContractQuotationIds(data ?? []));
+
   return (data ?? [])
     .flatMap((quotation) => {
       const settings = quotation.layout_settings as Record<string, unknown> | null;
@@ -326,7 +329,7 @@ export async function allProjectFiles(
         quotationId: quotation.id,
         reference: order.reference,
         status,
-        total: order.total,
+        total: projectContractValue(quotation, contractStates),
       }];
     })
     .filter((order, index, all) => all.findIndex((candidate) => candidate.orderNo === order.orderNo) === index);

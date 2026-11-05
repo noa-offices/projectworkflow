@@ -107,8 +107,9 @@ test("8. no on_hold Project File metric was invented anywhere in the aggregate/a
   assert.ok(!/on_hold|onHoldCount|pendingCount|delayedCount/.test(insights.slice(insightsProjectFilesStart, projectFileAnalyticsStart + 2000)));
 });
 
-test("9. Project File value uses the owning quotation's already-established total/currency (order.total/order.currency), never procurement/invoice/payment totals", () => {
-  assert.ok(insightsProjectFilesBody.includes("total: order.total,"));
+test("9. Project File value uses the shared current-contract reader and stored currency, never procurement/invoice/payment totals", () => {
+  assert.ok(insightsProjectFilesBody.includes("total: projectContractValue(quotation, contractStates),"));
+  assert.ok(insightsProjectFilesBody.includes("loadProjectContractTotals(supabase, projectContractQuotationIds(data ?? []))"));
   assert.ok(insightsProjectFilesBody.includes("currency: order.currency,"));
   assert.ok(!buildAggregateBody.includes("procurement") && !buildAggregateBody.includes("invoice") && !buildAggregateBody.includes("payment"));
 });

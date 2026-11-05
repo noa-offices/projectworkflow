@@ -3,6 +3,7 @@ import { canManageProductLibrary } from "@/lib/auth";
 import { entities, minimizedRows, type ReadEntity, type ReadRow } from "@/lib/local-read-cache/types";
 import { projectSummaries, quotationGroupCondition, quotationGroupKey, quotationSummaries, type SummaryQuotation } from "@/lib/local-read-cache/projections";
 import { managementRows, brandRows, materialRows } from "./product-projections";
+import { loadProjectContractTotals, projectContractQuotationIds } from "@/lib/projects/project-contract-total";
 
 const headers = { "Cache-Control": "private, no-store", Vary: "Cookie" };
 function failure(status: number, code: string) { return Response.json({ ok: false, code }, { status, headers }); }
@@ -121,9 +122,10 @@ export async function readProjection(request: Request, entity: string, createDb:
         },
       })) as unknown as SummaryQuotation[];
       const names = new Map((clients.data ?? []).map(r => [r.id, r.company_name]));
+      const contractStates = entity === "quotations" ? new Map() : await loadProjectContractTotals(db, projectContractQuotationIds(normalized));
       rows = entity === "quotations"
         ? quotationSummaries(normalized, names, new Map((projects.data ?? []).map(r => [r.id, r])))
-        : projectSummaries(normalized, names, entity === "completed");
+        : projectSummaries(normalized, names, entity === "completed", contractStates);
     }
     return Response.json({
       ok: true, userId: user.id, entity, data: minimizedRows(entity as ReadEntity, rows), fetchedAt: Date.now(),

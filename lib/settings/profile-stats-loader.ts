@@ -7,6 +7,7 @@ import {
   quotationSalesFolderKey,
 } from "@/lib/quotations/sales-attribution";
 import type { SalesCommissionRow } from "@/lib/commissions/types";
+import { loadProjectContractTotals, projectContractForQuotation, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
 
 type DateRange = { from: string; to: string };
 
@@ -461,6 +462,7 @@ export async function loadProfileStats(
   }
 
   const rows = quotationRows ?? [];
+  const contractStates = await loadProjectContractTotals(supabase, projectContractQuotationIds(rows));
   const quotationById = new Map(rows.map((quotation) => [quotation.id, quotation]));
   const workedFolderKeys = new Set<string>();
   for (const quotation of rows) {
@@ -533,8 +535,9 @@ export async function loadProfileStats(
     const folderKey = quotationSalesFolderKey(quotation);
     const approvedQuotation = approvedByFolder.get(folderKey);
     const commission = commissionByFolder.get(folderKey);
+    const contract = projectContractForQuotation(approvedQuotation ?? quotation, contractStates);
     return {
-      approvedValue: commission
+      approvedValue: contract?.appliedVariationNo ? contract.currentTotal : commission
         ? Number(commission.approved_total_including_vat)
         : approvalSnapshotValueByFolder.get(folderKey) ?? approvedQuotation?.grand_total ?? 0,
       clientName: quotation.client_id ? clientNameById.get(quotation.client_id) ?? "Unknown client" : "No client",
@@ -734,6 +737,7 @@ export async function loadTeamStats(
   }
 
   const quotations = quotationRows ?? [];
+  const contractStates = await loadProjectContractTotals(admin, projectContractQuotationIds(quotations));
   const quotationById = new Map(quotations.map((quotation) => [quotation.id, quotation]));
 
   const stats: TeamMemberStat[] = (profileRows ?? []).map((profile) => {
@@ -754,7 +758,7 @@ export async function loadTeamStats(
     const totalQuotations = quoted.length;
     const approvedQuotations = approved.length;
     const totalValue = quoted.reduce((sum, quotation) => sum + (quotation.grand_total ?? 0), 0);
-    const approvedValue = approved.reduce((sum, quotation) => sum + (quotation.grand_total ?? 0), 0);
+    const approvedValue = approved.reduce((sum, quotation) => sum + projectContractValue(quotation, contractStates), 0);
     const currency = quoted[0]?.currency ?? "AED";
     const displayName = profile.full_name?.trim() || profile.email?.trim() || "Unknown";
     const activityRecordKeys = new Set(

@@ -4,6 +4,7 @@ import { requireProcurementManager } from "@/lib/auth";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { loadProjectContractTotals, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
 import { vendorDocSlotLabel, vendorStepLabel } from "@/lib/procurement/vendor-steps";
 import { createClient } from "@/lib/supabase/server";
 import type { NoaCapabilityResult, NoaPageContext } from "./noa-types";
@@ -59,6 +60,8 @@ async function allProcurementOrders(
     .select("id,layout_settings")
     .returns<QuotationLayoutRow[]>();
 
+  const contractStates = await loadProjectContractTotals(supabase, projectContractQuotationIds(data ?? []));
+
   return (data ?? [])
     .flatMap((quotation) => {
       const settings = quotation.layout_settings as Record<string, unknown> | null;
@@ -75,7 +78,7 @@ async function allProcurementOrders(
         orderNo: order.orderNo,
         quotationId: quotation.id,
         reference: order.reference,
-        total: order.total,
+        total: projectContractValue(quotation, contractStates),
       }] : [];
     })
     .filter((order, index, all) => all.findIndex((candidate) => candidate.orderNo === order.orderNo) === index);
