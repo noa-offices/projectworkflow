@@ -7,6 +7,7 @@ import {
   quotationSalesFolderKey,
 } from "@/lib/quotations/sales-attribution";
 import type { SalesCommissionRow } from "@/lib/commissions/types";
+import { loadCommissionAdjustments, type CommissionAdjustmentRow } from "@/lib/commissions/adjustments";
 import { loadProjectContractTotals, projectContractForQuotation, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
 
 type DateRange = { from: string; to: string };
@@ -80,7 +81,7 @@ export type ProfileCommissionRow = Pick<SalesCommissionRow,
   "id" | "quotation_folder_key" | "approved_total_including_vat" | "formula_type_snapshot" |
   "original_calculated_amount" | "final_commission_amount" | "currency" | "status" |
   "earned_at" | "paid_at"
->;
+> & { adjustments?: CommissionAdjustmentRow[]; adjustmentsUnavailable?: boolean };
 
 // ── Date range preset helper ──────────────────────────────────────────────────
 
@@ -398,6 +399,11 @@ export async function loadProfileStats(
     console.warn("loadProfileStats: audit_activity_log query failed", activityError.message);
   }
 
+  const adjustmentLedger = await loadCommissionAdjustments(supabase, (commissionRows ?? []).map((row) => row.id));
+  const commissionsWithAdjustments = (commissionRows ?? []).map((row) => ({ ...row,
+    adjustments: adjustmentLedger.rows.filter((adjustment) => adjustment.commission_id === row.id),
+    adjustmentsUnavailable: adjustmentLedger.unavailable,
+  }));
   const stats = commercialProfileStats(quotationRows ?? [], userId, range, dateRange);
   const recentPreparedQuotations = (quotationRows ?? [])
     .filter((quotation) => quotation.created_by === userId && isWithinDateRange(quotation, dateRange))
@@ -581,7 +587,7 @@ export async function loadProfileStats(
       uniqueClients,
       uniqueProjects: projects.length,
     },
-    commissions: commissionRows ?? [],
+    commissions: commissionsWithAdjustments,
     recentPreparedQuotations,
     recentActivity: activityRows ?? [],
   };

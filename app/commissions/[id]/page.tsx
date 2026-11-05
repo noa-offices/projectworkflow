@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { recordCommissionUserEvent, saveCommissionDraft, transitionCommission } from "@/app/commissions/actions";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { CommissionAdjustments } from "@/components/commissions/commission-adjustments";
+import { loadCommissionAdjustments } from "@/lib/commissions/adjustments";
 import { requireCommissionViewer } from "@/lib/auth";
 import {
   commissionBasisLabel,
@@ -119,8 +121,7 @@ export default async function CommissionDetailPage({ params, searchParams }: Pag
     supabase
       .from("audit_activity_log")
       .select("id,action,title,description,metadata,created_by,created_at")
-      .eq("entity_type", "sales_commission")
-      .eq("entity_id", commission.id)
+      .or(`and(entity_type.eq.sales_commission,entity_id.eq.${commission.id}),and(parent_entity_type.eq.sales_commission,parent_entity_id.eq.${commission.id})`)
       .order("created_at", { ascending: false })
       .returns<AuditRow[]>(),
     isFinancialEditor
@@ -156,6 +157,7 @@ export default async function CommissionDetailPage({ params, searchParams }: Pag
   const currentOwnerMadeRecord =
     commission.submitted_by === user.id || commission.overridden_by === user.id;
   const otherActiveOwnerCount = (ownerRows ?? []).filter((owner) => owner.id !== user.id).length;
+  const adjustments = await loadCommissionAdjustments(supabase, [commission.id]);
   const isOwnSalesManager = profile?.role === "sales_designer" && commission.salesperson_id === user.id;
   const lastReminder = (auditRows ?? []).find((entry) => entry.action === "commission_approval_reminder_sent");
   const lastPaymentRequest = (auditRows ?? []).find((entry) => entry.action === "commission_payment_update_requested");
@@ -238,6 +240,9 @@ export default async function CommissionDetailPage({ params, searchParams }: Pag
             <Detail label="Final commission" value={formatMoney(commission.currency, Number(commission.final_commission_amount))} />
           </dl>
         </section>
+
+        <CommissionAdjustments parent={commission} rows={adjustments.rows} unavailable={adjustments.unavailable}
+          userId={user.id} isOwner={isSystemOwner} otherOwnerCount={otherActiveOwnerCount} />
 
         {isFinancialEditor && (commission.status === "draft" || commission.status === "requires_review") ? (
           <form action={saveCommissionDraft} className="grid gap-4 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">

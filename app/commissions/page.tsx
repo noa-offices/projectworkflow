@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { transitionCommission } from "@/app/commissions/actions";
+import { loadCommissionAdjustments } from "@/lib/commissions/adjustments";
 import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
@@ -113,6 +114,8 @@ async function CommissionsContent({ searchParams, auth }: PageProps & { auth: Aw
       : supabase.rpc("list_commission_sales_managers"),
   ]);
   const rows = commissions ?? [];
+  const adjustments = await loadCommissionAdjustments(supabase, rows.map((row) => row.id));
+  const parentsWithAdjustments = new Set(adjustments.rows.map((row) => row.commission_id));
   const managers = (managerRows ?? []) as SalesManagerOption[];
   const managerName = new Map(managers.map((manager) => [manager.id, manager.display_name]));
   if (profile?.role === "sales_designer" && profile.id) {
@@ -166,6 +169,7 @@ async function CommissionsContent({ searchParams, auth }: PageProps & { auth: Aw
           <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error.message}</p>
         ) : null}
 
+        <p className="text-sm text-zinc-500">Summary values below are original commissions. Open “+ adjustments” to review variation amounts and net commission.{adjustments.unavailable ? " Adjustment information is currently unavailable." : ""}</p>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <SummaryCard label="Requires Review" value={counts.get("requires_review") ?? 0} />
           <SummaryCard label="Draft" value={counts.get("draft") ?? 0} />
@@ -258,7 +262,7 @@ async function CommissionsContent({ searchParams, auth }: PageProps & { auth: Aw
                     <td className="px-4 py-3">{commissionBasisLabel(row.basis_type_snapshot)}</td>
                     <td className="px-4 py-3">{commissionFormulaLabel(row.formula_type_snapshot)}</td>
                     <td className="px-4 py-3 whitespace-nowrap">{formatMoney(row.currency, Number(row.original_calculated_amount))}</td>
-                    <td className="px-4 py-3 whitespace-nowrap font-semibold">{formatMoney(row.currency, Number(row.final_commission_amount))}</td>
+                    <td className="px-4 py-3 whitespace-nowrap font-semibold">{formatMoney(row.currency, Number(row.final_commission_amount))}{parentsWithAdjustments.has(row.id) ? <Link href={`/commissions/${row.id}`} className="block text-xs font-medium text-emerald-900">+ adjustments</Link> : null}</td>
                     <td className="px-4 py-3 whitespace-nowrap">{dateOnly(row.earned_at)}</td>
                     <td className="px-4 py-3">{commissionStatusLabel(row.status)}</td>
                     <td className="px-4 py-3">

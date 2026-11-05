@@ -16,4 +16,6 @@ Project contract value is read through [project-contract-total](../../lib/projec
 
 ## Settings and other active areas
 
+Commission detail/list and profile cards read the separate [D2 variation adjustment ledger](COMMISSION_VARIATION_ADJUSTMENTS_D2.md). Draft adjustments need maker-checker approval before entering net/earned totals; original commissions remain separate. The guide records list/profile period limits and migration deployment order.
+
 [Settings](../../app/settings/page.tsx), [actions](../../app/settings/actions.ts), [users](../../app/settings/users/page.tsx), [company](../../app/settings/company/page.tsx), [documents](../../app/settings/documents/page.tsx), [AI settings](../../app/settings/ai/page.tsx), [workers](../../app/settings/workers/page.tsx), [system health](../../app/settings/system-health/page.tsx), and [AI settings tests](../../app/settings/ai/ai-settings.test.mts). Company/document settings affect exports; AI settings affect provider use; users and workers interact with auth and HR. Other active areas include dashboard, sales, commissions, notifications and leave; their complete contracts, routes, tests and planned status are **NOT VERIFIED**. See [overview](../PROJECT_OVERVIEW.md) and [workflows](../WORKFLOWS.md), then inspect the relevant route directly.
