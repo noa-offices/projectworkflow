@@ -326,11 +326,11 @@ test("the current scope is the latest applied variation, with the Project's own 
 
 // ---- Source text ----
 
-test("payments keep the original total; the Project page shows the revised one elsewhere", () => {
+test("payments follow the revised total (Step C2b); the Project page shows the revised one elsewhere", () => {
   const page = read("app/projects/orders/[orderNo]/page.tsx");
-  assert.ok(page.includes("contractTotal={String(entry.order.total)}"));
-  assert.ok(page.includes("const contract = moneyToFils(String(entry.order.total));"));
-  assert.ok(page.includes("The payment schedule still follows the original contract total"));
+  assert.ok(page.includes("contractTotal={clientPaymentContractTotal}"));
+  assert.ok(page.includes("const contract = moneyToFils(clientPaymentContractTotal);"), "the outstanding line uses the revised total");
+  assert.ok(!page.includes("The payment schedule still follows the original contract total"));
   assert.equal(page.split("formatRuleMoney(pricingRule, entry.order.currency, revisedContractTotal)").length - 1, 3);
   assert.ok(page.includes("(scope.originalHeader ?? commercial).payment_terms"));
   for (const file of ["lib/projects/client-payment-actions.ts", "components/projects/client-payment-panel.tsx"]) assert.ok(!read(file).includes("project_variation"), file);
