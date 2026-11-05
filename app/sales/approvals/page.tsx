@@ -7,7 +7,8 @@ import { quotationStatusLabel } from "@/lib/quotation-status";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { documentSetupRecord } from "@/lib/quotations/document-setup";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
-import { loadProjectContractTotals, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
+import { loadProjectContractTotals, projectContractForQuotation, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
+import { oneDealPerFolder } from "@/lib/projects/one-deal-per-folder";
 import { folderProjectOrderNo, variationLinkFromLayoutSettings } from "@/lib/quotations/project-variation";
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
@@ -27,6 +28,8 @@ type ApprovedQuotationRow = {
   quotation_date: string | null;
   status: string;
   grand_total: number | null;
+  revision_no: number | null;
+  created_at: string;
   currency: string | null;
   layout_settings: unknown;
   status_updated_at: string | null;
@@ -62,7 +65,7 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
   const [{ data: quotations, error }, { data: clients, error: clientsError }, { data: projectFileRows }] = await Promise.all([
     supabase
       .from("quotations")
-      .select("id,client_id,quotation_no,title,legacy_reference,quotation_date,status,grand_total,currency,layout_settings,status_updated_at,updated_at")
+      .select("id,client_id,quotation_no,title,legacy_reference,quotation_date,status,grand_total,revision_no,created_at,currency,layout_settings,status_updated_at,updated_at")
       .eq("status", "client_confirmed")
       .order("status_updated_at", { ascending: false })
       .limit(200)
@@ -92,7 +95,8 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
   }
 
   const clientNames = new Map((clients ?? []).map((client) => [client.id, client.company_name?.trim() || "Client"]));
-  const approvedQuotations = (quotations ?? []).map((quotation) => {
+  // One row per approved deal: variations and old revisions of a folder are not listed (same rule as the dashboard).
+  const approvedQuotations = oneDealPerFolder(quotations ?? [], contractStates).map(({ row: quotation }) => {
     const setup = documentSetupRecord(quotation.layout_settings);
     const header = setup.header && typeof setup.header === "object" && !Array.isArray(setup.header)
       ? setup.header as Record<string, unknown>
@@ -105,8 +109,15 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
     const folderOrderNo = variationLinkFromLayoutSettings(quotation.layout_settings)?.orderNo ?? folderProjectOrderNo(folderRows, quotation.quotation_no);
     const contractSource = projectFile ? quotation : folderOrderNo ? projectByOrderNo.get(folderOrderNo) : undefined;
 
+    const contract = contractSource ? projectContractForQuotation(contractSource, contractStates) : null;
+    const exact = (value: number) => `${quotation.currency ?? "AED"} ${value.toLocaleString("en-US", Number.isInteger(value) ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const variationNote = contract?.appliedVariationNo
+      ? `Original ${exact(contract.originalTotal)} · ${contract.variationDelta < 0 ? "-" : "+"}${exact(Math.abs(contract.variationDelta))} (V${contract.appliedVariationNo})`
+      : null;
+
     return {
       ...quotation,
+      variationNote,
       contractValue: contractSource ? projectContractValue(contractSource, contractStates) : quotation.grand_total ?? 0,
       clientName: quotation.client_id ? clientNames.get(quotation.client_id) ?? "Client" : "Client",
       folderNo: projectFile?.folderNo ?? quotationFolderNumberFromQuotationNumber(quotation.quotation_no),
@@ -143,7 +154,7 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
             <div>
               <h2 className="text-lg font-semibold text-zinc-950">Approved Quotations</h2>
               <p className="mt-1 text-sm text-zinc-500">
-                {approvedQuotations.length} {approvedQuotations.length === 1 ? "quotation" : "quotations"} marked {quotationStatusLabel("client_confirmed")}.
+                {approvedQuotations.length} approved {approvedQuotations.length === 1 ? "quotation folder" : "quotation folders"} marked {quotationStatusLabel("client_confirmed")}.
               </p>
             </div>
           </div>
@@ -182,7 +193,7 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
                       </div>
                       <div className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)] gap-2">
                         <dt className="font-semibold text-zinc-500">Value</dt>
-                        <dd className="font-semibold text-zinc-950">{formatRuleMoney(readPricingRule(quotation.layout_settings), quotation.currency, quotation.contractValue)}</dd>
+                        <dd className="font-semibold text-zinc-950">{formatRuleMoney(readPricingRule(quotation.layout_settings), quotation.currency, quotation.contractValue)}{quotation.variationNote ? <span className="mt-0.5 block text-[11px] font-normal text-zinc-400">{quotation.variationNote}</span> : null}</dd>
                       </div>
                       <div className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)] gap-2">
                         <dt className="font-semibold text-zinc-500">Project</dt>
@@ -251,6 +262,7 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
                       <td className="max-w-xs py-3 pr-4 text-zinc-600">{quotation.reference}</td>
                       <td className="py-3 pr-4 font-medium text-zinc-950">
                         {formatRuleMoney(readPricingRule(quotation.layout_settings), quotation.currency, quotation.contractValue)}
+                        {quotation.variationNote ? <span className="mt-0.5 block text-[11px] font-normal text-zinc-400">{quotation.variationNote}</span> : null}
                       </td>
                       <td className="py-3 pr-4 text-zinc-600">{formatDate(quotation.status_updated_at ?? quotation.updated_at ?? quotation.quotation_date)}</td>
                       <td className="py-3 pr-4 font-medium text-zinc-950">

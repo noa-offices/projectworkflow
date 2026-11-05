@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 import * as contract from "./project-contract-total.js";
+import * as pricing from "../quotation-pricing.js";
 import * as deals from "./one-deal-per-folder.js";
 import * as projectWise from "./project-wise-approved.js";
 import * as files from "../quotations/project-file.js";
@@ -65,7 +66,7 @@ const db = {
 function load(path: string, expose: string[] = [], capture?: string) {
   let source = readFileSync(path, "utf8");
   if (capture) {
-    const start = source.indexOf("async function SalesReportContent");
+    const start = source.indexOf(path.includes("approvals") ? "export default async function" : "async function SalesReportContent");
     const end = source.indexOf("\n  return (", start);
     assert.ok(end > start);
     source = source.slice(0, end) + `\n  return ${capture};\n}\n`;
@@ -74,7 +75,7 @@ function load(path: string, expose: string[] = [], capture?: string) {
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const testModule = { exports: {} as Record<string, unknown> };
   const modules: Record<string, unknown> = {
-    "@/lib/projects/project-contract-total": contract, "@/lib/projects/one-deal-per-folder": deals, "@/lib/projects/project-wise-approved": projectWise,
+    "@/lib/quotation-pricing": pricing, "@/lib/projects/project-contract-total": contract, "@/lib/projects/one-deal-per-folder": deals, "@/lib/projects/project-wise-approved": projectWise,
     "@/lib/quotations/project-file": files, "@/lib/quotations/client-approval-draft": approvals, "@/lib/quotations/sales-attribution": attribution, "@/lib/quotations/project-variation": variation,
     "@/lib/quotations/approval-display": approvalDisplay, "@/lib/projectworkflow-numbering": numbering, "@/lib/insights/date-ranges": ranges, "@/lib/quotations/document-setup": documentSetup,
     "@/lib/supabase/server": { createClient: async () => db }, "@/lib/supabase/admin": { createAdminClient: () => ({ client: db }) },
@@ -122,4 +123,23 @@ test("the report cards carry the two grey lines and the table sits below the tea
   const page = readFileSync("app/insights/sales-report/page.tsx", "utf8").replace(/\r\n/g, "\n");
   assert.ok(page.includes("Latest quotation per folder") && page.includes("Current Project contract value (includes variations)"));
   assert.ok(page.indexOf("<SalesTeamPerformanceTable") < page.indexOf("<ProjectWiseApprovedTable"));
+});
+
+test("Approved Quotations page, live case: one row per folder, current contract totals, a variation line only where one is applied", async () => {
+  fixture = liveRows();
+  const fn = load("app/sales/approvals/page.tsx", [], "approvedQuotations").default;
+  const rows = await fn({ searchParams: Promise.resolve({}) }) as Array<{ quotation_no: string; contractValue: number; variationNote: string | null }>;
+  assert.equal(JSON.stringify(rows.map((r) => [r.quotation_no, r.contractValue])), JSON.stringify([["QN-0006-001", 96265], ["QN-0002-001", 23948.4]]));
+  assert.equal(rows[0].variationNote, null);
+  assert.equal(rows[1].variationNote, "Original AED 22,800 · +AED 1,148.40 (V1)");
+  fixture = [row("r1", "QN-0009-001-R1", 200, {}, { revision_no: 1 }), row("r2", "QN-0009-001-R2", 300, {}, { revision_no: 2 }), row("N", "QN-0010-001", 500, { projectFile: file("CO-0010-001", "QN-0010-001", "N", 500) })];
+  const others = await fn({ searchParams: Promise.resolve({}) }) as Array<{ quotation_no: string; contractValue: number; variationNote: string | null }>;
+  assert.equal(JSON.stringify(others.map((r) => [r.quotation_no, r.contractValue, r.variationNote])), JSON.stringify([["QN-0009-001-R2", 300, null], ["QN-0010-001", 500, null]]));
+});
+
+test("Approved Quotations page: the subtitle counts folders; title, description and links are unchanged", () => {
+  const page = readFileSync("app/sales/approvals/page.tsx", "utf8").split(String.fromCharCode(13)).join("");
+  assert.ok(page.includes('approved {approvedQuotations.length === 1 ? "quotation folder" : "quotation folders"} marked'));
+  assert.ok(page.includes('title="Approved Quotations"') && page.includes("Quotations marked Client Approved. Project files can be opened or created from approved quotations."));
+  assert.ok(page.includes("Open Quotation") && page.includes("Open Project File"));
 });

@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 import * as contract from "./project-contract-total.js";
+import * as pricing from "../quotation-pricing.js";
 import * as deals from "./one-deal-per-folder.js";
 import * as projectWise from "./project-wise-approved.js";
 import * as files from "../quotations/project-file.js";
@@ -43,6 +44,7 @@ function load(path: string, expose: string[] = [], capture?: string) {
   const testModule = { exports: {} as Record<string, unknown> };
   const auth = async () => ({ user: { id: "rep" }, profile: { role: "designer" }, displayName: "Rep" });
   const modules: Record<string, unknown> = {
+    "@/lib/quotation-pricing": pricing,
     "@/lib/projects/project-contract-total": contract,
     "@/lib/projects/one-deal-per-folder": deals,
     "@/lib/projects/project-wise-approved": projectWise,
