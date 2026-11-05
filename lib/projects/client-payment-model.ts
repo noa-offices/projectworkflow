@@ -44,8 +44,17 @@ export type ClientPaymentInstallmentRow = {
   due_triggered_at: string | null;
   status_override: "waived" | "cancelled" | null;
   note: string | null;
+  /** The applied variation this instalment was added for (Step C2b). Null for every ordinary instalment. */
+  variation_id?: string | null;
   created_at: string;
   updated_at: string;
+};
+
+/** An applied Project variation, as the Payments tab needs it. */
+export type ClientPaymentVariationRow = {
+  id: string;
+  variation_no: number;
+  contract_delta: string | number;
 };
 
 export type ClientPaymentReceiptRow = {
@@ -190,4 +199,64 @@ export function calculateClientPaymentSummary(
     unscheduled: contract > scheduled ? contract - scheduled : BIGINT_ZERO,
     receivedByInstallment,
   };
+}
+
+export type ClientPaymentVariationLine = {
+  id: string;
+  variationNo: number;
+  delta: bigint;
+  /** An applied variation with no instalment yet. */
+  needsInstalment: boolean;
+  /** Only a variation that increases the contract gets an instalment; a credit is adjusted by hand. */
+  canAddInstalment: boolean;
+};
+
+export type ClientPaymentContractView = {
+  original: bigint;
+  /** Revised minus original, so the three figures always add up. */
+  variations: bigint;
+  revised: bigint;
+  lines: ClientPaymentVariationLine[];
+  /** By how much the (non-cancelled) instalments exceed the revised total; zero when they do not. */
+  overScheduled: bigint;
+};
+
+/**
+ * The Payments tab view of a Project with applied variations (Step C2b). Returns null when there is no applied
+ * variation, so a Project without one is drawn exactly as before.
+ */
+export function describeClientPaymentVariations(
+  originalTotal: string | number,
+  revisedTotal: string | number,
+  variations: ClientPaymentVariationRow[],
+  installments: ClientPaymentInstallmentRow[],
+  scheduled: bigint,
+): ClientPaymentContractView | null {
+  if (variations.length === 0) return null;
+  const original = moneyToFils(originalTotal);
+  const revised = moneyToFils(revisedTotal);
+  const withInstalment = new Set(installments.map((installment) => installment.variation_id).filter((id): id is string => Boolean(id)));
+  const lines = [...variations]
+    .sort((a, b) => a.variation_no - b.variation_no)
+    .map((variation) => {
+      const delta = moneyToFils(variation.contract_delta);
+      return {
+        id: variation.id,
+        variationNo: variation.variation_no,
+        delta,
+        needsInstalment: !withInstalment.has(variation.id),
+        canAddInstalment: delta > BIGINT_ZERO,
+      };
+    });
+  return { original, variations: revised - original, revised, lines, overScheduled: scheduled > revised ? scheduled - revised : BIGINT_ZERO };
+}
+
+/** The plain-words line for an applied variation that does not increase the contract. */
+export function variationWithoutInstalmentNote(currency: string, variationNo: number, delta: bigint): string {
+  if (delta === BIGINT_ZERO) return `Variation V${variationNo} does not change the contract total. No instalment is needed.`;
+  return `Variation V${variationNo} reduces the contract by ${formatPaymentMoney(currency, -delta)}. Adjust the remaining instalments by hand.`;
+}
+
+export function formatSignedPaymentMoney(currency: string, value: bigint): string {
+  return value > BIGINT_ZERO ? `+${formatPaymentMoney(currency, value)}` : formatPaymentMoney(currency, value);
 }

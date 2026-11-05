@@ -27,7 +27,7 @@ import { currentScopeNote, loadConfirmedVariations, vendorsWithChangedLines } fr
 import { ProjectVendorOperations, type ProjectVendorOperationsSummary } from "@/components/projects/project-vendor-operations";
 import type { VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 import { ClientPaymentNoAccess, ClientPaymentPanel } from "@/components/projects/client-payment-panel";
-import { formatPaymentMoney, moneyToFils, type ClientPaymentAttachmentRow, type ClientPaymentInstallmentRow, type ClientPaymentReceiptRow, type ClientPaymentScheduleRow } from "@/lib/projects/client-payment-model";
+import { formatPaymentMoney, moneyToFils, type ClientPaymentAttachmentRow, type ClientPaymentInstallmentRow, type ClientPaymentReceiptRow, type ClientPaymentScheduleRow, type ClientPaymentVariationRow } from "@/lib/projects/client-payment-model";
 
 export const dynamic = "force-dynamic";
 
@@ -209,6 +209,26 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
   let clientPaymentInstallments: ClientPaymentInstallmentRow[] = [];
   let clientPaymentReceipts: ClientPaymentReceiptRow[] = [];
   let clientPaymentAttachments: ClientPaymentAttachmentRow[] = [];
+  // Step C2b: with an applied variation, instalments are checked against the revised total (the latest variation's new_contract_total), as the database does.
+  let clientPaymentVariations: ClientPaymentVariationRow[] = [];
+  let clientPaymentContractTotal = String(entry.order.total);
+  let clientPaymentOriginalTotal: string | null = null;
+  if (mayViewClientPayments) {
+    const { data: variationRows, error: variationError } = await supabase
+      .from("project_variations")
+      .select("id, variation_no, contract_delta, new_contract_total, project_snapshots!inner(quotation_id)")
+      .eq("project_snapshots.quotation_id", entry.quotationId)
+      .order("variation_no", { ascending: true })
+      .returns<Array<{ id: string; variation_no: number; contract_delta: string | number; new_contract_total: string | number }>>();
+    // The table is missing until the variations migration is applied; that means no variation, as for any Project without one.
+    if (variationError && variationError.code !== "42P01" && variationError.code !== "PGRST205") console.error("CLIENT PAYMENT VARIATIONS READ ERROR", variationError.message);
+    const appliedVariationRows = variationRows ?? [];
+    if (appliedVariationRows.length > 0) {
+      clientPaymentVariations = appliedVariationRows.map((row) => ({ id: row.id, variation_no: row.variation_no, contract_delta: row.contract_delta }));
+      clientPaymentContractTotal = String(appliedVariationRows[appliedVariationRows.length - 1].new_contract_total);
+      clientPaymentOriginalTotal = String(entry.order.total);
+    }
+  }
   if (mayViewClientPayments) {
     const { data: schedule, error: scheduleError } = await supabase
       .from("client_payment_schedules")
@@ -237,6 +257,18 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
       if (installmentsResult.error) console.error("CLIENT PAYMENT INSTALLMENTS READ ERROR", installmentsResult.error.message);
       if (receiptsResult.error) console.error("CLIENT PAYMENT RECEIPTS READ ERROR", receiptsResult.error.message);
       clientPaymentInstallments = installmentsResult.data ?? [];
+      if (clientPaymentVariations.length > 0) {
+        // A separate read, so the list above still loads if the instalment column is not there yet.
+        const { data: variationLinks, error: variationLinkError } = await supabase
+          .from("client_payment_installments")
+          .select("id, variation_id")
+          .eq("schedule_id", clientPaymentSchedule.id)
+          .not("variation_id", "is", null)
+          .returns<Array<{ id: string; variation_id: string | null }>>();
+        if (variationLinkError) console.error("CLIENT PAYMENT VARIATION INSTALMENTS READ ERROR", variationLinkError.message);
+        const variationByInstalment = new Map((variationLinks ?? []).map((link) => [link.id, link.variation_id]));
+        clientPaymentInstallments = clientPaymentInstallments.map((installment) => ({ ...installment, variation_id: variationByInstalment.get(installment.id) ?? null }));
+      }
       clientPaymentReceipts = receiptsResult.data ?? [];
       const receiptIds = clientPaymentReceipts.map((receipt) => receipt.id);
       const attachmentsResult = receiptIds.length > 0
@@ -680,7 +712,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
           ["Outstanding client payment", mayViewClientPayments
             ? formatPaymentMoney(entry.order.currency, (() => {
                 const received = clientPaymentReceipts.reduce((total, receipt) => receipt.voided_at ? total : total + moneyToFils(receipt.amount_received), BigInt(0));
-                const contract = moneyToFils(String(entry.order.total));
+                const contract = moneyToFils(clientPaymentContractTotal);
                 return contract > received ? contract - received : BigInt(0);
               })())
             : "Restricted"],
@@ -700,14 +732,8 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
 
   const vendorsSection = <ProjectVendorOperations mode="vendors" orderNo={decodedOrderNo} vendors={vendorOperations} />;
   const scheduleSection = <ProjectVendorOperations mode="schedule" orderNo={decodedOrderNo} vendors={vendorOperations} />;
-  const paymentsNote = scope.appliedVariationNo ? (
-    <p className="mb-3 text-xs text-zinc-500">
-      The payment schedule still follows the original contract total ({formatRuleMoney(readPricingRule(entry.quotationRow.layout_settings), entry.order.currency, entry.order.total)}). Updating it for variations comes in the next step.
-    </p>
-  ) : null;
   const paymentsSection = mayViewClientPayments ? (
     <>
-    {paymentsNote}
     <ClientPaymentPanel
       schedule={clientPaymentSchedule}
       installments={clientPaymentInstallments}
@@ -715,7 +741,9 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
       attachments={clientPaymentAttachments}
       quotationId={entry.quotationId}
       orderNo={decodedOrderNo}
-      contractTotal={String(entry.order.total)}
+      contractTotal={clientPaymentContractTotal}
+      originalContractTotal={clientPaymentOriginalTotal}
+      variations={clientPaymentVariations}
       currency={entry.order.currency}
       paymentTerms={(scope.originalHeader ?? commercial).payment_terms}
       scheduleReadOnly={Boolean(completedAt || cancelledAt)}

@@ -91,6 +91,36 @@ export async function saveClientPaymentInstallment(input: ClientPaymentInstallme
   return { ok: true };
 }
 
+export async function addClientPaymentVariationInstalment(input: {
+  quotationId: string;
+  orderNo: string;
+  contractTotal: string;
+  variationNo: number;
+}): Promise<PaymentActionResult> {
+  const { profile } = await requireActiveUser();
+  if (!canManageClientPaymentInstallments(profile?.role)) return { ok: false, error: "Forbidden." };
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase.rpc("add_client_payment_variation_instalment", {
+    p_quotation_id: input.quotationId,
+    p_order_no: input.orderNo,
+    p_contract_total: input.contractTotal,
+    p_variation_no: input.variationNo,
+  });
+  if (error) {
+    logServerActionError("ADD CLIENT PAYMENT VARIATION INSTALMENT ERROR", error, { action: "add_client_payment_variation_instalment", recordId: input.orderNo });
+    const extracted = extractActionError(error);
+    return {
+      ok: false,
+      error: formatSafeActionError("Could not add the variation instalment", error),
+      staleContractTotal:
+        extracted.code === "P0001" &&
+        extracted.message === "Project File contract total has changed. Reload before continuing.",
+    };
+  }
+  refreshProject(input.orderNo);
+  return { ok: true };
+}
+
 export async function deleteClientPaymentInstallment(
   installmentId: string,
   quotationId: string,

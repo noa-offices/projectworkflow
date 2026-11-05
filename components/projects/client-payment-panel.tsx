@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Ban, ChevronDown, ChevronUp, Download, Eye, Paperclip, Pencil, Plus, ReceiptText, Trash2, X } from "lucide-react";
 import {
+  addClientPaymentVariationInstalment,
   deleteClientPaymentInstallment,
   moveClientPaymentInstallment,
   recordClientPaymentReceipt,
@@ -21,10 +22,13 @@ import {
   CLIENT_PAYMENT_METHODS,
   calculateClientPaymentSummary,
   clientPaymentDueLabel,
+  describeClientPaymentVariations,
   deriveClientPaymentStatus,
   filsToDecimalString,
   formatPaymentMoney,
+  formatSignedPaymentMoney,
   moneyToFils,
+  variationWithoutInstalmentNote,
   type ClientPaymentCalculationType,
   type ClientPaymentAttachmentRow,
   type ClientPaymentDueType,
@@ -32,6 +36,7 @@ import {
   type ClientPaymentMethod,
   type ClientPaymentReceiptRow,
   type ClientPaymentScheduleRow,
+  type ClientPaymentVariationRow,
 } from "@/lib/projects/client-payment-model";
 
 const DUE_LABELS: Record<ClientPaymentDueType, string> = {
@@ -137,6 +142,8 @@ export function ClientPaymentPanel({
   quotationId,
   orderNo,
   contractTotal,
+  originalContractTotal = null,
+  variations = [],
   currency,
   paymentTerms,
   scheduleReadOnly,
@@ -150,7 +157,11 @@ export function ClientPaymentPanel({
   attachments: ClientPaymentAttachmentRow[];
   quotationId: string;
   orderNo: string;
+  /** The total instalments are checked against: the revised total when a variation is applied, else the Project File total. */
   contractTotal: string;
+  /** Only when a variation is applied (Step C2b). */
+  originalContractTotal?: string | null;
+  variations?: ClientPaymentVariationRow[];
   currency: string;
   paymentTerms: string | null;
   scheduleReadOnly: boolean;
@@ -173,6 +184,10 @@ export function ClientPaymentPanel({
   const summary = useMemo(() => {
     return calculateClientPaymentSummary(contractTotal, installments, receipts, todayIso);
   }, [contractTotal, installments, receipts, todayIso]);
+  const variationView = useMemo(
+    () => (originalContractTotal ? describeClientPaymentVariations(originalContractTotal, contractTotal, variations, installments, summary.scheduled) : null),
+    [originalContractTotal, contractTotal, variations, installments, summary.scheduled],
+  );
 
   const receiptExpected = receiptInstallment ? moneyToFils(receiptInstallment.expected_amount) : BIGINT_ZERO;
   const receiptAlreadyReceived = receiptInstallment
@@ -240,6 +255,23 @@ export function ClientPaymentPanel({
     startTransition(async () => {
       const result = await deleteClientPaymentInstallment(installment.id, quotationId, orderNo, contractTotal);
       if (!result.ok) setError(result.error);
+    });
+  }
+
+  function runAddVariationInstalment(variationNo: number) {
+    setError(null);
+    startTransition(async () => {
+      const result = await addClientPaymentVariationInstalment({ quotationId, orderNo, contractTotal, variationNo });
+      if (!result.ok) {
+        if (result.staleContractTotal) {
+          setError("Project File data was refreshed. Review the updated contract total, then submit again.");
+          router.refresh();
+        } else {
+          setError(result.error);
+        }
+      } else {
+        router.refresh();
+      }
     });
   }
 
@@ -390,13 +422,23 @@ export function ClientPaymentPanel({
     });
   }
 
-  const tiles: Array<[string, bigint]> = [
-    ["Contract total", summary.contract],
-    ["Scheduled", summary.scheduled],
-    ["Received", summary.received],
-    ["Outstanding", summary.outstanding],
-    ["Overdue", summary.overdue],
-  ];
+  const tiles: Array<[string, string]> = variationView
+    ? [
+        ["Original contract", formatPaymentMoney(currency, variationView.original)],
+        ["Variations", formatSignedPaymentMoney(currency, variationView.variations)],
+        ["Revised contract total", formatPaymentMoney(currency, variationView.revised)],
+        ["Scheduled", formatPaymentMoney(currency, summary.scheduled)],
+        ["Received", formatPaymentMoney(currency, summary.received)],
+        ["Balance", formatPaymentMoney(currency, summary.outstanding)],
+        ["Overdue", formatPaymentMoney(currency, summary.overdue)],
+      ]
+    : [
+        ["Contract total", formatPaymentMoney(currency, summary.contract)],
+        ["Scheduled", formatPaymentMoney(currency, summary.scheduled)],
+        ["Received", formatPaymentMoney(currency, summary.received)],
+        ["Outstanding", formatPaymentMoney(currency, summary.outstanding)],
+        ["Overdue", formatPaymentMoney(currency, summary.overdue)],
+      ];
 
   return (
     <section className="min-w-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm xl:p-5">
@@ -412,15 +454,36 @@ export function ClientPaymentPanel({
         ) : null}
       </div>
 
-      <dl className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-5">
+      <dl className={`mt-4 grid grid-cols-2 gap-2 ${variationView ? "lg:grid-cols-4" : "lg:grid-cols-5"}`}>
         {tiles.map(([label, value]) => (
           <div key={label} className="min-w-0 rounded-md border border-zinc-200 bg-zinc-50 p-3">
             <dt className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">{label}</dt>
-            <dd className="mt-1 break-words text-sm font-semibold text-zinc-950">{formatPaymentMoney(currency, value)}</dd>
+            <dd className="mt-1 break-words text-sm font-semibold text-zinc-950">{value}</dd>
           </div>
         ))}
       </dl>
       {summary.unscheduled > BIGINT_ZERO ? <p className="mt-2 text-xs font-medium text-amber-800">{formatPaymentMoney(currency, summary.unscheduled)} remains unscheduled.</p> : null}
+      {variationView && variationView.overScheduled > BIGINT_ZERO ? <p className="mt-2 text-xs font-medium text-amber-800">Instalments add up to {formatPaymentMoney(currency, variationView.overScheduled)} more than the revised contract total.</p> : null}
+      {variationView ? (
+        <ul className="mt-3 space-y-2">
+          {variationView.lines.filter((line) => line.needsInstalment).map((line) => (
+            <li key={line.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+              {line.canAddInstalment ? (
+                <>
+                  <span><span className="font-semibold text-zinc-900">Variation V{line.variationNo}</span> adds {formatPaymentMoney(currency, line.delta)} to the contract. It has no instalment yet.</span>
+                  {!scheduleReadOnly ? (
+                    <button type="button" disabled={isPending} onClick={() => runAddVariationInstalment(line.variationNo)} className="inline-flex min-h-10 items-center gap-1 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white disabled:opacity-40">
+                      <Plus className="h-3.5 w-3.5" aria-hidden="true" /> Add instalment for Variation V{line.variationNo}
+                    </button>
+                  ) : null}
+                </>
+              ) : (
+                <span>{variationWithoutInstalmentNote(currency, line.variationNo, line.delta)}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {scheduleReadOnly ? <p className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">This project schedule is read-only. Authorised late receipts remain available for completed projects.</p> : null}
       {error ? <p role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">{error}</p> : null}
 
