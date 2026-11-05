@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { loadProjectContractTotals, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
+import { projectWiseApprovedRows, type ProjectWiseRow } from "@/lib/projects/project-wise-approved";
 import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
@@ -11,6 +12,7 @@ import { requireActiveUser } from "@/lib/auth";
 import {
   actualApprovedQuotationsByFolder,
   latestPrimaryQuotationsByFolder,
+  quotationSalesFolderKey,
 } from "@/lib/quotations/sales-attribution";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -252,6 +254,69 @@ function SalesLeaderboard({
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
+
+function aedFull(value: number) {
+  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function ProjectWiseApprovedTable({ rows, salespersonName, rangeLabel }: { rows: ProjectWiseRow[]; salespersonName: (id: string | null) => string; rangeLabel: string }) {
+  const total = rows.reduce((sum, row) => sum + row.currentContract, 0);
+  return (
+    <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+      <div className="border-b border-zinc-100 px-4 py-3">
+        <h2 className="text-sm font-semibold text-zinc-900">Project-wise approved value</h2>
+        <p className="mt-0.5 text-xs text-zinc-500">{rangeLabel} · One row per Project File. Current contract value includes variations.</p>
+      </div>
+      {rows.length === 0 ? (
+        <p className="p-6 text-center text-sm text-zinc-400">No approved Projects in this period.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1100px] text-left text-sm">
+            <thead className="bg-zinc-50 text-xs text-zinc-500">
+              <tr>
+                <th className="px-4 py-2.5 font-medium">Project no</th>
+                <th className="px-3 py-2.5 font-medium">Folder</th>
+                <th className="px-3 py-2.5 font-medium">Client</th>
+                <th className="px-3 py-2.5 font-medium">Reference</th>
+                <th className="px-3 py-2.5 font-medium">Salesperson</th>
+                <th className="px-3 py-2.5 text-right font-medium">Quoted</th>
+                <th className="px-3 py-2.5 text-right font-medium">Original contract</th>
+                <th className="px-3 py-2.5 text-right font-medium">Variations</th>
+                <th className="px-3 py-2.5 text-right font-medium">Current contract value</th>
+                <th className="px-3 py-2.5 font-medium">Approved date</th>
+                <th className="px-4 py-2.5 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {rows.map((row) => (
+                <tr key={row.quotationId}>
+                  <td className="px-4 py-3 font-medium text-zinc-950">{row.projectNo}</td>
+                  <td className="px-3 py-3 text-zinc-600">{row.folder}</td>
+                  <td className="px-3 py-3 text-zinc-800">{row.client}</td>
+                  <td className="px-3 py-3 text-zinc-600">{row.reference}</td>
+                  <td className="px-3 py-3 text-zinc-800">{salespersonName(row.salespersonId)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{aedFull(row.quoted)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{aedFull(row.originalContract)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{row.variations === null ? "" : `${row.variations > 0 ? "+" : ""}${aedFull(row.variations)}`}</td>
+                  <td className="px-3 py-3 text-right font-medium tabular-nums text-zinc-950">{aedFull(row.currentContract)}</td>
+                  <td className="px-3 py-3 text-zinc-600">{row.approvedDate.slice(0, 10)}</td>
+                  <td className="px-4 py-3 text-zinc-800">{row.status}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-zinc-50 text-sm font-semibold text-zinc-950">
+              <tr>
+                <td className="px-4 py-3" colSpan={8}>Total (AED)</td>
+                <td className="px-3 py-3 text-right tabular-nums">{aedFull(total)}</td>
+                <td colSpan={2} />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
 
 function SalesTeamPerformanceTable({
   rows,
@@ -554,6 +619,9 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
   const quotedQuotations = latestPrimaryQuotationsByFolder(allQuotationRows);
   const approvedQuotations = actualApprovedQuotationsByFolder(allQuotationRows);
 
+  const quotedTotalByFolder = new Map(quotedQuotations.map((q) => [quotationSalesFolderKey(q), q.grand_total ?? 0]));
+  const salespersonNames = new Map(allProfiles.map((p) => [p.id, p.full_name?.trim() || p.email?.trim() || "Unknown"]));
+
   // ── Period filtering (by created_at) ────────────────────────────────────────
   const currentQuotes = quotedQuotations.filter((q) => {
     const createdAt = new Date(q.created_at);
@@ -571,6 +639,9 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
     const d = new Date(q.created_at);
     return d >= priorStart && d < priorEnd;
   });
+
+  const projectWiseRows = projectWiseApprovedRows(currentApproved, quotedTotalByFolder, quotationSalesFolderKey, contractStates)
+    .filter((row) => !selectedUserId || row.salespersonId === selectedUserId);
 
   // ── Company-wide KPI totals ──────────────────────────────────────────────────
   const kpiCurrent = {
@@ -774,6 +845,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                     {formatSalesReportAEDMillions(kpiCurrent.totalQuotedAmount)}
                   </p>
                   <ChangeBadge value={quotedChange} />
+                  <p className="mt-1 text-[10px] text-zinc-400">Latest quotation per folder</p>
                 </div>
                 <SalesRepSparkline
                   data={kpiQuotedSparkline}
@@ -792,6 +864,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                     {formatSalesReportAEDMillions(kpiCurrent.approvedAmount)}
                   </p>
                   <ChangeBadge value={approvedChange} />
+                  <p className="mt-1 text-[10px] text-zinc-400">Current Project contract value (includes variations)</p>
                 </div>
                 <SalesRepSparkline
                   data={kpiApprovedSparkline}
@@ -835,6 +908,13 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
               canOpenDetails={profile?.role === "system_owner"}
               hrefForUser={(userId) => reportHref({ user: userId })}
             />
+            <div className="mt-5">
+              <ProjectWiseApprovedTable
+                rows={projectWiseRows}
+                salespersonName={(id) => (id ? salespersonNames.get(id) ?? "Unknown" : "Unassigned")}
+                rangeLabel={rangeLabel}
+              />
+            </div>
           </div>
 
           {/* ── RIGHT COLUMN: Leaderboard (sticky on desktop) ─────────────── */}

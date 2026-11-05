@@ -227,7 +227,7 @@ export function ERPDashboard({
     {
       label: "Confirmed Value",
       value: formatAED(salesData.yearlyTurnover),
-      description: `From ${salesData.dealCount} client-confirmed quotation${salesData.dealCount !== 1 ? "s" : ""}.`,
+      description: `From ${salesData.dealCount} client-confirmed quotation folder${salesData.dealCount !== 1 ? "s" : ""}.`,
       trend: `Calendar year ${new Date().getFullYear()}`,
       href: "/sales/approvals",
       icon: BadgeCheck,
@@ -527,7 +527,7 @@ export function ERPDashboard({
               <MonthlyBarChart data={monthlyData} color="#10b981" />
             </div>
             <p className="mt-1 text-xs text-zinc-500">
-              From {salesData.dealCount} client-confirmed quotation{salesData.dealCount !== 1 ? "s" : ""}
+              From {salesData.dealCount} client-confirmed quotation folder{salesData.dealCount !== 1 ? "s" : ""}
             </p>
           </DashboardCard>
         </div>

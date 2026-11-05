@@ -8,7 +8,7 @@ import { folderProjectOrderNoFrom, folderProjectOrderNos } from "@/lib/quotation
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { loadProjectContractTotals, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
-import { variationLinkFromLayoutSettings } from "@/lib/quotations/project-variation";
+import { oneDealPerFolder } from "@/lib/projects/one-deal-per-folder";
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import type { AlertIconKey, DashboardAlert } from "@/components/dashboard/alerts-panel";
 import { sendNotificationToRole } from "@/lib/notifications/actions";
@@ -492,7 +492,7 @@ export async function getDashboardSalesData(): Promise<DashboardSalesData> {
   const [{ data: quotations }, { data: profiles }] = await Promise.all([
     supabase
       .from("quotations")
-      .select("id, salesperson_id, grand_total, layout_settings")
+      .select("id, salesperson_id, grand_total, layout_settings, quotation_no, project_id, revision_no, created_at")
       .eq("status", "client_confirmed")
       .eq("is_active", true)
       .gte("created_at", yearStart)
@@ -502,7 +502,7 @@ export async function getDashboardSalesData(): Promise<DashboardSalesData> {
       // or is_active, so without this filter cancelled projects are counted.
       // ->> extracts as text; returns SQL NULL when the key is absent (= not cancelled).
       .filter("layout_settings->>projectCancelledAt", "is", null)
-      .returns<Array<{ id: string; salesperson_id: string | null; grand_total: number; layout_settings: unknown }>>(),
+      .returns<Array<{ id: string; salesperson_id: string | null; grand_total: number; layout_settings: unknown; quotation_no: string | null; project_id: string | null; revision_no: number | null; created_at: string }>>(),
     adminClient
       .from("profiles")
       .select("id, full_name, avatar_url")
@@ -511,23 +511,24 @@ export async function getDashboardSalesData(): Promise<DashboardSalesData> {
       .returns<Array<{ id: string; full_name: string | null; avatar_url: string | null }>>(),
   ]);
 
-  const rows = (quotations ?? []).filter((row) => !variationLinkFromLayoutSettings(row.layout_settings));
-  const contractStates = await loadProjectContractTotals(supabase, projectContractQuotationIds(rows));
+  const contractStates = await loadProjectContractTotals(supabase, projectContractQuotationIds(quotations ?? []));
+  // One deal per quotation folder: variations and old revisions of a folder are not separate deals.
+  const deals = oneDealPerFolder(quotations ?? [], contractStates);
   const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
 
-  const yearlyTurnover = rows.reduce((sum, q) => sum + projectContractValue(q, contractStates), 0);
-  const dealCount = rows.length;
+  const yearlyTurnover = deals.reduce((sum, deal) => sum + deal.value, 0);
+  const dealCount = deals.length;
 
   // Aggregate totals per salesperson_id (null key = unattributed)
   const byPerson = new Map<string | null, { total: number; deal_count: number }>();
-  for (const q of rows) {
+  for (const { row: q, value } of deals) {
     const key = q.salesperson_id ?? null;
     const existing = byPerson.get(key);
     if (existing) {
-      existing.total += projectContractValue(q, contractStates);
+      existing.total += value;
       existing.deal_count += 1;
     } else {
-      byPerson.set(key, { total: projectContractValue(q, contractStates), deal_count: 1 });
+      byPerson.set(key, { total: value, deal_count: 1 });
     }
   }
 
@@ -578,13 +579,13 @@ export async function getMonthlySalesData(): Promise<MonthlyTotal[]> {
 
   const { data } = await supabase
     .from("quotations")
-    .select("id, grand_total, created_at, layout_settings")
+    .select("id, grand_total, created_at, layout_settings, quotation_no, project_id, revision_no")
     .eq("status", "client_confirmed")
     .eq("is_active", true)
     .gte("created_at", `${year}-01-01`)
     .lt("created_at", `${year + 1}-01-01`)
     .filter("layout_settings->>projectCancelledAt", "is", null)
-    .returns<Array<{ id: string; grand_total: number; created_at: string; layout_settings: unknown }>>();
+    .returns<Array<{ id: string; grand_total: number; created_at: string; layout_settings: unknown; quotation_no: string | null; project_id: string | null; revision_no: number | null }>>();
 
   const contractStates = await loadProjectContractTotals(supabase, projectContractQuotationIds(data ?? []));
 
@@ -594,10 +595,9 @@ export async function getMonthlySalesData(): Promise<MonthlyTotal[]> {
     total: 0,
   }));
 
-  for (const row of data ?? []) {
-    if (variationLinkFromLayoutSettings(row.layout_settings)) continue;
+  for (const { row, value } of oneDealPerFolder(data ?? [], contractStates)) {
     const monthIndex = new Date(row.created_at).getMonth(); // 0-based
-    totals[monthIndex].total += projectContractValue(row, contractStates);
+    totals[monthIndex].total += value;
   }
 
   return totals;
