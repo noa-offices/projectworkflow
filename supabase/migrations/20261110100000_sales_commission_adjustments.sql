@@ -143,7 +143,7 @@ begin
   if parent.status in ('cancelled','reversed','requires_review') then
     reason := 'The original commission is ' || replace(parent.status,'_',' ') || '.';
   elsif parent.commissionable_base_override is not null or parent.percentage_rate_override is not null
-    or parent.fixed_amount_override is not null or parent.final_amount_override is not null
+    or parent.fixed_amount_override is not null
     or parent.overridden_by is not null or nullif(btrim(parent.override_reason),'') is not null then
     reason := 'The original commission has a manual override. An adjustment policy must be reviewed.';
   elsif parent.rule_id is null or parent.formula_type_snapshot is null then
@@ -264,7 +264,7 @@ begin
     if a.review_reason is not null or a.formula_type_snapshot is null or a.adjustment_amount is null
       or parent.status in ('cancelled','reversed','requires_review')
       or parent.commissionable_base_override is not null or parent.percentage_rate_override is not null
-      or parent.fixed_amount_override is not null or parent.final_amount_override is not null
+      or parent.fixed_amount_override is not null
       or parent.overridden_by is not null or nullif(btrim(parent.override_reason),'') is not null then
       raise exception 'The commission calculation is not valid for approval.';
     end if;

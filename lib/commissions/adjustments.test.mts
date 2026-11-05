@@ -7,6 +7,7 @@ const path = "supabase/migrations/20261110100000_sales_commission_adjustments.sq
 test("D2 adds a separate signed ledger without replacing existing functions", () => {
   assert.ok(existsSync(path), "the D2 migration exists");
   const sql = readFileSync(path, "utf8");
+  assert.doesNotMatch(sql, /final_amount_override/);
   assert.match(sql, /create table public.sales_commission_adjustments/);
   assert.doesNotMatch(sql, /create or replace|alter table public\.(sales_commissions|project_variations|sales_approval_snapshots)|\?/i);
   assert.doesNotMatch(sql, /(?:update|insert into|delete from) public\.(sales_commissions|project_variations|sales_approval_snapshots|project_snapshots|client_payment)/i);
@@ -50,6 +51,8 @@ before(async () => {
   const approvalSQL = read("supabase/migrations/083_sales_approval_snapshots.sql");
   await db.exec(approvalSQL.slice(0,approvalSQL.indexOf("comment on table")));
   await db.exec(read("supabase/migrations/084_sales_commission_rules_ledger.sql"));
+  // Match the live ledger schema; the historical migration includes an unused column.
+  await db.exec("alter table public.sales_commissions drop column final_amount_override");
   await db.exec(read("supabase/migrations/085_commission_maker_checker_notifications.sql"));
   await db.exec(read("supabase/migrations/086_commission_sales_manager_follow_up.sql"));
   await db.exec(read("supabase/migrations/20261107100000_project_snapshots.sql"));
@@ -77,8 +80,8 @@ async function project(options: Scenario = {}) {
       percentage_rate_snapshot=case when $4='percentage' then 10 else null end,
       fixed_amount_snapshot=case when $4='fixed_amount' then 200 else null end,fixed_amount_currency_snapshot='AED',
       tier_method_snapshot='slab',tier_configuration_snapshot='[{"minimum":"0","maximum":"2000","rate":"10"},{"minimum":"2000","maximum":null,"rate":"20"}]',
-      final_commission_amount=100,original_calculated_amount=100,final_amount_override=$6 where approval_snapshot_id=$1`,
-      [approval,rule,options.status ?? "draft",options.formula ?? "percentage",options.basis ?? "approved_total_excluding_vat",options.override ? 120 : null]);
+      final_commission_amount=100,original_calculated_amount=100,override_reason=$6 where approval_snapshot_id=$1`,
+      [approval,rule,options.status ?? "draft",options.formula ?? "percentage",options.basis ?? "approved_total_excluding_vat",options.override ? "Manual override" : null]);
   }
   return { qid,snap,orderNo,legacy:options.legacy ?? false,total };
 }
@@ -175,7 +178,7 @@ test("approved negative credit preserves paid parent; review recalculation keeps
 
   const review = await project({override:true}), rv = await variation(review,1575,75), initial = await adjustment(rv);
   // Fixture resolves the original's review issue through the same state an existing edit RPC would leave.
-  await db.query("update public.sales_commissions set final_amount_override=null where quotation_id=$1",[review.qid]);
+  await db.query("update public.sales_commissions set override_reason=null where quotation_id=$1",[review.qid]);
   assert.equal(await generate(rv),initial.id);
   const resolved = await adjustment(rv);
   assert.equal(resolved.status,"draft"); assert.equal(resolved.recalculated_by,owner);
