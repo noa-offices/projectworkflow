@@ -8,7 +8,7 @@ import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-a
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { formatRuleMoney, readPricingRule, type PricingRule } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
-import { loadRevisedContractTotals } from "@/lib/projects/project-variations";
+import { loadProjectContractTotalsByOrder } from "@/lib/projects/project-contract-total";
 
 export const dynamic = "force-dynamic";
 
@@ -82,7 +82,7 @@ async function CompletedProcurementContent() {
     completedAt: string;
   };
 
-  const revisedTotals = await loadRevisedContractTotals(supabase, quotations ?? []);
+  const revisedTotals = await loadProjectContractTotalsByOrder(supabase, quotations ?? []);
   const completedOrders: CompletedProcurementItem[] = (quotations ?? [])
     .flatMap((quotation) => {
       const settings = quotation.layout_settings as Record<string, unknown> | null;

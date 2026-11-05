@@ -9,6 +9,7 @@ let active = "active";
 let failing = "";
 const selections: Array<{ table: string; fields: string }> = [];
 const tables: Record<string, RecordRow[]> = {};
+let variationRows: RecordRow[] = [];
 class Query {
   constructor(private table: string) {}
   select(fields: string) { selections.push({ table: this.table, fields }); return this; }
@@ -21,12 +22,20 @@ class Query {
 const createDb = async () => ({
     auth: { getUser: async () => ({ data: { user }, error: null }) },
     from: (table: string) => new Query(table),
+    rpc: async () => ({ data: variationRows, error: null }),
   }) as unknown as SupabaseClient;
 beforeEach(() => {
   user = { id: "user-a" }; role = "designer"; active = "active"; failing = ""; selections.length = 0;
+  variationRows = [];
   for (const key of Object.keys(tables)) delete tables[key];
 });
 async function request(entity: string) { return readProjection(new Request("http://localhost/api/local-read-cache/" + entity), entity, createDb); }
+test("Project cache builds use current applied contract and preserve original when none is applied", async () => {
+  tables.quotations = [{ id: "q", file: { orderNo: "CO-1", quotationId: "q", quotationNo: "QN-1", clientId: "c", clientName: "Client", reference: "Office", total: 1000, currency: "AED", createdAt: "2026-11-01", createdBy: "user-a" } }];
+  assert.equal((await (await request("projects")).json()).data[0].total, 1000);
+  variationRows = [{ quotation_id: "q", applied_variation_no: 1, contract_total: 1200 }];
+  assert.equal((await (await request("projects")).json()).data[0].total, 1200);
+});
 test("unauthorized/inactive reads rejected with no-store response", async () => {
   user = null; assert.equal((await request("clients")).status, 401);
   user = { id: "user-a" }; active = "disabled"; assert.equal((await request("clients")).status, 403);

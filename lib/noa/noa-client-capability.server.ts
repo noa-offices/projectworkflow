@@ -3,6 +3,7 @@ import "server-only";
 import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { loadProjectContractTotals, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
 import { createClient } from "@/lib/supabase/server";
 import type { NoaSemanticEntity } from "./noa-semantic-request";
 import type { NoaCapabilityResult, NoaPageContext } from "./noa-types";
@@ -251,11 +252,13 @@ async function clientProjectFiles(
 ): Promise<Array<{ clientName: string; currency: string; orderNo: string; reference: string; status: ClientProjectFileStatus; total: number }>> {
   const { data } = await supabase
     .from("quotations")
-    .select("layout_settings")
+    .select("id,layout_settings")
     .eq("client_id", clientId)
     .order("created_at", { ascending: false })
     .limit(CLIENT_PROJECT_FILE_SCAN_LIMIT)
-    .returns<Array<{ layout_settings: unknown }>>();
+    .returns<Array<{ id: string; layout_settings: unknown }>>();
+
+  const contractStates = await loadProjectContractTotals(supabase, projectContractQuotationIds(data ?? []));
 
   return (data ?? [])
     .flatMap((quotation) => {
@@ -266,7 +269,7 @@ async function clientProjectFiles(
       const completedAt = typeof settings?.projectCompletedAt === "string" ? settings.projectCompletedAt : null;
       const cancelledAt = typeof settings?.projectCancelledAt === "string" ? settings.projectCancelledAt : null;
       const status: ClientProjectFileStatus = cancelledAt ? "cancelled" : completedAt ? "completed" : "active";
-      return [{ clientName: order.clientName, currency: order.currency, orderNo: order.orderNo, reference: order.reference, status, total: order.total }];
+      return [{ clientName: order.clientName, currency: order.currency, orderNo: order.orderNo, reference: order.reference, status, total: projectContractValue(quotation, contractStates) }];
     })
     .filter((order, index, all) => all.findIndex((candidate) => candidate.orderNo === order.orderNo) === index);
 }

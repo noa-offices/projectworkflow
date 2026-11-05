@@ -6,6 +6,8 @@
 
 ## Procurement / orders ? implemented entry points
 
+Project contract value is read through [project-contract-total](../../lib/projects/project-contract-total.ts): original Project File total until the latest applied variation state is available, with batched reads and original-value fallback. See [Step D consumer audit and commission study](PROJECT_CONTRACT_TOTAL_D.md). Quotation document totals and commission ledger amounts remain separate; cached Project previews hide monetary values because offline snapshots cannot verify later variations.
+
 [Orders](../../app/procurement/orders/page.tsx), [order detail](../../app/procurement/orders/%5BorderNo%5D/page.tsx), [completed](../../app/procurement/completed/page.tsx), [PO generation action](../../lib/procurement/generate-po-action.ts), [vendor document action](../../lib/procurement/vendor-docs-action.ts), and [vendor steps](../../lib/procurement/vendor-steps.ts). Relevant records include `project_purchase_orders`, `procurement_vendor_docs`, `procurement_vendor_progress`, quotation purchase-order settings and project records; [database guide](../DATABASE.md) and later migrations supply schema/RLS context. Quotation, project execution and documents are dependencies. Tests: [generate PO](../../lib/procurement/generate-po-action.test.mts), [vendor dates](../../lib/procurement/vendor-dates.test.mts). Full status transitions and snapshot guarantees: **NOT VERIFIED**.
 
 ## Authentication / roles / RLS

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { loadProjectContractTotals, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
 import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
@@ -498,6 +499,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
   ]);
 
   const allQuotationRows = quotations ?? [];
+  const contractStates = await loadProjectContractTotals(supabase, projectContractQuotationIds(allQuotationRows));
   const allProfiles = salespersonProfiles ?? [];
 
   // ── Selected user (Team Overview drill-down) ─────────────────────────────────
@@ -575,13 +577,13 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
     totalQuotes: currentQuotes.length,
     totalQuotedAmount: currentQuotes.reduce((s, q) => s + (q.grand_total ?? 0), 0),
     approvedCount: currentApproved.length,
-    approvedAmount: currentApproved.reduce((s, q) => s + (q.grand_total ?? 0), 0),
+    approvedAmount: currentApproved.reduce((s, q) => s + projectContractValue(q, contractStates), 0),
   };
   const kpiPrior = {
     totalQuotes: priorQuotes.length,
     totalQuotedAmount: priorQuotes.reduce((s, q) => s + (q.grand_total ?? 0), 0),
     approvedCount: priorApproved.length,
-    approvedAmount: priorApproved.reduce((s, q) => s + (q.grand_total ?? 0), 0),
+    approvedAmount: priorApproved.reduce((s, q) => s + projectContractValue(q, contractStates), 0),
   };
 
   const conversionCurrent =
@@ -610,7 +612,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
   for (const q of currentApproved) {
     const k = monthKey(new Date(q.created_at));
     if (aggApprovedByMonth.has(k)) {
-      aggApprovedByMonth.set(k, (aggApprovedByMonth.get(k) ?? 0) + (q.grand_total ?? 0));
+      aggApprovedByMonth.set(k, (aggApprovedByMonth.get(k) ?? 0) + projectContractValue(q, contractStates));
     }
   }
 
@@ -648,7 +650,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
     for (const q of repCurrentApproved) {
       const k = monthKey(new Date(q.created_at));
       if (monthMap.has(k)) {
-        monthMap.set(k, (monthMap.get(k) ?? 0) + (q.grand_total ?? 0));
+        monthMap.set(k, (monthMap.get(k) ?? 0) + projectContractValue(q, contractStates));
       }
     }
 
@@ -662,12 +664,12 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
       totalQuotedAmount: repCurrent.reduce((s, q) => s + (q.grand_total ?? 0), 0),
       approvedCount,
       currentApprovedAmount: repCurrentApproved.reduce(
-        (s, q) => s + (q.grand_total ?? 0),
+        (s, q) => s + projectContractValue(q, contractStates),
         0,
       ),
       approvalRate: totalQuotes > 0 ? approvedCount / totalQuotes : 0,
       priorApprovedAmount: repPriorApproved.reduce(
-        (s, q) => s + (q.grand_total ?? 0),
+        (s, q) => s + projectContractValue(q, contractStates),
         0,
       ),
       monthlyApproved: monthKeys.map((k) => ({

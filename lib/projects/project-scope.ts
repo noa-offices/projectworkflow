@@ -1,4 +1,5 @@
 import { readPricingRule, type PricingRule } from "../quotation-pricing";
+import { projectContractTotal } from "./project-contract-total";
 
 // Step B2: the ONE place that decides what a Project is made of. A Project that has a frozen copy (project_snapshots, Step B1) is read from the copy,
 // so a later change to the quotation cannot change the Project. A Project without a copy (an older Project) is read from the live quotation, as it
@@ -187,7 +188,7 @@ async function readSnapshot(client: Client, quotationId: string, options: Projec
       source: "snapshot",
       fallback: null,
       snapshotId: snapshot.id,
-      contractTotal: latest!.view.newContractTotal,
+      contractTotal: projectContractTotal(contractTotal, { applied_variation_no: latest!.view.variationNo, contract_total: latest!.view.newContractTotal }).currentTotal,
       originalContractTotal: contractTotal,
       pricingRule: latest!.view.pricingRule,
       appliedVariationNo: latest!.view.variationNo,

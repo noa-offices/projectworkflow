@@ -23,6 +23,7 @@ import { actualApprovedQuotationsByFolder, type SalesAttributionQuotation } from
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { loadProjectContractTotals, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
 import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/lib/supabase/types";
 import type { NoaCapabilityResult, NoaPageContext } from "./noa-types";
@@ -593,6 +594,8 @@ async function insightsProjectFiles(
     .limit(PROJECT_FILE_SCAN_LIMIT)
     .returns<InsightsProjectFileLayoutRow[]>();
 
+  const contractStates = await loadProjectContractTotals(supabase, projectContractQuotationIds(data ?? []));
+
   const seen = new Set<string>();
   const orders: InsightsProjectFile[] = [];
   for (const quotation of data ?? []) {
@@ -610,7 +613,7 @@ async function insightsProjectFiles(
       orderNo: order.orderNo,
       quotationId: quotation.id,
       status: cancelledAt ? "cancelled" : completedAt ? "completed" : "active",
-      total: order.total,
+      total: projectContractValue(quotation, contractStates),
     });
   }
   return orders;
@@ -1553,12 +1556,13 @@ async function salesBySalespersonAnswer(
   const totalMatching = count ?? rows.length;
   const scanCapped = totalMatching > rows.length;
   const names = new Map(((nameRows ?? []) as Array<{ display_name: string; id: string }>).map((person) => [person.id, person.display_name]));
+  const contractStates = await loadProjectContractTotals(supabase, projectContractQuotationIds(rows));
 
   const byPerson = new Map<string, { approvedCount: number; approvedTotal: number; name: string }>();
   const otherCurrencyTotals = new Map<string, { count: number; total: number }>();
   let pending = { approvedCount: 0, approvedTotal: 0 };
   for (const row of actualApprovedQuotationsByFolder(rows)) {
-    const amount = row.grand_total ?? 0;
+    const amount = projectContractValue(row, contractStates);
     if (row.currency !== "AED") {
       const other = otherCurrencyTotals.get(row.currency) ?? { count: 0, total: 0 };
       otherCurrencyTotals.set(row.currency, { count: other.count + 1, total: other.total + amount });
