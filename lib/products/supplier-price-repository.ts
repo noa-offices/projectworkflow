@@ -1117,6 +1117,8 @@ export type SupplierPriceListCard = {
   sourceId: string; definitionId?: string | null; filename?: string; basis?: string; sourceName: string | null; title: string; currency: string; profileId: string | null;
   families: number | null; sourceRows: number; items: number; compacted: boolean;
   batchId: string | null; batchStatus: string | null; scope: string | null; state: SupplierPriceListState;
+  /** True when no price update (batch) has ever been started for this list. */
+  neverStarted?: boolean;
   unresolved: number; unchanged: number; changed: number;
 };
 /** Pure state rule: uses the batch status and the batch's own unit totals, never a second status system. */
@@ -1149,10 +1151,14 @@ export async function supplierPriceListCards(client: SupabaseClient, brandId: st
     const priceListState = resolveSupplierPriceListLifecycleState(version, versions, batches, businessDate);
     if (priceListState === "previous" || priceListState === "archived") continue;
     // An imported list with no products/review must stay discoverable for later coverage.
-    if (priceListState === "update_in_progress" && batch?.status !== "review" && batch?.status !== "matching" && (!definition?.isActive || hasCoverage || batch !== null)) continue;
+    // An imported list with coverage whose first price update was never started stays visible, unless a completed list of the same source already replaced it.
+    const neverStarted = sourceBatches.length === 0;
+    const replaced = versions.some((other) => other.id !== version.id && (other.definition_id ?? null) === (version.definition_id ?? null) && batches.some((item) => item.source_id === other.id && item.status === "completed"));
+    const showNeverStarted = neverStarted && !replaced && Boolean(definition?.isActive) && hasCoverage;
+    if (priceListState === "update_in_progress" && batch?.status !== "review" && batch?.status !== "matching" && !showNeverStarted && (!definition?.isActive || hasCoverage || batch !== null)) continue;
     cards.push({ priceListState, effectiveFrom: version.effective_from, createdAt: version.created_at, sourceId: version.id, definitionId: version.definition_id ?? null, filename: version.filename, basis: version.basis, sourceName: definition?.name ?? null, title: version.title, currency: version.currency, profileId: definition?.profileId ?? null,
       families: definition ? definition.families.length : null, sourceRows: version.stored_rows, items: version.identity_count, compacted: Boolean(version.rows_compacted_at),
-      batchId: batch?.id ?? null, batchStatus: batch?.status ?? null, scope: batch?.scope ?? null,
+      batchId: batch?.id ?? null, batchStatus: batch?.status ?? null, scope: batch?.scope ?? null, neverStarted,
       state: supplierPriceListState({ hasSource: true, hasCoverage, batchStatus: batch?.status ?? null, unresolved }), unresolved, unchanged, changed });
   }
   return cards.sort((a, b) => Number(b.priceListState === "current") - Number(a.priceListState === "current") || (b.effectiveFrom ?? "").localeCompare(a.effectiveFrom ?? "") || (b.createdAt ?? "").localeCompare(a.createdAt ?? "") || b.sourceId.localeCompare(a.sourceId));

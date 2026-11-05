@@ -258,3 +258,10 @@ test("a replaced completed source leaves the Current cards and remains available
   const out = html(cardsCoverage.SupplierPriceListCards, { cards: [view({ sourceId: "new", title: "New baseline", priceListState: "current", batchStatus: "completed" }), view({ sourceId: "old", title: "Old baseline", priceListState: "previous", batchStatus: "completed" })], importHref: "/import", approver: true });
   assert.match(out, /New baseline/); assert.doesNotMatch(out, /Old baseline/);
 });
+
+test("a never-started imported list shows a plain label and a Start price update action that opens its start page", () => {
+  const out = html(cardsCoverage.SupplierPriceListCards, { cards: [view({ sourceId: "las", state: "ready_to_review", priceListState: "update_in_progress", neverStarted: true, openHref: "/start-las" })], importHref: "/import", approver: true });
+  assert.match(out, /Imported · no price update started yet/); assert.match(out, /href="\/start-las"[^>]*>Start price update</);
+  assert.match(out, /1 available price list /); assert.doesNotMatch(out, /No Supplier price lists yet/);
+  assert.equal((out.match(/Imported · no price update started yet/g) ?? []).length, 1);
+});
