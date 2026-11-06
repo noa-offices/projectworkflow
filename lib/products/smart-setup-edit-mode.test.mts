@@ -39,12 +39,12 @@ test("4-5: the workspace seeds from the CURRENT (unsaved) form state, not a relo
 });
 
 // ---- edit-mode UI ----
-test("6-11: edit-mode header, hidden Source QA/PDF/crop/source count, Back to Template and Save Changes", () => {
+test("6-11: edit-mode header, local PDF crop, hidden coverage/source count, Back to Template and Save Changes", () => {
   assert.ok(smart.includes('Editing: {templateName || "Product Template"}'));
   assert.ok(smart.includes('{editMode ? "Editing saved template data" : `Imported JSON sources: ${importCount}`}'));
-  assert.ok(smart.includes("{props.editMode ? null : <SourceQaPanel"));
+  assert.ok(smart.includes("editMode={props.editMode} onCropAvailabilityChange={props.onCropAvailabilityChange}"));
   assert.ok(smart.includes("{props.editMode ? null : <ExtractionCoverageCard"));
-  assert.ok(smart.includes("<SmartSetupCropAvailableContext.Provider value={!editMode}>"));
+  assert.ok(smart.includes("<SmartSetupCropAvailableContext.Provider value={cropAvailability}>"));
   assert.ok(staged.includes("{cropAvailable ? <button"), "per-row Crop from PDF link is hidden without a PDF");
   assert.ok(smart.includes('>Back to Template</button>'));
   assert.ok(smart.includes('{editMode ? "Save Changes" : "Apply to Product Template"}'));

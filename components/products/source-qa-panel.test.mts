@@ -1,6 +1,52 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { sourceQaAiDisplaySeverity, sourceQaAiIssueDetails, sourceQaAiIssueGroups, sourceQaAiIssueLabel, sourceQaAiSummary } from "./source-qa-panel.js";
+import test, { mock } from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { productTemplateFormSmartWorkspace } from "../../lib/products/product-template-form-smart-workspace.js";
+import { reviewedRowImageKey } from "../../lib/products/smart-product-row-images.js";
+
+// The real action needs server credentials; rendering the crop UI must never call it.
+mock.module("@/app/products/templates/source-qa-actions", { namedExports: { runSourceQaAi: async () => { throw new Error("Source QA must not run while rendering"); } } });
+const { SourceQaPanel, sourceQaAiDisplaySeverity, sourceQaAiIssueDetails, sourceQaAiIssueGroups, sourceQaAiIssueLabel, sourceQaAiSummary } = await import("./source-qa-panel.js");
+const { SmartSetupCropAvailableContext, SmartSetupSavedPicturesContext, StagedPricingRowReferenceImage } = await import("./staged-pricing-row-reference-image.js");
+const workspace = productTemplateFormSmartWorkspace({ desking_size_pricing: "[]", variant_pricing: "[]", category_pricing: "[]", modular_item_pricing: "[]", accessory_pricing: "[]", currency: "EUR" });
+
+test("edit mode renders local PDF cropping and its paste guidance without Source QA", () => {
+  const html = renderToStaticMarkup(createElement(SourceQaPanel, { draft: workspace.draft, originalImportedJsonSources: [], images: {}, editMode: true, onImageChange() {} }));
+  for (const text of ["PDF Crop", "Choose PDF", "Crop Images", "Choose the price list PDF to crop pictures onto rows. The PDF is not uploaded.", "Rows without a Crop link can still be filled by pasting an image (Ctrl+V)."] ) assert.ok(html.includes(text), text);
+  for (const text of ["Source QA", "Run Source QA", "Missing from supplied pages", "Referenced pages not supplied", "compare JSON"]) assert.ok(!html.includes(text), text);
+});
+
+test("add mode retains Source QA and has no edit-only guidance", () => {
+  const html = renderToStaticMarkup(createElement(SourceQaPanel, { draft: workspace.draft, originalImportedJsonSources: [], images: {}, onImageChange() {} }));
+  assert.ok(html.includes("Source QA (optional)"));
+  assert.ok(html.includes("Run Source QA"));
+  assert.ok(!html.includes("Rows without a Crop link"));
+});
+
+test("only eligible edit targets get a Crop link after a local PDF is ready; paste stays available", () => {
+  const targets = new Set([reviewedRowImageKey("matrix:buddy", "220B"), reviewedRowImageKey("modular:chair", "m1"), reviewedRowImageKey("subgroup:matrix:buddy", "mesh")]);
+  const render = (available: boolean | ReadonlySet<string>, sourceKey: string, rowId: string) => renderToStaticMarkup(createElement(SmartSetupCropAvailableContext.Provider, { value: available }, createElement(StagedPricingRowReferenceImage, { sourceKey, rowId, image: null, onChange() {} })));
+  assert.ok(!render(false, "matrix:buddy", "220B").includes("Crop from PDF"));
+  for (const [sourceKey, rowId] of [["matrix:buddy", "220B"], ["modular:chair", "m1"], ["subgroup:matrix:buddy", "mesh"]]) assert.ok(render(targets, sourceKey, rowId).includes("Crop from PDF"));
+  for (const sourceKey of ["workstation:rows", "modular:direct", "base_model:rows", "option:kit"]) {
+    const html = render(targets, sourceKey, "unsupported");
+    assert.ok(!html.includes("Crop from PDF"));
+    assert.ok(html.includes("Ctrl+V"));
+  }
+  assert.ok(render(true, "base_model:rows", "a1").includes("Crop from PDF"), "add-mode availability is unchanged");
+});
+
+test("a saved matrix picture supports replacement and returns when the staged crop is removed", () => {
+  const saved = { "finish_category\u0000buddy\u0000220B": { id: "picture", pricingType: "finish_category" as const, groupId: "buddy", rowId: "220B", previewUrl: "https://saved.example/chair.webp", caption: null } };
+  const staged = { file: new File(["crop"], "source-p1.webp", { type: "image/webp" }), previewUrl: "blob:crop", sourceKey: "matrix:buddy", sourceRowId: "220B" };
+  const render = (image: typeof staged | null) => renderToStaticMarkup(createElement(SmartSetupSavedPicturesContext.Provider, { value: saved }, createElement(StagedPricingRowReferenceImage, { sourceKey: "matrix:buddy", rowId: "220B", image, onChange() {} })));
+  assert.ok(render(null).includes('alt="Saved row reference"'));
+  assert.ok(render(null).includes("Paste to replace"));
+  assert.ok(render(staged).includes('alt="Pending row reference"'));
+  assert.ok(render(null).includes('src="https://saved.example/chair.webp"'));
+  assert.equal(saved["finish_category\u0000buddy\u0000220B"].previewUrl, "https://saved.example/chair.webp");
+});
 
 const issue = { id: "issue", type: "price_value_mismatch" as const, severity: "critical" as const, confidence: "high" as const, supplierModelCode: "9MU201", sourcePage: 1, sourceEvidence: "Fabric Cat. D-E 5800", sourceValue: 5800, jsonLocation: "pricing.priceMatrices[0].rows[0]", jsonValue: 5700, explanation: "Price differs." };
 

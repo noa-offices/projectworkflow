@@ -81,3 +81,22 @@ export function sourceCropTargets(draft: ProductTemplateDraft, subgroups: SmartR
   const visualSubgroups = Object.entries(subgroups).flatMap(([sourceKey, items]) => items.map((item) => ({ id: "subgroup:" + sourceKey + ":" + item.id, sourceKey: "subgroup:" + sourceKey, rowId: item.id, label: "Subgroup — " + item.subgroup_name, codes: [], kind: "Visual subgroup" as const })));
   return [...rows, ...visualSubgroups];
 }
+
+/** Edit-existing only: expose rows with a paste control, plus visual subgroups, without changing import-mode targets. */
+export function editSourceCropTargets(draft: ProductTemplateDraft, subgroups: SmartReviewedPricingSubgroups = {}): SourceCropTarget[] {
+  const groupLabels = new Map<string, string>([
+    ["workstation:rows", "Workstation Pricing"],
+    ["base_model:rows", "Base / Model Pricing"],
+    ...draft.pricing.baseModelRows.filter((row) => row.groupId).map((row): [string, string] => [baseModelGroupRouteKey(row.groupId!), row.groupLabel ?? row.groupId!]),
+    ...draft.pricing.priceMatrices.map((matrix): [string, string] => [`matrix:${matrix.id}`, matrix.label ?? matrix.id]),
+    ...draft.pricing.modularGroups.map((group): [string, string] => [`modular:${group.id}`, group.label ?? group.id]),
+    ...draft.optionGroups.map((group): [string, string] => [`option:${group.id}`, group.label ?? group.id]),
+  ]);
+  const modularKeys = new Set(draft.pricing.modularGroups.filter((group) => group.matrix).map((group) => `modular:${group.id}`));
+  return sourceCropTargets(draft, subgroups)
+    .filter((target) => target.kind === "Category / Matrix" || target.kind === "Visual subgroup" || (target.kind === "Modular" && modularKeys.has(target.sourceKey)))
+    .map((target) => {
+      const groupKey = target.kind === "Visual subgroup" ? target.sourceKey.slice("subgroup:".length) : target.sourceKey;
+      return { ...target, label: `${target.label} — ${groupLabels.get(groupKey) ?? groupKey}` };
+    });
+}

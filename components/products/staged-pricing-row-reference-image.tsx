@@ -5,16 +5,18 @@
 
 import { createContext, useContext, useState, type ClipboardEvent } from "react";
 import { clipboardImageFileFromClipboard, compressedClipboardImage, formatProductImageSize } from "@/lib/products/product-template-row-image-client";
-import { displayedReviewRowPicture, savedPictureForReviewRow, type StagedReviewedRowImage } from "@/lib/products/smart-product-row-images";
+import { displayedReviewRowPicture, reviewedRowImageKey, savedPictureForReviewRow, type StagedReviewedRowImage } from "@/lib/products/smart-product-row-images";
 import type { ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
 
-/** Edit-existing Smart Setup has no Source PDF: it hides the per-row "Crop from PDF" link (paste/upload stay available). */
-export const SmartSetupCropAvailableContext = createContext(true);
+/** Import mode keeps all links; edit mode supplies eligible image keys only after a local PDF is ready. */
+export const SmartSetupCropAvailableContext = createContext<boolean | ReadonlySet<string>>(true);
 /** Edit-existing Smart Setup only: the template's saved row pictures, keyed like the normal editor. Shown read-only when a row has no staged picture. */
 export const SmartSetupSavedPicturesContext = createContext<Readonly<Record<string, ProductTemplateRowReferencePreview>>>({});
 
 export function StagedPricingRowReferenceImage({ image, onChange, sourceKey, rowId }: { image: StagedReviewedRowImage | null; onChange: (image: StagedReviewedRowImage | null) => void; sourceKey: string; rowId: string }) {
-  const [message, setMessage] = useState<string | null>(null); const [busy, setBusy] = useState(false); const cropAvailable = useContext(SmartSetupCropAvailableContext); const shownUrl = displayedReviewRowPicture(image, savedPictureForReviewRow(useContext(SmartSetupSavedPicturesContext), sourceKey, rowId));
+  const [message, setMessage] = useState<string | null>(null); const [busy, setBusy] = useState(false); const cropAvailability = useContext(SmartSetupCropAvailableContext);
+  const cropAvailable = cropAvailability === true || (cropAvailability !== false && cropAvailability.has(reviewedRowImageKey(sourceKey, rowId)));
+  const shownUrl = displayedReviewRowPicture(image, savedPictureForReviewRow(useContext(SmartSetupSavedPicturesContext), sourceKey, rowId));
   const paste = async (event: ClipboardEvent<HTMLDivElement>) => {
     const clipboardFile = clipboardImageFileFromClipboard(event.clipboardData);
     if (!clipboardFile) { setMessage("Clipboard does not contain an image."); return; }
