@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeProductTemplateDraft, type ProductTemplateDraft } from "./product-template-draft.js";
 import { createSmartSetupReviewRouting } from "./smart-product-review-routing.js";
-import { pendingRowImagesForSmartSetupApply, reviewedRowImageKey } from "./smart-product-row-images.js";
+import { displayedReviewRowPicture, pendingRowImagesForSmartSetupApply, reviewedRowImageKey, savedPictureForReviewRow, updateStagedReviewedRowImage, uploadPendingRowImagesAfterSave } from "./smart-product-row-images.js";
+import { editSourceCropTargets } from "./source-qa-crop.js";
 import { cropForZoom, existingSourceCropTargets, exportRenderScale, fitWidthZoom, mergeSourceCropTargetIds, nextSourceCropTarget, normalizeSourceCrop, removeSourceCropTargetIds, selectedSourceCropTargets, sourceCropSearchPages, sourceCropTargets, sourceQaTextGeometry, sourceQaTextGeometryMatch, sourceQaTextGeometryViewport, uniqueSourceCropTarget, validSourceCrop, type SourceCropTarget } from "./source-qa-crop.js";
 const targets: SourceCropTarget[] = [
   { id: "one", sourceKey: "base_model:rows", rowId: "one", label: "IN120 — Table", codes: ["IN120"], kind: "Base / Model" },
@@ -122,4 +123,47 @@ test("existing-image conflict detection sees native group rows through their sco
   const existing = new Set(found.filter((target) => images[target.sourceKey + "\u0000" + target.rowId]).map((target) => target.id));
   assert.deepEqual([...existing], ["base:a1"]);
   assert.deepEqual(existingSourceCropTargets(found, ["base:a1", "base:a2"], existing).map((target) => target.id), ["base:a1"]);
+});
+
+test("edit crop targets keep paste IDs, include group labels after the code, and omit unsupported rows", () => {
+  const draft = nativeDraft();
+  draft.pricing.priceMatrices[0].label = "BUDDYis3 Mesh Conference Chairs";
+  draft.pricing.priceMatrices[0].rows[0].supplierCodes = ["220B"];
+  draft.pricing.priceMatrices[0].rows[0].displayName = "Mesh Conference Chair";
+  draft.pricing.modularGroups = [
+    { id: "modules", label: "Modular Chairs", defaultDimensions: null, defaultSpecification: null, matrix: structuredClone(draft.pricing.priceMatrices[0]) },
+    { id: "direct", label: "Direct Chairs", defaultDimensions: null, defaultSpecification: null, directRows: [{ ...draft.pricing.baseModelRows[0], id: "direct-row", role: "starter" }] },
+  ];
+  const subgroups = { "matrix:mx": [{ id: "mesh", subgroup_name: "Mesh", sort_order: 0, is_active: true, row_ids: ["mrow"] }] };
+  const targets = editSourceCropTargets(draft, subgroups);
+  assert.deepEqual(targets.map(({ sourceKey, rowId }) => [sourceKey, rowId]), [["matrix:mx", "mrow"], ["modular:modules", "mrow"], ["subgroup:matrix:mx", "mesh"]]);
+  assert.equal(targets[0].label, "220B — Mesh Conference Chair — BUDDYis3 Mesh Conference Chairs");
+  assert.equal(targets[1].label, "220B — Mesh Conference Chair — Modular Chairs");
+  assert.equal(targets[2].label, "Subgroup — Mesh — BUDDYis3 Mesh Conference Chairs");
+  assert.deepEqual(sourceCropSearchPages([{ pageNumber: 3, text: "220B prices" }], targets[0].label.split(" — ")[0]), [3]);
+  assert.equal(sourceCropTargets(draft)[0].sourceKey, "base_model_group:comby-system", "add targets are unchanged");
+  assert.equal(sourceCropTargets(draft).find((target) => target.sourceKey === "matrix:mx")?.label, "220B — Mesh Conference Chair", "add labels are unchanged");
+});
+
+test("a matrix crop stages through the paste path and cannot replace the saved reference before Save", async () => {
+  const draft = nativeDraft();
+  const target = editSourceCropTargets(draft).find((entry) => entry.sourceKey === "matrix:mx")!;
+  const saved = { "finish_category\u0000mx\u0000mrow": { previewUrl: "https://saved.example/chair.webp" } };
+  const savedBefore = structuredClone(saved);
+  const file = new File(["cropped image"], "source-p3.webp", { type: "image/webp" });
+  const stagedImage = { file, previewUrl: "blob:crop", sourceKey: target.sourceKey, sourceRowId: target.rowId };
+  const staged = updateStagedReviewedRowImage({}, target.sourceKey, target.rowId, stagedImage, () => {});
+  assert.equal(staged[reviewedRowImageKey("matrix:mx", "mrow")].file, file);
+  const savedPicture = savedPictureForReviewRow(saved, "matrix:mx", "mrow");
+  assert.equal(displayedReviewRowPicture(null, savedPicture), "https://saved.example/chair.webp");
+  assert.equal(displayedReviewRowPicture(stagedImage, savedPicture), "blob:crop", "same pending preview as paste");
+  const pending = pendingRowImagesForSmartSetupApply(draft, createSmartSetupReviewRouting(draft), staged);
+  assert.deepEqual(pending.map(({ pricingType, rowId }) => [pricingType, rowId]), [["finish_category", "mrow"]]);
+  const uploads: File[] = [];
+  const upload = async (entry: { file: File }) => { uploads.push(entry.file); };
+  await uploadPendingRowImagesAfterSave({ entries: pending, templateSaved: false, resolveIdentity: (entry) => entry.rowId, upload });
+  assert.deepEqual(uploads, []);
+  assert.deepEqual(saved, savedBefore);
+  await uploadPendingRowImagesAfterSave({ entries: pending, templateSaved: true, resolveIdentity: (entry) => entry.rowId, upload });
+  assert.deepEqual(uploads, [file]);
 });
