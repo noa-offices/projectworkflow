@@ -13,7 +13,7 @@ const workspace = productTemplateFormSmartWorkspace({ desking_size_pricing: "[]"
 
 test("edit mode renders local PDF cropping and its paste guidance without Source QA", () => {
   const html = renderToStaticMarkup(createElement(SourceQaPanel, { draft: workspace.draft, originalImportedJsonSources: [], images: {}, editMode: true, onImageChange() {} }));
-  for (const text of ["PDF Crop", "Choose PDF", "Crop Images", "Choose the price list PDF to crop pictures onto rows. The PDF is not uploaded.", "Rows without a Crop link can still be filled by pasting an image (Ctrl+V)."] ) assert.ok(html.includes(text), text);
+  for (const text of ["PDF Crop", "Choose PDF", "Crop Images", "Choose the price list PDF to crop pictures onto rows. The PDF is not uploaded."] ) assert.ok(html.includes(text), text);
   for (const text of ["Source QA", "Run Source QA", "Missing from supplied pages", "Referenced pages not supplied", "compare JSON"]) assert.ok(!html.includes(text), text);
 });
 
@@ -85,4 +85,13 @@ test("renders equal-value review items neutrally without changing their report s
   const before = structuredClone(review); const summary = sourceQaAiSummary([review]);
   assert.equal(sourceQaAiIssueLabel(review), "Review item"); assert.equal(sourceQaAiDisplaySeverity(review), "review"); assert.deepEqual(summary.counts, { critical: 0, warning: 0, info: 0 }); assert.equal(review.severity, "critical"); assert.deepEqual(review, before);
   assert.equal(sourceQaAiDisplaySeverity(issue), "critical");
+});
+
+test("every Monolith-like paste row (base-model group, workstation, accessory) gets a Crop link; direct modular rows have none", () => {
+  const ids = ["mono-047", "mono-048", "mono-049"];
+  const keys = new Set([...ids.map((id) => reviewedRowImageKey("base_model_group:meeting-std", id)), reviewedRowImageKey("base_model:rows", "b1"), reviewedRowImageKey("workstation:rows", "w1"), reviewedRowImageKey("option:kit", "k1")]);
+  const render = (sourceKey: string, rowId: string) => renderToStaticMarkup(createElement(SmartSetupCropAvailableContext.Provider, { value: keys }, createElement(StagedPricingRowReferenceImage, { sourceKey, rowId, image: null, onChange() {} })));
+  for (const id of ids) assert.ok(render("base_model_group:meeting-std", id).includes("Crop from PDF"));
+  for (const [k, r] of [["base_model:rows", "b1"], ["workstation:rows", "w1"], ["option:kit", "k1"]]) assert.ok(render(k, r).includes("Crop from PDF"));
+  assert.ok(!render("modular:direct", "d1").includes("Crop from PDF"));
 });

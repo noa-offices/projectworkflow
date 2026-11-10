@@ -125,24 +125,50 @@ test("existing-image conflict detection sees native group rows through their sco
   assert.deepEqual(existingSourceCropTargets(found, ["base:a1", "base:a2"], existing).map((target) => target.id), ["base:a1"]);
 });
 
-test("edit crop targets keep paste IDs, include group labels after the code, and omit unsupported rows", () => {
+test("edit crop targets equal the paste-box rows, use paste keys, and put the code first", () => {
   const draft = nativeDraft();
   draft.pricing.priceMatrices[0].label = "BUDDYis3 Mesh Conference Chairs";
   draft.pricing.priceMatrices[0].rows[0].supplierCodes = ["220B"];
   draft.pricing.priceMatrices[0].rows[0].displayName = "Mesh Conference Chair";
+  const base = draft.pricing.baseModelRows;
+  // Monolith-like: three main-family rows in a native base-model group, one without a code.
+  draft.pricing.baseModelRows = ["047", "048", "049"].map((n, i) => ({ ...base[0], id: "mono-" + n, groupId: "meeting-std", groupLabel: "Hole + Top Access", role: undefined, supplierCodes: i === 2 ? [] : ["1AF " + n], referenceCodes: [], label: null, displayName: "MONOLITH Standard Rectangular Meeting Table - W210" + i }));
+  draft.pricing.workstationRows = [{ ...base[0], id: "ws1", supplierCodes: ["WS 1"], layoutType: null, additionalPrice: null } as never];
   draft.pricing.modularGroups = [
     { id: "modules", label: "Modular Chairs", defaultDimensions: null, defaultSpecification: null, matrix: structuredClone(draft.pricing.priceMatrices[0]) },
-    { id: "direct", label: "Direct Chairs", defaultDimensions: null, defaultSpecification: null, directRows: [{ ...draft.pricing.baseModelRows[0], id: "direct-row", role: "starter" }] },
+    { id: "direct", label: "Direct Chairs", defaultDimensions: null, defaultSpecification: null, directRows: [{ ...base[0], id: "direct-row", role: "starter" }] },
   ];
+  draft.optionGroups = [{ id: "acc", label: "Cable Trays", items: [{ ...base[0], id: "acc1", supplierCodes: ["TR 1"], displayName: "Cable tray" }] } as never];
   const subgroups = { "matrix:mx": [{ id: "mesh", subgroup_name: "Mesh", sort_order: 0, is_active: true, row_ids: ["mrow"] }] };
   const targets = editSourceCropTargets(draft, subgroups);
-  assert.deepEqual(targets.map(({ sourceKey, rowId }) => [sourceKey, rowId]), [["matrix:mx", "mrow"], ["modular:modules", "mrow"], ["subgroup:matrix:mx", "mesh"]]);
-  assert.equal(targets[0].label, "220B — Mesh Conference Chair — BUDDYis3 Mesh Conference Chairs");
-  assert.equal(targets[1].label, "220B — Mesh Conference Chair — Modular Chairs");
-  assert.equal(targets[2].label, "Subgroup — Mesh — BUDDYis3 Mesh Conference Chairs");
-  assert.deepEqual(sourceCropSearchPages([{ pageNumber: 3, text: "220B prices" }], targets[0].label.split(" — ")[0]), [3]);
-  assert.equal(sourceCropTargets(draft)[0].sourceKey, "base_model_group:comby-system", "add targets are unchanged");
+  assert.deepEqual(targets.map(({ sourceKey, rowId }) => [sourceKey, rowId]), [
+    ["base_model_group:meeting-std", "mono-047"], ["base_model_group:meeting-std", "mono-048"], ["base_model_group:meeting-std", "mono-049"],
+    ["workstation:rows", "ws1"], ["matrix:mx", "mrow"], ["modular:modules", "mrow"], ["option:acc", "acc1"], ["subgroup:matrix:mx", "mesh"],
+  ]);
+  assert.ok(!targets.some((target) => target.rowId === "direct-row"), "direct modular rows have no paste box");
+  assert.equal(targets[0].label, "1AF 047 — MONOLITH Standard Rectangular Meeting Table - W2100 — Hole + Top Access");
+  assert.equal(targets[2].label, "MONOLITH Standard Rectangular Meeting Table - W2102 — Hole + Top Access", "no code: model name first");
+  assert.equal(targets[4].label, "220B — Mesh Conference Chair — BUDDYis3 Mesh Conference Chairs");
+  assert.equal(targets[5].label, "220B — Mesh Conference Chair — Modular Chairs");
+  assert.equal(targets[7].label, "Subgroup — Mesh — BUDDYis3 Mesh Conference Chairs");
+  assert.deepEqual(sourceCropSearchPages([{ pageNumber: 3, text: "1AF 047 prices" }], targets[0].label.split(" — ")[0]), [3]);
+  assert.equal(sourceCropTargets(draft)[0].sourceKey, "base_model_group:meeting-std", "add targets are unchanged");
   assert.equal(sourceCropTargets(draft).find((target) => target.sourceKey === "matrix:mx")?.label, "220B — Mesh Conference Chair", "add labels are unchanged");
+  assert.deepEqual(new Set(sourceCropTargets(draft).map((target) => target.sourceKey)).has("workstation:rows"), false, "add mode targets unchanged");
+});
+
+test("a Monolith-like base-model row crop stages under the paste key", () => {
+  const draft = nativeDraft();
+  draft.pricing.baseModelRows = [{ ...draft.pricing.baseModelRows[0], id: "mono-047", groupId: "meeting-std", groupLabel: "Hole + Top Access", supplierCodes: ["1AF 047"] }];
+  const target = editSourceCropTargets(draft).find((entry) => entry.rowId === "mono-047")!;
+  assert.equal(target.sourceKey, "base_model_group:meeting-std");
+  const file = new File(["x"], "p.webp", { type: "image/webp" });
+  const image = { file, previewUrl: "blob:crop", sourceKey: target.sourceKey, sourceRowId: target.rowId };
+  const staged = updateStagedReviewedRowImage({}, target.sourceKey, target.rowId, image, () => {});
+  assert.equal(staged[reviewedRowImageKey("base_model_group:meeting-std", "mono-047")].file, file, "same key paste uses");
+  const saved = savedPictureForReviewRow({ "anything": { previewUrl: "https://saved.example/a.webp" } }, target.sourceKey, target.rowId);
+  assert.equal(saved, null, "base-model rows have no saved-picture lookup today; unchanged");
+  assert.equal(displayedReviewRowPicture(image, saved), "blob:crop");
 });
 
 test("a matrix crop stages through the paste path and cannot replace the saved reference before Save", async () => {
