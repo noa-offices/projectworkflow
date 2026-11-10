@@ -1,5 +1,6 @@
 import { draftModularRows, type ProductTemplateDraft } from "./product-template-draft";
 import { baseModelGroupRouteKey } from "./base-model-draft-groups";
+import { matrixImageScope, modularImageScope, reviewPasteRows, type ReviewPasteRowKind } from "./review-paste-rows";
 import type { SmartReviewedPricingSubgroups } from "./smart-product-row-images";
 import { normalizeSourceQaCode, type SourceQaPage } from "./source-qa";
 
@@ -48,7 +49,7 @@ export function sourceQaTextGeometryMatch(items: SourceQaTextGeometry[], query: 
   return null;
 }
 export function sourceQaTextGeometryViewport(geometry: SourceQaTextGeometry, pageHeight: number, scale: number) { return { x: geometry.x * scale, y: (pageHeight - geometry.y - geometry.height) * scale, width: geometry.width * scale, height: geometry.height * scale }; }
-export type SourceCropTarget = { id: string; sourceKey: string; rowId: string; label: string; codes: string[]; kind: "Base / Model" | "Category / Matrix" | "Modular" | "Accessory" | "Visual subgroup" };
+export type SourceCropTarget = { id: string; sourceKey: string; rowId: string; label: string; codes: string[]; kind: ReviewPasteRowKind | "Visual subgroup" };
 export function normalizeSourceCrop(rect: SourceCropRect): SourceCropRect { const x2 = rect.x + rect.width; const y2 = rect.y + rect.height; return { x: Math.min(rect.x, x2), y: Math.min(rect.y, y2), width: Math.abs(rect.width), height: Math.abs(rect.height) }; }
 export function cropForZoom(rect: SourceCropRect, zoom: number) { return { x: rect.x * zoom, y: rect.y * zoom, width: rect.width * zoom, height: rect.height * zoom }; }
 export function validSourceCrop(rect: SourceCropRect | null) { return !!rect && rect.width >= 12 && rect.height >= 12; }
@@ -82,21 +83,18 @@ export function sourceCropTargets(draft: ProductTemplateDraft, subgroups: SmartR
   return [...rows, ...visualSubgroups];
 }
 
-/** Edit-existing only: expose rows with a paste control, plus visual subgroups, without changing import-mode targets. */
+/** Edit-existing only: every row with a "Paste image" box (same sourceKey/rowId as the paste box), plus visual subgroups. Import-mode targets are unchanged. */
 export function editSourceCropTargets(draft: ProductTemplateDraft, subgroups: SmartReviewedPricingSubgroups = {}): SourceCropTarget[] {
+  const rows = reviewPasteRows(draft).map((row): SourceCropTarget => {
+    const model = row.displayName ?? row.label ?? row.rowId; const code = row.supplierCodes[0];
+    return { id: `${row.sourceKey}:${row.rowId}`, sourceKey: row.sourceKey, rowId: row.rowId, label: [...(code ? [code] : []), model, row.groupLabel].join(" — "), codes: rowCodes(row), kind: row.kind };
+  });
   const groupLabels = new Map<string, string>([
-    ["workstation:rows", "Workstation Pricing"],
-    ["base_model:rows", "Base / Model Pricing"],
     ...draft.pricing.baseModelRows.filter((row) => row.groupId).map((row): [string, string] => [baseModelGroupRouteKey(row.groupId!), row.groupLabel ?? row.groupId!]),
-    ...draft.pricing.priceMatrices.map((matrix): [string, string] => [`matrix:${matrix.id}`, matrix.label ?? matrix.id]),
-    ...draft.pricing.modularGroups.map((group): [string, string] => [`modular:${group.id}`, group.label ?? group.id]),
-    ...draft.optionGroups.map((group): [string, string] => [`option:${group.id}`, group.label ?? group.id]),
+    ...draft.pricing.priceMatrices.map((matrix): [string, string] => [matrixImageScope(matrix.id), matrix.label ?? matrix.id]),
+    ...draft.pricing.modularGroups.map((group): [string, string] => [modularImageScope(group.id), group.label ?? group.id]),
   ]);
-  const modularKeys = new Set(draft.pricing.modularGroups.filter((group) => group.matrix).map((group) => `modular:${group.id}`));
-  return sourceCropTargets(draft, subgroups)
-    .filter((target) => target.kind === "Category / Matrix" || target.kind === "Visual subgroup" || (target.kind === "Modular" && modularKeys.has(target.sourceKey)))
-    .map((target) => {
-      const groupKey = target.kind === "Visual subgroup" ? target.sourceKey.slice("subgroup:".length) : target.sourceKey;
-      return { ...target, label: `${target.label} — ${groupLabels.get(groupKey) ?? groupKey}` };
-    });
+  const visual = sourceCropTargets(draft, subgroups).filter((target) => target.kind === "Visual subgroup")
+    .map((target) => ({ ...target, label: `${target.label} — ${groupLabels.get(target.sourceKey.slice("subgroup:".length)) ?? target.sourceKey.slice("subgroup:".length)}` }));
+  return [...rows, ...visual];
 }
