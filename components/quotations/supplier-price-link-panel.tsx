@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { confirmSupplierBindings } from "@/app/products/price-updates/supplier-sources/actions";
-import { confirmLinksInOrder } from "@/lib/products/supplier-link-confirm";
+import { confirmLineText, confirmLinksInOrder, linkRowIdentity } from "@/lib/products/supplier-link-confirm";
 import { linkReasonLabels, notInProductLines, priceLineStateLabels, type LinkRow, type PriceLine } from "@/lib/products/supplier-price-lines";
 
 const money = (value: number | null, currency: string | null) => value === null ? "—" : `${currency ?? ""} ${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim();
@@ -47,7 +47,7 @@ export function SupplierLinkButton({ line, brandId, onDone }: { line: PriceLine;
   return (
     <>
       <button type="button" onClick={start} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">{suggestion ? "Link" : "Link to a row"}</button>
-      {suggestion && link.suggestion ? <span className="block text-[11px] text-zinc-500">Suggested: {suggestion.name} ({linkReasonLabels[link.suggestion.reason]})</span> : null}
+      {suggestion && link.suggestion ? <span className="block text-[11px] text-zinc-500">Suggested: {linkRowIdentity(suggestion).join(" · ")} ({linkReasonLabels[link.suggestion.reason]})</span> : null}
       {open ? <Dialog title="Link this supplier line to a row" onClose={() => { if (!busy) setOpen(false); }}>
         <p className="mt-2 text-sm text-zinc-700">Supplier tier <span className="font-semibold">{link.tierLabel || "—"}</span> for code <span className="font-semibold">{line.code}</span>, supplier price <span className="font-semibold">{money(line.supplierPrice, line.supplierCurrency)}</span>.</p>
         <fieldset className="mt-3 space-y-2">
@@ -55,7 +55,7 @@ export function SupplierLinkButton({ line, brandId, onDone }: { line: PriceLine;
           {link.rows.map((item) => (
             <label key={item.targetKey} className={`flex items-start gap-2 rounded-md border p-2 text-sm ${item.taken ? "border-zinc-200 bg-zinc-50 text-zinc-500" : "border-zinc-300"}`}>
               <input type="radio" name="link-row" disabled={item.taken} checked={chosen === item.targetKey} onChange={() => setChosen(item.targetKey)} className="mt-1" />
-              <span><span className="font-semibold text-zinc-900">{item.name}</span>{item.note ? <span className="block text-xs text-zinc-600">{item.note}</span> : null}
+              <span><span className="font-semibold text-zinc-900">{item.code ? `${item.code} · ` : ""}{item.name}</span>{item.note ? <span className="block text-xs text-zinc-600">{item.note}</span> : null}
                 <span className="block text-xs">Your price {money(item.price, item.currency)}{item.taken ? " · already linked to another supplier line" : ""}{link.suggestion?.targetKey === item.targetKey ? ` · suggested (${linkReasonLabels[link.suggestion.reason]})` : ""}</span></span>
             </label>
           ))}
@@ -94,8 +94,8 @@ export function ConfirmAllSuggested({ lines, brandId, onDone }: { lines: PriceLi
       <button type="button" onClick={() => { setError(""); setSaved(0); setOpen(true); }} className="rounded-md bg-emerald-800 px-3 py-1.5 text-xs font-semibold text-white">Confirm all suggested ({items.length})</button>
       {open ? <Dialog title={`Confirm ${items.length} suggested links`} onClose={close}>
         <p className="mt-2 text-sm text-zinc-700">Each supplier tier below will be linked to the row shown. Check them first.</p>
-        <ul className="mt-2 max-h-64 space-y-1 overflow-y-auto text-sm">
-          {items.map(({ line, row }) => <li key={line.key} className="rounded border border-zinc-100 px-2 py-1"><span className="font-semibold text-zinc-900">{line.link!.tierLabel}</span> ({money(line.supplierPrice, line.supplierCurrency)}) → {row.name} ({money(row.price, row.currency)}) · {priceLineStateLabels[row.mapping.preview]} · {linkReasonLabels[line.link!.suggestion!.reason]}</li>)}
+        <ul className="mt-2 max-h-80 space-y-1 overflow-y-auto text-sm">
+          {items.map(({ line, row }) => <li key={line.key} className="break-words rounded border border-zinc-100 px-2 py-1">{confirmLineText(line, row)}</li>)}
         </ul>
         <Warning />
         {error ? <p role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</p> : null}

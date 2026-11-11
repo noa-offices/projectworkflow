@@ -122,3 +122,27 @@ test("row notes come from the stored specification of the row, found by group an
   assert.deepEqual([found.get(targets[0].key), found.get(targets[1].key)], ["model 162S", "model 262S"]);
   assert.equal(targetRowNotes([], targets).size, 0);
 });
+
+test("Confirm-all text shows each row's code, name and note, so rows with the same name and price can be told apart", async () => {
+  const { confirmLineText, linkRowIdentity } = await import("./supplier-link-confirm");
+  const { lines } = build(rows(), { rowNotes: new Map(rows().map((t) => [t.key, `Brushed silver metal parts, model ${t.row_id.split("-").at(-1)!.toUpperCase()}`])) });
+  const suggested = lines.filter((l) => l.link!.suggestion);
+  assert.equal(suggested.length, 7);
+  const texts = suggested.map((l) => ({ l, text: confirmLineText(l, l.link!.rows.find((r) => r.targetKey === l.link!.suggestion!.targetKey)!) }));
+  for (const { l, text } of texts) {
+    const m = l.link!.tierLabel;
+    assert.ok(text.startsWith(`Tier ${m} EUR`), text);
+    for (const part of ["→", "2349", "Brushed Silver Metal Parts", `Brushed silver metal parts, model ${m}`, "Same", "from the row note"]) assert.ok(text.includes(part), `${m}: ${part}`);
+  }
+  assert.equal(new Set(texts.map((t) => t.text)).size, 7, "all seven lines differ");
+  const [a, b] = ["162S", "101S"].map((m) => texts.find((t) => t.l.link!.tierLabel === m)!.text.split("→")[1]);
+  assert.notEqual(a, b, "162S and 101S share the price EUR 535.00 but read differently");
+  assert.ok(a.includes("EUR 535.00") && b.includes("EUR 535.00"));
+  // a row without a note shows its code and name only; the long note is not truncated
+  assert.deepEqual(linkRowIdentity({ code: "2349", name: "Brushed Silver Metal Parts", note: "" }), ["2349", "Brushed Silver Metal Parts"]);
+  const bare = build(rows(), { rowNotes: new Map() }).lines.find((l) => l.link!.tierLabel === "262S")!;
+  const text = confirmLineText(bare, bare.link!.rows.find((r) => r.targetKey === bare.link!.suggestion!.targetKey)!);
+  assert.ok(text.includes("2349 · Brushed Silver Metal Parts · EUR 665.00") && text.includes("from the row id"), text);
+  const long = "x".repeat(400);
+  assert.ok(linkRowIdentity({ code: "1", name: "n", note: long }).includes(long));
+});

@@ -18,7 +18,7 @@ export type LineShared = {
 /** Why a product row is suggested for a supplier tier. Rule (a), a structured model reference per row, is not available on a price target. */
 export type LinkSuggestionReason = "name" | "note" | "id";
 export const linkReasonLabels: Record<LinkSuggestionReason, string> = { name: "from the row name", note: "from the row note", id: "from the row id" };
-export type LinkRow = { targetKey: string; name: string; note: string; price: number | null; currency: string; /** Already linked to a supplier line: it cannot take a second one. */ taken: boolean; mapping: LineMapping };
+export type LinkRow = { targetKey: string; /** The row's own supplier code, to tell rows apart. Display only. */ code: string; name: string; note: string; price: number | null; currency: string; /** Already linked to a supplier line: it cannot take a second one. */ taken: boolean; mapping: LineMapping };
 /**
  * One supplier line that could match several rows of this product (or whose code has several tiers). Nothing is saved: a link is made only
  * through the existing alias mapping, after the user confirms. Rows are this product's rows of the code, in the supplier line's currency.
@@ -80,7 +80,7 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string, bindi
       const valid = source.price !== null && Number.isFinite(source.price) && source.price >= 0 && !source.issues.length;
       const tierLabel = plainSupplierDimension(source.raw_dimension ?? source.dimension);
       const linkable = valid && !waits;
-      const rows: LinkRow[] = linkable ? own.filter((target) => target.currency === source.currency).map((target) => ({ targetKey: target.key, name: target.label || target.row_id, note: options.rowNotes?.get(target.key) ?? "", price: target.price, currency: target.currency, taken: takenKeys.has(target.key), mapping: previewMapping(source, target) })) : [];
+      const rows: LinkRow[] = linkable ? own.filter((target) => target.currency === source.currency).map((target) => ({ targetKey: target.key, code: target.raw_code || target.code, name: target.label || target.row_id, note: options.rowNotes?.get(target.key) ?? "", price: target.price, currency: target.currency, taken: takenKeys.has(target.key), mapping: previewMapping(source, target) })) : [];
       const line: PriceLine = {
         key: `${match.key}|link`, code: own[0].raw_code || own[0].code, field: `Tier ${tierLabel || "—"} · could match ${own.length} row${own.length === 1 ? "" : "s"} of your product`,
         ourPrice: null, ourCurrency: own[0].currency, supplierPrice: source.price, supplierCurrency: source.currency, difference: null, state,
