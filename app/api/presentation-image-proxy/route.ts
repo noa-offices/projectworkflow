@@ -18,7 +18,7 @@ function errorResponse(error: string, status: number, details?: string) {
       error,
       ...(details ? { details } : {}),
     },
-    { status },
+    { status, headers: { "X-Content-Type-Options": "nosniff" } },
   );
 }
 
@@ -96,7 +96,7 @@ async function requireProxyAccess() {
 
 export async function GET(request: Request) {
   if (await isWarehouseStaffRequest()) {
-    return Response.json({ error: "Forbidden." }, { status: 403 });
+    return errorResponse("Forbidden.", 403);
   }
   if (!await requireProxyAccess()) {
     return errorResponse("Unauthorized", 401);
@@ -129,7 +129,12 @@ export async function GET(request: Request) {
         Accept: "image/png,image/jpeg,image/webp,image/svg+xml,image/gif,image/*;q=0.8,*/*;q=0.5",
       },
       cache: "no-store",
+      redirect: "manual",
     });
+
+    if (upstreamResponse.status >= 300 && upstreamResponse.status < 400) {
+      return errorResponse("Upstream image redirects are not allowed.", 502);
+    }
 
     if (!upstreamResponse.ok) {
       return errorResponse("Failed to fetch export image.", upstreamResponse.status, `Host: ${remoteUrl.hostname}`);
@@ -157,6 +162,10 @@ export async function GET(request: Request) {
         "Content-Length": String(buffer.byteLength),
         "Cache-Control": "private, no-store, max-age=0",
         "X-Content-Type-Options": "nosniff",
+        ...(contentType === "image/svg+xml" ? {
+          "Content-Security-Policy": "default-src 'none'; sandbox",
+          "Content-Disposition": "attachment",
+        } : {}),
       },
     });
   } catch (error) {
