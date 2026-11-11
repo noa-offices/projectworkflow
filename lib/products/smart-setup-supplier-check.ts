@@ -24,6 +24,8 @@ export type SmartSetupSupplierCheckResult = {
   evidence: { identityKey: string; sheet: string; rowNumber: number; sourceRowCount: number | null } | null;
   /** Only for a shared code that is not confirmed: the one usable supplier price it could be confirmed against. Never a matched price. */
   sharedCandidate?: { price: number; currency: string } | null;
+  /** True when a saved link (alias) between this product row and the supplier line made the match. */
+  viaSavedLink?: boolean;
 };
 /** `templateId` (a saved product) reads its saved families; `familyNames` (chosen on screen, for example for a new unsaved product) win over them. Neither = no family scope. */
 export type SmartSetupSupplierCheckInput = { brandId: unknown; definitionId: unknown; sourceVersionId: unknown; priceBasis?: unknown; cells: unknown; templateId?: unknown; familyNames?: unknown };
@@ -100,6 +102,23 @@ function transientBindings(bindings: DurableBinding[], targets: PriceTarget[]): 
   });
 }
 
+/**
+ * Saved aliases (supplier line -> one product row) of the product being edited, turned into aliases of its draft rows. A persisted target key is
+ * [templateId, architecture, groupId, rowId, physicalField, columnId]; the draft keeps the group, row and column ids when it is applied, so the
+ * draft row is found by those three ids and the alias's price field (architecture and physical field are routing details and are ignored).
+ * An alias that reaches zero or several draft rows, or belongs to another product, is dropped: the row stays unresolved. Nothing is guessed.
+ */
+export function savedAliasBindingsForDraft(bindings: DurableBinding[], templateId: string | null, targets: PriceTarget[]): DurableBinding[] {
+  if (!templateId) return [];
+  return bindings.filter((b) => b.confirmed && b.kind === "alias" && b.target_keys.length === 1).flatMap((b) => {
+    let parsed: unknown; try { parsed = JSON.parse(b.target_keys[0]); } catch { return []; }
+    if (!Array.isArray(parsed) || parsed.length !== 6 || parsed.some((part) => typeof part !== "string") || parsed[0] !== templateId) return [];
+    const [, , groupId, rowId, , columnId] = parsed as string[];
+    const found = targets.filter((t) => t.group_id === groupId && t.row_id === rowId && t.column_id === columnId && t.price_field === b.price_field && comparisonCode(t.code) === comparisonCode(b.code));
+    return found.length === 1 ? [{ ...b, target_keys: [found[0].key] }] : [];
+  });
+}
+
 type Outcome = { status: SmartSetupSupplierCheckStatus; reason: SmartSetupSupplierCheckReason; source: SourceIdentity | null };
 const review = (reason: SmartSetupSupplierCheckReason, source: SourceIdentity | null): Outcome => ({ status: "NEEDS_REVIEW", reason, source });
 
@@ -159,7 +178,9 @@ export async function runSmartSetupSupplierCheck(deps: SmartSetupSupplierCheckDe
   const guarded = familyKeys.size ? new Set<string>() : new Set(allIdentities.filter((i) => supplierDimensionFamily(i.dimension) !== null).map((i) => comparisonCode(i.code)));
   const targets = allTargets.filter((t) => !guarded.has(comparisonCode(t.code)));
   const identities = allIdentities.filter((i) => !guarded.has(comparisonCode(i.code)));
-  const matches = matchSupplierPrices(identities, targets, rules, transientBindings(bindings, targets), smartSetupFamilyScope(familyKeys));
+  const aliases = savedAliasBindingsForDraft(bindings, optionalId(input.templateId, "Product"), targets);
+  const aliasTargets = new Map(aliases.map((a) => [JSON.stringify([comparisonCode(a.code), a.price_field, a.source_dimension]), a.target_keys[0]]));
+  const matches = matchSupplierPrices(identities, targets, rules, [...transientBindings(bindings, targets), ...aliases], smartSetupFamilyScope(familyKeys));
   const outcomes = mapSmartSetupMatches(matches, targets, expectedBasis !== null && expectedBasis !== (version.basis as PriceBasis));
   for (const t of allTargets) if (guarded.has(comparisonCode(t.code))) outcomes.set(t.key, review("choose_family", null));
   const source = { versionId: version.id, definitionId, title: version.title, currency: version.currency, basis: version.basis };
@@ -170,8 +191,9 @@ export async function runSmartSetupSupplierCheck(deps: SmartSetupSupplierCheckDe
     if (cell.price === null && outcome.status !== "NOT_FOUND") outcome = review("missing_draft_price", outcome.source);
     const established = outcome.status === "MATCHED" || outcome.status === "MISMATCH";
     const evidence = outcome.source ? firstEvidence.get(outcome.source.key)?.[0] : undefined;
+    const viaLink = established && outcome.source !== null && aliasTargets.get(JSON.stringify([comparisonCode(outcome.source.code), outcome.source.price_field, outcome.source.dimension])) === t.key;
     const candidate = outcome.reason === "shared_price_unconfirmed" && outcome.source && outcome.source.price !== null && !outcome.source.issues.length ? { price: outcome.source.price, currency: outcome.source.currency } : null;
-    return { ...(candidate ? { sharedCandidate: candidate } : {}), locator: cell.locator, role: cell.role, code: cell.code, priceField: cell.priceField, dimension: cell.dimension, status: outcome.status, reason: outcome.reason, importedPrice: cell.price, importedCurrency: cell.currency,
+    return { ...(candidate ? { sharedCandidate: candidate } : {}), ...(viaLink ? { viaSavedLink: true } : {}), locator: cell.locator, role: cell.role, code: cell.code, priceField: cell.priceField, dimension: cell.dimension, status: outcome.status, reason: outcome.reason, importedPrice: cell.price, importedCurrency: cell.currency,
       referencePrice: established ? outcome.source!.price : null, referenceCurrency: established ? outcome.source!.currency : null, source,
       evidence: outcome.source && established ? { identityKey: outcome.source.key, sheet: evidence?.sheet ?? "", rowNumber: evidence?.row_number ?? 0, sourceRowCount: outcome.source.source_row_count ?? null } : null };
   });

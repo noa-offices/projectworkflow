@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { projectDraftPricing, type SmartSetupPriceCell } from "./smart-setup-supplier-targets.js";
-import { runSmartSetupSupplierCheck, SMART_SETUP_CHECK_MAX_CELLS } from "./smart-setup-supplier-check.js";
+import { projectDraftPricing, smartSetupCellsToTargets, type SmartSetupPriceCell } from "./smart-setup-supplier-targets.js";
+import { runSmartSetupSupplierCheck, savedAliasBindingsForDraft, SMART_SETUP_CHECK_MAX_CELLS } from "./smart-setup-supplier-check.js";
 import type { ProductTemplateDraft } from "./product-template-draft.js";
 import type { DimensionRule, DurableBinding, SourceIdentity } from "./supplier-price-contracts.js";
 
@@ -20,7 +20,9 @@ function fakeClient(tables: Tables) {
     return api;
   };
   const forbidden = (name: string) => () => { calls.push(`WRITE:${name}`); throw Error(`write attempted: ${name}`); };
-  const client = { from: builder, rpc: forbidden("rpc"), storage: { from: forbidden("storage") } } as unknown as SupabaseClient;
+  // The two family lookups are read-only RPCs (empty here: no families); any other RPC counts as a write.
+  const rpc = (name: string) => (name === "supplier_source_families" || name === "supplier_template_series_list" ? Promise.resolve({ data: [], error: null }) : forbidden(name)());
+  const client = { from: builder, rpc, storage: { from: forbidden("storage") } } as unknown as SupabaseClient;
   return { client, calls };
 }
 
@@ -171,4 +173,61 @@ test("Unauthorized reviewer is rejected before any client or database access", a
   let touched = false;
   await assert.rejects(runSmartSetupSupplierCheck({ requireReviewer: async () => { throw Error("redirect"); }, getClient: async () => { touched = true; return fakeClient(base()).client; } }, { brandId: "b1", definitionId: "d1", sourceVersionId: "v1", cells: [] }), /redirect/);
   assert.equal(touched, false);
+});
+
+// Saved links: Interstuhl 2349 has seven product rows (one per chair model), all the same code, and a supplier price per chair model.
+const models: Array<[string, number, number]> = [["162S", 535, 535], ["262S", 665, 700], ["362S", 790, 790], ["100S", 350, 360], ["101S", 535, 535], ["151S", 665, 665], ["191S", 790, 800]]; // [model, product price, supplier price]
+const silverItems = models.map(([m, price]) => priced(`item-${m}`, "2349", price));
+const silverCells = () => cellsOf({}, [optionGroup(silverItems, { id: "metal-parts-finish" })]);
+const supplier2349 = () => models.map(([m, , supplier]) => identity("2349", supplier, { dimension: m }));
+const persistedKey = (template: string, model: string, over: Partial<{ group: string; column: string }> = {}) => JSON.stringify([template, "accessory_pricing", over.group ?? "metal-parts-finish", `item-${model}`, "price", over.column ?? ""]);
+const alias = (model: string, targetKey: string, over: Partial<DurableBinding> = {}): DurableBinding => ({ id: `a-${model}`, code: "2349", price_field: "unit_price", source_dimension: model, target_keys: [targetKey], kind: "alias", confirmed: true, ...over });
+const withAliases = (bindings: DurableBinding[]) => base(supplier2349(), { supplier_price_bindings: bindings.map((b) => ({ ...b, brand_id: "b1" })) as never });
+const rowOf = (results: Awaited<ReturnType<typeof check>>, model: string) => by(results, `option:metal-parts-finish:item-${model}`);
+
+test("saved product: seven saved links resolve each 2349 row to its own supplier line", async () => {
+  const links = models.map(([m]) => alias(m, persistedKey("T1", m)));
+  const r = await check(withAliases(links), silverCells(), { templateId: "T1" });
+  for (const [m, , supplier] of models) {
+    const x = rowOf(r, m);
+    assert.deepEqual([x.status, x.referencePrice, x.viaSavedLink], [x.importedPrice === supplier ? "MATCHED" : "MISMATCH", supplier, true], m);
+  }
+  assert.equal(r.filter((x) => x.status === "MISMATCH").length, 3);
+});
+test("saved links: a row without a link stays needs_dimension_mapping", async () => {
+  const links = models.filter(([m]) => m !== "101S").map(([m]) => alias(m, persistedKey("T1", m)));
+  const r = await check(withAliases(links), silverCells(), { templateId: "T1" });
+  assert.deepEqual([rowOf(r, "101S").status, rowOf(r, "101S").reason, rowOf(r, "101S").referencePrice], ["NEEDS_REVIEW", "needs_dimension_mapping", null]);
+  assert.equal(rowOf(r, "162S").status, "MATCHED");
+});
+test("saved links: a link of another product, a vanished row, an ambiguous or non-alias link are ignored", async () => {
+  const none = (links: DurableBinding[], templateId: string | undefined = "T1") => check(withAliases(links), silverCells(), { templateId }).then((r) => r.every((x) => x.status === "NEEDS_REVIEW" && x.reason === "needs_dimension_mapping" && !x.viaSavedLink));
+  assert.ok(await none([alias("162S", persistedKey("OTHER", "162S"))]));
+  assert.ok(await none([alias("162S", persistedKey("T1", "162S", { group: "gone" }))]));
+  assert.ok(await none([alias("162S", persistedKey("T1", "162S", { column: "c9" }))]));
+  assert.ok(await none([alias("162S", "not json"), alias("262S", JSON.stringify(["T1", "x"]))]));
+  assert.ok(await none([alias("162S", persistedKey("T1", "162S"), { kind: "disambiguation" }), alias("262S", persistedKey("T1", "262S"), { confirmed: false })]));
+  // two draft targets with the same group, row and column ids (different architectures) make the link ambiguous: it is dropped
+  const cells = silverCells(); const twin = { ...cells[0], locator: "option_direct:other", architecture: "option_direct" as const };
+  const targets = smartSetupCellsToTargets("b1", [...cells, twin]);
+  assert.deepEqual(savedAliasBindingsForDraft([alias("162S", persistedKey("T1", "162S"))], "T1", targets), []);
+  assert.equal(savedAliasBindingsForDraft([alias("262S", persistedKey("T1", "262S"))], "T1", targets).length, 1);
+  assert.deepEqual(savedAliasBindingsForDraft([alias("262S", persistedKey("T1", "262S"))], null, targets), []);
+});
+test("unsaved product: saved links are not used and results equal the no-link results", async () => {
+  const links = models.map(([m]) => alias(m, persistedKey("T1", m)));
+  const withLinks = await check(withAliases(links), silverCells());
+  const without = await check(withAliases([]), silverCells());
+  assert.deepEqual(withLinks, without);
+  assert.ok(withLinks.every((x) => x.reason === "needs_dimension_mapping"));
+});
+test("saved links on a matrix cell and a workstation price field", async () => {
+  const matrix = cellsOf({ priceMatrices: [{ id: "pm", label: null, columns: [{ id: "c1", label: "C1" }], rows: [{ ...priced("r1", "M9", 0), prices: { c1: 50 } }] }] });
+  const key = JSON.stringify(["T1", "category_pricing", "pm", "r1", "prices", "c1"]);
+  const r = await check(base([identity("M9", 55, { dimension: "SG1" })], { supplier_price_bindings: [{ ...alias("SG1", key, { code: "M9" }), brand_id: "b1" }] as never }), matrix, { templateId: "T1" });
+  assert.deepEqual([r[0].status, r[0].referencePrice, r[0].viaSavedLink], ["MISMATCH", 55, true]);
+  const ws = cellsOf({ workstationRows: [{ ...priced("w1", "WS1", 100), additionalPrice: 40, layoutType: null }] });
+  const wsKey = JSON.stringify(["T1", "desking_size_pricing", "legacy", "w1", "additional_price", ""]);
+  const r2 = await check(base([identity("WS1", 45, { dimension: "X", price_field: "additional_price" })], { supplier_price_bindings: [{ ...alias("X", wsKey, { code: "WS1", price_field: "additional_price" }), brand_id: "b1" }] as never }), ws, { templateId: "T1" });
+  assert.deepEqual([r2.find((x) => x.priceField === "additional_price")!.status, r2.find((x) => x.priceField === "default_price")!.status], ["MISMATCH", "NOT_FOUND"]);
 });

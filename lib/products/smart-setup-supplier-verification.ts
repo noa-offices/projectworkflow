@@ -50,7 +50,8 @@ export function referencePriceText(r: SmartSetupSupplierCheckResult) {
 }
 export const importedPriceText = (r: SmartSetupSupplierCheckResult) => (r.importedPrice === null ? "—" : `${r.importedCurrency} ${r.importedPrice}`);
 export function evidenceText(r: SmartSetupSupplierCheckResult) {
-  return r.evidence ? `${r.evidence.sheet ? `${r.evidence.sheet}, ` : ""}row ${r.evidence.rowNumber}` : "";
+  const where = r.evidence ? `${r.evidence.sheet ? `${r.evidence.sheet}, ` : ""}row ${r.evidence.rowNumber}` : "";
+  return r.viaSavedLink ? [where, "Matched through a saved link"].filter(Boolean).join(" · ") : where;
 }
 export function sourceOptionLabel(o: { name: string; versionTitle: string; effectiveFrom: string | null; currency: string; basis: string }) {
   return `${o.name} — ${o.versionTitle}${o.effectiveFrom ? `, effective ${o.effectiveFrom}` : ""} · ${o.currency} · ${o.basis} price`;
