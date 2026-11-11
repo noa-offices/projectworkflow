@@ -110,7 +110,7 @@ export function SupplierVerificationPanel({ brandId, sources, definitionId, onSe
   const [decisionSummary, setDecisionSummary] = useState<{ fingerprint: string; count: number } | null>(null);
   const onDecisionsSaved = useCallback((records: SavedReviewDecision[]) => {
     if (!fresh) return;
-    const saved = mapDecisions(records), rows = buildReviewRows(fresh.output.results, fresh.cells), conflicts = conflictingDecisionKeys(rows);
+    const rows = buildReviewRows(fresh.output.results, fresh.cells), saved = mapDecisions(records, rows), conflicts = conflictingDecisionKeys(rows);
     setDecisionSummary({ fingerprint: fresh.fingerprint, count: rows.filter((r) => !conflicts.has(decisionKey(r)) && decisionForRow(r, saved[decisionKey(r)])).length });
   }, [fresh]);
   // Managers see "N decided" as soon as a check finishes, without opening the review window.

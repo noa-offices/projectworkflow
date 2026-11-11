@@ -3,14 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listSupplierPriceDecisions, saveSupplierPriceDecisions } from "@/app/products/supplier-review-decision-actions";
 import { buildReviewRows } from "@/lib/products/smart-setup-supplier-review";
-import { conflictingDecisionKeys, decisionKey, draftForRow, inputForRow, mapDecisions, sameDraft, supplierPriceChanged, type DecisionDraft, type DecisionMap, type SavedReviewDecision } from "@/lib/products/supplier-review-decisions";
+import { conflictingDecisionKeys, decisionKey, draftForRow, inputForRow, mapDecisions, sameDraft, savedDecisionKey, supplierPriceChanged, type DecisionDraft, type DecisionMap, type SavedReviewDecision } from "@/lib/products/supplier-review-decisions";
 import type { SupplierCheckedResult } from "./smart-setup-supplier-verification";
 
 export function useSupplierReviewDecisions(fresh: SupplierCheckedResult | null, canManage: boolean, onSaved?: (decisions: SavedReviewDecision[]) => void) {
   const sourceId = fresh?.output.source.versionId;
   const rows = useMemo(() => fresh ? buildReviewRows(fresh.output.results, fresh.cells) : [], [fresh]);
   const conflicts = useMemo(() => conflictingDecisionKeys(rows), [rows]);
-  const [saved, setSaved] = useState<DecisionMap>({});
+  const [records, setRecords] = useState<SavedReviewDecision[]>([]);
+  const saved: DecisionMap = useMemo(() => mapDecisions(records, rows), [records, rows]);
   const [edits, setEdits] = useState<Record<string, DecisionDraft>>({});
   const [loadedSource, setLoadedSource] = useState<string>();
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -27,7 +28,7 @@ export function useSupplierReviewDecisions(fresh: SupplierCheckedResult | null, 
     let current = true;
     listSupplierPriceDecisions(sourceId).then((records) => {
       if (!current) return;
-      setSaved(mapDecisions(records)); setEdits({}); setLoadedSource(sourceId); setLoadError(null); onSaved?.(records);
+      setRecords(records); setEdits({}); setLoadedSource(sourceId); setLoadError(null); onSaved?.(records);
     }).catch(() => { if (current) setLoadError("Saved decisions could not be loaded. Try again before making changes."); });
     return () => { current = false; };
   }, [canManage, sourceId, retry, onSaved]);
@@ -56,13 +57,14 @@ export function useSupplierReviewDecisions(fresh: SupplierCheckedResult | null, 
         if (!input) throw Error(`${row.result.code}: choose an action before saving a note.`);
         return { key, input };
       });
-      let merged = { ...saved };
+      let merged = records;
       for (let from = 0; from < changes.length; from += 200) {
         const batch = changes.slice(from, from + 200);
-        const records = await saveSupplierPriceDecisions(batch.map((c) => c.input));
-        merged = { ...merged, ...mapDecisions(records) };
-        setSaved(merged); setEdits((current) => { const next = { ...current }; batch.forEach(({ key }) => delete next[key]); return next; });
-        savedCount += batch.length; onSaved?.(Object.values(merged));
+        const result = await saveSupplierPriceDecisions(batch.map((c) => c.input));
+        const replaced = new Set(result.map(savedDecisionKey));
+        merged = [...merged.filter((r) => !replaced.has(savedDecisionKey(r))), ...result];
+        setRecords(merged); setEdits((current) => { const next = { ...current }; batch.forEach(({ key }) => delete next[key]); return next; });
+        savedCount += batch.length; onSaved?.(merged);
       }
       setMessage(`${savedCount} decision${savedCount === 1 ? "" : "s"} saved. Product prices have not changed.`);
     } catch (error) {

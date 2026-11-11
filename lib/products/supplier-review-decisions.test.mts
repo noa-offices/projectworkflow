@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canManageReviewDecisions, validateDecisionInput, decisionKey, supplierPriceChanged, usableSupplierPrice, decisionForRow, decisionWithDraft, conflictingDecisionKeys, inputForRow, type SavedReviewDecision } from "./supplier-review-decisions";
+import { canManageReviewDecisions, validateDecisionInput, decisionKey, supplierPriceChanged, usableSupplierPrice, decisionForRow, decisionWithDraft, conflictingDecisionKeys, inputForRow, mapDecisions, type SavedReviewDecision } from "./supplier-review-decisions";
 import { buildReviewRows, reviewRowsToCsv } from "./smart-setup-supplier-review";
 import type { SmartSetupSupplierCheckResult } from "./smart-setup-supplier-check";
 
@@ -15,7 +15,10 @@ test("only active cost managers can save review decisions", () => {
   for (const status of ["disabled", "pending", null]) assert.equal(canManageReviewDecisions("system_owner", status), false);
 });
 test("decision validation rejects invalid fields and accepts zero custom/supplier prices", () => {
-  assert.deepEqual(validateDecisionInput(input), input);
+  assert.deepEqual(validateDecisionInput(input), { ...input, row_ref: "" });
+  assert.equal(validateDecisionInput({ ...input, row_ref: "option:g:i:c" }).row_ref, "option:g:i:c");
+  assert.throws(() => validateDecisionInput({ ...input, row_ref: "x".repeat(301) }));
+  assert.throws(() => validateDecisionInput({ ...input, row_ref: 5 }));
   assert.equal(validateDecisionInput({ ...input, decision: "set_custom", custom_price: 0 }).custom_price, 0);
   for (const patch of [{ decision: "bad" }, { decision: "set_custom" }, { decision: "set_custom", custom_price: -1 }, { custom_price: 2 }, { note: "x".repeat(501) }, { note: 2 }, { supplier_price: null }, { supplier_price: Infinity }, { supplier_source_id: "bad" }, { model_code: " " }, { price_field: "bad" }, { currency: "bad" }, { status: "applied" }, { decided_by: "spoof" }]) assert.throws(() => validateDecisionInput({ ...input, ...patch }));
   assert.equal(validateDecisionInput({ ...input, supplier_price: 0 }).supplier_price, 0);
@@ -67,4 +70,36 @@ test("a note edit does not reconfirm a stale action; explicit confirmation does"
   assert.throws(() => inputForRow(row, draft, stale), /confirm or change the action/);
   assert.equal(decisionWithDraft(row, stale, { ...draft, confirmed: true }), "use_supplier");
   assert.equal(inputForRow(row, { ...draft, confirmed: true }, stale)?.supplier_price, 100);
+});
+
+// Interstuhl 2349: one option code, seven product rows (one per chair model), same code and price field, different prices.
+const models = [["162S", 535], ["262S", 665], ["362S", 790], ["100S", 350], ["101S", 535], ["151S", 665], ["191S", 790]] as const;
+const interstuhl = buildReviewRows(models.map(([m, price]) => ({ ...result, locator: `option:silver:2349-${m}`, code: "2349", status: "NEEDS_REVIEW" as const, reason: "needs_dimension_mapping" as const, importedPrice: price, referencePrice: null, referenceCurrency: null })), []);
+const savedFor = (r: (typeof interstuhl)[number], decision: SavedReviewDecision["decision"], extra: Partial<SavedReviewDecision> = {}) => ({ ...saved, ...(inputForRow(r, { decision, customPrice: decision === "set_custom" ? "1" : "", note: "" })!), decision, ...extra }) as SavedReviewDecision;
+
+test("rows sharing a code and price field but with different row identity are never locked and keep their own decision", () => {
+  assert.equal(new Set(interstuhl.map(decisionKey)).size, 7);
+  assert.equal(conflictingDecisionKeys(interstuhl).size, 0);
+  const choices = ["ignore", "check_later", "keep_imported", "set_custom", "ignore", "keep_imported", "check_later"] as const;
+  const records = interstuhl.map((r, i) => savedFor(r, choices[i]));
+  assert.ok(records.every((r, i) => r.row_ref === interstuhl[i].result.locator));
+  const map = mapDecisions(records, interstuhl); // save, then reload
+  interstuhl.forEach((r, i) => assert.equal(decisionForRow(r, map[decisionKey(r)]), choices[i]));
+  assert.equal(new Set(records.map((r) => JSON.stringify([r.model_code, r.price_field, r.row_ref]))).size, 7);
+});
+test("a decision saved the old way (no row identity) still loads on its row", () => {
+  const legacy = { ...saved, category: row.category, row_ref: "" } as SavedReviewDecision;
+  const legacyNoField = { ...saved, category: row.category } as Partial<SavedReviewDecision>; delete legacyNoField.row_ref; // rows returned by the old database have no row_ref at all until the migration
+  for (const record of [legacy, legacyNoField as SavedReviewDecision]) {
+    const map = mapDecisions([record], [row]);
+    assert.equal(decisionForRow(row, map[decisionKey(row)]), "use_supplier");
+  }
+  // a different category does not inherit it, and a decision for the row itself wins over the old one
+  assert.equal(mapDecisions([legacy], [{ ...row, category: "Other" }])[decisionKey({ ...row, category: "Other" })], undefined);
+  const specific = { ...saved, row_ref: row.result.locator, decision: "ignore" } as SavedReviewDecision;
+  assert.equal(decisionForRow(row, mapDecisions([legacy, specific], [row])[decisionKey(row)]), "ignore");
+});
+test("a true conflict (the same full key twice with different data) is still locked", () => {
+  const twin = { ...interstuhl[0], result: { ...interstuhl[0].result, importedPrice: 999 } };
+  assert.equal(conflictingDecisionKeys([interstuhl[0], twin]).has(decisionKey(interstuhl[0])), true);
 });
