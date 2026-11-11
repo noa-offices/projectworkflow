@@ -22,7 +22,7 @@
     "exceljs": "^4.4.0",
     "html-to-image": "^1.11.13",
     "lucide-react": "^1.17.0",
-    "next": "16.2.4",
+    "next": "16.4.6",
     "pdfjs-dist": "^6.3.289",
     "playwright": "^1.59.1",
     "playwright-core": "^1.59.1",
@@ -31,7 +31,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "^3.8.1",
-    "sharp": "^0.35.2",
+    "sharp": "^0.35.5",
     "xlsx": "^0.18.5",
     "zod": "^4.6.7"
   },
@@ -43,11 +43,19 @@
     "@types/react-dom": "^19",
     "@types/sharp": "^0.31.1",
     "eslint": "^9",
-    "eslint-config-next": "16.2.4",
+    "eslint-config-next": "16.4.6",
     "fake-indexeddb": "6.2.5",
     "server-only": "^0.0.1",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
     "typescript": "^5"
+  },
+  "overrides": {
+    "baseline-browser-mapping@^2.0.0": "2.11.0",
+    "brace-expansion@^1.0.0": "1.1.21",
+    "brace-expansion@^2.0.0": "2.1.7",
+    "ip-address@^10.0.0": "10.7.4",
+    "source-map-js@^1.0.0": "1.2.2",
+    "ws@^8.0.0": "8.21.0"
   }
 }
