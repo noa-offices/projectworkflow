@@ -124,9 +124,13 @@ const review = (reason: SmartSetupSupplierCheckReason, source: SourceIdentity | 
 
 /** Pure mapping of existing matcher output to per-draft-cell outcomes. No second matching algorithm. */
 export function mapSmartSetupMatches(matches: PriceMatch[], targets: PriceTarget[], sourceBasisMismatch: boolean): Map<string, Outcome> {
+  // Only the matcher's equal-price saved-alias group is one claim; all other competing sources remain review-only.
+  const claimKey = (match: PriceMatch) => match.aliasSources && match.classification !== "ambiguous"
+    ? JSON.stringify(["aliases", ...match.aliasSources.map((source) => source.key).sort()]) : match.source!.key;
   const claims = new Map<string, Set<string>>();
-  for (const match of matches) if (match.source && match.targets.length && !["ambiguous", "needs_dimension_mapping", "invalid_source", "baseline_drift"].includes(match.classification)) for (const t of match.targets) claims.set(t.key, new Set([...(claims.get(t.key) ?? []), match.source.key]));
+  for (const match of matches) if (match.source && match.targets.length && !["ambiguous", "needs_dimension_mapping", "invalid_source", "baseline_drift"].includes(match.classification)) for (const t of match.targets) claims.set(t.key, new Set([...(claims.get(t.key) ?? []), claimKey(match)]));
   const outcomes = new Map<string, Outcome>(); const unmapped: PriceTarget[] = [];
+  const outcomeClaims = new Map<string, string>();
   for (const match of matches) {
     if (match.source === null) { for (const t of match.targets) outcomes.set(t.key, { status: "NOT_FOUND", reason: "no_source_candidate", source: null }); continue; }
     const source = match.source;
@@ -136,7 +140,7 @@ export function mapSmartSetupMatches(matches: PriceMatch[], targets: PriceTarget
     for (const t of match.targets) {
       const resolved = ["unchanged", "increased", "decreased", "changed", "shared"].includes(match.classification);
       let outcome: Outcome;
-      if (match.classification === "ambiguous") outcome = review(match.candidate_shared || match.targets.length > 1 ? "shared_price_unconfirmed" : "needs_dimension_mapping", source);
+      if (match.classification === "ambiguous") outcome = review(match.aliasSources ? "ambiguous_source_contexts" : match.candidate_shared || match.targets.length > 1 ? "shared_price_unconfirmed" : "needs_dimension_mapping", source);
       else if (match.classification === "baseline_drift") outcome = review("shared_price_baseline_drift", source);
       else if (!resolved) outcome = review("invalid_source_evidence", source);
       else if ((claims.get(t.key)?.size ?? 0) > 1) outcome = review("ambiguous_source_contexts", source);
@@ -146,7 +150,8 @@ export function mapSmartSetupMatches(matches: PriceMatch[], targets: PriceTarget
       else outcome = t.price === source.price ? { status: "MATCHED", reason: "same_price", source } : { status: "MISMATCH", reason: "price_differs", source };
       const previous = outcomes.get(t.key);
       // A cell reached by several matches is never silently resolved by the first one.
-      outcomes.set(t.key, previous && (previous.source?.key !== source.key || previous.status !== outcome.status) ? review("ambiguous_source_contexts", source) : outcome);
+      outcomes.set(t.key, previous && (outcomeClaims.get(t.key) !== claimKey(match) || previous.status !== outcome.status) ? review("ambiguous_source_contexts", source) : outcome);
+      outcomeClaims.set(t.key, claimKey(match));
     }
   }
   for (const t of unmapped) if (!outcomes.has(t.key)) outcomes.set(t.key, review("needs_dimension_mapping", null));

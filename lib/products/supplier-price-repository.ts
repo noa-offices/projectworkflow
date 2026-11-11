@@ -344,6 +344,17 @@ export async function supplierApplyReviewedPrice(client: SupabaseClient, batchId
     if (!current || baselineFields.some((field) => current[field] !== baseline[field]) || current.price === identity.price || expectedPricingVersion(current.pricing_version) === null) throw Error(freshSupplierComparison);
     return current;
   });
+  if (!shared) {
+    const bindings = await supplierRows<DurableBinding>(client, "supplier_price_bindings", "*", { brand_id: batch.brand_id });
+    const aliases = bindings.filter((binding) => binding.confirmed && binding.kind === "alias" && binding.target_keys.length === 1 && binding.target_keys[0] === currents[0].key);
+    if (aliases.length >= 2) {
+      const identities = await supplierRows<{ data: SourceIdentity }>(client, "supplier_source_identities", "key,data", { source_id: source.id }, "key");
+      const fresh = matchSupplierPrices(identities.map((row) => withoutEvidence(row.data)), targets, [], bindings);
+      if (fresh.some((item) => item.classification === "ambiguous" && item.aliasSources && item.targets.some((target) => target.key === currents[0].key))) {
+        throw Error("Conflicting saved alias tiers. Build a fresh Supplier comparison before applying.");
+      }
+    }
+  }
   const history = { brand_price_list_update_id: batch.brand_price_list_update_id ?? null, effective_from: source.effective_from ?? null,
     note: `Supplier source: ${source.title}; batch: ${batch.id}; match: ${match.key}${shared ? "; shared apply" : ""}` };
   // Same-Template detail targets accumulate into one working copy so each later payload includes earlier changes.

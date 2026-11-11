@@ -15,6 +15,61 @@ const notes = (targets: PriceTarget[]) => new Map(targets.map((t) => [t.key, `mo
 const tier = (dimension: string, price: number, over: Partial<SourceIdentity> = {}) => ({ key: `s:${dimension}`, code: "2349", price_field: "unit_price", dimension, raw_dimension: dimension, finishes: [], price, currency: "EUR", row_keys: [], issues: [], ...over }) as SourceIdentity;
 const supplier = () => [...models.map(([m, price]) => tier(m, price)), ...otherTiers.map((t, i) => tier(t, 900 + i))];
 type Binding = { id: string; code: string; price_field: string; source_dimension: string; kind: "alias"; confirmed: boolean; target_keys: string[] };
+
+const mergedRows = () => [row("100s", 350), row("162s-101s", 535), row("262s-151s", 665), row("362s-191s", 790)];
+const linkFor = (tier: string, target: PriceTarget): Binding => ({ id: tier, code: "2349", price_field: "unit_price", source_dimension: tier, kind: "alias", confirmed: true, target_keys: [target.key] });
+test("merged Silver rows: three remaining suggestions, nine unrelated tiers, then seven resolved tiers", () => {
+  const targets = mergedRows();
+  const bindings = ["100S", "101S", "151S", "191S"].map((tier, i) => linkFor(tier, targets[i]));
+  const compare = () => buildPriceLines(matchSupplierPrices(supplier(), targets, [], bindings), "T1", bindings).lines;
+  const lines = compare();
+  assert.equal(summarizePriceLines(lines).needsMapping, 3);
+  assert.equal(notInProductLines(lines).length, 9);
+  for (const [index, tier] of ["162S", "262S", "362S"].entries()) {
+    const line = lines.find((l) => l.link?.tierLabel === tier)!;
+    assert.equal(line.link!.suggestion?.targetKey, targets[index + 1].key);
+    assert.equal(line.link!.rows.find((r) => r.targetKey === targets[index + 1].key)!.taken, false);
+    bindings.push(linkFor(tier, targets[index + 1]));
+  }
+  const resolved = compare();
+  assert.deepEqual(summarizePriceLines(resolved), { same: 7, changed: 0, needsMapping: 0, other: 0, shared: 0 });
+  assert.equal(notInProductLines(resolved).length, 9);
+  assert.deepEqual(resolved.find((l) => l.binding?.id === "101S")!.linkedTiers, ["101S", "162S"]);
+});
+
+test("saved aliases on one row: equal prices compare normally; conflicting price or currency is never applicable", () => {
+  const target = mergedRows()[1], bindings = [linkFor("101S", target), linkFor("162S", target)];
+  for (const [prices, currency, state] of [[[535, 535], "EUR", "same"], [[600, 600], "EUR", "changed"], [[600, 650], "EUR", "ambiguous"], [[600, 600], "USD", "ambiguous"]] as const) {
+    const sources = [tier("101S", prices[0]), tier("162S", prices[1], { currency })];
+    const matches = matchSupplierPrices(sources, [target], [], bindings);
+    const lines = buildPriceLines(matches, "T1", bindings).lines;
+    assert.deepEqual(lines.map((l) => l.state), [state, state]);
+    if (state === "ambiguous") for (const line of lines) {
+      assert.equal(line.apply, undefined);
+      assert.match(line.matchHint!, /101S.*600.*162S/);
+    }
+  }
+});
+
+test("a single-tier row remains disabled for an unrelated second tier, with a reason", () => {
+  const target = row("101S", 535), bindings = [linkFor("101S", target)];
+  const lines = buildPriceLines(matchSupplierPrices([tier("101S", 535), tier("162S", 535)], [target], [], bindings), "T1", bindings).lines;
+  const choice = lines.find((l) => l.link?.tierLabel === "162S")!.link!.rows[0];
+  assert.equal(choice.taken, true);
+  assert.match(choice.takenReason!, /does not name/);
+});
+
+test("the alias conflict guard requires distinct saved aliases and never absorbs other binding kinds", () => {
+  const target = mergedRows()[1];
+  const one = linkFor("101S", target);
+  const duplicate = matchSupplierPrices([tier("101S", 535), tier("101S", 600, { key: "duplicate" })], [target], [], [one]);
+  assert.deepEqual(duplicate.map((m) => m.classification), ["unchanged", "increased"]);
+  assert.ok(duplicate.every((m) => !m.aliasSources));
+  const disambiguation = { ...linkFor("162S", target), kind: "disambiguation" as const };
+  const separate = matchSupplierPrices([tier("101S", 535), tier("162S", 600)], [target], [], [one, disambiguation]);
+  assert.deepEqual(separate.map((m) => m.classification), ["unchanged", "increased"]);
+  assert.ok(separate.every((m) => !m.aliasSources));
+});
 const build = (targets: PriceTarget[], over: { sources?: SourceIdentity[]; bindings?: Binding[]; rowNotes?: ReadonlyMap<string, string>; familyRequired?: boolean } = {}) => {
   const matches = matchSupplierPrices(over.sources ?? supplier(), targets);
   return buildPriceLines(matches, "T1", over.bindings ?? [], { rowNotes: over.rowNotes ?? notes(targets.filter((t) => t.template_id === "T1")), familyRequired: over.familyRequired });

@@ -47,6 +47,7 @@ export function matchSupplierPrices(sources: SourceIdentity[], targets: PriceTar
   const bindingIndex = new Map([...bindingGroups].filter(([, group]) => group.length === 1).map(([key, group]) => [key, group[0]]));
   const represented = new Set<string>();
   const viaBinding = new Set<string>();
+  const viaAlias = new Map<string, string>();
   const matches = sources.map<PriceMatch>((source) => {
     const base = { key: source.key, source, targets: [] as PriceTarget[], candidate_shared: false };
     const sourceFamily = familyScope?.size ? supplierDimensionFamily(source.dimension) : null;
@@ -89,16 +90,17 @@ export function matchSupplierPrices(sources: SourceIdentity[], targets: PriceTar
       return { ...base, targets: found, comparison, classification: drift ? "baseline_drift" : binding?.kind === "shared" ? "shared" : "ambiguous", candidate_shared: !drift && found.every((target) => target.currency === source.currency) };
     }
     const target = found[0];
+    if (binding?.kind === "alias" && binding.target_keys.length === 1) viaAlias.set(source.key, binding.id);
     const comparison = target.currency !== source.currency || target.price === null ? "changed" : source.price === target.price ? "unchanged" : source.price > target.price ? "increased" : "decreased";
     return { ...base, targets: found, comparison, classification: comparison };
   });
-  if (familyScope?.size) {
+  if (familyScope?.size || viaAlias.size) {
     // Several chosen families for one target with different prices: never pick one.
     const groups = new Map<string, Array<{ index: number; family: string }>>();
     matches.forEach((match, index) => {
       if (!match.source || match.targets.length !== 1 || viaBinding.has(match.key) || !["unchanged", "increased", "decreased", "changed"].includes(match.classification)) return;
       const target = match.targets[0];
-      if (!familyScope.get(target.template_id)?.size) return;
+      if (!familyScope?.get(target.template_id)?.size) return;
       const family = supplierDimensionFamily(match.source.dimension);
       if (family) groups.set(target.key, [...(groups.get(target.key) ?? []), { index, family: supplierFamilyKey(family.family) }]);
     });
@@ -106,6 +108,25 @@ export function matchSupplierPrices(sources: SourceIdentity[], targets: PriceTar
       if (new Set(group.map((item) => item.family)).size < 2) continue;
       if (new Set(group.map((item) => JSON.stringify([matches[item.index].source!.price, matches[item.index].source!.currency]))).size < 2) continue;
       for (const { index } of group) { const { key, source, targets: found, candidate_shared } = matches[index]; matches[index] = { key, source, targets: found, candidate_shared, classification: "ambiguous" }; }
+    }
+    // Saved aliases are a separate case: do not mix them with family or shared matches.
+    const aliases = new Map<string, number[]>();
+    matches.forEach((match, index) => {
+      if (viaAlias.has(match.key)) aliases.set(match.targets[0].key, [...(aliases.get(match.targets[0].key) ?? []), index]);
+    });
+    for (const group of aliases.values()) {
+      if (new Set(group.map((index) => viaAlias.get(matches[index].key))).size < 2) continue;
+      const aliasSources = group.map((index) => {
+        const source = matches[index].source!;
+        return { key: source.key, tier: plainSupplierDimension(source.raw_dimension ?? source.dimension), price: source.price!, currency: source.currency };
+      });
+      const conflict = new Set(aliasSources.map((source) => JSON.stringify([source.price, source.currency]))).size > 1;
+      for (const index of group) {
+        const match = matches[index];
+        matches[index] = conflict
+          ? { key: match.key, source: match.source, targets: match.targets, candidate_shared: false, classification: "ambiguous", aliasSources }
+          : { ...match, aliasSources };
+      }
     }
   }
   for (const target of targets) if (!represented.has(target.key)) matches.push({ key: `target:${target.key}`, source: null, targets: [target], classification: "target_not_represented", candidate_shared: false });
