@@ -261,7 +261,7 @@ test("family scope reaches the matcher: the saved family decides which supplier 
   const action = readFileSync("components/quotations/supplier-price-lines-actions.ts", "utf8");
   assert.match(action, /await supplierBrandMatches\(client, current\.id\)/);
   assert.match(action, /const familyRequired = families\.length > 0 && chosen\.length === 0/);
-  assert.match(action, /buildPriceLines\(matches, templateId, bindings, \{ familyRequired \}\)/);
+  assert.match(action, /buildPriceLines\(matches, templateId, bindings, \{ familyRequired(, rowNotes)? \}\)/);
 });
 
 test("the lines action returns the families, the chosen set and the missing ones, read only, for approvers", () => {

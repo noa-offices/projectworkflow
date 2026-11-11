@@ -3,7 +3,7 @@
 import { requireActiveUser } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import type { DurableBinding, PriceMatch } from "@/lib/products/supplier-price-contracts";
-import { buildPriceLines, type PriceLine } from "@/lib/products/supplier-price-lines";
+import { buildPriceLines, targetRowNotes, type PriceLine } from "@/lib/products/supplier-price-lines";
 import { resolveApplicableSupplierSourceVersion, supplierBrandMatches, supplierBusinessDate, supplierLatestTemplateChecks, supplierListTemplateFamilies, supplierMissingTemplateFamilies, supplierRows, supplierSourceFamilies } from "@/lib/products/supplier-price-repository";
 import { findSourceReviewBatch } from "@/lib/products/supplier-replacement";
 import { createClient } from "@/lib/supabase/server";
@@ -69,11 +69,12 @@ export async function supplierTemplatePriceLines(templateId: string): Promise<Pr
     const families = found.map((item) => ({ family: item.family, key: item.family_key, count: item.identity_count }));
     const chosen = saved.filter((item) => item.template_id === templateId).map((item) => ({ family: item.family, key: item.family_key }));
     const missing = absent.filter((item) => item.template_id === templateId).map((item) => ({ family: item.family, key: item.family_key }));
-    const { matches } = await supplierBrandMatches(client, current.id);
+    const { matches, templates: brandTemplates, targets: brandTargets } = await supplierBrandMatches(client, current.id);
+    const rowNotes = targetRowNotes(brandTemplates as Array<Record<string, unknown>>, brandTargets.filter((target) => target.template_id === templateId));
     const familyRequired = families.length > 0 && chosen.length === 0;
     sources.push({ definitionId: definition.id, sourceId: current.id, definitionName: definition.name, title: current.title, effectiveFrom: current.effective_from, families, chosen, missing,
       check: (() => { const newest = checks.filter((item) => item.source_id === current.id).sort((a, b) => b.checked_at.localeCompare(a.checked_at))[0]; return newest ? { checkedAt: newest.checked_at, valid: String(newest.pricing_version) === String(template.pricing_version), checkedByName: newest.checked_by_name?.trim() || null } : null; })(),
-      ...(await withApplyBatch(client, current.id, buildPriceLines(matches, templateId, bindings, { familyRequired }))) });
+      ...(await withApplyBatch(client, current.id, buildPriceLines(matches, templateId, bindings, { familyRequired, rowNotes }))) });
   }
   return { brandId: template.brand_id, sources };
 }

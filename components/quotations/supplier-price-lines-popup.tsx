@@ -4,6 +4,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { applySupplierReviewedPrice, confirmSupplierBindings, removeSupplierBinding, saveSupplierDecision, setSupplierTemplateFamilies } from "@/app/products/price-updates/supplier-sources/actions";
 import { filterAndOrderPriceLines, priceLineStateLabels, summarizePriceLines, type PriceLine, type PriceLineFilter, type PriceLineState } from "@/lib/products/supplier-price-lines";
+import { ConfirmAllSuggested, SupplierLinkButton, NotInProductGroup } from "./supplier-price-link-panel";
 import { SupplierFamilyBar } from "@/components/products/supplier-family-bar";
 import { useCoverageAccess } from "./supplier-coverage-popup";
 import { supplierTemplatePriceLines, type PriceLinesResult } from "./supplier-price-lines-actions";
@@ -142,7 +143,7 @@ function SourceLines({ source, brandId, templateId, templateName, onDone, onStat
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const hasActions = source.lines.some((line) => line.mapping || line.shared || line.binding || line.apply || line.applyHint || line.familyHint);
+  const hasActions = source.lines.some((line) => line.mapping || line.link || line.shared || line.binding || line.apply || line.applyHint || line.familyHint);
   // Writes happen only here, from the confirm button. Each uses the existing Price Updates action (role re-checked on the server).
   const confirm = async () => {
     if (!pending || busy) return;
@@ -175,7 +176,7 @@ function SourceLines({ source, brandId, templateId, templateName, onDone, onStat
   const summary = summarizePriceLines(source.lines);
   const attention = summary.changed + summary.needsMapping + summary.other;
   const shown = filterAndOrderPriceLines(source.lines, filter);
-  const counts: Record<PriceLineFilter, number> = { all: source.lines.length, attention, same: summary.same };
+  const counts: Record<PriceLineFilter, number> = { all: source.lines.filter((line) => !line.link?.notInProduct).length, attention, same: summary.same };
   const tiles = [
     { label: "Same", value: summary.same, tone: "border-emerald-200 bg-emerald-50 text-emerald-900", note: summary.shared ? `includes ${summary.shared} shared` : "" },
     { label: "Changed", value: summary.changed, tone: "border-amber-300 bg-amber-100 text-amber-950", note: "" },
@@ -196,6 +197,7 @@ function SourceLines({ source, brandId, templateId, templateName, onDone, onStat
           <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Show lines">
             {filters.map((item) => <button key={item.key} type="button" aria-pressed={filter === item.key} onClick={() => setFilter(item.key)} className={`rounded-full border px-3 py-1 text-xs font-semibold ${filter === item.key ? "border-emerald-800 bg-emerald-800 text-white" : "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-500"}`}>{item.label} ({counts[item.key]})</button>)}
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2"><ConfirmAllSuggested lines={source.lines} brandId={brandId} onDone={onDone} /></div>
           <div className="mt-3 max-h-[52vh] overflow-auto rounded-lg border border-zinc-200">
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead className="sticky top-0 z-10 bg-zinc-100 text-xs font-semibold text-zinc-700">
@@ -211,6 +213,7 @@ function SourceLines({ source, brandId, templateId, templateName, onDone, onStat
                     <td className="px-3 py-2 text-right tabular-nums">{line.difference === null ? "—" : `${line.difference > 0 ? "+" : ""}${line.difference.toLocaleString("en-US", { minimumFractionDigits: 2 })}`}</td>
                     <td className="px-3 py-2"><span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-bold ${badgeClass[line.state]}`}>{priceLineStateLabels[line.state]}</span></td>
                     {hasActions ? <td className="px-3 py-2">
+                      {line.link ? <SupplierLinkButton line={line} brandId={brandId} onDone={onDone} /> : null}
                       {line.mapping ? <button type="button" onClick={() => { setError(""); setPending({ kind: "map", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Map this line</button> : null}
                       {line.familyHint === "choose_family" ? <span className="block max-w-48 text-xs text-zinc-600">Choose a family first.</span> : null}
                       {line.shared ? <button type="button" onClick={() => { setError(""); setPending({ kind: "share", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Map as shared</button> : null}
@@ -227,6 +230,7 @@ function SourceLines({ source, brandId, templateId, templateName, onDone, onStat
           </div>
         </>
       )}
+      <NotInProductGroup lines={source.lines} brandId={brandId} onDone={onDone} />
       {pending ? <ConfirmStep pending={pending} busy={busy} error={error} onCancel={() => { setPending(null); setError(""); }} onConfirm={() => void confirm()} /> : null}
       {source.truncated ? <p className="mt-2 text-xs text-amber-800">Only the first 500 lines are shown.</p> : null}
     </section>
