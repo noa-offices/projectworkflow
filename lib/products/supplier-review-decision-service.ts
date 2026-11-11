@@ -17,7 +17,7 @@ export async function saveReviewDecisions(deps: Dependencies, values: unknown): 
   await requireManager(deps);
   if (!Array.isArray(values) || values.length < 1 || values.length > 200) throw Error("Save between 1 and 200 decisions at a time.");
   const decisions = values.map(validateDecisionInput);
-  if (new Set(decisions.map((r) => JSON.stringify([r.supplier_source_id, r.model_code, r.price_field]))).size !== decisions.length) throw Error("Each model code and price field can have only one decision per price list.");
+  if (new Set(decisions.map((r) => JSON.stringify([r.supplier_source_id, r.model_code, r.price_field, r.row_ref]))).size !== decisions.length) throw Error("Each product row can have only one decision per price list.");
   const { data, error } = await (await deps.getClient()).rpc("save_supplier_price_decisions", { p_decisions: decisions });
   if (error) throw Error("Decisions could not be saved. Your changes are still here; try again.");
   return data as SavedReviewDecision[];

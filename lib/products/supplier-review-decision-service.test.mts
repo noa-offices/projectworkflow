@@ -20,9 +20,10 @@ test("all non-managers are rejected before any decision RPC", async () => {
 test("managers call only the decision RPC; malformed, oversized and duplicate payloads never reach it", async () => {
   const d = deps("admin_manager");
   await listReviewDecisions(d.deps, source); await saveReviewDecisions(d.deps, [payload]);
-  assert.deepEqual(d.calls, [["list_supplier_price_decisions", { p_supplier_source_id: source }], ["save_supplier_price_decisions", { p_decisions: [payload] }]]);
-  for (const bad of [null, [], Array(201).fill(payload), [payload, payload], [{ ...payload, note: "a".repeat(501) }]]) await assert.rejects(saveReviewDecisions(d.deps, bad));
-  await assert.rejects(listReviewDecisions(d.deps, "bad")); assert.equal(d.calls.length, 2);
+  assert.deepEqual(d.calls, [["list_supplier_price_decisions", { p_supplier_source_id: source }], ["save_supplier_price_decisions", { p_decisions: [{ ...payload, row_ref: "" }] }]]);
+  await saveReviewDecisions(d.deps, [{ ...payload, row_ref: "option:g:a" }, { ...payload, row_ref: "option:g:b" }]); // same code, different product rows: allowed
+  for (const bad of [null, [], Array(201).fill(payload), [payload, payload], [{ ...payload, row_ref: "r" }, { ...payload, row_ref: "r" }], [{ ...payload, note: "a".repeat(501) }]]) await assert.rejects(saveReviewDecisions(d.deps, bad));
+  await assert.rejects(listReviewDecisions(d.deps, "bad")); assert.equal(d.calls.length, 3);
 });
 test("RPC errors are plain English, not internal database details", async () => {
   const d = deps("system_owner", { message: "secret database details" });
