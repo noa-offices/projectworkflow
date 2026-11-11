@@ -6,6 +6,7 @@ import { formatSafeActionError, logServerActionError } from "@/lib/action-errors
 import { createAuditLog } from "@/lib/audit-log";
 import { requireSystemOwner } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { AccountStatus, AppRole } from "@/lib/supabase/types";
 import { USER_ROLE_OPTIONS, USER_STATUS_OPTIONS } from "@/lib/user-management";
 
@@ -93,6 +94,23 @@ export async function updateUserAccess(profileId: string, formData: FormData) {
     redirectWithMessage(actionErrorMessage("User access update failed", error));
   }
 
+  let authWarning: string | null = null;
+  if (existingProfile.account_status !== accountStatus) {
+    try {
+      const { client } = createAdminClient();
+      if (!client) throw new Error("Auth admin client unavailable");
+      const { error: authError } = await client.auth.admin.updateUserById(profileId, {
+        ban_duration: accountStatus === "active" ? "none" : "876000h",
+      });
+      if (authError) throw authError;
+    } catch {
+      // The profile remains saved. Never expose provider errors or admin credentials.
+      authWarning = accountStatus === "active"
+        ? "Account active, but sign-in restoration failed: Auth service could not restore access. Contact support."
+        : `Account ${accountStatus}, but sign-out failed: Auth service could not block sessions. Contact support.`;
+    }
+  }
+
   await createAuditLog(supabase, {
     entityType: "profile",
     entityId: profileId,
@@ -110,5 +128,5 @@ export async function updateUserAccess(profileId: string, formData: FormData) {
   });
 
   revalidatePath("/settings/users");
-  redirectWithMessage("User access updated.");
+  redirectWithMessage(authWarning ?? "User access updated.");
 }
