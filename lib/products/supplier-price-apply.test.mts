@@ -64,6 +64,7 @@ async function fixture(includeDynamicHistoryFields = true) {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   let beforeRpc: (() => Promise<void>) | undefined;
   const bindings: Array<Record<string, unknown>> = [];
+  const extraIdentities: Array<typeof state.identity> = [];
   // Test transport: authoritative Product reads and writer RPC execute in real PostgreSQL.
   // Supplier records are immutable fixtures; filters implement the action's ownership lookups.
   const client = {
@@ -74,7 +75,7 @@ async function fixture(includeDynamicHistoryFields = true) {
         if (table === "supplier_price_batches") rows = [state.batch];
         else if (table === "supplier_source_versions") rows = [state.source];
         else if (table === "supplier_price_matches") rows = [state.match];
-        else if (table === "supplier_source_identities") rows = [state.identity];
+        else if (table === "supplier_source_identities") rows = [state.identity, ...extraIdentities];
         else if (table === "supplier_price_bindings") rows = bindings;
         else if (table === "product_components") rows = (await db.query<Record<string, unknown>>("select c.*,t.brand_id as \"product_templates.brand_id\" from product_components c join product_templates t on t.id=c.template_id order by c.id")).rows;
         else if (["product_templates", "brands"].includes(table)) rows = (await db.query<Record<string, unknown>>(`select * from ${table} order by id`)).rows;
@@ -116,8 +117,26 @@ async function fixture(includeDynamicHistoryFields = true) {
   const confirm = () => supplierConfirmUnchangedPrice(client, c, "match-key");
   const version = async () => (await db.query<{ pricing_version: number }>("select pricing_version from product_templates where id=$1", [a])).rows[0].pricing_version;
   const untouched = async () => (await db.query("select jsonb_build_object('checked_at',last_price_checked_at,'checked_by',last_price_checked_by,'note',price_check_note) data from product_templates union all select to_jsonb(b) from brands b union all select to_jsonb(u) from brand_price_list_updates u union all select to_jsonb(q) from quotations q")).rows;
-  return { db, state, client, calls, bindings, confirm, compare, apply, version, untouched, beforeRpc(work: () => Promise<void>) { beforeRpc = work; } };
+  return { db, state, client, calls, bindings, extraIdentities, confirm, compare, apply, version, untouched, beforeRpc(work: () => Promise<void>) { beforeRpc = work; } };
 }
+
+test("crafted Apply refuses conflicting saved alias tiers before any write", async () => {
+  const f = await fixture();
+  try {
+    await f.db.exec("update product_templates set default_unit_price=535");
+    f.state.identity.data.dimension = "101S"; f.state.identity.data.price = 600;
+    const other = { ...f.state.identity.data, key: "other-tier", dimension: "162S", price: 650 };
+    f.extraIdentities.push({ source_id: b, key: other.key, data: other });
+    await f.compare();
+    for (const dimension of ["101S", "162S"]) f.bindings.push({ id: dimension, brand_id: a, code: "SIMPLE", price_field: "unit_price", source_dimension: dimension, kind: "alias", confirmed: true, target_keys: [f.state.match.data.targets[0].key] });
+    const before = await f.db.query("select to_jsonb(t) data from product_templates t");
+    await assert.rejects(f.apply(), /Conflicting saved alias/);
+    assert.deepEqual(f.calls, []);
+    assert.deepEqual(await f.db.query("select to_jsonb(t) data from product_templates t"), before);
+    assert.equal((await f.db.query<{ n: number }>("select count(*)::int n from product_template_price_history")).rows[0].n, 0);
+    assert.equal((await f.db.query<{ n: number }>("select count(*)::int n from product_template_detail_price_history")).rows[0].n, 0);
+  } finally { await f.db.close(); }
+});
 
 test("all eligibility and ownership failures refuse the writer without changing Products", async () => {
   const f = await fixture();

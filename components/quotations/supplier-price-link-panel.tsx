@@ -56,7 +56,7 @@ export function SupplierLinkButton({ line, brandId, onDone }: { line: PriceLine;
             <label key={item.targetKey} className={`flex items-start gap-2 rounded-md border p-2 text-sm ${item.taken ? "border-zinc-200 bg-zinc-50 text-zinc-500" : "border-zinc-300"}`}>
               <input type="radio" name="link-row" disabled={item.taken} checked={chosen === item.targetKey} onChange={() => setChosen(item.targetKey)} className="mt-1" />
               <span><span className="font-semibold text-zinc-900">{item.code ? `${item.code} · ` : ""}{item.name}</span>{item.note ? <span className="block text-xs text-zinc-600">{item.note}</span> : null}
-                <span className="block text-xs">Your price {money(item.price, item.currency)}{item.taken ? " · already linked to another supplier line" : ""}{link.suggestion?.targetKey === item.targetKey ? ` · suggested (${linkReasonLabels[link.suggestion.reason]})` : ""}</span></span>
+                <span className="block text-xs">Your price {money(item.price, item.currency)}{item.linkedTiers?.length ? ` · Linked to ${item.linkedTiers.join(", ")}` : ""}{item.taken ? ` · ${item.takenReason ?? "Already linked to another supplier line."}` : ""}{link.suggestion?.targetKey === item.targetKey ? ` · suggested (${linkReasonLabels[link.suggestion.reason]})` : ""}</span></span>
             </label>
           ))}
         </fieldset>

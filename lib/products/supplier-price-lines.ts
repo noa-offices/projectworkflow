@@ -18,7 +18,7 @@ export type LineShared = {
 /** Why a product row is suggested for a supplier tier. Rule (a), a structured model reference per row, is not available on a price target. */
 export type LinkSuggestionReason = "name" | "note" | "id";
 export const linkReasonLabels: Record<LinkSuggestionReason, string> = { name: "from the row name", note: "from the row note", id: "from the row id" };
-export type LinkRow = { targetKey: string; /** The row's own supplier code, to tell rows apart. Display only. */ code: string; name: string; note: string; price: number | null; currency: string; /** Already linked to a supplier line: it cannot take a second one. */ taken: boolean; mapping: LineMapping };
+export type LinkRow = { targetKey: string; /** The row's own supplier code, to tell rows apart. Display only. */ code: string; name: string; note: string; price: number | null; currency: string; /** Cannot accept this tier in addition to its saved links. */ taken: boolean; takenReason?: string; linkedTiers?: string[]; mapping: LineMapping };
 /**
  * One supplier line that could match several rows of this product (or whose code has several tiers). Nothing is saved: a link is made only
  * through the existing alias mapping, after the user confirms. Rows are this product's rows of the code, in the supplier line's currency.
@@ -32,6 +32,8 @@ export type PriceLine = {
   mapping?: LineMapping;
   /** Present when a saved, confirmed mapping (binding) of the Brand is what matches this line. */
   binding?: { id: string; kind: string };
+  linkedTiers?: string[];
+  matchHint?: string;
   apply?: LineApply;
   /** Present for a grouped Needs-mapping line (one per supplier line, not one per supplier line and row). */
   link?: LineLink;
@@ -65,6 +67,14 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string, bindi
   const tiersPerCode = new Map<string, number>();
   for (const match of matches) if (match.source) { const key = JSON.stringify([comparisonCode(match.source.code), match.source.price_field]); tiersPerCode.set(key, (tiersPerCode.get(key) ?? 0) + 1); }
   const takenKeys = new Set(bindings.filter((item) => item.confirmed).flatMap((item) => item.target_keys ?? []));
+  const bindingsByTarget = new Map<string, typeof bindings>();
+  for (const binding of bindings.filter((item) => item.confirmed)) for (const key of binding.target_keys ?? []) bindingsByTarget.set(key, [...(bindingsByTarget.get(key) ?? []), binding]);
+  const linkedTiers = (key: string) => [...new Set((bindingsByTarget.get(key) ?? []).map((binding) => plainSupplierDimension(binding.source_dimension)).filter(Boolean))].sort();
+  const allTiers = new Map<string, string[]>();
+  for (const match of matches) if (match.source) {
+    const key = JSON.stringify([comparisonCode(match.source.code), match.source.price_field]);
+    allTiers.set(key, [...(allTiers.get(key) ?? []), plainSupplierDimension(match.source.raw_dimension ?? match.source.dimension).trim().toLowerCase()]);
+  }
   const groups: Array<{ line: PriceLine; own: PriceTarget[]; source: SourceIdentity }> = [];
   for (const match of matches) {
     const state = states[match.classification];
@@ -80,7 +90,16 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string, bindi
       const valid = source.price !== null && Number.isFinite(source.price) && source.price >= 0 && !source.issues.length;
       const tierLabel = plainSupplierDimension(source.raw_dimension ?? source.dimension);
       const linkable = valid && !waits;
-      const rows: LinkRow[] = linkable ? own.filter((target) => target.currency === source.currency).map((target) => ({ targetKey: target.key, code: target.raw_code || target.code, name: target.label || target.row_id, note: options.rowNotes?.get(target.key) ?? "", price: target.price, currency: target.currency, taken: takenKeys.has(target.key), mapping: previewMapping(source, target) })) : [];
+      const rows: LinkRow[] = linkable ? own.filter((target) => target.currency === source.currency).map((target) => {
+        const note = options.rowNotes?.get(target.key) ?? "", linked = linkedTiers(target.key);
+        const named = (tier: string) => clueFor(target, tier.trim().toLowerCase(), note) !== null;
+        const bound = bindingsByTarget.get(target.key) ?? [];
+        const canShare = bound.length > 0 && bound.every((binding) => binding.kind === "alias" && binding.target_keys?.length === 1 && comparisonCode(binding.code) === comparisonCode(source.code) && binding.price_field === source.price_field)
+          && new Set([...linked.map((tier) => tier.toLowerCase()), tierLabel.trim().toLowerCase()]).size >= 2 && [...linked, tierLabel].every(named);
+        const taken = takenKeys.has(target.key) && !canShare;
+        return { targetKey: target.key, code: target.raw_code || target.code, name: target.label || target.row_id, note, price: target.price, currency: target.currency, taken,
+          ...(taken ? { takenReason: bound.every((binding) => binding.kind === "alias") ? "Already linked. This row does not name all these tiers." : "Already linked by a mapping that cannot be reused." } : {}), ...(linked.length ? { linkedTiers: linked } : {}), mapping: previewMapping(source, target) };
+      }) : [];
       const line: PriceLine = {
         key: `${match.key}|link`, code: own[0].raw_code || own[0].code, field: `Tier ${tierLabel || "—"} · could match ${own.length} row${own.length === 1 ? "" : "s"} of your product`,
         ourPrice: null, ourCurrency: own[0].currency, supplierPrice: source.price, supplierCurrency: source.currency, difference: null, state,
@@ -112,8 +131,11 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string, bindi
       // Without a saved family a family-tagged line cannot be mapped: the family decides which supplier rows belong to this product.
       const waitsForFamily = Boolean(options.familyRequired && match.source && supplierDimensionFamily(match.source.dimension) !== null);
       const offerMapping = Boolean(mappable) && !waitsForFamily, offerShared = shareable && !waitsForFamily;
+      const linked = linkedTiers(target.key);
       const pushed: PriceLine = {
         ...(binding ? { binding } : {}),
+        ...(linked.length ? { linkedTiers: linked } : {}),
+        ...(state === "ambiguous" && match.aliasSources ? { matchHint: `Conflicting tiers: ${match.aliasSources.map((item) => `${item.tier} ${item.currency} ${item.price}`).join("; ")}.` } : {}),
         ...(waitsForFamily && (mappable || shareable) ? { familyHint: "choose_family" as const } : {}),
         ...(offerShared && match.source ? { shared: previewShared(match.source, match.targets) } : {}),
         // An empty price cannot be applied safely: the price writer only accepts a stored value that is exactly null, so it is set by hand.
@@ -128,46 +150,44 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string, bindi
       if (attach) { pushed.link = attach.link; groups.push({ line: pushed, own, source: match.source! }); }
     }
   }
-  suggestLinks(groups, options.rowNotes ?? new Map(), takenKeys);
+  suggestLinks(groups, options.rowNotes ?? new Map(), allTiers);
   lines.sort((a, b) => a.code.localeCompare(b.code) || a.field.localeCompare(b.field) || a.key.localeCompare(b.key));
   return { lines: lines.slice(0, priceLineLimit), truncated: lines.length > priceLineLimit };
 }
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const hasToken = (text: string, tier: string) => tier !== "" && new RegExp(`(^|[^a-z0-9])${escapeRegExp(tier)}([^a-z0-9]|$)`).test(text.toLowerCase());
-const endsWithToken = (text: string, tier: string) => tier !== "" && new RegExp(`(^|[^a-z0-9])${escapeRegExp(tier)}$`).test(text.toLowerCase());
-/** The strongest clue that links one row to one tier, or null. Order: the row name or note (whole word), then the end of the row id. */
+/** The strongest clue that links one row to one tier, or null. Order: name/note, then whole tokens in the row id. */
 function clueFor(target: PriceTarget, tier: string, note: string): LinkSuggestionReason | null {
   if (hasToken(target.label, tier)) return "name";
   if (hasToken(note, tier)) return "note";
-  return endsWithToken(target.row_id, tier) ? "id" : null;
+  return hasToken(target.row_id, tier) ? "id" : null;
 }
 /**
  * Suggestions only; never applied. A tier is suggested a row only when exactly one row of this product carries a clue at the strongest level that
- * has any, that row is not linked yet, and no other tier points to the same row. Any ambiguity means no suggestion. A tier that no row of the
+ * has any, and that row can accept this tier. Several tiers can share a row only when it names them. Any ambiguity means no suggestion. A tier that no row of the
  * product mentions is marked "not in this product", but only when the other tiers of the same code do match rows (so the product's rows are
  * recognisable); otherwise it stays a normal line.
  */
-function suggestLinks(groups: Array<{ line: PriceLine; own: PriceTarget[]; source: SourceIdentity }>, notes: ReadonlyMap<string, string>, taken: ReadonlySet<string>) {
+function suggestLinks(groups: Array<{ line: PriceLine; own: PriceTarget[]; source: SourceIdentity }>, notes: ReadonlyMap<string, string>, allTiers: ReadonlyMap<string, string[]>) {
   const byCode = new Map<string, typeof groups>();
   for (const group of groups) { const key = JSON.stringify([comparisonCode(group.source.code), group.source.price_field]); byCode.set(key, [...(byCode.get(key) ?? []), group]); }
-  for (const list of byCode.values()) {
-    const tiers = list.map((group) => group.line.link!.tierLabel.trim().toLowerCase()).filter(Boolean);
+  for (const [code, list] of byCode) {
+    const tiers = (allTiers.get(code) ?? []).filter(Boolean);
     const found = list.map((group) => {
       const tier = group.line.link!.tierLabel.trim().toLowerCase();
-      // The row id is the weakest clue: it is ignored for a row whose own name or note names a different tier of this code.
-      const contradicts = (target: PriceTarget) => tiers.some((other) => other !== tier && (hasToken(target.label, other) || hasToken(notes.get(target.key) ?? "", other)));
+      // An id clue yields to a name/note naming a different tier, unless the merged id itself names that tier too.
+      const contradicts = (target: PriceTarget) => tiers.some((other) => other !== tier && (hasToken(target.label, other) || hasToken(notes.get(target.key) ?? "", other)) && !hasToken(target.row_id, other));
       const hits = group.own.map((target) => ({ target, reason: clueFor(target, tier, notes.get(target.key) ?? "") })).filter((hit): hit is { target: PriceTarget; reason: LinkSuggestionReason } => hit.reason !== null && (hit.reason !== "id" || !contradicts(hit.target)));
       const level = hits.some((hit) => hit.reason !== "id") ? hits.filter((hit) => hit.reason !== "id") : hits;
-      return { group, hits, pick: level.length === 1 && !taken.has(level[0].target.key) && group.line.link!.rows.some((row) => row.targetKey === level[0].target.key) ? level[0] : null };
+      return { group, hits, pick: level.length === 1 && group.line.link!.rows.some((row) => row.targetKey === level[0].target.key && !row.taken) ? level[0] : null };
     });
-    const votes = new Map<string, number>();
-    for (const item of found) if (item.pick) votes.set(item.pick.target.key, (votes.get(item.pick.target.key) ?? 0) + 1);
-    const recognisable = found.some((item) => item.hits.length > 0);
+    const recognisable = tiers.some((tier) => list.some((group) => group.own.some((target) => clueFor(target, tier, notes.get(target.key) ?? "") !== null)));
     for (const item of found) {
       const link = item.group.line.link!;
-      if (item.pick && votes.get(item.pick.target.key) === 1) link.suggestion = { targetKey: item.pick.target.key, reason: item.pick.reason };
-      if (recognisable && item.hits.length === 0) link.notInProduct = true;
+      if (item.pick) link.suggestion = { targetKey: item.pick.target.key, reason: item.pick.reason };
+      const tier = link.tierLabel.trim().toLowerCase();
+      if (recognisable && !item.group.own.some((target) => clueFor(target, tier, notes.get(target.key) ?? "") !== null)) link.notInProduct = true;
     }
   }
 }

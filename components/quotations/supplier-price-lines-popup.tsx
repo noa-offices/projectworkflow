@@ -207,11 +207,11 @@ function SourceLines({ source, brandId, templateId, templateName, onDone, onStat
                 {shown.length === 0 ? <tr><td colSpan={hasActions ? 7 : 6} className="px-3 py-4 text-sm text-zinc-600">No lines in this view.</td></tr> : shown.map((line) => (
                   <tr key={line.key} className="border-t border-zinc-100 align-top">
                     <td className="px-3 py-2 font-semibold text-zinc-900">{line.code}</td>
-                    <td className="px-3 py-2 text-zinc-600">{line.field || "—"}</td>
+                    <td className="px-3 py-2 text-zinc-600">{line.field || "—"}{line.linkedTiers?.length ? <span className="block text-xs">Linked to {line.linkedTiers.join(", ")}</span> : null}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(line.ourPrice, line.ourCurrency)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(line.supplierPrice, line.supplierCurrency)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{line.difference === null ? "—" : `${line.difference > 0 ? "+" : ""}${line.difference.toLocaleString("en-US", { minimumFractionDigits: 2 })}`}</td>
-                    <td className="px-3 py-2"><span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-bold ${badgeClass[line.state]}`}>{priceLineStateLabels[line.state]}</span></td>
+                    <td className="px-3 py-2"><span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-bold ${badgeClass[line.state]}`}>{priceLineStateLabels[line.state]}</span>{line.matchHint ? <span className="mt-1 block max-w-64 text-xs text-zinc-600">{line.matchHint}</span> : null}</td>
                     {hasActions ? <td className="px-3 py-2">
                       {line.link ? <SupplierLinkButton line={line} brandId={brandId} onDone={onDone} /> : null}
                       {line.mapping ? <button type="button" onClick={() => { setError(""); setPending({ kind: "map", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Map this line</button> : null}

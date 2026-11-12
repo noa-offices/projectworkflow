@@ -185,6 +185,19 @@ const alias = (model: string, targetKey: string, over: Partial<DurableBinding> =
 const withAliases = (bindings: DurableBinding[]) => base(supplier2349(), { supplier_price_bindings: bindings.map((b) => ({ ...b, brand_id: "b1" })) as never });
 const rowOf = (results: Awaited<ReturnType<typeof check>>, model: string) => by(results, `option:metal-parts-finish:item-${model}`);
 
+test("two saved aliases on one merged draft row compare as one only when prices and currencies agree", async () => {
+  const cells = cellsOf({}, [optionGroup([priced("item-162S-101S", "2349", 535)], { id: "metal-parts-finish" })]);
+  const bindings = ["101S", "162S"].map((m) => alias(m, persistedKey("T1", "162S-101S")));
+  assert.equal(savedAliasBindingsForDraft(bindings, "T1", smartSetupCellsToTargets("b1", cells)).length, 2);
+  for (const [prices, currency, status] of [[[535, 535], "EUR", "MATCHED"], [[600, 600], "EUR", "MISMATCH"], [[600, 650], "EUR", "NEEDS_REVIEW"], [[600, 600], "USD", "NEEDS_REVIEW"]] as const) {
+    const tables = base([identity("2349", prices[0], { dimension: "101S" }), identity("2349", prices[1], { dimension: "162S", currency })], { supplier_price_bindings: bindings.map((b) => ({ ...b, brand_id: "b1" })) });
+    const [result] = await check(tables, cells, { templateId: "T1" });
+    assert.equal(result.status, status);
+    if (status === "NEEDS_REVIEW") assert.equal(result.reason, "ambiguous_source_contexts");
+    else assert.equal(result.viaSavedLink, true);
+  }
+});
+
 test("saved product: seven saved links resolve each 2349 row to its own supplier line", async () => {
   const links = models.map(([m]) => alias(m, persistedKey("T1", m)));
   const r = await check(withAliases(links), silverCells(), { templateId: "T1" });
