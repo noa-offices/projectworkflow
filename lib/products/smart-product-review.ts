@@ -275,7 +275,8 @@ export function removeReviewedMatrixModel(draft: ProductTemplateDraft, plan: Sma
 /** Base / Model and Workstation rows: same add / move / remove behaviour as matrix models. An empty price stays missing (null), 0 stays 0. */
 export type ManualPricedRow = { id: string; name: string; code: string; specification: string; price: string; additionalPrice?: string };
 const reviewRowIdTaken = (draft: ProductTemplateDraft, id: string) =>
-  draft.pricing.priceMatrices.some((matrix) => matrix.rows.some((row) => row.id === id)) || draft.pricing.baseModelRows.some((row) => row.id === id) || draft.pricing.workstationRows.some((row) => row.id === id) || draft.pricing.modularGroups.some((group) => group.id === id || draftModularRows(group).some((row) => row.id === id));
+  draft.pricing.priceMatrices.some((matrix) => matrix.rows.some((row) => row.id === id)) || draft.pricing.baseModelRows.some((row) => row.id === id) || draft.pricing.workstationRows.some((row) => row.id === id) || draft.pricing.modularGroups.some((group) => group.id === id || draftModularRows(group).some((row) => row.id === id))
+  || draft.optionGroups.some((group) => group.id === id || group.items.some((item) => item.id === id));
 const manualPricedRow = (input: ManualPricedRow) => {
   const name = input.name.trim();
   return {
@@ -346,18 +347,56 @@ export function updateReviewedOptionItem(
 }
 
 export type ManualOptionLine = { id: string; name: string; supplierCode: string; price: string; specification: string };
-export function addReviewedOptionLine(draft: ProductTemplateDraft, groupIndex: number, input: ManualOptionLine): ProductTemplateDraft {
+type ReviewedOptionItem = ProductTemplateDraft["optionGroups"][number]["items"][number];
+function manualOptionItem(group: { priceCategories?: { id: string }[] } | undefined, input: ManualOptionLine): ReviewedOptionItem {
   const name = input.name.trim();
-  if (!name) return draft;
-  const group = draft.optionGroups[groupIndex];
-  if (!group) return draft;
   const price = nullableReviewNumber(input.price);
-  const item: ProductTemplateDraft["optionGroups"][number]["items"][number] = {
+  return {
     id: input.id, label: name, displayName: name, supplierCodes: input.supplierCode.trim() ? [input.supplierCode.trim()] : [], referenceCodes: [],
     dimensions: null, currency: "EUR", price, specification: input.specification.trim() || null,
-    ...(group.priceCategories?.length ? { prices: Object.fromEntries(group.priceCategories.map((category) => [category.id, price])) } : {}),
+    ...(group?.priceCategories?.length ? { prices: Object.fromEntries(group.priceCategories.map((category) => [category.id, price])) } : {}),
   };
+}
+export function addReviewedOptionLine(draft: ProductTemplateDraft, groupIndex: number, input: ManualOptionLine): ProductTemplateDraft {
+  if (!input.name.trim() || reviewRowIdTaken(draft, input.id)) return draft;
+  const group = draft.optionGroups[groupIndex];
+  if (!group) return draft;
+  const item = manualOptionItem(group, input);
   return { ...draft, optionGroups: draft.optionGroups.map((entry, index) => index === groupIndex ? { ...entry, items: [...entry.items, item] } : entry) };
+}
+
+/**
+ * A manual Options / Accessories group: its first item, a fresh review route (Apply only keeps option groups that have one) and the
+ * default configuration "optional accessory, available for all models" (no applicability rules). A refusal returns the inputs unchanged plus a reason.
+ */
+export type ManualOptionGroup = ManualOptionLine & { groupId: string; groupName: string };
+export function addReviewedOptionGroup(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, input: ManualOptionGroup): { draft: ProductTemplateDraft; plan: SmartSetupReviewRoutingPlan | undefined; reason?: string } {
+  const label = input.groupName.trim();
+  const refuse = (reason: string) => ({ draft, plan, reason });
+  if (!label) return refuse("Enter a group name.");
+  if (!input.name.trim()) return refuse("Enter a name for the first item.");
+  if (input.groupId === input.id) return refuse("The group and its first item need different ids.");
+  if (reviewRowIdTaken(draft, input.groupId)) return refuse("This group id is already used.");
+  if (reviewRowIdTaken(draft, input.id)) return refuse("This item id is already used.");
+  const group: ProductTemplateDraft["optionGroups"][number] = {
+    id: input.groupId, label,
+    selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] },
+    items: [manualOptionItem(undefined, input)],
+  };
+  const route = { key: `option:${group.id}`, sourceId: group.id, sourceKind: "option" as const, sourceName: label, groupName: label, rowCount: 1, columnCount: null, recommendedDestination: "accessory" as const, destination: "accessory" as const, supportedDestinations: ["accessory", "skip"] as ("accessory" | "skip")[], accessory: { role: "accessory" as const, selection: "optional_multiple" as const, rules: [] } };
+  const lastOption = plan ? plan.routes.map((item) => item.sourceKind).lastIndexOf("option") : -1;
+  const at = !plan ? 0 : lastOption >= 0 ? lastOption + 1 : plan.routes.length;
+  return {
+    draft: { ...draft, optionGroups: [...draft.optionGroups, group] },
+    plan: plan ? { ...plan, routes: [...plan.routes.slice(0, at), route, ...plan.routes.slice(at)] } : plan,
+  };
+}
+/** Removes the group, its route and every applicability rule (draft and plan) that targets one of its items. Keeps at least one group. The caller drops the route's review subgroups. */
+export function removeReviewedOptionGroup(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan | undefined, groupId: string) {
+  if (draft.optionGroups.length <= 1 || !draft.optionGroups.some((group) => group.id === groupId)) return { draft, plan };
+  const matches = (target: ReviewRuleTarget) => (target?.kind === "option_item" || target?.kind === "base_model") && target.group_id === groupId;
+  const without = { ...draft, optionGroups: draft.optionGroups.filter((group) => group.id !== groupId) };
+  return removeReviewedRowRules(without, plan, matches, `option:${groupId}`, null);
 }
 
 export function moveReviewedOptionLine(draft: ProductTemplateDraft, groupIndex: number, itemIndex: number, direction: -1 | 1): ProductTemplateDraft {
