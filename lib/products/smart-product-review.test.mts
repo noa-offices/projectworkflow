@@ -8,6 +8,10 @@ import {
   addReviewedMatrixModel,
   addReviewedModularGroup,
   addReviewedModularItem,
+  addReviewedOptionGroup,
+  addReviewedOptionLine,
+  removeReviewedOptionGroup,
+  moveReviewedOptionLine,
   moveReviewedModularItem,
   removeReviewedModularGroup,
   removeReviewedModularItem,
@@ -43,6 +47,9 @@ import {
   updateReviewedOptionItem,
   updateReviewedTemplate,
 } from "./smart-product-review.js";
+import { createSmartSetupReviewRouting, draftForSmartSetupReviewApply, validateSmartSetupReviewRouting } from "./smart-product-review-routing.js";
+import { mapSmartDraftForApply, previewSmartSetupApply } from "./smart-setup-apply-preview.js";
+import { projectDraftPricing } from "./smart-setup-supplier-targets.js";
 
 test("important requirements use one trimmed, distinct line per saved value", () => {
   assert.deepEqual(reviewImportantRequirements(" Finishing top required \n\nWall fixing required\nFinishing top required "), ["Finishing top required", "Wall fixing required"]);
@@ -594,4 +601,115 @@ test("removed modular group loses its route and every option rule that targets i
   assert.deepEqual(next.plan?.routes[2].accessory?.rules.map((rule) => rule.target), [keep]);
   assert.equal(removeReviewedModularGroup(next.draft, next.plan, "g-matrix").draft, next.draft);
   assert.equal(removeReviewedModularGroup(modularDraft, undefined, "missing").draft, modularDraft);
+});
+
+// ---- Options / Accessories: manual group add / remove ----
+const optionInput = (extra: object = {}) => ({ id: "i-new", groupId: "g-new", groupName: " Armrests ", name: " Fixed arm ", supplierCode: "", price: "", specification: "", ...extra });
+const optionBase = () => createReviewedProductTemplateDraft(reviewedSource);
+const optionPlan = (draft: ProductTemplateDraft) => createSmartSetupReviewRouting(draft);
+
+test("option group add: draft passes normalizeProductTemplateDraft", () => {
+  const next = addReviewedOptionGroup(optionBase(), optionPlan(optionBase()), optionInput());
+  assert.equal(next.reason, undefined);
+  const result = normalizeProductTemplateDraft(JSON.parse(JSON.stringify(next.draft)));
+  assert.equal(result.valid, true, JSON.stringify(result));
+});
+
+test("option group add: Apply accepts it and produces an accessory group with the right id and name", () => {
+  const next = addReviewedOptionGroup(optionBase(), optionPlan(optionBase()), optionInput());
+  assert.equal(validateSmartSetupReviewRouting(next.draft, next.plan!).valid, true);
+  assert.equal(previewSmartSetupApply(next.draft, next.plan), null);
+  const mapped = mapSmartDraftForApply(next.draft, next.plan).accessoryResult;
+  const group = mapped.groups.find((entry) => entry.id === "g-new");
+  assert.ok(group, "new accessory group is applied");
+  assert.equal(group?.group_name, "Armrests");
+  assert.equal(mapped.groups.length, 2);
+});
+
+test("option group add: duplicate group id or item id is refused and nothing changes", () => {
+  const draft = optionBase(); const plan = optionPlan(draft);
+  const next = addReviewedOptionGroup(draft, plan, optionInput());
+  [optionInput({ groupId: "g-new", id: "i-other" }), optionInput({ groupId: "extras", id: "i-other" }), optionInput({ groupId: "g-other", id: "chrome" }), optionInput({ groupId: "g-other", id: "i-new" }), optionInput({ groupId: "aa-9090", id: "i-other" }), optionInput({ groupId: "same", id: "same" })].forEach((input) => {
+    const refused = addReviewedOptionGroup(next.draft, next.plan, input);
+    assert.equal(refused.draft, next.draft); assert.equal(refused.plan, next.plan); assert.ok(refused.reason);
+  });
+  assert.equal(addReviewedOptionLine(next.draft, 0, { id: "i-new", name: "Dup", supplierCode: "", price: "", specification: "" }), next.draft);
+  assert.equal(addReviewedOptionLine(next.draft, 0, { id: "aa-9090", name: "Clash with a matrix row", supplierCode: "", price: "", specification: "" }), next.draft);
+});
+
+test("option group add: empty group name or empty first item is refused", () => {
+  const draft = optionBase(); const plan = optionPlan(draft);
+  [optionInput({ groupName: "  " }), optionInput({ name: "  " })].forEach((input) => {
+    const refused = addReviewedOptionGroup(draft, plan, input);
+    assert.equal(refused.draft, draft); assert.equal(refused.plan, plan); assert.ok(refused.reason);
+  });
+});
+
+test("option group add: ids stay stable after more edits and moves", () => {
+  let draft = addReviewedOptionGroup(optionBase(), optionPlan(optionBase()), optionInput()).draft;
+  draft = addReviewedOptionLine(draft, 1, { id: "i-second", name: "Second", supplierCode: "S2", price: "0", specification: "" });
+  draft = updateReviewedOptionItem(draft, 1, 0, { specification: "edited" });
+  draft = moveReviewedOptionLine(draft, 1, 1, -1);
+  assert.deepEqual(draft.optionGroups.map((group) => group.id), ["extras", "g-new"]);
+  assert.deepEqual(draft.optionGroups[1].items.map((item) => item.id), ["i-second", "i-new"]);
+  assert.equal(draft.optionGroups[1].items[0].price, 0);
+  assert.equal(draft.optionGroups[1].items[1].price, null);
+});
+
+test("option group add: route sits after the last option route and rowCount matches the items", () => {
+  const draft = optionBase(); const plan = optionPlan(draft);
+  const first = addReviewedOptionGroup(draft, plan, optionInput());
+  assert.deepEqual(first.plan!.routes.map((route) => route.key).slice(-2), ["option:extras", "option:g-new"]);
+  const route = first.plan!.routes.at(-1)!;
+  assert.equal(route.rowCount, first.draft.optionGroups[1].items.length);
+  assert.equal(route.destination, "accessory"); assert.equal(route.groupName, "Armrests");
+  const noOptionPlan = { routes: plan.routes.filter((entry) => entry.sourceKind !== "option") };
+  assert.equal(addReviewedOptionGroup(draft, noOptionPlan, optionInput()).plan!.routes.at(-1)?.key, "option:g-new");
+});
+
+test("option group add: default applicability is 'available for all models' (no rules, optional accessory)", () => {
+  const next = addReviewedOptionGroup(optionBase(), optionPlan(optionBase()), optionInput());
+  const route = next.plan!.routes.find((entry) => entry.key === "option:g-new")!;
+  assert.deepEqual(route.accessory, { role: "accessory", selection: "optional_multiple", rules: [] });
+  assert.equal(next.draft.optionGroups[1].conditionalConfiguration, undefined);
+  assert.deepEqual(route.accessory, createSmartSetupReviewRouting(next.draft).routes.find((entry) => entry.key === "option:g-new")?.accessory);
+});
+
+test("option group add: a group with a route is kept by draftForSmartSetupReviewApply, one without is dropped", () => {
+  const next = addReviewedOptionGroup(optionBase(), optionPlan(optionBase()), optionInput());
+  assert.deepEqual(draftForSmartSetupReviewApply(next.draft, next.plan!).optionGroups.map((group) => group.id), ["extras", "g-new"]);
+  const withoutRoute = { routes: next.plan!.routes.filter((route) => route.key !== "option:g-new") };
+  assert.deepEqual(draftForSmartSetupReviewApply(next.draft, withoutRoute).optionGroups.map((group) => group.id), ["extras"]);
+});
+
+test("option group add: supplier targets list a new row without code as unsupported and do not block Apply; old locators are unchanged", () => {
+  const before = projectDraftPricing(optionBase());
+  const next = addReviewedOptionGroup(optionBase(), optionPlan(optionBase()), optionInput());
+  const after = projectDraftPricing(next.draft);
+  assert.deepEqual(after.unsupported.filter((cell) => cell.locator === "option:g-new:i-new").map((cell) => cell.reason), ["missing_supplier_code"]);
+  assert.deepEqual(after.cells.map((cell) => cell.locator), before.cells.map((cell) => cell.locator));
+  assert.deepEqual(after.unsupported.filter((cell) => cell.locator !== "option:g-new:i-new"), before.unsupported);
+  assert.equal(previewSmartSetupApply(next.draft, next.plan), null);
+});
+
+test("option group remove: drops the group, its route, rules that target its items and leaves other groups untouched", () => {
+  const added = addReviewedOptionGroup(optionBase(), optionPlan(optionBase()), optionInput());
+  const target = { kind: "option_item" as const, group_id: "g-new", row_id: "i-new" };
+  const keep = { kind: "price_matrix" as const, group_id: "lounge", row_id: "aa-9090" };
+  const draft = { ...added.draft, optionGroups: added.draft.optionGroups.map((group) => group.id === "extras" ? { ...group, conditionalConfiguration: { role: "conditional_option" as const, selection: "exactly_one" as const, applicability: [{ target, required: true, visible: true }, { target: keep, required: true, visible: true }] } } : group) } as ProductTemplateDraft;
+  const plan = { routes: added.plan!.routes.map((route) => route.key === "option:extras" ? { ...route, accessory: { ...route.accessory!, rules: [{ target, required: true }, { target: keep, required: true }] } } : route) };
+  const removed = removeReviewedOptionGroup(draft, plan as typeof added.plan, "g-new");
+  assert.deepEqual(removed.draft.optionGroups.map((group) => group.id), ["extras"]);
+  assert.deepEqual(removed.plan!.routes.map((route) => route.key), optionPlan(optionBase()).routes.map((route) => route.key));
+  assert.deepEqual(removed.draft.optionGroups[0].conditionalConfiguration?.applicability.map((rule) => rule.target), [keep]);
+  assert.deepEqual(removed.plan!.routes.find((route) => route.key === "option:extras")?.accessory?.rules.map((rule) => rule.target), [keep]);
+  assert.deepEqual(removed.draft.optionGroups[0].items, optionBase().optionGroups[0].items);
+  assert.equal(removed.draft.pricing, draft.pricing);
+});
+
+test("option group remove: keeps at least one group and ignores an unknown id", () => {
+  const draft = optionBase(); const plan = optionPlan(draft);
+  assert.equal(removeReviewedOptionGroup(draft, plan, "extras").draft, draft);
+  const added = addReviewedOptionGroup(draft, plan, optionInput());
+  assert.equal(removeReviewedOptionGroup(added.draft, added.plan, "nope").draft, added.draft);
 });
