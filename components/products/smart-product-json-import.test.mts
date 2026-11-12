@@ -1,8 +1,116 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { createElement, type ReactElement, type ReactNode } from "react";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 
 const source = readFileSync("components/products/smart-product-json-import.tsx", "utf8");
+
+// Run the actual presentation functions with local hook/DOM doubles. No server imports.
+function panelHarness(name: "ReviewDestinationSection" | "OptionGroupPanel") {
+  const shell = readFileSync("components/products/option-group-panel.tsx", "utf8");
+  const ast = ts.createSourceFile("panel.tsx", name === "OptionGroupPanel" ? shell : source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declaration = ast.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === name)!;
+  const exports: Record<string, (props: Record<string, unknown>) => ReactElement<Record<string, unknown>>> = {};
+  let cursor = 0;
+  const cells: unknown[] = [];
+  const effects: (() => void | (() => void))[] = [];
+  const cleanups: (() => void)[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  let inner = false; let focused = 0; let modal = false;
+  const scroll = { scrollTop: 321, style: { overflowY: "auto" } };
+  class Element { isConnected = true; focus() { focused++; } }
+  const trigger = new Element();
+  const element = {
+    closest: () => scroll, querySelector: () => inner ? {} : null,
+    showModal: () => { modal = true; }, close: () => { modal = false; },
+    addEventListener: (key: string, handler: (event: unknown) => void) => listeners.set(key, handler),
+    removeEventListener: (key: string) => listeners.delete(key),
+  };
+  const code = ts.transpileModule(declaration.getText(ast) + `\nexports.subject = ${name};`, { compilerOptions: { jsx: ts.JsxEmit.React, module: ts.ModuleKind.CommonJS } }).outputText;
+  const scope = {
+    exports, React: { createElement }, HTMLElement: Element,
+    useId: () => "panel", useRef: (value: unknown) => { const at = cursor++; return cells[at] ??= { current: at === 0 ? element : value }; },
+    useState: (value: unknown) => { const at = cursor++; if (!(at in cells)) cells[at] = value; return [cells[at], (next: unknown) => { cells[at] = next; }]; },
+    useEffect: (effect: () => void | (() => void)) => effects.push(effect),
+    window: { addEventListener: (key: string, handler: (event: unknown) => void) => listeners.set(key, handler), removeEventListener: () => {} },
+    document: { activeElement: trigger },
+    OptionGroupPanel: "Panel", optionPanelTabs: { items: "Items", applies: "Applies to", settings: "Settings", subgroups: "Subgroups" },
+    destinationLabels: { accessory: "Options / Accessories" }, roleLabels: {},
+  };
+  runInNewContext(code, scope);
+  return {
+    render(props: Record<string, unknown>) { cursor = 0; effects.length = 0; return exports.subject(props); },
+    flush() { effects.forEach((effect) => { const cleanup = effect(); if (cleanup) cleanups.push(cleanup); }); },
+    cleanup() { cleanups.forEach((cleanup) => cleanup()); },
+    event(key: string, event: unknown) { listeners.get(key)?.(event); },
+    setInner(value: boolean) { inner = value; }, scroll,
+    get modal() { return modal; }, get focused() { return focused; },
+  };
+}
+
+function panelElements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
+  if (Array.isArray(node)) return node.flatMap(panelElements);
+  if (!node || typeof node !== "object" || !("props" in node)) return [];
+  const element = node as ReactElement<Record<string, unknown>>;
+  return [element, ...panelElements(element.props.children as ReactNode)];
+}
+
+test("option panel: three card actions and the applicability event select their tabs", () => {
+  const h = panelHarness("ReviewDestinationSection");
+  const props = { children: null, expanded: false, onExpandedChange: () => assert.fail("must not expand inline"), route: { key: "option:a", sourceName: "A", sourceKind: "option", destination: "accessory", rowCount: 2 }, warningCount: 0, availabilitySummary: "All models", optionPanel: { destination: "accessory", tabs: {} } };
+  for (const [label, tab] of [["Show", "items"], ["Review applicability", "applies"], ["Advanced Setup", "settings"]]) {
+    const button = panelElements(h.render(props)).find((node) => node.type === "button" && node.props.children === label)!;
+    (button.props.onClick as () => void)();
+    assert.equal(panelElements(h.render(props)).find((node) => node.type === "Panel")!.props.tab, tab);
+  }
+  h.flush(); h.event("smart-setup-review-applicability", { detail: { routeKey: "option:a" } });
+  const panel = panelElements(h.render(props)).find((node) => node.type === "Panel")!;
+  assert.equal(panel.props.tab, "applies");
+  (panel.props.onClose as () => void)();
+  assert.equal(panelElements(h.render(props)).find((node) => node.type === "Panel")!.props.tab, null);
+});
+
+test("option panel: mounted tabs, Done, nested Escape, native focus and scroll cleanup", () => {
+  const h = panelHarness("OptionGroupPanel"); let closes = 0;
+  const tree = h.render({ title: "A", summary: "2 items", tab: "items", tabs: { items: "unfinished form", applies: "models", settings: "settings", subgroups: "groups" }, onTabChange: () => {}, onClose: () => { closes++; } });
+  const nodes = panelElements(tree);
+  const panels = nodes.filter((node) => node.props.role === "tabpanel");
+  assert.equal(panels.length, 4);
+  assert.equal(panels.filter((node) => node.props.hidden).length, 3);
+  assert.deepEqual(panels.map((node) => node.props.children), ["unfinished form", "models", "settings", "groups"]);
+  h.flush(); assert.equal(h.modal, true); assert.equal(h.scroll.style.overflowY, "hidden");
+  const cancel = tree.props.onCancel as (event: { preventDefault: () => void }) => void;
+  h.setInner(true); h.event("keydown", { key: "Escape" }); cancel({ preventDefault() {} }); assert.equal(closes, 0);
+  h.setInner(false); h.event("keydown", { key: "Escape" }); cancel({ preventDefault() {} }); assert.equal(closes, 1);
+  const done = nodes.find((node) => node.type === "button" && node.props.children === "Done")!;
+  (done.props.onClick as () => void)(); assert.equal(closes, 2);
+  h.scroll.scrollTop = 0; h.cleanup(); assert.equal(h.modal, false); assert.equal(h.scroll.scrollTop, 321); assert.equal(h.scroll.style.overflowY, "auto"); assert.equal(h.focused, 1);
+});
+
+test("option panel: removal and destination changes discard the open panel instance", () => {
+  assert.ok(source.includes('key={`${group.id}:${route?.destination ?? "unrouted"}`}'));
+  assert.ok(source.includes("removeReviewedOptionGroup(draft, plan, group.id)"));
+  // React unmounts the keyed dialog on removal, skip or any destination change;
+  // the shell cleanup closes the native modal and restores the review scroll.
+});
+
+test("option panel: crop container uses the open top layer without changing its child", () => {
+  const shell = readFileSync("components/products/option-group-panel.tsx", "utf8");
+  const ast = ts.createSourceFile("panel.tsx", shell, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declaration = ast.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "OptionPanelCropLayer")!;
+  const code = ts.transpileModule(declaration.getText(ast), { compilerOptions: { jsx: ts.JsxEmit.React, module: ts.ModuleKind.CommonJS } }).outputText;
+  const host = {};
+  const child = createElement("span", null, "existing viewer");
+  for (const open of [false, true]) {
+    const exports: { OptionPanelCropLayer?: (props: { children: ReactNode }) => unknown } = {};
+    runInNewContext(code, { exports, React: { createElement }, document: { querySelector: () => open ? host : null }, createPortal: (node: ReactElement<{ children: ReactNode }>, target: unknown) => {
+      assert.equal(target, host); assert.equal(node.props.children, child); return "in top layer";
+    } });
+    assert.equal(exports.OptionPanelCropLayer!({ children: child }), open ? "in top layer" : child);
+  }
+});
 const categoryRenderer = source.slice(
   source.indexOf("function SmartAccessoryRowsEditor"),
   source.indexOf("function SmartScalarAccessoryRowsEditor"),
@@ -442,7 +550,7 @@ test("Accessories Advanced Setup: starts collapsed by default and is local per-r
 
 test("Option-group Advanced Setup: renders the compact 'Advanced Setup' / 'Hide Advanced Setup' button and gates its existing controls behind it", () => {
   assert.ok(localRouteControlsRenderer.includes('{advancedSetupOpen ? "Hide Advanced Setup" : "Advanced Setup"}'), "Button label must toggle between the exact required collapsed/expanded text");
-  assert.ok(localRouteControlsRenderer.includes("if (!isAccessoriesFocus && !alwaysAdvancedSetup) return controls;"), "Only option groups can opt into the existing disclosure regardless of focus");
+  assert.ok(localRouteControlsRenderer.includes("if (panelSettings || (!isAccessoriesFocus && !alwaysAdvancedSetup)) return controls;"), "Panel Settings bypasses the disclosure; other sections retain their focus behavior");
   assert.ok(localRouteControlsRenderer.includes("{advancedSetupOpen ? <div className=\"mt-2\">{controls}{advancedContent}</div> : null}"), "Controls and the option-group Advanced Setup content only render when expanded");
 });
 
@@ -488,7 +596,7 @@ test("Accessories Advanced Setup: product rows, families, and model data stay vi
 
 test("other pricing sections retain their existing focus behavior", () => {
   assert.ok(localRouteControlsRenderer.includes("isAccessoriesFocus?: boolean;"), "isAccessoriesFocus must be optional so existing call sites without focus information keep working");
-  assert.ok(localRouteControlsRenderer.includes("if (!isAccessoriesFocus && !alwaysAdvancedSetup) return controls;"));
+  assert.ok(localRouteControlsRenderer.includes("if (panelSettings || (!isAccessoriesFocus && !alwaysAdvancedSetup)) return controls;"));
   const workstationSection = source.slice(source.indexOf('title: "Workstation Pricing"'), source.indexOf('{draft.optionGroups.length'));
   assert.ok(workstationSection.includes("isAccessoriesFocus={isAccessoriesFocus}"));
   assert.equal(workstationSection.includes("alwaysAdvancedSetup"), false, "Only option groups opt into global Advanced Setup");
