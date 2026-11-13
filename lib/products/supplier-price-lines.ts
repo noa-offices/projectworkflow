@@ -264,3 +264,28 @@ export function filterAndOrderPriceLines(lines: PriceLine[], filter: PriceLineFi
 
 /** Supplier lines no row of this product looks like. Display only: nothing is saved. */
 export const notInProductLines = (lines: PriceLine[]) => lines.filter((line) => line.link?.notInProduct);
+
+/**
+ * One supplier line read by several product rows is shown as ONE group, not as one problem per row. Presentation only: it reshapes the lines
+ * that are already built, never changes them, and the state counts still come from the lines. "unmapped" is the Unclear-match case that can be
+ * mapped as shared (all lines carry the same LineShared, i.e. the matcher's targets); "mapped" is a saved shared binding read by 2 or more lines.
+ */
+export type PriceLineGroup = { key: string; kind: "unmapped" | "mapped"; lines: PriceLine[]; /** The line the existing save/remove path is started from. */ first: PriceLine };
+export const isPriceLineGroup = (item: PriceLine | PriceLineGroup): item is PriceLineGroup => "lines" in item;
+export function groupSharedLines(lines: PriceLine[]): Array<PriceLine | PriceLineGroup> {
+  const groups = new Map<string, PriceLineGroup>();
+  const out: Array<PriceLine | PriceLineGroup> = [];
+  const mappedCount = new Map<string, number>();
+  const mappedKey = (line: PriceLine) => line.state === "shared" && line.binding?.kind === "shared" ? `mapped|${line.binding.id}` : null;
+  for (const line of lines) { const key = mappedKey(line); if (key) mappedCount.set(key, (mappedCount.get(key) ?? 0) + 1); }
+  for (const line of lines) {
+    const mapped = mappedKey(line);
+    const key = line.shared ? `unmapped|${JSON.stringify([line.shared.code, line.shared.priceField, line.shared.sourceDimension, line.shared.targets.map((item) => item.key).sort()])}` : mapped && (mappedCount.get(mapped) ?? 0) >= 2 ? mapped : null;
+    if (!key) { out.push(line); continue; }
+    const found = groups.get(key);
+    if (found) { found.lines.push(line); continue; }
+    const group: PriceLineGroup = { key, kind: line.shared ? "unmapped" : "mapped", lines: [line], first: line };
+    groups.set(key, group); out.push(group);
+  }
+  return out;
+}
