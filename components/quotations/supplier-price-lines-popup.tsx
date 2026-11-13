@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { applySupplierReviewedPrice, confirmSupplierBindings, removeSupplierBinding, saveSupplierDecision, setSupplierTemplateFamilies } from "@/app/products/price-updates/supplier-sources/actions";
-import { filterAndOrderPriceLines, priceLineStateLabels, summarizePriceLines, type PriceLine, type PriceLineFilter, type PriceLineState } from "@/lib/products/supplier-price-lines";
+import { filterAndOrderPriceLines, groupSharedLines, isPriceLineGroup, priceLineStateLabels, summarizePriceLines, type PriceLine, type PriceLineFilter, type PriceLineGroup, type PriceLineState } from "@/lib/products/supplier-price-lines";
 import { ConfirmAllSuggested, SupplierLinkButton, NotInProductGroup } from "./supplier-price-link-panel";
 import { SupplierFamilyBar } from "@/components/products/supplier-family-bar";
 import { useCoverageAccess } from "./supplier-coverage-popup";
@@ -81,6 +81,38 @@ function ConfirmStep({ pending, busy, error, onCancel, onConfirm }: { pending: P
   );
 }
 
+/**
+ * ONE card for one supplier line read by several product rows. Unclear case: one button that opens the existing "Map as shared" confirm step
+ * (the same save as before, from the first line, which carries the matcher's targets). Mapped case: "Shared (N rows)" and the existing Remove.
+ */
+function SharedGroupCard({ group, canSave, onShare, onRemove }: { group: PriceLineGroup; canSave: boolean; onShare: (line: PriceLine) => void; onRemove: (line: PriceLine) => void }) {
+  const { first } = group;
+  const shared = first.shared;
+  const rows = shared ? shared.targets.map((item) => ({ key: item.key, name: [item.templateName, item.label].filter(Boolean).join(" — ") || "price", price: item.price, currency: item.currency }))
+    : group.lines.map((line) => ({ key: line.key, name: line.field || "—", price: line.ourPrice, currency: line.ourCurrency }));
+  const count = rows.length;
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-3" data-shared-group={group.kind}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold text-zinc-900">{first.code}</span>
+        <span className="tabular-nums text-zinc-700">{money(first.supplierPrice, first.supplierCurrency)}</span>
+        <span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-bold ${badgeClass[group.kind === "mapped" ? "shared" : "ambiguous"]}`}>{group.kind === "mapped" ? `Shared (${count} rows)` : "Unclear match"}</span>
+        {group.kind === "unmapped" ? <span className="text-xs text-zinc-600">shared by {count} rows</span> : null}
+      </div>
+      {group.kind === "unmapped" ? <p className="mt-1 text-sm text-zinc-700">One supplier price covers these {count} rows. They will share the same price.</p> : null}
+      <ul className="mt-2 space-y-1 text-sm">
+        {rows.map((row) => <li key={row.key} className="flex flex-wrap justify-between gap-2 rounded border border-zinc-100 px-2 py-1"><span className="text-zinc-800">{row.name}</span><span className="tabular-nums text-zinc-700">Your price {money(row.price, row.currency)}{first.supplierPrice !== null && row.price !== first.supplierPrice ? <span className="ml-2 text-xs font-semibold text-amber-800">differs from supplier price</span> : null}</span></li>)}
+      </ul>
+      <div className="mt-2">
+        {group.kind === "unmapped" ? (canSave
+          ? <button type="button" onClick={() => onShare(first)} className="rounded-md bg-emerald-800 px-3 py-1.5 text-xs font-semibold text-white">Map these {count} rows as shared</button>
+          : <p className="text-xs text-zinc-600">Brand price approver permission required.</p>)
+          : first.binding ? (canSave ? <button type="button" onClick={() => onRemove(first)} className="whitespace-nowrap text-xs font-semibold text-red-800 underline">Remove mapping</button> : null) : null}
+      </div>
+    </div>
+  );
+}
+
 type Source = PriceLinesResult["sources"][number];
 /** Which Supplier family or families this product belongs to, inside the popup. One save call, then the lines reload. */
 function FamilyBar({ source, templateId, onDone }: { source: Source; templateId: string; onDone: (message: string) => void }) {
@@ -138,7 +170,7 @@ function CheckBar({ source, templateId, templateName, onDone, onStatus }: { sour
   );
 }
 
-function SourceLines({ source, brandId, templateId, templateName, onDone, onStatus }: { source: Source; brandId: string; templateId: string; templateName: string; onDone: (message: string) => void; onStatus?: StatusListener }) {
+function SourceLines({ source, brandId, templateId, templateName, onDone, onStatus, canSave = true }: { source: Source; brandId: string; templateId: string; templateName: string; onDone: (message: string) => void; onStatus?: StatusListener; /** False hides the save/remove buttons of shared groups. The server checks the role again. */ canSave?: boolean }) {
   const [filter, setFilter] = useState<PriceLineFilter>("all");
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
@@ -175,7 +207,7 @@ function SourceLines({ source, brandId, templateId, templateName, onDone, onStat
   };
   const summary = summarizePriceLines(source.lines);
   const attention = summary.changed + summary.needsMapping + summary.other;
-  const shown = filterAndOrderPriceLines(source.lines, filter);
+  const shown = groupSharedLines(filterAndOrderPriceLines(source.lines, filter)); // display only: counts above still come from the lines
   const counts: Record<PriceLineFilter, number> = { all: source.lines.filter((line) => !line.link?.notInProduct).length, attention, same: summary.same };
   const tiles = [
     { label: "Same", value: summary.same, tone: "border-emerald-200 bg-emerald-50 text-emerald-900", note: summary.shared ? `includes ${summary.shared} shared` : "" },
@@ -204,7 +236,9 @@ function SourceLines({ source, brandId, templateId, templateName, onDone, onStat
                 <tr><th className="px-3 py-2">Model code</th><th className="px-3 py-2">Price name</th><th className="px-3 py-2 text-right">Your price</th><th className="px-3 py-2 text-right">Supplier price</th><th className="px-3 py-2 text-right">Difference</th><th className="px-3 py-2">Status</th>{hasActions ? <th className="px-3 py-2">Action</th> : null}</tr>
               </thead>
               <tbody>
-                {shown.length === 0 ? <tr><td colSpan={hasActions ? 7 : 6} className="px-3 py-4 text-sm text-zinc-600">No lines in this view.</td></tr> : shown.map((line) => (
+                {shown.length === 0 ? <tr><td colSpan={hasActions ? 7 : 6} className="px-3 py-4 text-sm text-zinc-600">No lines in this view.</td></tr> : shown.map((item) => isPriceLineGroup(item) ? (
+                  <tr key={item.key} className="border-t border-zinc-100 align-top"><td colSpan={hasActions ? 7 : 6} className="px-3 py-2"><SharedGroupCard group={item} canSave={canSave} onShare={(line) => { setError(""); setPending({ kind: "share", line }); }} onRemove={(line) => { setError(""); setPending({ kind: "remove", line }); }} /></td></tr>
+                ) : ((line) => (
                   <tr key={line.key} className="border-t border-zinc-100 align-top">
                     <td className="px-3 py-2 font-semibold text-zinc-900">{line.code}</td>
                     <td className="px-3 py-2 text-zinc-600">{line.field || "—"}{line.linkedTiers?.length ? <span className="block text-xs">Linked to {line.linkedTiers.join(", ")}</span> : null}</td>
@@ -216,7 +250,6 @@ function SourceLines({ source, brandId, templateId, templateName, onDone, onStat
                       {line.link ? <SupplierLinkButton line={line} brandId={brandId} onDone={onDone} /> : null}
                       {line.mapping ? <button type="button" onClick={() => { setError(""); setPending({ kind: "map", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Map this line</button> : null}
                       {line.familyHint === "choose_family" ? <span className="block max-w-48 text-xs text-zinc-600">Choose a family first.</span> : null}
-                      {line.shared ? <button type="button" onClick={() => { setError(""); setPending({ kind: "share", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Map as shared</button> : null}
                       {line.apply?.batchId ? <button type="button" onClick={() => { setError(""); setPending({ kind: "apply", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Use supplier price</button> : null}
                       {line.apply && !line.apply.batchId ? <span className="block max-w-48 text-xs text-zinc-600">Start the review for this price list first.</span> : null}
                       {line.applyHint === "set_by_hand" ? <span className="block max-w-48 text-xs text-zinc-600">This price is empty. Set it by hand in Edit Template.</span> : null}
@@ -224,7 +257,7 @@ function SourceLines({ source, brandId, templateId, templateName, onDone, onStat
                       {line.binding ? <button type="button" onClick={() => { setError(""); setPending({ kind: "remove", line }); }} className="whitespace-nowrap text-xs font-semibold text-red-800 underline">Remove mapping</button> : null}
                     </td> : null}
                   </tr>
-                ))}
+                ))(item))}
               </tbody>
             </table>
           </div>
@@ -271,7 +304,7 @@ export function SupplierPriceLinesAction({ templateId, templateName, onSupplierS
               {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</p> : null}
               {result && result.sources.length === 0 ? <p className="text-sm text-zinc-600">No current Supplier price list covers this product yet, so there is nothing to show.</p> : null}
               {notice ? <p role="status" className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-900">{notice}</p> : null}
-              {result?.sources.map((source) => <SourceLines key={`${source.definitionName}|${source.title}`} source={source} brandId={result.brandId} templateId={templateId} templateName={templateName} onDone={load} onStatus={onSupplierStatus} />)}
+              {result?.sources.map((source) => <SourceLines key={`${source.definitionName}|${source.title}`} source={source} brandId={result.brandId} templateId={templateId} templateName={templateName} onDone={load} onStatus={onSupplierStatus} canSave={allowed === true} />)}
             </div>
           </div>
         </div>,

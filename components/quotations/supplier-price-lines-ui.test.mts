@@ -58,3 +58,45 @@ test("picker shows 'Also linked to' for a linked row that can take one more tier
   assert.match(html, /Also linked to JC211/);
   assert.doesNotMatch(html, /type="radio"[^>]*disabled/);
 });
+
+// Shared groups: one card per supplier line. Real SourceLines render with lines from the real builder.
+const groupTarget = (key: string, price: number, label: string) => ({ key, template_id: "T1", template_name: "Chair", brand_id: "b", architecture: "accessory_pricing", group_id: "g", row_id: key, column_id: "", dimension: "", price_field: "unit_price", physical_field: "price", code: "521304H", raw_code: "521304H", price, currency: "EUR", pricing_version: "3", label });
+async function renderGroups(canSave?: boolean, mapped = false) {
+  const { matchSupplierPrices } = await import("../../lib/products/supplier-price-matching");
+  const targets = [groupTarget("a1", 170, "Column high 490 - 620 mm"), groupTarget("a2", 170, "Column high 520 - 615 mm")];
+  const src = { key: "s", code: "521304H", price_field: "unit_price", dimension: "", raw_dimension: "", finishes: [], price: 174, currency: "EUR", row_keys: [], issues: [] };
+  const bindings = mapped ? [{ id: "sb", code: "521304H", price_field: "unit_price", source_dimension: "", kind: "shared" as const, confirmed: true, target_keys: ["a1", "a2"] }] : [];
+  const built = lines.buildPriceLines(matchSupplierPrices([src as any], targets as any, [], bindings), "T1", bindings).lines;
+  const { SourceLines } = compile("components/quotations/supplier-price-lines-popup.tsx", {
+    ...common, "./supplier-price-link-panel": { ConfirmAllSuggested: () => null, SupplierLinkButton: () => null, NotInProductGroup: () => null },
+    "@/components/products/supplier-family-bar": { SupplierFamilyBar: () => null }, "./supplier-coverage-popup": {}, "./supplier-price-lines-actions": {},
+    "./supplier-template-check-actions": {}, "./supplier-template-status-actions": {}, "@/lib/products/supplier-template-check": { evaluateTemplateCheck: () => ({ ok: false }) },
+  }, "\nexport { SourceLines };\n");
+  const html = renderToStaticMarkup(React.createElement(SourceLines, { brandId: "b", templateId: "T1", templateName: "Chair", onDone() {}, canSave, source: { sourceId: "s", title: "Supplier", families: [], chosen: [], missing: [], lines: built } }));
+  return { html, built };
+}
+test("an unclear shared supplier line shows as one card with one button and per-row prices; the counts stay per line", async () => {
+  const { html, built } = await renderGroups();
+  assert.equal(built.length, 2);
+  assert.equal((html.match(/data-shared-group="unmapped"/g) ?? []).length, 1);
+  assert.equal((html.match(/Map these 2 rows as shared/g) ?? []).length, 1);
+  assert.doesNotMatch(html, />Map as shared</);
+  assert.match(html, /shared by 2 rows/);
+  assert.match(html, /One supplier price covers these 2 rows\. They will share the same price\./);
+  assert.match(html, /Column high 490 - 620 mm/); assert.match(html, /Column high 520 - 615 mm/);
+  assert.match(html, /differs from supplier price/, "both 170 rows are marked, the supplier price is 174");
+  assert.match(html, /All \(2\)/); assert.match(html, /Needs attention \(2\)/);
+});
+test("a user who may not save sees the card without the button and with the reason", async () => {
+  const { html } = await renderGroups(false);
+  assert.equal((html.match(/data-shared-group="unmapped"/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /Map these 2 rows as shared/);
+  assert.match(html, /Brand price approver permission required\./);
+});
+test("a mapped shared group shows Shared (N rows) and the existing Remove mapping", async () => {
+  const { html } = await renderGroups(true, true);
+  assert.equal((html.match(/data-shared-group="mapped"/g) ?? []).length, 1);
+  assert.match(html, /Shared \(2 rows\)/);
+  assert.equal((html.match(/Remove mapping/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /Map these/);
+});
