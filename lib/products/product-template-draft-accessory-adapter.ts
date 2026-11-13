@@ -2,6 +2,7 @@ import type { ProductTemplateDraft, ProductTemplateDraftMatrixRow, ProductTempla
 import type { AccessoryItemRole, AccessoryModelApplicabilityRule, StructuralSupportCompatibleTarget } from "./accessory-conditional-configuration";
 import { baseModelGroupRouteKey } from "./base-model-draft-groups";
 import { directMatrixRowPrice, routeDraftPriceMatrices } from "./product-template-draft-pricing-routing";
+import { allowUnlistedItems } from "./accessory-conditional-configuration-ui-state";
 import { smartReviewMatrixOverrides, smartReviewRuleTarget, smartReviewSelectionContract, type SmartReviewRule, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 
 type AccessoryGroup = {
@@ -113,7 +114,8 @@ export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft, r
       is_active: group.isActive !== false,
       sort_order: groupIndex,
       ...(group.selection.defaultItemIds.length ? { default_item_ids: group.selection.defaultItemIds.filter((id) => group.items.some((item) => item.id === id)) } : {}),
-      ...(configuration ? { conditional_configuration: configuration } : {}),
+      // Safety net: an item that is in no explicit allowed-item list would be hidden on every model, so it joins every list.
+      ...(configuration ? { conditional_configuration: { ...configuration, applicability: allowUnlistedItems(configuration.applicability, group.items.map((item) => item.id)) } } : {}),
       items: group.items.map((item, itemIndex) => mapItem(item, item.price, itemIndex, warnings, "Accessory item")),
     }];
   });
