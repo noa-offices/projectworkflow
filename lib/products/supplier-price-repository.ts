@@ -205,7 +205,8 @@ export async function supplierSourceFamilies(client: SupabaseClient, sourceId: s
 export async function supplierMissingTemplateFamilies(client: SupabaseClient, definitionId: string, sourceId: string) {
   return (await supplierRpcRows<Omit<SupplierTemplateFamily, "definition_id">>(client, "supplier_template_series_missing", { p_definition_id: definitionId, p_source_id: sourceId })) ?? [];
 }
-export async function supplierBrandMatches(client: SupabaseClient, sourceId: string) {
+/** `openedTemplateId` is passed only by the Supplier price lines window (see matchSupplierPrices); every other caller matches over the whole coverage. */
+export async function supplierBrandMatches(client: SupabaseClient, sourceId: string, openedTemplateId?: string) {
   const source = await supplierSource(client, sourceId);
   if (source.status !== "imported") throw Error("Matching refuses an incomplete or archived source.");
   const coverage = await supplierSourceCoverage(client, source);
@@ -216,7 +217,7 @@ export async function supplierBrandMatches(client: SupabaseClient, sourceId: str
     supplierRows<DurableBinding>(client, "supplier_price_bindings", "*", { brand_id: source.brand_id }),
     supplierFamilyScope(client, source.definition_id),
   ]);
-  return { source, templates, targets, coverage, rules, matches: matchSupplierPrices(identities.map((identity) => withoutEvidence(identity.data)), targets, rules, bindings, familyScope) };
+  return { source, templates, targets, coverage, rules, matches: matchSupplierPrices(identities.map((identity) => withoutEvidence(identity.data)), targets, rules, bindings, familyScope, openedTemplateId) };
 }
 /** Builds a review batch. Coverage is the outer boundary (a source definition’s Families, or the whole Brand for a legacy source); the scope only narrows within it. */
 export async function supplierCreateReviewBatch(client: SupabaseClient, sourceId: string, scope: string, selectedIds: string[], brandListId?: string) {

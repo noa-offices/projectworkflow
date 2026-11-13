@@ -144,7 +144,8 @@ test("the lines action only reads: it attaches a batch only when the open review
   assert.match(action, /\["increased", "decreased", "changed"\]\.includes\(stored\.classification\)/);
   assert.match(action, /stored\.targets\[0\]\.key === line\.apply!\.targetKey/);
   assert.match(action, /stored\.targets\[0\]\.price === line\.ourPrice && stored\.source\?\.price === line\.supplierPrice/);
-  assert.match(action, /applyHint: "old_review"/);
+  assert.match(action, /: "old_review" as const/, "a genuinely stale review still gives old_review");
+  assert.match(action, /otherProduct\.has\(line\.key\) \? "other_product" as const/, "several stored targets in the review match give the other_product hint");
   assert.doesNotMatch(action, /supplierWrite|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(|revalidatePath|saveSupplierDecision|applySupplierReviewedPrice/);
 });
 
@@ -257,9 +258,10 @@ test("family scope reaches the matcher: the saved family decides which supplier 
   assert.deepEqual(lines.map((line) => [line.state, line.supplierPrice]), [["same", 58]]);
   const repository = readFileSync("lib/products/supplier-price-repository.ts", "utf8");
   assert.match(repository, /supplierFamilyScope\(client, source\.definition_id\)/);
-  assert.match(repository, /matchSupplierPrices\(identities\.map\(\(identity\) => withoutEvidence\(identity\.data\)\), targets, rules, bindings, familyScope\)/);
+  assert.match(repository, /matchSupplierPrices\(identities\.map\(\(identity\) => withoutEvidence\(identity\.data\)\), targets, rules, bindings, familyScope, openedTemplateId\)/, "the family scope is still passed, now with the opened template id");
+  assert.match(repository, /supplierBrandMatches\(client: SupabaseClient, sourceId: string, openedTemplateId\?: string\)/);
   const action = readFileSync("components/quotations/supplier-price-lines-actions.ts", "utf8");
-  assert.match(action, /await supplierBrandMatches\(client, current\.id\)/);
+  assert.match(action, /await supplierBrandMatches\(client, current\.id, templateId\)/, "the window passes the opened template id");
   assert.match(action, /const familyRequired = families\.length > 0 && chosen\.length === 0/);
   assert.match(action, /buildPriceLines\(matches, templateId, bindings, \{ familyRequired(, rowNotes)? \}\)/);
 });
