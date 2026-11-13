@@ -89,13 +89,14 @@ function ConfirmStep({ pending, busy, error, onCancel, onConfirm }: { pending: P
 function SharedGroupCard({ group, canSave, onShare, onRemove }: { group: PriceLineGroup; canSave: boolean; onShare: (line: PriceLine) => void; onRemove: (line: PriceLine) => void }) {
   const { first } = group;
   const shared = first.shared;
-  const rows = shared ? shared.targets.map((item) => ({ key: item.key, name: [item.templateName, item.label].filter(Boolean).join(" — ") || "price", price: item.price, currency: item.currency }))
+  const rows = shared ? shared.targets.map((item) => ({ key: item.key, name: [[item.templateName, item.label].filter(Boolean).join(" — "), item.dimensionLabel].filter(Boolean).join(" · ") || "price", price: item.price, currency: item.currency }))
     : group.lines.map((line) => ({ key: line.key, name: line.field || "—", price: line.ourPrice, currency: line.ourCurrency }));
   const count = rows.length;
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-3" data-shared-group={group.kind}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold text-zinc-900">{first.code}</span>
+        {shared?.tierLabel ? <span className="text-zinc-700" data-tier-label>· {shared.tierLabel} ·</span> : null}
         <span className="tabular-nums text-zinc-700">{money(first.supplierPrice, first.supplierCurrency)}</span>
         <span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-bold ${badgeClass[group.kind === "mapped" ? "shared" : "ambiguous"]}`}>{group.kind === "mapped" ? `Shared (${count} rows)` : "Unclear match"}</span>
         {group.kind === "unmapped" ? <span className="text-xs text-zinc-600">shared by {count} rows</span> : null}
@@ -254,6 +255,7 @@ function SourceLines({ source, brandId, templateId, templateName, onDone, onStat
                       {line.apply?.batchId ? <button type="button" onClick={() => { setError(""); setPending({ kind: "apply", line }); }} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">Use supplier price</button> : null}
                       {line.apply && !line.apply.batchId ? <span className="block max-w-48 text-xs text-zinc-600">Start the review for this price list first.</span> : null}
                       {line.applyHint === "set_by_hand" ? <span className="block max-w-48 text-xs text-zinc-600">This price is empty. Set it by hand in Edit Template.</span> : null}
+                      {line.applyHint === "other_product" ? <span className="block max-w-48 text-xs text-zinc-600">This supplier line also matches a row in another product in the Price updates review. Apply it from Price updates.</span> : null}
                       {line.applyHint === "old_review" ? <span className="block max-w-48 text-xs text-zinc-600">The review is out of date. Start a new review for this price list.</span> : null}
                       {line.binding ? <button type="button" onClick={() => { setError(""); setPending({ kind: "remove", line }); }} className="whitespace-nowrap text-xs font-semibold text-red-800 underline">Remove mapping</button> : null}
                     </td> : null}

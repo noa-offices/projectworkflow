@@ -13,8 +13,8 @@ export type LineApply = { matchKey: string; targetKey: string; batchId: string |
  * price, currency, tier and price field. The targets are exactly the matcher's targets; the user never picks them. Preview is in memory.
  */
 export type LineShared = {
-  code: string; priceField: string; sourceDimension: string; preview: PriceLineState;
-  targets: Array<{ key: string; templateId: string; templateName: string; label: string; pricingVersion: string; price: number | null; currency: string }>;
+  code: string; priceField: string; sourceDimension: string; /** The supplier price category (e.g. LG6), read as in the link picker. Display only. */ tierLabel: string; preview: PriceLineState;
+  targets: Array<{ key: string; templateId: string; templateName: string; label: string; /** The row's own price category label, when it has one. Display only. */ dimensionLabel?: string; pricingVersion: string; price: number | null; currency: string }>;
 };
 /** Why a product row is suggested for a supplier tier. Rule (a), a structured model reference per row, is not available on a price target. */
 export type LinkSuggestionReason = "name" | "note" | "id" | "price";
@@ -44,7 +44,7 @@ export type PriceLine = {
   /** Present only when this unclear line can safely be mapped as shared (see LineShared). */
   shared?: LineShared;
   /** Why there is no button: the price is empty (set it by hand in Edit Template), or the open review no longer matches this line. */
-  applyHint?: "set_by_hand" | "old_review";
+  applyHint?: "set_by_hand" | "old_review" | "other_product";
   /** The list has families, this product has none saved, and this line carries a family: mapping waits until a family is chosen. */
   familyHint?: "choose_family";
 };
@@ -250,8 +250,8 @@ export function previewShared(source: SourceIdentity, targets: PriceMatch["targe
   const proposed: DurableBinding = { id: "preview", code: source.code, price_field: source.price_field, source_dimension: source.dimension, target_keys: targets.map((item) => item.key), kind: "shared", confirmed: true };
   const [result] = matchSupplierPrices([source], targets, [], [proposed]);
   return {
-    code: source.code, priceField: source.price_field, sourceDimension: source.dimension, preview: states[result.classification] ?? "ambiguous",
-    targets: targets.map((item) => ({ key: item.key, templateId: item.template_id, templateName: item.template_name, label: item.label, pricingVersion: item.pricing_version, price: item.price, currency: item.currency })),
+    code: source.code, priceField: source.price_field, sourceDimension: source.dimension, tierLabel: plainSupplierDimension(source.raw_dimension ?? source.dimension), preview: states[result.classification] ?? "ambiguous",
+    targets: targets.map((item) => ({ key: item.key, templateId: item.template_id, templateName: item.template_name, label: item.label, ...(item.dimension_label ? { dimensionLabel: item.dimension_label } : {}), pricingVersion: item.pricing_version, price: item.price, currency: item.currency })),
   };
 }
 

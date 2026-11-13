@@ -32,16 +32,18 @@ async function withApplyBatch(client: SupabaseClient, sourceId: string, built: {
   const review = await findSourceReviewBatch(client, sourceId);
   const batchId = review.state === "exists" && review.status === "review" ? review.batchId : null;
   if (!batchId) return built;
-  const checked = new Map<string, boolean>();
+  const checked = new Map<string, boolean>(), otherProduct = new Set<string>();
   await Promise.all(eligible.slice(0, applyLookupLimit).map(async (line) => {
     const { data } = await client.from("supplier_price_matches").select("key,data").eq("batch_id", batchId).eq("key", line.apply!.matchKey).maybeSingle<{ key: string; data: PriceMatch }>();
     const stored = data?.data;
+    // The review's match for this line also holds rows of another product: Apply is done from Price updates.
+    if (stored && stored.targets.length > 1 && stored.targets.some((target) => target.key === line.apply!.targetKey)) otherProduct.add(line.key);
     checked.set(line.key, Boolean(stored && ["increased", "decreased", "changed"].includes(stored.classification) && stored.targets.length === 1 && stored.targets[0].key === line.apply!.targetKey
       && stored.targets[0].price === line.ourPrice && stored.source?.price === line.supplierPrice));
   }));
   return { ...built, lines: built.lines.map((line) => {
     if (!line.apply || !checked.has(line.key)) return line;
-    if (!checked.get(line.key)) return { ...line, apply: undefined, applyHint: "old_review" as const };
+    if (!checked.get(line.key)) return { ...line, apply: undefined, applyHint: otherProduct.has(line.key) ? "other_product" as const : "old_review" as const };
     return { ...line, apply: { ...line.apply, batchId } };
   }) };
 }
@@ -69,7 +71,7 @@ export async function supplierTemplatePriceLines(templateId: string): Promise<Pr
     const families = found.map((item) => ({ family: item.family, key: item.family_key, count: item.identity_count }));
     const chosen = saved.filter((item) => item.template_id === templateId).map((item) => ({ family: item.family, key: item.family_key }));
     const missing = absent.filter((item) => item.template_id === templateId).map((item) => ({ family: item.family, key: item.family_key }));
-    const { matches, templates: brandTemplates, targets: brandTargets } = await supplierBrandMatches(client, current.id);
+    const { matches, templates: brandTemplates, targets: brandTargets } = await supplierBrandMatches(client, current.id, templateId);
     const rowNotes = targetRowNotes(brandTemplates as Array<Record<string, unknown>>, brandTargets.filter((target) => target.template_id === templateId));
     const familyRequired = families.length > 0 && chosen.length === 0;
     sources.push({ definitionId: definition.id, sourceId: current.id, definitionName: definition.name, title: current.title, effectiveFrom: current.effective_from, families, chosen, missing,

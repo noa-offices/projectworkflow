@@ -37,10 +37,12 @@ function mappedDimension(source: SourceIdentity, target: PriceTarget, rules: Dim
  * A template with chosen families only takes identities that carry a family tag for one of them; identities with no family tag stay
  * candidates. Two chosen families that give the same code and price field different prices are never resolved: those lines are "ambiguous".
  * Saved bindings are explicit and are not filtered by the scope.
+ * `openedTemplateId` (optional, used only by the Supplier price lines window) limits the candidates of an UNBOUND supplier line to that product, so a row of
+ * another product never makes it ambiguous. Saved bindings still resolve against ALL targets (a cross-product shared binding stays "shared"). Without it, matching is as before.
  */
-export function matchSupplierPrices(sources: SourceIdentity[], targets: PriceTarget[], rules: DimensionRule[] = [], bindings: DurableBinding[] = [], familyScope?: ReadonlyMap<string, ReadonlySet<string>>): PriceMatch[] {
+export function matchSupplierPrices(sources: SourceIdentity[], targets: PriceTarget[], rules: DimensionRule[] = [], bindings: DurableBinding[] = [], familyScope?: ReadonlyMap<string, ReadonlySet<string>>, openedTemplateId?: string): PriceMatch[] {
   const index = new Map<string, PriceTarget[]>(); const byKey = new Map(targets.map((target) => [target.key, target]));
-  for (const target of targets) { const key = JSON.stringify([comparisonCode(target.code), target.price_field]); const bucket = index.get(key) ?? []; bucket.push(target); index.set(key, bucket); }
+  for (const target of targets) { if (openedTemplateId !== undefined && target.template_id !== openedTemplateId) continue; const key = JSON.stringify([comparisonCode(target.code), target.price_field]); const bucket = index.get(key) ?? []; bucket.push(target); index.set(key, bucket); }
   // Bindings whose codes differ only by whitespace would be two answers for one identity: neither is used, so the row stays unresolved.
   const bindingGroups = new Map<string, DurableBinding[]>();
   for (const binding of bindings.filter((item) => item.confirmed)) { const key = JSON.stringify([comparisonCode(binding.code), binding.price_field, binding.source_dimension]); bindingGroups.set(key, [...(bindingGroups.get(key) ?? []), binding]); }
@@ -129,7 +131,7 @@ export function matchSupplierPrices(sources: SourceIdentity[], targets: PriceTar
       }
     }
   }
-  for (const target of targets) if (!represented.has(target.key)) matches.push({ key: `target:${target.key}`, source: null, targets: [target], classification: "target_not_represented", candidate_shared: false });
+  for (const target of targets) if (!represented.has(target.key) && (openedTemplateId === undefined || target.template_id === openedTemplateId)) matches.push({ key: `target:${target.key}`, source: null, targets: [target], classification: "target_not_represented", candidate_shared: false });
   return matches;
 }
 export function templateReviewUnits(matches: PriceMatch[], templateIds?: string[]) {

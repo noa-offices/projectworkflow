@@ -88,7 +88,7 @@ test("the loader reads the scope for one definition; before the migration it rea
 test("wiring: matching loads the scope only for the matched source's definition; actions use the approver guard; no UI", () => {
   const repository = readFileSync("lib/products/supplier-price-repository.ts", "utf8");
   assert.match(repository, /supplierFamilyScope\(client, source\.definition_id\)/);
-  assert.match(repository, /matchSupplierPrices\(identities\.map\(\(identity\) => withoutEvidence\(identity\.data\)\), targets, rules, bindings, familyScope\)/);
+  assert.match(repository, /matchSupplierPrices\(identities\.map\(\(identity\) => withoutEvidence\(identity\.data\)\), targets, rules, bindings, familyScope, openedTemplateId\)/);
   const actions = readFileSync("app/products/price-updates/supplier-sources/actions.ts", "utf8");
   for (const name of ["setSupplierTemplateFamilies", "listSupplierTemplateFamilies", "listSupplierSourceFamilies", "listMissingSupplierTemplateFamilies"]) {
     const body = actions.match(new RegExp(`export async function ${name}[\\s\\S]*?\\n\\}`))?.[0] ?? "";
