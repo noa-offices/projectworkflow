@@ -2,6 +2,7 @@ import { draftModularRows, isDirectModularGroup, type ProductTemplateDraft, type
 import { smartReviewRuleTarget, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 import { draftUngroupedBaseModelRows, replaceDraftBaseModelScopeRows } from "./base-model-draft-groups";
 import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
+import { addItemToRuleLists, allowedListWithItem, allowedListWithoutItem, removeItemFromRuleLists } from "./accessory-conditional-configuration-ui-state";
 
 /** Prices of a modular row in either pricing mode (matrix cells or one direct price). */
 function modularRowPrices(row: { prices?: Record<string, ProductTemplateDraftPrice>; price?: ProductTemplateDraftPrice }) {
@@ -362,7 +363,20 @@ export function addReviewedOptionLine(draft: ProductTemplateDraft, groupIndex: n
   const group = draft.optionGroups[groupIndex];
   if (!group) return draft;
   const item = manualOptionItem(group, input);
-  return { ...draft, optionGroups: draft.optionGroups.map((entry, index) => index === groupIndex ? { ...entry, items: [...entry.items, item] } : entry) };
+  // A hand-added item joins every explicit allowed-item list of its group (rules without a list already allow every item).
+  const withItem = (entry: typeof group) => ({ ...entry, items: [...entry.items, item], ...(entry.conditionalConfiguration ? { conditionalConfiguration: { ...entry.conditionalConfiguration, applicability: addItemToRuleLists(entry.conditionalConfiguration.applicability, item.id) } } : {}) });
+  return { ...draft, optionGroups: draft.optionGroups.map((entry, index) => index === groupIndex ? withItem(entry) : entry) };
+}
+
+/**
+ * The plan's rules of an option group are what Apply reads once the group has a reviewed route. Keeps their allowed-item lists in step with items
+ * added or removed by hand: added ids join every explicit list, removed ids leave every list. Rules without a list stay without.
+ */
+export function syncReviewedOptionItemLists(plan: SmartSetupReviewRoutingPlan, groupId: string, change: { added?: string[]; removed?: string[] }): SmartSetupReviewRoutingPlan {
+  const touch = (list: string[] | undefined) => (change.removed ?? []).reduce((current, id) => allowedListWithoutItem(current, id), (change.added ?? []).reduce((current, id) => allowedListWithItem(current, id), list));
+  return { ...plan, routes: plan.routes.map((route) => route.sourceKind === "option" && route.sourceId === groupId && route.accessory
+    ? { ...route, accessory: { ...route.accessory, rules: route.accessory.rules.map((rule) => { const next = touch(rule.allowedItemIds); return next === rule.allowedItemIds ? rule : { ...rule, allowedItemIds: next }; }) } }
+    : route) };
 }
 
 /**
@@ -412,6 +426,7 @@ export function removeReviewedOptionLine(draft: ProductTemplateDraft, groupIndex
   return { ...draft, optionGroups: draft.optionGroups.map((entry, index) => index === groupIndex ? {
     ...entry, items: entry.items.filter((item) => item.id !== itemId),
     selection: { ...entry.selection, defaultItemIds: entry.selection.defaultItemIds.filter((id) => id !== itemId) },
+    ...(entry.conditionalConfiguration ? { conditionalConfiguration: { ...entry.conditionalConfiguration, applicability: removeItemFromRuleLists(entry.conditionalConfiguration.applicability, itemId) } } : {}),
   } : entry) };
 }
 

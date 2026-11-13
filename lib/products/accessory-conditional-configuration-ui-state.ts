@@ -132,3 +132,37 @@ export function staleAccessoryRuleItemIds(group: AccessoryConfigurationGroup) {
     .flatMap((rule) => rule.allowed_item_ids ?? [])
     .filter((id) => !itemIds.has(id)))];
 }
+
+/**
+ * Allowed-item lists of applicability rules. A rule WITH a list shows only those items on the product page; a rule without one allows every
+ * item of the group. These helpers keep a list in step with the group's items and never create a list: a rule without one stays without.
+ * An empty list is left alone (it is an error the review already reports, not an "all items" rule).
+ */
+export const allowedListWithItem = (list: string[] | undefined, itemId: string): string[] | undefined => list?.length && !list.includes(itemId) ? [...list, itemId] : list;
+export const allowedListWithoutItem = (list: string[] | undefined, itemId: string): string[] | undefined => list?.includes(itemId) ? list.filter((id) => id !== itemId) : list;
+type RuleWithList = { allowed_item_ids?: string[] };
+const mapLists = <R extends RuleWithList>(rules: R[], change: (list: string[] | undefined) => string[] | undefined): R[] => rules.map((rule) => {
+  const next = change(rule.allowed_item_ids);
+  return next === rule.allowed_item_ids ? rule : { ...rule, allowed_item_ids: next };
+});
+export const addItemToRuleLists = <R extends RuleWithList>(rules: R[], itemId: string): R[] => mapLists(rules, (list) => allowedListWithItem(list, itemId));
+export const removeItemFromRuleLists = <R extends RuleWithList>(rules: R[], itemId: string): R[] => mapLists(rules, (list) => allowedListWithoutItem(list, itemId));
+/** Post-save editor: a hand-added item joins every explicit list of its group. */
+export function addAccessoryItemToRuleLists(group: AccessoryConfigurationGroup, itemId: string): AccessoryConfigurationGroup {
+  return withConfiguration(group, (configuration) => ({ ...configuration, applicability: addItemToRuleLists(configuration.applicability, itemId) }));
+}
+/** Post-save editor: a removed item leaves every explicit list of its group. */
+export function removeAccessoryItemFromRuleLists(group: AccessoryConfigurationGroup, itemId: string): AccessoryConfigurationGroup {
+  return withConfiguration(group, (configuration) => ({ ...configuration, applicability: removeItemFromRuleLists(configuration.applicability, itemId) }));
+}
+/**
+ * Apply safety net: when a group has explicit lists, an item that is in NO list at all would be hidden on every model. Such an item is added to
+ * every list. Items that are in at least one list, and groups without any list, are never touched.
+ */
+export function allowUnlistedItems<R extends RuleWithList>(rules: R[], itemIds: string[]): R[] {
+  const lists = rules.map((rule) => rule.allowed_item_ids).filter((list): list is string[] => Boolean(list?.length));
+  if (!lists.length) return rules;
+  const listed = new Set(lists.flat());
+  const hidden = itemIds.filter((id) => !listed.has(id));
+  return hidden.length ? hidden.reduce((current, id) => addItemToRuleLists(current, id), rules) : rules;
+}

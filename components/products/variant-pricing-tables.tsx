@@ -82,6 +82,8 @@ import {
   setAccessoryApplicabilityTargets,
   setAccessoryConfigurationRole,
   setAccessoryRuleAllowedItems,
+  addAccessoryItemToRuleLists,
+  removeAccessoryItemFromRuleLists,
   setAccessorySelectionMode,
   staleAccessoryRuleItemIds,
   updateAccessoryApplicabilityRule,
@@ -2258,7 +2260,7 @@ export function AccessoryPricingTable({
                       <td className="px-2 py-2 align-top"><details><summary className="cursor-pointer rounded border border-zinc-300 px-2 py-1 text-xs font-semibold text-emerald-900">Edit / Details</summary><div className="mt-2 min-w-[360px]"><AutoGrowTextarea value={item.specification ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /><ImportantRequirementsTextarea value={item.importantRequirements} onChange={(importantRequirements) => updateItem(groupIndex, itemIndex, { importantRequirements })} /></div></details></td>
                       <td className="px-2 py-2 align-top"><input type="checkbox" checked={item.is_active !== false} onChange={(e) => updateItem(groupIndex, itemIndex, { is_active: e.target.checked })} /></td>
                       <td className="px-2 py-2 align-top"><select value={(group.subgroups ?? []).find((subgroup) => item.id && subgroup.row_ids.includes(item.id))?.id ?? ""} onChange={(event) => { const subgroupId = event.target.value || null; if (!item.id) return; updateGroup(groupIndex, { subgroups: (group.subgroups ?? []).map((subgroup) => ({ ...subgroup, row_ids: subgroup.id === subgroupId ? [...subgroup.row_ids.filter((id) => id !== item.id), item.id!] : subgroup.row_ids.filter((id) => id !== item.id) })) }); }} className="h-10 min-w-[180px] border border-zinc-200 bg-white px-2"><option value="">Ungrouped</option>{(group.subgroups ?? []).map((subgroup) => <option key={subgroup.id} value={subgroup.id}>{subgroup.subgroup_name}</option>)}</select></td>
-                      <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => updateGroup(groupIndex, { items: (group.items ?? []).filter((_, index) => index !== itemIndex), subgroups: (group.subgroups ?? []).map((subgroup) => ({ ...subgroup, row_ids: subgroup.row_ids.filter((id) => id !== item.id) })) })} className="text-xs font-semibold text-red-700">Remove item</button></div></td>
+                      <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => updateGroup(groupIndex, { ...(item.id ? removeAccessoryItemFromRuleLists(group, item.id) : {}), items: (group.items ?? []).filter((_, index) => index !== itemIndex), subgroups: (group.subgroups ?? []).map((subgroup) => ({ ...subgroup, row_ids: subgroup.row_ids.filter((id) => id !== item.id) })) })} className="text-xs font-semibold text-red-700">Remove item</button></div></td>
                     </tr>
                   ))}
                   {!(group.items ?? []).length ? <tr><td colSpan={10} className="px-3 py-5 text-center text-zinc-500">No items in this group yet.</td></tr> : null}
@@ -2266,7 +2268,7 @@ export function AccessoryPricingTable({
               </table>
               </SyncedHorizontalScrollContainer>
             </div>
-            <button type="button" onClick={(event) => updateGroup(groupIndex, { items: [...(group.items ?? []), { id: idFor("add-on", group.items?.length ?? 0), currency: resolveDefaultPricingCurrency({ brandDefaultCurrency, existingRows: group.items ?? groups.flatMap((entry) => entry.items ?? []), savedTemplateCurrency: templateCurrency, trigger: event.currentTarget }), is_active: true, sort_order: group.items?.length ?? 0 }] })} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add Accessory</button>
+            <button type="button" onClick={(event) => updateGroup(groupIndex, { ...addAccessoryItemToRuleLists(group, idFor("add-on", group.items?.length ?? 0)), items: [...(group.items ?? []), { id: idFor("add-on", group.items?.length ?? 0), currency: resolveDefaultPricingCurrency({ brandDefaultCurrency, existingRows: group.items ?? groups.flatMap((entry) => entry.items ?? []), savedTemplateCurrency: templateCurrency, trigger: event.currentTarget }), is_active: true, sort_order: group.items?.length ?? 0 }] })} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add Accessory</button>
             </> : null}
           </div>
           );
