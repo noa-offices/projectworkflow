@@ -51,12 +51,20 @@ test("saved aliases on one row: equal prices compare normally; conflicting price
   }
 });
 
-test("a single-tier row remains disabled for an unrelated second tier, with a reason", () => {
+test("a row already linked to one tier accepts a second tier of the same price", () => {
   const target = row("101S", 535), bindings = [linkFor("101S", target)];
   const lines = buildPriceLines(matchSupplierPrices([tier("101S", 535), tier("162S", 535)], [target], [], bindings), "T1", bindings).lines;
   const choice = lines.find((l) => l.link?.tierLabel === "162S")!.link!.rows[0];
+  assert.equal(choice.taken, false);
+  assert.deepEqual(choice.linkedTiers, ["101S"]);
+});
+
+test("a single-tier row remains disabled for a second tier of a different price, with the clear reason", () => {
+  const target = row("101S", 535), bindings = [linkFor("101S", target)];
+  const lines = buildPriceLines(matchSupplierPrices([tier("101S", 535), tier("162S", 600)], [target], [], bindings), "T1", bindings).lines;
+  const choice = lines.find((l) => l.link?.tierLabel === "162S")!.link!.rows[0];
   assert.equal(choice.taken, true);
-  assert.match(choice.takenReason!, /does not name/);
+  assert.equal(choice.takenReason, "Different price (EUR 600.00) from the row (EUR 535.00)");
 });
 
 test("the alias conflict guard requires distinct saved aliases and never absorbs other binding kinds", () => {
@@ -118,11 +126,22 @@ test("a tier that matches two rows gets no suggestion; a row claimed by two tier
   assert.equal(b.find((l) => l.link!.tierLabel === "262S")!.link!.suggestion, undefined, "262S: two rows carry it");
 });
 
-test("a row already linked to another supplier line is not suggested and cannot be picked", () => {
+test("a row already linked to another supplier line can take a tier of the same price, and is suggested for it", () => {
   const binding: Binding = { id: "x", code: "2349", price_field: "unit_price", source_dimension: "OLD", kind: "alias", confirmed: true, target_keys: [row("101S", 0).key] };
   const line = build(rows(), { bindings: [binding] }).lines.find((l) => l.link?.tierLabel === "101S")!;
+  assert.equal(line.link!.suggestion?.targetKey, row("101S", 0).key);
+  assert.equal(line.link!.rows.find((r) => r.targetKey === row("101S", 0).key)!.taken, false);
+  assert.equal(line.link!.rows.filter((r) => r.taken).length, 0);
+});
+
+test("a row already linked to another supplier line is not suggested and cannot be picked for a different price", () => {
+  const binding: Binding = { id: "x", code: "2349", price_field: "unit_price", source_dimension: "OLD", kind: "alias", confirmed: true, target_keys: [row("101S", 0).key] };
+  const sources = supplier().map((s) => s.dimension === "101S" ? { ...s, price: 999 } : s);
+  const line = build(rows(), { bindings: [binding], sources }).lines.find((l) => l.link?.tierLabel === "101S")!;
   assert.equal(line.link!.suggestion, undefined);
-  assert.equal(line.link!.rows.find((r) => r.targetKey === row("101S", 0).key)!.taken, true);
+  const choice = line.link!.rows.find((r) => r.targetKey === row("101S", 0).key)!;
+  assert.equal(choice.taken, true);
+  assert.equal(choice.takenReason, "Different price (EUR 999.00) from the row (EUR 535.00)");
   assert.equal(line.link!.rows.filter((r) => r.taken).length, 1);
 });
 
@@ -200,4 +219,78 @@ test("Confirm-all text shows each row's code, name and note, so rows with the sa
   assert.ok(text.includes("2349 · Brushed Silver Metal Parts · EUR 665.00") && text.includes("from the row id"), text);
   const long = "x".repeat(400);
   assert.ok(linkRowIdentity({ code: "1", name: "n", note: long }).includes(long));
+});
+
+// Joyce, code 608: two rows with the SAME name at different prices; many supplier tiers at two prices. Plain rows: no row names a tier.
+const joyceRow = (id: string, price: number) => row("x", price, { key: JSON.stringify(["T1", "accessory_pricing", group, id, "price", ""]), row_id: id, code: "608", raw_code: "608", label: "608 - Seat depth and lumbar support adjustment" });
+const rowA = () => joyceRow("seat-depth-a", 49), rowB = () => joyceRow("seat-depth-b", 17);
+const jt = (name: string, price: number) => tier(name, price, { code: "608" });
+const joyceTiers: Array<[string, number]> = [["JC211", 49], ["JC216", 17], ["JC213", 49], ["JC251", 49], ["JC252", 49], ["JC253", 49], ["JC217", 17], ["JC218", 17], ["JC256", 17], ["JC257", 17], ["JC258", 17]];
+const joyceBind = (tierName: string, targetKey: string): Binding => ({ id: tierName, code: "608", price_field: "unit_price", source_dimension: tierName, kind: "alias", confirmed: true, target_keys: [targetKey] });
+const joyce = (bindings: Binding[], prices: Record<string, number> = {}, targets = [rowA(), rowB()]) =>
+  buildPriceLines(matchSupplierPrices(joyceTiers.map(([n, p]) => jt(n, prices[n] ?? p)), targets, [], bindings), "T1", bindings, { rowNotes: new Map() });
+
+test("Joyce 608: equal-price tiers are suggested to the one row with that price; Confirm all saves normal alias bindings and nothing needs attention", async () => {
+  const [A, B] = [rowA(), rowB()], bindings = [joyceBind("JC211", A.key), joyceBind("JC216", B.key)];
+  const grouped = joyce(bindings).lines.filter((l) => l.link);
+  assert.deepEqual(grouped.map((l) => l.link!.tierLabel).sort(), ["JC213", "JC217", "JC218", "JC251", "JC252", "JC253", "JC256", "JC257", "JC258"]);
+  for (const line of grouped) {
+    const expected = ["JC213", "JC251", "JC252", "JC253"].includes(line.link!.tierLabel) ? A : B;
+    assert.deepEqual(line.link!.suggestion, { targetKey: expected.key, reason: "price" }, line.link!.tierLabel);
+    assert.equal(line.link!.rows.find((r) => r.targetKey === expected.key)!.taken, false);
+    assert.equal(line.link!.notInProduct, false);
+  }
+  assert.equal(summarizePriceLines(joyce(bindings).lines).needsMapping, 9);
+  // the reason is in plain words and names the price
+  const { confirmLineText } = await import("./supplier-link-confirm");
+  const first = grouped.find((l) => l.link!.tierLabel === "JC213")!;
+  assert.ok(confirmLineText(first, first.link!.rows.find((r) => r.targetKey === A.key)!).includes("Same price EUR 49.00 as the row"));
+  // Confirm all goes through the existing path: one normal alias proposal per tier
+  const items = grouped.map((l) => ({ label: l.link!.tierLabel, mapping: l.link!.rows.find((r) => r.targetKey === l.link!.suggestion!.targetKey)!.mapping }));
+  const calls: AliasProposal[] = [];
+  const outcome = await confirmLinksInOrder("brand-1", items, async (_b, proposals) => { calls.push(...proposals); });
+  assert.deepEqual([outcome.saved, outcome.failed], [9, null]);
+  assert.ok(calls.every((p) => p.kind === "alias" && p.code === "608" && p.target_keys.length === 1));
+  for (const p of calls) bindings.push(joyceBind(p.source_dimension, p.target_keys[0]));
+  const done = joyce(bindings).lines;
+  assert.ok(done.every((l) => !l.link && l.state === "same"), "every line resolves");
+  assert.equal(done.length, 11, "one line per saved tier");
+  assert.deepEqual(summarizePriceLines(done), { same: 11, changed: 0, needsMapping: 0, other: 0, shared: 0 });
+});
+
+test("price clue: two rows with the same price, no matching row, a name clue, or an already linked tier get no price suggestion", () => {
+  const sameTwo = joyce([], {}, [rowA(), joyceRow("seat-depth-c", 49), rowB()]).lines.filter((l) => l.link);
+  for (const l of sameTwo.filter((x) => x.supplierPrice === 49)) assert.equal(l.link!.suggestion, undefined, `${l.link!.tierLabel}: two rows at 49`);
+  for (const l of sameTwo.filter((x) => x.supplierPrice === 17)) assert.equal(l.link!.suggestion?.targetKey, rowB().key);
+  const none = joyce([], { JC213: 30 }).lines.find((l) => l.link?.tierLabel === "JC213")!;
+  assert.equal(none.link!.suggestion, undefined, "price matches no row");
+  // a row note naming the tier keeps its existing suggestion (the price clue never overrides it)
+  const A = rowA(), B = rowB();
+  const sources = joyceTiers.map(([n, p]) => jt(n, p));
+  const noted = buildPriceLines(matchSupplierPrices(sources, [A, B]), "T1", [], { rowNotes: new Map([[B.key, "model JC213"]]) }).lines.find((l) => l.link?.tierLabel === "JC213")!;
+  assert.deepEqual(noted.link!.suggestion, { targetKey: B.key, reason: "note" });
+  // a tier that is already linked is never re-suggested: it has no picker line at all
+  assert.equal(joyce([joyceBind("JC211", A.key)]).lines.find((l) => l.link?.tierLabel === "JC211"), undefined);
+});
+
+test("price clue is off for rows that name tiers: a Silver tier at a Silver row price is not suggested by price", () => {
+  const targets = mergedRows();
+  const bindings = ["100S", "101S", "151S", "191S"].map((t, i) => linkFor(t, targets[i]));
+  const lines = buildPriceLines(matchSupplierPrices([...supplier(), tier("ZZ9", 535)], targets, [], bindings), "T1", bindings).lines; // ZZ9: same price as the 162S-101S row
+  const zz = lines.find((l) => l.link?.tierLabel === "ZZ9")!;
+  assert.equal(zz.link!.suggestion, undefined);
+  assert.equal(zz.link!.notInProduct, true);
+  const suggested = lines.filter((l) => l.link?.suggestion);
+  assert.equal(suggested.length, 3);
+  assert.ok(suggested.every((l) => l.link!.suggestion!.reason !== "price"));
+  assert.equal(summarizePriceLines(lines).needsMapping, 3);
+  assert.equal(notInProductLines(lines).length, 10);
+});
+
+test("tiers saved by price that later differ in price are unclear on every line, with no apply", () => {
+  const [A, B] = [rowA(), rowB()], bindings = [joyceBind("JC211", A.key), joyceBind("JC213", A.key), joyceBind("JC216", B.key)];
+  assert.deepEqual(joyce(bindings).lines.filter((l) => l.binding && l.ourPrice === 49).map((l) => l.state), ["same", "same"]);
+  const lines = joyce(bindings, { JC213: 52 }).lines.filter((l) => l.binding && l.ourPrice === 49);
+  assert.deepEqual(lines.map((l) => l.state), ["ambiguous", "ambiguous"]);
+  for (const line of lines) { assert.equal(line.apply, undefined); assert.match(line.matchHint!, /Conflicting tiers/); }
 });
