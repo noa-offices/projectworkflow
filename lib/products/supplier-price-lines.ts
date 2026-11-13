@@ -1,8 +1,9 @@
 import type { DurableBinding, PriceMatch, PriceTarget, SourceIdentity } from "./supplier-price-contracts";
 import { comparisonCode, matchSupplierPrices, sharedBaselineDrift } from "./supplier-price-matching";
-import { plainSupplierDimension, supplierDimensionFamily } from "./supplier-price-import";
+import { plainSupplierDimension, supplierDimensionFamily, supplierFamilyKey } from "./supplier-price-import";
 
-export type PriceLineState = "same" | "changed" | "not_in_supplier_list" | "needs_mapping" | "ambiguous" | "shared";
+/** "covered": an untiered family summary line whose tiers are all linked (see coveredUntiered). Counts as resolved; never applicable. */
+export type PriceLineState = "same" | "changed" | "not_in_supplier_list" | "needs_mapping" | "ambiguous" | "shared" | "covered";
 /** Everything needed to save one alias mapping for a Needs-mapping line, plus what the line would become (computed in memory, no writes). */
 export type LineMapping = { code: string; priceField: string; sourceDimension: string; tierLabel: string; targetKey: string; pricingVersion: string; targetPrice: number | null; targetCurrency: string; preview: PriceLineState };
 /** "Use supplier price" for one changed single-target line. batchId is filled in by the server only when an open review holds this exact line. */
@@ -54,7 +55,7 @@ const states: Partial<Record<string, PriceLineState>> = {
   needs_dimension_mapping: "needs_mapping", ambiguous: "ambiguous", baseline_drift: "ambiguous", shared: "shared",
 };
 export const priceLineStateLabels: Record<PriceLineState, string> = {
-  same: "Same", changed: "Changed", not_in_supplier_list: "Not in supplier list", needs_mapping: "Needs mapping", ambiguous: "Unclear match", shared: "Shared",
+  same: "Same", changed: "Changed", not_in_supplier_list: "Not in supplier list", needs_mapping: "Needs mapping", ambiguous: "Unclear match", shared: "Shared", covered: "Covered by its tiers",
 };
 
 /**
@@ -78,6 +79,25 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string, bindi
     const key = JSON.stringify([comparisonCode(match.source.code), match.source.price_field]);
     allTiers.set(key, [...(allTiers.get(key) ?? []), plainSupplierDimension(match.source.raw_dimension ?? match.source.dimension).trim().toLowerCase()]);
   }
+  // An untiered family line (no tier letters, e.g. one "JOYCE" price next to tiers JC211...) is only a summary when every tier of that code and
+  // family is a confirmed single alias AND its price equals the price of at least one of those tiers. Otherwise it stays a visible problem.
+  const familyId = (source: SourceIdentity) => { const family = supplierDimensionFamily(source.dimension); return family ? JSON.stringify([comparisonCode(source.code), source.price_field, supplierFamilyKey(family.family)]) : null; };
+  const tierGroups = new Map<string, { linked: boolean; prices: Set<string> }>();
+  for (const match of matches) {
+    const source = match.source, id = source ? familyId(source) : null;
+    if (!source || !id || plainSupplierDimension(source.dimension).trim() === "") continue;
+    const saved = grouped.get(identity(source.code, source.price_field, source.dimension));
+    const entry = tierGroups.get(id) ?? { linked: true, prices: new Set<string>() };
+    entry.linked = entry.linked && saved?.length === 1 && saved[0].kind === "alias";
+    entry.prices.add(JSON.stringify([source.price, source.currency]));
+    tierGroups.set(id, entry);
+  }
+  const coveredUntiered = (source: SourceIdentity) => {
+    const id = familyId(source);
+    if (!id || plainSupplierDimension(source.dimension).trim() !== "" || options.familyRequired || grouped.has(identity(source.code, source.price_field, source.dimension))) return false;
+    const tiers = tierGroups.get(id);
+    return Boolean(tiers?.linked && tiers.prices.has(JSON.stringify([source.price, source.currency])));
+  };
   const groups: Array<{ line: PriceLine; own: PriceTarget[]; source: SourceIdentity }> = [];
   for (const match of matches) {
     const state = states[match.classification];
@@ -152,6 +172,11 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string, bindi
         ourPrice: target.price, ourCurrency: target.currency, supplierPrice, supplierCurrency: match.source?.currency ?? null,
         difference: supplierPrice !== null && target.price !== null && sameCurrency ? Math.round((supplierPrice - target.price) * 100) / 100 : null, state,
       };
+      if (state === "ambiguous" && match.source && coveredUntiered(match.source)) {
+        // Summary line: it shows the row's own price, never another row's supplier price, and offers nothing.
+        delete pushed.shared; delete pushed.mapping; delete pushed.apply; delete pushed.applyHint; delete pushed.familyHint; delete pushed.matchHint; delete pushed.linkedTiers;
+        Object.assign(pushed, { state: "covered" as const, supplierPrice: null, supplierCurrency: null, difference: null, field: [target.label, "covered by its tiers"].filter(Boolean).join(" · ") });
+      }
       lines.push(pushed);
       if (attach) { pushed.link = attach.link; groups.push({ line: pushed, own, source: match.source! }); }
     }
@@ -241,7 +266,7 @@ export type PriceLineFilter = "all" | "attention" | "same";
 /** `same` includes confirmed shared lines; `shared` says how many of them there are (for the small note under the Same tile). */
 export type PriceLineSummary = { same: number; changed: number; needsMapping: number; other: number; shared: number };
 /** A line that is fine as it is: the same price, or a confirmed shared mapping. */
-const isOk = (line: PriceLine) => line.state === "same" || line.state === "shared";
+const isOk = (line: PriceLine) => line.state === "same" || line.state === "shared" || line.state === "covered";
 
 export function summarizePriceLines(lines: PriceLine[]): PriceLineSummary {
   const summary: PriceLineSummary = { same: 0, changed: 0, needsMapping: 0, other: 0, shared: 0 };
@@ -255,7 +280,7 @@ export function summarizePriceLines(lines: PriceLine[]): PriceLineSummary {
   return summary;
 }
 
-const attentionOrder: Record<PriceLineState, number> = { needs_mapping: 0, changed: 1, ambiguous: 2, not_in_supplier_list: 3, shared: 5, same: 5 };
+const attentionOrder: Record<PriceLineState, number> = { needs_mapping: 0, changed: 1, ambiguous: 2, not_in_supplier_list: 3, shared: 5, same: 5, covered: 5 };
 /** Lines that need a look first, then the rest. The incoming (code) order is kept inside each group. */
 export function filterAndOrderPriceLines(lines: PriceLine[], filter: PriceLineFilter): PriceLine[] {
   const kept = lines.filter((line) => !line.link?.notInProduct).filter((line) => filter === "all" || (filter === "same" ? isOk(line) : !isOk(line)));

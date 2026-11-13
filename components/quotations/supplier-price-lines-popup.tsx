@@ -21,6 +21,7 @@ const badgeClass: Record<PriceLineState, string> = {
   ambiguous: "border-red-200 bg-red-50 text-red-900",
   not_in_supplier_list: "border-zinc-300 bg-zinc-100 text-zinc-800",
   shared: "border-sky-200 bg-sky-50 text-sky-900",
+  covered: "border-emerald-200 bg-emerald-50 text-emerald-900",
 };
 const filters: Array<{ key: PriceLineFilter; label: string }> = [{ key: "all", label: "All" }, { key: "attention", label: "Needs attention" }, { key: "same", label: "Same" }];
 
