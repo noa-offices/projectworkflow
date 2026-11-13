@@ -40,9 +40,21 @@ test("picker shows saved tiers and disables an unrelated second link with its re
     ...common, react: { ...React, useState: (initial: unknown) => [stateIndex++ === 0 ? true : initial, () => {}] }, "@/lib/products/supplier-link-confirm": links,
   });
   const html = renderToStaticMarkup(React.createElement(SupplierLinkButton, {
-    brandId: "b", onDone() {}, line: { code: "2349", supplierPrice: 535, supplierCurrency: "EUR", link: { tierLabel: "162S", rows: [{ targetKey: "t", code: "2349", name: "Silver 101S", note: "", price: 535, currency: "EUR", linkedTiers: ["101S"], taken: true, takenReason: "Already linked. This row does not name all these tiers." }] } },
+    brandId: "b", onDone() {}, line: { code: "2349", supplierPrice: 535, supplierCurrency: "EUR", link: { tierLabel: "162S", rows: [{ targetKey: "t", code: "2349", name: "Silver 101S", note: "", price: 535, currency: "EUR", linkedTiers: ["101S"], taken: true, takenReason: "Different price (EUR 600.00) from the row (EUR 535.00)" }] } },
   }));
   assert.match(html, /Linked to 101S/);
-  assert.match(html, /does not name all these tiers/);
+  assert.match(html, /Different price \(EUR 600\.00\) from the row \(EUR 535\.00\)/);
   assert.match(html, /type="radio"[^>]*disabled/);
+});
+
+test("picker shows 'Also linked to' for a linked row that can take one more tier of the same price", () => {
+  let stateIndex = 0;
+  const { SupplierLinkButton } = compile("components/quotations/supplier-price-link-panel.tsx", {
+    ...common, react: { ...React, useState: (initial: unknown) => [stateIndex++ === 0 ? true : initial, () => {}] }, "@/lib/products/supplier-link-confirm": links,
+  });
+  const html = renderToStaticMarkup(React.createElement(SupplierLinkButton, {
+    brandId: "b", onDone() {}, line: { code: "608", supplierPrice: 49, supplierCurrency: "EUR", link: { tierLabel: "JC213", rows: [{ targetKey: "t", code: "608", name: "Seat depth", note: "", price: 49, currency: "EUR", linkedTiers: ["JC211"], taken: false }] } },
+  }));
+  assert.match(html, /Also linked to JC211/);
+  assert.doesNotMatch(html, /type="radio"[^>]*disabled/);
 });

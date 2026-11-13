@@ -16,8 +16,11 @@ export type LineShared = {
   targets: Array<{ key: string; templateId: string; templateName: string; label: string; pricingVersion: string; price: number | null; currency: string }>;
 };
 /** Why a product row is suggested for a supplier tier. Rule (a), a structured model reference per row, is not available on a price target. */
-export type LinkSuggestionReason = "name" | "note" | "id";
-export const linkReasonLabels: Record<LinkSuggestionReason, string> = { name: "from the row name", note: "from the row note", id: "from the row id" };
+export type LinkSuggestionReason = "name" | "note" | "id" | "price";
+export const linkReasonLabels: Record<LinkSuggestionReason, string> = { name: "from the row name", note: "from the row note", id: "from the row id", price: "same price as the row" };
+const priceText = (value: number | null, currency: string) => value === null ? "—" : `${currency} ${value.toFixed(2)}`;
+/** Reason in plain words. A price reason names the price, e.g. "Same price EUR 49.00 as the row". Display only. */
+export const linkReasonText = (reason: LinkSuggestionReason, row: Pick<LinkRow, "price" | "currency">) => reason === "price" ? `Same price ${priceText(row.price, row.currency)} as the row` : linkReasonLabels[reason];
 export type LinkRow = { targetKey: string; /** The row's own supplier code, to tell rows apart. Display only. */ code: string; name: string; note: string; price: number | null; currency: string; /** Cannot accept this tier in addition to its saved links. */ taken: boolean; takenReason?: string; linkedTiers?: string[]; mapping: LineMapping };
 /**
  * One supplier line that could match several rows of this product (or whose code has several tiers). Nothing is saved: a link is made only
@@ -96,9 +99,12 @@ export function buildPriceLines(matches: PriceMatch[], templateId: string, bindi
         const bound = bindingsByTarget.get(target.key) ?? [];
         const canShare = bound.length > 0 && bound.every((binding) => binding.kind === "alias" && binding.target_keys?.length === 1 && comparisonCode(binding.code) === comparisonCode(source.code) && binding.price_field === source.price_field)
           && new Set([...linked.map((tier) => tier.toLowerCase()), tierLabel.trim().toLowerCase()]).size >= 2 && [...linked, tierLabel].every(named);
-        const taken = takenKeys.has(target.key) && !canShare;
+        // A row that already holds saved single-target alias tiers of this code may take one more tier of an EQUAL price and currency (several tiers, one price).
+        const plainAliases = bound.length > 0 && bound.every((binding) => binding.kind === "alias" && binding.target_keys?.length === 1 && comparisonCode(binding.code) === comparisonCode(source.code) && binding.price_field === source.price_field);
+        const samePrice = plainAliases && target.price !== null && source.price === target.price && target.currency === source.currency;
+        const taken = takenKeys.has(target.key) && !canShare && !samePrice;
         return { targetKey: target.key, code: target.raw_code || target.code, name: target.label || target.row_id, note, price: target.price, currency: target.currency, taken,
-          ...(taken ? { takenReason: bound.every((binding) => binding.kind === "alias") ? "Already linked. This row does not name all these tiers." : "Already linked by a mapping that cannot be reused." } : {}), ...(linked.length ? { linkedTiers: linked } : {}), mapping: previewMapping(source, target) };
+          ...(taken ? { takenReason: plainAliases ? `Different price (${priceText(source.price, source.currency)}) from the row (${priceText(target.price, target.currency)})` : "Already linked by a mapping that cannot be reused." } : {}), ...(linked.length ? { linkedTiers: linked } : {}), mapping: previewMapping(source, target) };
       }) : [];
       const line: PriceLine = {
         key: `${match.key}|link`, code: own[0].raw_code || own[0].code, field: `Tier ${tierLabel || "—"} · could match ${own.length} row${own.length === 1 ? "" : "s"} of your product`,
@@ -183,8 +189,15 @@ function suggestLinks(groups: Array<{ line: PriceLine; own: PriceTarget[]; sourc
       return { group, hits, pick: level.length === 1 && group.line.link!.rows.some((row) => row.targetKey === level[0].target.key && !row.taken) ? level[0] : null };
     });
     const recognisable = tiers.some((tier) => list.some((group) => group.own.some((target) => clueFor(target, tier, notes.get(target.key) ?? "") !== null)));
+    // Weakest clue: equal price. Only for plain rows (no row of the code names any tier), only when no name/note/id clue exists for the tier,
+    // and only when exactly one row of this product has this price and currency. Never for rows that name tiers, so those behave as before.
+    const plain = !recognisable;
     for (const item of found) {
       const link = item.group.line.link!;
+      if (plain && item.hits.length === 0 && item.group.source.price !== null) {
+        const same = item.group.own.filter((target) => target.currency === item.group.source.currency && target.price === item.group.source.price);
+        if (same.length === 1 && link.rows.some((row) => row.targetKey === same[0].key && !row.taken)) { link.suggestion = { targetKey: same[0].key, reason: "price" }; continue; }
+      }
       if (item.pick) link.suggestion = { targetKey: item.pick.target.key, reason: item.pick.reason };
       const tier = link.tierLabel.trim().toLowerCase();
       if (recognisable && !item.group.own.some((target) => clueFor(target, tier, notes.get(target.key) ?? "") !== null)) link.notInProduct = true;

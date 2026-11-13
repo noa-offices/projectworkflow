@@ -4,7 +4,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { confirmSupplierBindings } from "@/app/products/price-updates/supplier-sources/actions";
 import { confirmLineText, confirmLinksInOrder, linkRowIdentity } from "@/lib/products/supplier-link-confirm";
-import { linkReasonLabels, notInProductLines, priceLineStateLabels, type LinkRow, type PriceLine } from "@/lib/products/supplier-price-lines";
+import { linkReasonText, notInProductLines, priceLineStateLabels, type LinkRow, type PriceLine } from "@/lib/products/supplier-price-lines";
 
 const money = (value: number | null, currency: string | null) => value === null ? "—" : `${currency ?? ""} ${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim();
 const lineLabel = (line: PriceLine) => `${line.code} · ${line.link?.tierLabel ?? ""}`;
@@ -47,7 +47,7 @@ export function SupplierLinkButton({ line, brandId, onDone }: { line: PriceLine;
   return (
     <>
       <button type="button" onClick={start} className="whitespace-nowrap text-xs font-semibold text-emerald-800 underline">{suggestion ? "Link" : "Link to a row"}</button>
-      {suggestion && link.suggestion ? <span className="block text-[11px] text-zinc-500">Suggested: {linkRowIdentity(suggestion).join(" · ")} ({linkReasonLabels[link.suggestion.reason]})</span> : null}
+      {suggestion && link.suggestion ? <span className="block text-[11px] text-zinc-500">Suggested: {linkRowIdentity(suggestion).join(" · ")} ({linkReasonText(link.suggestion.reason, suggestion)})</span> : null}
       {open ? <Dialog title="Link this supplier line to a row" onClose={() => { if (!busy) setOpen(false); }}>
         <p className="mt-2 text-sm text-zinc-700">Supplier tier <span className="font-semibold">{link.tierLabel || "—"}</span> for code <span className="font-semibold">{line.code}</span>, supplier price <span className="font-semibold">{money(line.supplierPrice, line.supplierCurrency)}</span>.</p>
         <fieldset className="mt-3 space-y-2">
@@ -56,7 +56,7 @@ export function SupplierLinkButton({ line, brandId, onDone }: { line: PriceLine;
             <label key={item.targetKey} className={`flex items-start gap-2 rounded-md border p-2 text-sm ${item.taken ? "border-zinc-200 bg-zinc-50 text-zinc-500" : "border-zinc-300"}`}>
               <input type="radio" name="link-row" disabled={item.taken} checked={chosen === item.targetKey} onChange={() => setChosen(item.targetKey)} className="mt-1" />
               <span><span className="font-semibold text-zinc-900">{item.code ? `${item.code} · ` : ""}{item.name}</span>{item.note ? <span className="block text-xs text-zinc-600">{item.note}</span> : null}
-                <span className="block text-xs">Your price {money(item.price, item.currency)}{item.linkedTiers?.length ? ` · Linked to ${item.linkedTiers.join(", ")}` : ""}{item.taken ? ` · ${item.takenReason ?? "Already linked to another supplier line."}` : ""}{link.suggestion?.targetKey === item.targetKey ? ` · suggested (${linkReasonLabels[link.suggestion.reason]})` : ""}</span></span>
+                <span className="block text-xs">Your price {money(item.price, item.currency)}{item.linkedTiers?.length ? ` · ${item.taken ? "Linked to" : "Also linked to"} ${item.linkedTiers.join(", ")}` : ""}{item.taken ? ` · ${item.takenReason ?? "Already linked to another supplier line."}` : ""}{link.suggestion?.targetKey === item.targetKey ? ` · suggested (${linkReasonText(link.suggestion.reason, item)})` : ""}</span></span>
             </label>
           ))}
         </fieldset>

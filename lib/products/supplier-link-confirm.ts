@@ -1,4 +1,4 @@
-import { linkReasonLabels, priceLineStateLabels, type LinkRow, type LineMapping, type PriceLine } from "./supplier-price-lines";
+import { linkReasonText, priceLineStateLabels, type LinkRow, type LineMapping, type PriceLine } from "./supplier-price-lines";
 
 /** The proposal shape of the existing confirmSupplierBindings action, for one alias link. Same fields the "Map this line" step sends. */
 export const aliasProposal = (mapping: LineMapping) => ({
@@ -26,6 +26,6 @@ const amount = (value: number | null, currency: string | null) => value === null
 export const linkRowIdentity = (row: Pick<LinkRow, "code" | "name" | "note">) => [row.code, row.name, row.note].filter((part) => part.trim() !== "");
 /** One Confirm-all line: tier and price, an arrow, the row's identity and price, the result and the reason. Display only. */
 export function confirmLineText(line: PriceLine, row: LinkRow): string {
-  const reason = line.link?.suggestion ? linkReasonLabels[line.link.suggestion.reason] : "";
+  const reason = line.link?.suggestion ? linkReasonText(line.link.suggestion.reason, row) : "";
   return [`Tier ${line.link?.tierLabel ?? ""} ${amount(line.supplierPrice, line.supplierCurrency)} →`, [...linkRowIdentity(row), amount(row.price, row.currency), priceLineStateLabels[row.mapping.preview], reason].filter(Boolean).join(" · ")].join(" ");
 }
