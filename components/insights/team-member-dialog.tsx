@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, useTransition, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { AmountModeToggle } from "@/components/insights/amount-mode-toggle";
 import { DateRangeSelector } from "@/components/insights/date-range-selector";
 import { TeamMemberSkeleton } from "@/components/insights/team-member-states";
 import { memberInitials } from "@/lib/insights/team-member-dialog";
@@ -85,7 +86,7 @@ export function TeamMemberDialog({
     if (!inside) go(closeHref);
   }
 
-  const navButton = "flex h-9 w-9 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40";
+  const navButton = "flex h-9 w-9 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-600 outline-none transition hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-emerald-600 disabled:cursor-not-allowed disabled:opacity-40";
 
   return (
     <dialog
@@ -102,14 +103,15 @@ export function TeamMemberDialog({
         <header className="shrink-0 border-b border-zinc-100 px-4 py-4 sm:px-5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-900 text-sm font-semibold text-white">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-900 text-sm font-semibold text-white ring-2 ring-emerald-100 ring-offset-2">
                 {memberInitials(name)}
               </span>
               <div className="min-w-0">
                 <h2 id={`${id}-title`} className="truncate text-sm font-semibold text-zinc-950">{name}</h2>
                 <div className="mt-0.5 flex flex-wrap items-center gap-2">
                   <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-800">{roleLabel}</span>
-                  <span className="text-xs text-zinc-400">Sales Activity Profile{position ? ` · ${position}` : ""}</span>
+                  <span className="text-xs text-zinc-400">Sales Activity Profile</span>
+                  {position ? <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600">{position}</span> : null}
                 </div>
               </div>
             </div>
@@ -124,13 +126,16 @@ export function TeamMemberDialog({
               Showing <span className="font-semibold text-zinc-700">{rangeLabel.toLowerCase()}</span>
               {" "}vs. prior equivalent period
             </p>
-            <DateRangeSelector
-              current={range}
-              customFrom={customFrom}
-              customTo={customTo}
-              onPendingChange={setRangePending}
-              preserveScroll
-            />
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              <AmountModeToggle preserveScroll />
+              <DateRangeSelector
+                current={range}
+                customFrom={customFrom}
+                customTo={customTo}
+                onPendingChange={setRangePending}
+                preserveScroll
+              />
+            </div>
           </div>
         </header>
         <div aria-busy={pending} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-emerald-50/30 p-4 sm:p-5">

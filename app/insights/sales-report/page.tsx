@@ -1,9 +1,11 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { loadProjectContractTotals, projectContractQuotationIds, projectContractValue } from "@/lib/projects/project-contract-total";
 import { projectWiseApprovedRows, type ProjectWiseRow } from "@/lib/projects/project-wise-approved";
 import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
+import { AmountModeToggle } from "@/components/insights/amount-mode-toggle";
 import { DateRangeSelector } from "@/components/insights/date-range-selector";
 import { TeamMemberDialog } from "@/components/insights/team-member-dialog";
 import { TeamMemberEmptyState } from "@/components/insights/team-member-states";
@@ -23,7 +25,7 @@ import { loadTeamStats, loadProfileStatsForUser } from "@/lib/settings/profile-s
 import type { TeamMemberStat } from "@/lib/settings/profile-stats-loader";
 import type { AggMonthPoint, RepSeriesData } from "@/components/insights/sales-performance-charts";
 import { DATE_RANGE_OPTIONS, getRangeStart, resolveDateRange } from "@/lib/insights/date-ranges";
-import { formatSalesReportAEDMillions } from "@/lib/insights/sales-report-money";
+import { formatSalesReportAED, type AmountMode } from "@/lib/insights/sales-report-money";
 
 export const dynamic = "force-dynamic";
 
@@ -126,6 +128,42 @@ function statusBadgeClass(status: string): string {
 
 // ─── Inline server components ─────────────────────────────────────────────────
 
+const KPI_ICONS = {
+  quotes: "M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6",
+  quoted: "M12 3v18M16 7.5c0-1.4-1.8-2.5-4-2.5s-4 1.1-4 2.5S9.8 10 12 10s4 1.1 4 2.5S14.2 15 12 15s-4-1.1-4-2.5",
+  approved: "M5 12.5l4.5 4.5L19 7.5",
+  conversion: "M4 19l5-6 4 3 7-9M15 7h5v5",
+} as const;
+
+function KpiCard({
+  label,
+  icon,
+  footer,
+  children,
+}: {
+  label: string;
+  icon: keyof typeof KPI_ICONS;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="group flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition duration-200 hover:border-emerald-200 hover:shadow-md motion-safe:hover:-translate-y-0.5">
+      <div className="p-4 pb-2">
+        <div className="flex items-center gap-2">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-800">
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d={KPI_ICONS[icon]} />
+            </svg>
+          </span>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">{label}</p>
+        </div>
+        {children}
+      </div>
+      {footer ? <div className="mt-auto">{footer}</div> : null}
+    </div>
+  );
+}
+
 function ChangeBadge({ value }: { value: number | null }) {
   if (value === null) return null;
   const positive = value >= 0;
@@ -160,14 +198,16 @@ const REP_COLORS = ["#14532d", "#5b21b6", "#b45309", "#075985", "#9f1239", "#0f7
 function SalesLeaderboard({
   rangeLabel,
   rows,
+  amountMode,
 }: {
   rangeLabel: string;
   rows: LeaderboardRow[];
+  amountMode: AmountMode;
 }) {
   const maxAmount = rows[0]?.approvedAmount ?? 0;
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+    <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
       <div className="border-b border-zinc-100 px-4 py-3">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
           Top Sales Performers
@@ -225,7 +265,7 @@ function SalesLeaderboard({
                   {/* Approved amount */}
                   <div className="shrink-0 text-right">
                     <p className="text-[11px] font-semibold text-zinc-700">
-                      {formatSalesReportAEDMillions(row.approvedAmount)}
+                      {formatSalesReportAED(row.approvedAmount, amountMode)}
                     </p>
                     {/* Rank trend */}
                     <p className="text-[10px]">
@@ -258,11 +298,13 @@ function SalesLeaderboard({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-function aedFull(value: number) {
+function aedFull(value: number, amountMode: AmountMode = "millions") {
+  // Default keeps the existing two-decimal contract values; Full AED shows whole numbers.
+  if (amountMode === "full") return formatSalesReportAED(value, "full", { includeCurrency: false });
   return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function ProjectWiseApprovedTable({ rows, salespersonName, rangeLabel }: { rows: ProjectWiseRow[]; salespersonName: (id: string | null) => string; rangeLabel: string }) {
+function ProjectWiseApprovedTable({ rows, salespersonName, rangeLabel, amountMode }: { rows: ProjectWiseRow[]; salespersonName: (id: string | null) => string; rangeLabel: string; amountMode: AmountMode }) {
   const total = rows.reduce((sum, row) => sum + row.currentContract, 0);
   return (
     <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
@@ -298,10 +340,10 @@ function ProjectWiseApprovedTable({ rows, salespersonName, rangeLabel }: { rows:
                   <td className="px-3 py-3 text-zinc-800">{row.client}</td>
                   <td className="px-3 py-3 text-zinc-600">{row.reference}</td>
                   <td className="px-3 py-3 text-zinc-800">{salespersonName(row.salespersonId)}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{aedFull(row.quoted)}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{aedFull(row.originalContract)}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{row.variations === null ? "" : `${row.variations > 0 ? "+" : ""}${aedFull(row.variations)}`}</td>
-                  <td className="px-3 py-3 text-right font-medium tabular-nums text-zinc-950">{aedFull(row.currentContract)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{aedFull(row.quoted, amountMode)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{aedFull(row.originalContract, amountMode)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{row.variations === null ? "" : `${row.variations > 0 ? "+" : ""}${aedFull(row.variations, amountMode)}`}</td>
+                  <td className="px-3 py-3 text-right font-medium tabular-nums text-zinc-950">{aedFull(row.currentContract, amountMode)}</td>
                   <td className="px-3 py-3 text-zinc-600">{row.approvedDate.slice(0, 10)}</td>
                   <td className="px-4 py-3 text-zinc-800">{row.status}</td>
                 </tr>
@@ -310,7 +352,7 @@ function ProjectWiseApprovedTable({ rows, salespersonName, rangeLabel }: { rows:
             <tfoot className="bg-zinc-50 text-sm font-semibold text-zinc-950">
               <tr>
                 <td className="px-4 py-3" colSpan={8}>Total (AED)</td>
-                <td className="px-3 py-3 text-right tabular-nums">{aedFull(total)}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{aedFull(total, amountMode)}</td>
                 <td colSpan={2} />
               </tr>
             </tfoot>
@@ -326,11 +368,13 @@ function SalesTeamPerformanceTable({
   rangeLabel,
   canOpenDetails,
   hrefForUser,
+  amountMode,
 }: {
   rows: LeaderboardRow[];
   rangeLabel: string;
   canOpenDetails: boolean;
   hrefForUser: (userId: string) => string;
+  amountMode: AmountMode;
 }) {
   return (
     <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
@@ -402,11 +446,11 @@ function SalesTeamPerformanceTable({
                   </td>
                   <td className="px-3 py-3 text-right tabular-nums text-zinc-700">{row.totalQuotes}</td>
                   <td className="px-3 py-3 text-right tabular-nums text-zinc-700">
-                    {formatSalesReportAEDMillions(row.totalQuotedAmount)}
+                    {formatSalesReportAED(row.totalQuotedAmount, amountMode)}
                   </td>
                   <td className="px-3 py-3 text-right tabular-nums text-zinc-700">{row.approvedCount}</td>
                   <td className="px-3 py-3 text-right tabular-nums font-medium text-zinc-900">
-                    {formatSalesReportAEDMillions(row.approvedAmount)}
+                    {formatSalesReportAED(row.approvedAmount, amountMode)}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-zinc-700">
                     {(row.approvalRate * 100).toFixed(1)}%
@@ -472,6 +516,7 @@ type PageProps = {
   searchParams?: Promise<{
     detailTab?: string;
     from?: string;
+    amount?: string;
     range?: string;
     teamView?: string;
     to?: string;
@@ -521,8 +566,10 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
   const rangeLabel = hasValidCustomRange
     ? `${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(rangeStart)} – ${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(rangeEnd)}`
     : DATE_RANGE_OPTIONS.find((option) => option.value === range)?.label ?? "Last 6 months";
+  const amountMode: AmountMode = resolved?.amount === "full" ? "full" : "millions";
   const baseReportParams = new URLSearchParams({ range });
   baseReportParams.set("teamView", teamView);
+  if (amountMode === "full") baseReportParams.set("amount", "full");
   if (hasValidCustomRange && resolved?.from && resolved?.to) {
     baseReportParams.set("from", resolved.from);
     baseReportParams.set("to", resolved.to);
@@ -627,7 +674,14 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
   const selectedNeighbours = selectedUserId
     ? teamMemberNeighbours(visibleTeamStats.map((member) => member.userId), selectedUserId)
     : null;
-  const selectedPosition = selectedNeighbours && selectedNeighbours.index >= 0
+  // Display only: which row gets the top-performer badge and how wide each contribution bar is.
+  const maxContribution = Math.max(0, ...visibleTeamStats.map((member) => member.contributionValue ?? 0));
+  const topMemberId = teamView === "commercial"
+    ? visibleTeamStats[0]?.userId ?? null
+    : maxContribution > 0
+      ? visibleTeamStats.find((member) => member.contributionValue === maxContribution)?.userId ?? null
+      : null;
+  const selectedPosition =selectedNeighbours && selectedNeighbours.index >= 0
     ? `${selectedNeighbours.index + 1} of ${selectedNeighbours.total}`
     : null;
 
@@ -821,122 +875,115 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
             Showing <span className="font-semibold text-zinc-700">{rangeLabel.toLowerCase()}</span>
             {" "}vs. prior equivalent period
           </p>
-          <DateRangeSelector
-            current={range}
-            customFrom={hasValidCustomRange ? resolved?.from : undefined}
-            customTo={hasValidCustomRange ? resolved?.to : undefined}
-          />
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <AmountModeToggle />
+            <DateRangeSelector
+              current={range}
+              customFrom={hasValidCustomRange ? resolved?.from : undefined}
+              customTo={hasValidCustomRange ? resolved?.to : undefined}
+            />
+          </div>
         </div>
 
-        {/* ── Two-column grid ──────────────────────────────────────────────── */}
-        <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid gap-5">
 
-          {/* ── LEFT COLUMN ──────────────────────────────────────────────── */}
-          <div className="grid gap-5">
+          {/* KPI strip — 4 tiles in one row from xl, 2 columns on tablets, stacked on phones */}
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
 
-            {/* KPI strip — 4 individual tiles */}
-            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+            {/* Tile 1: Total Quotes */}
+            <KpiCard label="Total Quotes" icon="quotes">
+              <p className="mt-2 text-2xl font-bold tabular-nums text-zinc-950">
+                {kpiCurrent.totalQuotes}
+              </p>
+              <ChangeBadge value={quotesChange} />
+              <p className="mt-1 text-[10px] text-zinc-400">
+                vs {kpiPrior.totalQuotes} prior period
+              </p>
+            </KpiCard>
 
-              {/* Tile 1: Total Quotes */}
-              <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                  Total Quotes
-                </p>
-                <p className="mt-2 text-2xl font-bold text-zinc-950">
-                  {kpiCurrent.totalQuotes}
-                </p>
-                <ChangeBadge value={quotesChange} />
-                <p className="mt-1 text-[10px] text-zinc-400">
-                  vs {kpiPrior.totalQuotes} prior period
-                </p>
-              </div>
-
-              {/* Tile 2: Total Quoted Value + sparkline */}
-              <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-                <div className="p-4 pb-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                    Total Quoted
-                  </p>
-                  <p className="mt-2 text-2xl font-bold text-zinc-950">
-                    {formatSalesReportAEDMillions(kpiCurrent.totalQuotedAmount)}
-                  </p>
-                  <ChangeBadge value={quotedChange} />
-                  <p className="mt-1 text-[10px] text-zinc-400">Latest quotation per folder</p>
-                </div>
+            {/* Tile 2: Total Quoted Value + sparkline */}
+            <KpiCard
+              label="Total Quoted"
+              icon="quoted"
+              footer={
                 <SalesRepSparkline
                   data={kpiQuotedSparkline}
                   color="#6366f1"
                   uniqueId="kpi-quoted"
                 />
-              </div>
+              }
+            >
+              <p className="mt-2 text-2xl font-bold tabular-nums text-zinc-950">
+                {formatSalesReportAED(kpiCurrent.totalQuotedAmount, amountMode)}
+              </p>
+              <ChangeBadge value={quotedChange} />
+              <p className="mt-1 text-[10px] text-zinc-400">Latest quotation per folder</p>
+            </KpiCard>
 
-              {/* Tile 3: Total Approved Value + sparkline */}
-              <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-                <div className="p-4 pb-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                    Client Approved Value
-                  </p>
-                  <p className="mt-2 text-2xl font-bold text-zinc-950">
-                    {formatSalesReportAEDMillions(kpiCurrent.approvedAmount)}
-                  </p>
-                  <ChangeBadge value={approvedChange} />
-                  <p className="mt-1 text-[10px] text-zinc-400">Current Project contract value (includes variations)</p>
-                </div>
+            {/* Tile 3: Total Approved Value + sparkline */}
+            <KpiCard
+              label="Client Approved Value"
+              icon="approved"
+              footer={
                 <SalesRepSparkline
                   data={kpiApprovedSparkline}
                   color="#10b981"
                   uniqueId="kpi-approved"
                 />
-              </div>
+              }
+            >
+              <p className="mt-2 text-2xl font-bold tabular-nums text-zinc-950">
+                {formatSalesReportAED(kpiCurrent.approvedAmount, amountMode)}
+              </p>
+              <ChangeBadge value={approvedChange} />
+              <p className="mt-1 text-[10px] text-zinc-400">Current Project contract value (includes variations)</p>
+            </KpiCard>
 
-              {/* Tile 4: Overall Conversion Rate + progress bar */}
-              <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                  Conversion Rate
-                </p>
-                <p className="mt-2 text-2xl font-bold text-zinc-950">
-                  {conversionCurrent.toFixed(0)}%
-                </p>
-                <ChangeBadge value={conversionChange} />
-                <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
-                  <div
-                    className="h-1 rounded-full bg-emerald-500 transition-all"
-                    style={{ width: `${Math.min(conversionCurrent, 100)}%` }}
-                  />
-                </div>
+            {/* Tile 4: Overall Conversion Rate + progress bar */}
+            <KpiCard label="Conversion Rate" icon="conversion">
+              <p className="mt-2 text-2xl font-bold tabular-nums text-zinc-950">
+                {conversionCurrent.toFixed(0)}%
+              </p>
+              <ChangeBadge value={conversionChange} />
+              <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
+                <div
+                  className="h-1 rounded-full bg-emerald-500 transition-all"
+                  style={{ width: `${Math.min(conversionCurrent, 100)}%` }}
+                />
               </div>
-            </div>
+            </KpiCard>
+          </div>
 
-            {/* Performance Trends charts */}
-            <div>
+          {/* Charts with Top Sales Performers beside them (below on smaller screens) */}
+          <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="min-w-0">
               <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
                 Performance Trends
               </h2>
               <SalesPerformanceCharts
                 perRepData={perRepSeriesData}
                 aggMonthData={aggMonthData}
+                amountMode={amountMode}
               />
             </div>
-
-            <SalesTeamPerformanceTable
-              rows={leaderboardRows}
-              rangeLabel={rangeLabel}
-              canOpenDetails={profile?.role === "system_owner"}
-              hrefForUser={(userId) => reportHref({ user: userId })}
-            />
-            <div className="mt-5">
-              <ProjectWiseApprovedTable
-                rows={projectWiseRows}
-                salespersonName={(id) => (id ? salespersonNames.get(id) ?? "Unknown" : "Unassigned")}
-                rangeLabel={rangeLabel}
-              />
-            </div>
+            <aside className="min-w-0">
+              <SalesLeaderboard rows={leaderboardRows} rangeLabel={rangeLabel} amountMode={amountMode} />
+            </aside>
           </div>
 
-          {/* ── RIGHT COLUMN: Leaderboard (sticky on desktop) ─────────────── */}
-          <aside className="2xl:sticky 2xl:top-4 2xl:self-start">
-            <SalesLeaderboard rows={leaderboardRows} rangeLabel={rangeLabel} />
-          </aside>
+          <SalesTeamPerformanceTable
+            rows={leaderboardRows}
+            rangeLabel={rangeLabel}
+            canOpenDetails={profile?.role === "system_owner"}
+            hrefForUser={(userId) => reportHref({ user: userId })}
+            amountMode={amountMode}
+          />
+          <ProjectWiseApprovedTable
+            rows={projectWiseRows}
+            salespersonName={(id) => (id ? salespersonNames.get(id) ?? "Unknown" : "Unassigned")}
+            rangeLabel={rangeLabel}
+            amountMode={amountMode}
+          />
         </div>
 
         {/* ── Team Overview — system_owner only ───────────────────────────── */}
@@ -972,9 +1019,9 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                 Commercial Sales Performance
               </Link>
             </div>
-            <div className="overflow-x-auto">
+            <div className="max-h-[34rem] overflow-auto">
               <table className="w-full min-w-[980px] divide-y divide-zinc-200 text-sm">
-                <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
+                <thead className="sticky top-0 z-10 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 shadow-[0_1px_0_0_#e4e4e7]">
                   {teamView === "commercial" ? (
                     <tr>
                       <th className="px-5 py-3 text-left font-semibold">Sales Manager</th>
@@ -999,40 +1046,43 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                   )}
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {(visibleTeamStats as TeamMemberStat[]).map((member, index) => {
+                  {(visibleTeamStats as TeamMemberStat[]).map((member) => {
                     const isSelected = member.userId === selectedUserId;
                     const rowHref = reportHref({ user: member.userId });
                     return (
                       <tr
                         key={member.userId}
+                        aria-selected={isSelected}
                         className={`transition-colors ${
                           isSelected
-                            ? "border-l-2 border-emerald-600 bg-emerald-50"
-                            : teamView === "commercial" && index === 0
-                            ? "bg-emerald-50/40 hover:bg-zinc-50"
+                            ? "bg-emerald-50 shadow-[inset_3px_0_0_0_#059669]"
+                            : member.userId === topMemberId
+                            ? "bg-emerald-50/40 hover:bg-emerald-50/70"
                             : "hover:bg-zinc-50"
                         }`}
                       >
                         <td className="px-0">
-                          <Link href={rowHref} scroll={false}className="block px-5 py-4 font-medium text-zinc-950">
+                          <Link href={rowHref} scroll={false} className="block px-5 py-4 font-medium text-zinc-950">
                             {member.displayName}
-                            {teamView === "commercial" && index === 0 && (
-                              <span className="ml-2 text-xs text-emerald-700">Top performer</span>
+                            {member.userId === topMemberId && (
+                              <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                                #1 Top performer
+                              </span>
                             )}
                           </Link>
                         </td>
                         <td className="px-0">
-                          <Link href={rowHref} scroll={false}className={`block px-5 py-4 ${teamView === "commercial" ? "text-right text-zinc-950" : "text-zinc-500"}`}>
+                          <Link href={rowHref} scroll={false} className={`block px-5 py-4 ${teamView === "commercial" ? "text-right text-zinc-950" : "text-zinc-500"}`}>
                             {teamView === "commercial" ? member.totalQuotations : roleLabel(member.role)}
                           </Link>
                         </td>
                         <td className="px-0">
-                          <Link href={rowHref} scroll={false}className={`block px-5 py-4 ${teamView === "commercial" ? "text-right" : "text-left"} text-zinc-950`}>
+                          <Link href={rowHref} scroll={false} className={`block px-5 py-4 ${teamView === "commercial" ? "text-right" : "text-left"} text-zinc-950`}>
                             {teamView === "commercial" ? member.approvedQuotations : member.primaryContribution}
                           </Link>
                         </td>
                         <td className="px-0">
-                          <Link href={rowHref} scroll={false}className="block px-5 py-4 text-right text-zinc-950">
+                          <Link href={rowHref} scroll={false} className="block px-5 py-4 text-right text-zinc-950">
                             {teamView === "commercial"
                               ? member.totalQuotations > 0
                                 ? Math.round((member.approvedQuotations / member.totalQuotations) * 100) + "%"
@@ -1041,24 +1091,32 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                           </Link>
                         </td>
                         <td className="px-0">
-                          <Link href={rowHref} scroll={false}className="block px-5 py-4 text-right text-zinc-950">
+                          <Link href={rowHref} scroll={false} className="block px-5 py-4 text-right text-zinc-950">
                             {teamView === "commercial"
-                              ? formatSalesReportAEDMillions(member.totalValue)
+                              ? formatSalesReportAED(member.totalValue, amountMode)
                               : member.approvedCompleted}
                           </Link>
                         </td>
                         <td className="px-0">
-                          <Link href={rowHref} scroll={false}className="block px-5 py-4 text-right font-medium text-zinc-950">
+                          <Link href={rowHref} scroll={false} className="block px-5 py-4 text-right font-medium text-zinc-950">
                             {teamView === "commercial"
-                              ? formatSalesReportAEDMillions(member.approvedValue)
+                              ? formatSalesReportAED(member.approvedValue, amountMode)
                               : member.contributionValue === null
                                 ? "—"
-                                : formatSalesReportAEDMillions(member.contributionValue)}
+                                : formatSalesReportAED(member.contributionValue, amountMode)}
+                            {teamView === "contribution" && member.contributionValue !== null && maxContribution > 0 ? (
+                              <span className="mt-1.5 ml-auto block h-1 w-24 overflow-hidden rounded-full bg-zinc-100">
+                                <span
+                                  className="block h-1 rounded-full bg-emerald-500"
+                                  style={{ width: `${Math.min(100, Math.max(0, (member.contributionValue / maxContribution) * 100))}%` }}
+                                />
+                              </span>
+                            ) : null}
                           </Link>
                         </td>
                         {teamView === "contribution" ? (
                           <td className="px-0">
-                            <Link href={rowHref} scroll={false}className="block px-5 py-4 text-right text-zinc-950">
+                            <Link href={rowHref} scroll={false} className="block px-5 py-4 text-right text-zinc-950">
                               {member.activityCount}
                             </Link>
                           </td>
@@ -1151,8 +1209,8 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                       {selectedUsesOperationalAttribution
                         ? selectedUserInfo.contributionValue === null
                           ? "—"
-                          : formatSalesReportAEDMillions(selectedUserInfo.contributionValue)
-                        : formatSalesReportAEDMillions(selectedUserStats.totalValue)}
+                          : formatSalesReportAED(selectedUserInfo.contributionValue, amountMode)
+                        : formatSalesReportAED(selectedUserStats.totalValue, amountMode)}
                     </p>
                     {selectedUsesPreparationAttribution ? (
                       <p className="mt-1 text-[10px] leading-4 text-zinc-400">
@@ -1171,6 +1229,9 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                   </h4>
                   <SalesPerformanceCharts
                     perRepData={[]}
+                    showRepChart={false}
+                    valueKind="count"
+                    amountMode={amountMode}
                     aggMonthData={selectedUserStats.monthlyData.map((m) => ({
                       month: m.month,
                       quoted: m.total,
@@ -1316,7 +1377,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                                 </span>
                               </td>
                               <td className="px-4 py-3 text-right text-zinc-700">
-                                {formatSalesReportAEDMillions(q.grand_total ?? 0)}
+                                {formatSalesReportAED(q.grand_total ?? 0, amountMode)}
                               </td>
                               <td className="px-4 py-3 text-xs text-zinc-400">
                                 {new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(
