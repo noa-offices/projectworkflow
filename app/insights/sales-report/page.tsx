@@ -22,6 +22,8 @@ import {
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadTeamStats, loadProfileStatsForUser } from "@/lib/settings/profile-stats-loader";
+import { loadTeamContributionStats } from "@/lib/settings/team-contribution-loader";
+import { mostQuotesCreatedIds, type MemberContribution } from "@/lib/settings/team-contribution";
 import type { TeamMemberStat } from "@/lib/settings/profile-stats-loader";
 import type { AggMonthPoint, RepSeriesData } from "@/components/insights/sales-performance-charts";
 import { DATE_RANGE_OPTIONS, getRangeStart, resolveDateRange } from "@/lib/insights/date-ranges";
@@ -629,20 +631,35 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
       : null;
 
   const selectedUserInfo = teamStats?.find((m) => m.userId === selectedUserId) ?? null;
+  // Team Contribution rules (created / edited / created value) come from their own loader; see lib/settings/team-contribution.ts.
+  const teamContribution = teamStats
+    ? await loadTeamContributionStats(teamDateRange, teamStats.map((member) => member.userId))
+    : null;
+  const contributionOf = (userId: string): MemberContribution =>
+    teamContribution?.[userId] ?? {
+      approvedOfCreated: 0,
+      createdCount: 0,
+      createdValue: 0,
+      editedCount: 0,
+      monthlyData: [],
+      recentCreated: [],
+      userId,
+    };
   const visibleTeamStats = teamView === "commercial"
     ? (teamStats ?? [])
       .filter((member) => member.role === "sales_designer")
       .sort((left, right) => right.totalValue - left.totalValue)
-    : teamStats ?? [];
+    : [...(teamStats ?? [])].sort(
+      (left, right) =>
+        contributionOf(right.userId).createdCount - contributionOf(left.userId).createdCount ||
+        contributionOf(right.userId).editedCount - contributionOf(left.userId).editedCount ||
+        right.activityCount - left.activityCount ||
+        left.displayName.localeCompare(right.displayName),
+    );
+  const selectedContribution = contributionOf(selectedUserId ?? "");
   const selectedUserStats = selectedUserId
     ? await loadProfileStatsForUser(selectedUserId, teamDateRange, selectedUserInfo?.role ?? null)
     : null;
-  const selectedUsesPreparationAttribution = [
-    "sales_coordinator",
-    "designer",
-  ].includes(selectedUserInfo?.role ?? "");
-  const selectedUsesOperationalAttribution = selectedUserInfo?.role !== "sales_designer" &&
-    !selectedUsesPreparationAttribution;
   const selectedRecentActivity = selectedUserStats?.recentActivity ?? [];
   const selectedProductActivity = selectedRecentActivity.filter(
     (entry) =>
@@ -661,26 +678,27 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
       "confirmed_order_project_created",
     ].includes(entry.action),
   );
-  const hasSelectedTrend = selectedUserStats?.monthlyData.some(
+  const hasSelectedTrend = selectedContribution.monthlyData.some(
     (month) => month.total > 0 || month.approved > 0,
-  ) ?? false;
+  );
   const selectedHasNoData = selectedUserStats != null && selectedUserInfo != null &&
     !hasSelectedTrend &&
-    selectedUserStats.totalQuotations === 0 &&
-    selectedUserStats.recentQuotations.length === 0 &&
+    selectedContribution.createdCount === 0 &&
+    selectedContribution.editedCount === 0 &&
     selectedRecentActivity.length === 0 &&
-    selectedUserInfo.recordsWorkedOn === 0 &&
     selectedUserInfo.activityCount === 0;
   const selectedNeighbours = selectedUserId
     ? teamMemberNeighbours(visibleTeamStats.map((member) => member.userId), selectedUserId)
     : null;
   // Display only: which row gets the top-performer badge and how wide each contribution bar is.
-  const maxContribution = Math.max(0, ...visibleTeamStats.map((member) => member.contributionValue ?? 0));
-  const topMemberId = teamView === "commercial"
-    ? visibleTeamStats[0]?.userId ?? null
-    : maxContribution > 0
-      ? visibleTeamStats.find((member) => member.contributionValue === maxContribution)?.userId ?? null
-      : null;
+  const maxCreatedValue = Math.max(0, ...visibleTeamStats.map((member) => contributionOf(member.userId).createdValue));
+  const mostCreatedIds = teamStats
+    ? mostQuotesCreatedIds(
+      visibleTeamStats.map((member) => ({ createdCount: contributionOf(member.userId).createdCount, userId: member.userId })),
+    )
+    : new Set<string>();
+  // Commercial tab keeps its existing "#1 Top performer" badge.
+  const topMemberId = teamView === "commercial" ? visibleTeamStats[0]?.userId ?? null : null;
   const selectedPosition =selectedNeighbours && selectedNeighbours.index >= 0
     ? `${selectedNeighbours.index + 1} of ${selectedNeighbours.total}`
     : null;
@@ -1037,9 +1055,20 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                       <th className="px-5 py-3 text-left font-semibold">Team Member</th>
                       <th className="px-5 py-3 text-left font-semibold">Role</th>
                       <th className="px-5 py-3 text-left font-semibold">Primary Contribution</th>
-                      <th className="px-5 py-3 text-right font-semibold">Records Worked On</th>
-                      <th className="px-5 py-3 text-right font-semibold">Approved / Completed</th>
-                      <th className="px-5 py-3 text-right font-semibold">Contribution Value</th>
+                      <th className="px-5 py-3 text-right font-semibold">Quotes Created</th>
+                      <th className="px-5 py-3 text-right font-semibold">
+                        Edited (logged){" "}
+                        <span
+                          tabIndex={0}
+                          role="img"
+                          aria-label="Only edits recorded in the activity log are counted."
+                          title="Only edits recorded in the activity log are counted."
+                          className="ml-0.5 inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-zinc-300 align-middle text-[10px] font-bold normal-case text-zinc-500 outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+                        >
+                          i
+                        </span>
+                      </th>
+                      <th className="px-5 py-3 text-right font-semibold">Created Value</th>
                       <th className="px-5 py-3 text-right font-semibold">Activity Count</th>
                       <th className="px-5 py-3 w-8" />
                     </tr>
@@ -1056,7 +1085,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                         className={`transition-colors ${
                           isSelected
                             ? "bg-emerald-50 shadow-[inset_3px_0_0_0_#059669]"
-                            : member.userId === topMemberId
+                            : member.userId === topMemberId || (teamView === "contribution" && mostCreatedIds.has(member.userId))
                             ? "bg-emerald-50/40 hover:bg-emerald-50/70"
                             : "hover:bg-zinc-50"
                         }`}
@@ -1064,6 +1093,11 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                         <td className="px-0">
                           <Link href={rowHref} scroll={false} className="block px-5 py-4 font-medium text-zinc-950">
                             {member.displayName}
+                            {teamView === "contribution" && mostCreatedIds.has(member.userId) && (
+                              <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                                Most quotes created
+                              </span>
+                            )}
                             {member.userId === topMemberId && (
                               <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
                                 #1 Top performer
@@ -1087,28 +1121,26 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                               ? member.totalQuotations > 0
                                 ? Math.round((member.approvedQuotations / member.totalQuotations) * 100) + "%"
                                 : "—"
-                              : member.recordsWorkedOn}
+                              : contributionOf(member.userId).createdCount}
                           </Link>
                         </td>
                         <td className="px-0">
                           <Link href={rowHref} scroll={false} className="block px-5 py-4 text-right text-zinc-950">
                             {teamView === "commercial"
                               ? formatSalesReportAED(member.totalValue, amountMode)
-                              : member.approvedCompleted}
+                              : contributionOf(member.userId).editedCount}
                           </Link>
                         </td>
                         <td className="px-0">
                           <Link href={rowHref} scroll={false} className="block px-5 py-4 text-right font-medium text-zinc-950">
                             {teamView === "commercial"
                               ? formatSalesReportAED(member.approvedValue, amountMode)
-                              : member.contributionValue === null
-                                ? "—"
-                                : formatSalesReportAED(member.contributionValue, amountMode)}
-                            {teamView === "contribution" && member.contributionValue !== null && maxContribution > 0 ? (
+                              : formatSalesReportAED(contributionOf(member.userId).createdValue, amountMode)}
+                            {teamView === "contribution" && maxCreatedValue > 0 ? (
                               <span className="mt-1.5 ml-auto block h-1 w-24 overflow-hidden rounded-full bg-zinc-100">
                                 <span
                                   className="block h-1 rounded-full bg-emerald-500"
-                                  style={{ width: `${Math.min(100, Math.max(0, (member.contributionValue / maxContribution) * 100))}%` }}
+                                  style={{ width: `${Math.min(100, Math.max(0, (contributionOf(member.userId).createdValue / maxCreatedValue) * 100))}%` }}
                                 />
                               </span>
                             ) : null}
@@ -1145,78 +1177,23 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
               >
               <div>
 
-                {/* Stat cards */}
+                {/* Stat cards: same numbers as the table row (see team-contribution.ts) */}
                 <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-4">
-                  <div className="rounded-lg border border-zinc-200 bg-white p-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                      {selectedUsesOperationalAttribution
-                        ? "Records Worked On"
-                        : selectedUsesPreparationAttribution
-                        ? "Quotations Prepared"
-                        : selectedUserInfo.role === "sales_designer"
-                          ? "Owned Quotations"
-                          : "Quotes Created"}
-                    </p>
-                    <p className="mt-1 text-xl font-bold text-zinc-950">
-                      {selectedUsesOperationalAttribution
-                        ? selectedUserInfo.recordsWorkedOn
-                        : selectedUserStats.totalQuotations}
-                    </p>
+                  <div className="rounded-xl border border-zinc-200 bg-white p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Quotes Created</p>
+                    <p className="mt-1 text-xl font-bold tabular-nums text-zinc-950">{selectedContribution.createdCount}</p>
                   </div>
-                  <div className="rounded-lg border border-zinc-200 bg-white p-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                      {selectedUsesOperationalAttribution
-                        ? "Approved / Completed"
-                        : selectedUsesPreparationAttribution
-                        ? "Client Approved Quotations Prepared"
-                        : "Client Approved"}
-                    </p>
-                    <p className="mt-1 text-xl font-bold text-zinc-950">
-                      {selectedUsesOperationalAttribution
-                        ? selectedUserInfo.approvedCompleted
-                        : selectedUserStats.approvedQuotations}
-                    </p>
+                  <div className="rounded-xl border border-zinc-200 bg-white p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Quotes Edited (logged)</p>
+                    <p className="mt-1 text-xl font-bold tabular-nums text-zinc-950">{selectedContribution.editedCount}</p>
                   </div>
-                  <div className="rounded-lg border border-zinc-200 bg-white p-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                      {selectedUsesOperationalAttribution
-                        ? "Activity Count"
-                        : selectedUsesPreparationAttribution
-                        ? "Preparation Success Rate"
-                        : "Win Rate"}
-                    </p>
-                    <p className="mt-1 text-xl font-bold text-zinc-950">
-                      {selectedUsesOperationalAttribution
-                        ? selectedUserInfo.activityCount
-                        : selectedUserStats.totalQuotations > 0
-                        ? Math.round(
-                            (selectedUserStats.approvedQuotations / selectedUserStats.totalQuotations) * 100,
-                          ) + "%"
-                        : "—"}
-                    </p>
+                  <div className="rounded-xl border border-zinc-200 bg-white p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Created Value</p>
+                    <p className="mt-1 text-xl font-bold tabular-nums text-zinc-950">{formatSalesReportAED(selectedContribution.createdValue, amountMode)}</p>
                   </div>
-                  <div className="rounded-lg border border-zinc-200 bg-white p-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                      {selectedUsesOperationalAttribution
-                        ? "Contribution Value"
-                        : selectedUsesPreparationAttribution
-                        ? "Prepared Quoted Value"
-                        : selectedUserInfo.role === "sales_designer"
-                          ? "Owned Quoted Value"
-                          : "Total Value"}
-                    </p>
-                    <p className="mt-1 text-xl font-bold text-zinc-950">
-                      {selectedUsesOperationalAttribution
-                        ? selectedUserInfo.contributionValue === null
-                          ? "—"
-                          : formatSalesReportAED(selectedUserInfo.contributionValue, amountMode)
-                        : formatSalesReportAED(selectedUserStats.totalValue, amountMode)}
-                    </p>
-                    {selectedUsesPreparationAttribution ? (
-                      <p className="mt-1 text-[10px] leading-4 text-zinc-400">
-                        Preparation contribution only. Commercial ownership remains with the assigned Sales Manager.
-                      </p>
-                    ) : null}
+                  <div className="rounded-xl border border-zinc-200 bg-white p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Client Approved (of created)</p>
+                    <p className="mt-1 text-xl font-bold tabular-nums text-zinc-950">{selectedContribution.approvedOfCreated}</p>
                   </div>
                 </div>
 
@@ -1232,7 +1209,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                     showRepChart={false}
                     valueKind="count"
                     amountMode={amountMode}
-                    aggMonthData={selectedUserStats.monthlyData.map((m) => ({
+                    aggMonthData={selectedContribution.monthlyData.map((m) => ({
                       month: m.month,
                       quoted: m.total,
                       approved: m.approved,
@@ -1337,10 +1314,10 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                 <div className="mt-3 rounded-lg border border-zinc-200 bg-white">
                   <div className="border-b border-zinc-200 px-4 py-3">
                     <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                      Recent Quotations
+                      Recently Created Quotations
                     </h4>
                   </div>
-                  {selectedUserStats.recentQuotations.length === 0 ? (
+                  {selectedContribution.recentCreated.length === 0 ? (
                     <p className="px-4 py-5 text-center text-xs text-zinc-400">
                       No quotations in this period.
                     </p>
@@ -1357,7 +1334,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-50">
-                          {selectedUserStats.recentQuotations.map((q) => (
+                          {selectedContribution.recentCreated.map((q) => (
                             <tr key={q.id} className="hover:bg-zinc-50">
                               <td className="px-4 py-3 font-mono text-xs text-zinc-500">
                                 <Link href={`/quotations/${q.id}`} className="hover:underline">
