@@ -5,6 +5,9 @@ import { Suspense } from "react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { ListPageSkeleton } from "@/components/layout/list-page-skeleton";
 import { DateRangeSelector } from "@/components/insights/date-range-selector";
+import { TeamMemberDialog } from "@/components/insights/team-member-dialog";
+import { TeamMemberEmptyState } from "@/components/insights/team-member-states";
+import { teamMemberNeighbours } from "@/lib/insights/team-member-dialog";
 import { SalesPerformanceCharts } from "@/components/insights/sales-performance-charts";
 import { SalesRepSparkline } from "@/components/insights/sales-rep-sparkline";
 import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
@@ -614,6 +617,19 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
   const hasSelectedTrend = selectedUserStats?.monthlyData.some(
     (month) => month.total > 0 || month.approved > 0,
   ) ?? false;
+  const selectedHasNoData = selectedUserStats != null && selectedUserInfo != null &&
+    !hasSelectedTrend &&
+    selectedUserStats.totalQuotations === 0 &&
+    selectedUserStats.recentQuotations.length === 0 &&
+    selectedRecentActivity.length === 0 &&
+    selectedUserInfo.recordsWorkedOn === 0 &&
+    selectedUserInfo.activityCount === 0;
+  const selectedNeighbours = selectedUserId
+    ? teamMemberNeighbours(visibleTeamStats.map((member) => member.userId), selectedUserId)
+    : null;
+  const selectedPosition = selectedNeighbours && selectedNeighbours.index >= 0
+    ? `${selectedNeighbours.index + 1} of ${selectedNeighbours.total}`
+    : null;
 
   // ── Approved definition ──────────────────────────────────────────────────────
   const quotedQuotations = latestPrimaryQuotationsByFolder(allQuotationRows);
@@ -985,9 +1001,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                 <tbody className="divide-y divide-zinc-100">
                   {(visibleTeamStats as TeamMemberStat[]).map((member, index) => {
                     const isSelected = member.userId === selectedUserId;
-                    const rowHref = isSelected
-                      ? reportHref()
-                      : reportHref({ user: member.userId });
+                    const rowHref = reportHref({ user: member.userId });
                     return (
                       <tr
                         key={member.userId}
@@ -1000,7 +1014,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                         }`}
                       >
                         <td className="px-0">
-                          <Link href={rowHref} className="block px-5 py-4 font-medium text-zinc-950">
+                          <Link href={rowHref} scroll={false}className="block px-5 py-4 font-medium text-zinc-950">
                             {member.displayName}
                             {teamView === "commercial" && index === 0 && (
                               <span className="ml-2 text-xs text-emerald-700">Top performer</span>
@@ -1008,17 +1022,17 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                           </Link>
                         </td>
                         <td className="px-0">
-                          <Link href={rowHref} className={`block px-5 py-4 ${teamView === "commercial" ? "text-right text-zinc-950" : "text-zinc-500"}`}>
+                          <Link href={rowHref} scroll={false}className={`block px-5 py-4 ${teamView === "commercial" ? "text-right text-zinc-950" : "text-zinc-500"}`}>
                             {teamView === "commercial" ? member.totalQuotations : roleLabel(member.role)}
                           </Link>
                         </td>
                         <td className="px-0">
-                          <Link href={rowHref} className={`block px-5 py-4 ${teamView === "commercial" ? "text-right" : "text-left"} text-zinc-950`}>
+                          <Link href={rowHref} scroll={false}className={`block px-5 py-4 ${teamView === "commercial" ? "text-right" : "text-left"} text-zinc-950`}>
                             {teamView === "commercial" ? member.approvedQuotations : member.primaryContribution}
                           </Link>
                         </td>
                         <td className="px-0">
-                          <Link href={rowHref} className="block px-5 py-4 text-right text-zinc-950">
+                          <Link href={rowHref} scroll={false}className="block px-5 py-4 text-right text-zinc-950">
                             {teamView === "commercial"
                               ? member.totalQuotations > 0
                                 ? Math.round((member.approvedQuotations / member.totalQuotations) * 100) + "%"
@@ -1027,14 +1041,14 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                           </Link>
                         </td>
                         <td className="px-0">
-                          <Link href={rowHref} className="block px-5 py-4 text-right text-zinc-950">
+                          <Link href={rowHref} scroll={false}className="block px-5 py-4 text-right text-zinc-950">
                             {teamView === "commercial"
                               ? formatSalesReportAEDMillions(member.totalValue)
                               : member.approvedCompleted}
                           </Link>
                         </td>
                         <td className="px-0">
-                          <Link href={rowHref} className="block px-5 py-4 text-right font-medium text-zinc-950">
+                          <Link href={rowHref} scroll={false}className="block px-5 py-4 text-right font-medium text-zinc-950">
                             {teamView === "commercial"
                               ? formatSalesReportAEDMillions(member.approvedValue)
                               : member.contributionValue === null
@@ -1044,22 +1058,12 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                         </td>
                         {teamView === "contribution" ? (
                           <td className="px-0">
-                            <Link href={rowHref} className="block px-5 py-4 text-right text-zinc-950">
+                            <Link href={rowHref} scroll={false}className="block px-5 py-4 text-right text-zinc-950">
                               {member.activityCount}
                             </Link>
                           </td>
                         ) : null}
-                        <td className="px-5 py-4 text-center">
-                          {isSelected ? (
-                            <Link
-                              href={reportHref()}
-                              className="text-xs font-medium text-zinc-400 hover:text-zinc-700"
-                              aria-label="Close detail"
-                            >
-                              ×
-                            </Link>
-                          ) : null}
-                        </td>
+                        <td className="px-5 py-4 text-center" />
                       </tr>
                     );
                   })}
@@ -1067,36 +1071,21 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
               </table>
             </div>
 
-            {/* ── User detail panel ── */}
+            {/* ── User detail popup ── */}
             {selectedUserStats && selectedUserInfo ? (
-              <div className="border-t border-emerald-200 bg-emerald-50/30 p-5">
-                <div className="mb-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-900 text-sm font-semibold text-white">
-                      {selectedUserInfo.displayName
-                        .split(/\s+/)
-                        .filter(Boolean)
-                        .slice(0, 2)
-                        .map((part) => part[0])
-                        .join("")
-                        .toUpperCase() || "?"}
-                    </span>
-                    <div className="min-w-0">
-                    <h3 className="text-sm font-semibold text-zinc-950">
-                      {selectedUserInfo.displayName}
-                    </h3>
-                    <p className="mt-0.5 text-xs text-zinc-400">
-                      Sales Activity Profile · {rangeLabel} · {roleLabel(selectedUserInfo.role)}
-                    </p>
-                    </div>
-                  </div>
-                  <Link
-                    href={reportHref()}
-                    className="self-start rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 sm:self-auto"
-                  >
-                    Close ×
-                  </Link>
-                </div>
+              <TeamMemberDialog
+                name={selectedUserInfo.displayName}
+                roleLabel={roleLabel(selectedUserInfo.role)}
+                position={selectedPosition}
+                rangeLabel={rangeLabel}
+                range={range}
+                customFrom={hasValidCustomRange ? resolved?.from : undefined}
+                customTo={hasValidCustomRange ? resolved?.to : undefined}
+                closeHref={reportHref()}
+                prevHref={selectedNeighbours?.prevId ? reportHref({ user: selectedNeighbours.prevId }) : null}
+                nextHref={selectedNeighbours?.nextId ? reportHref({ user: selectedNeighbours.nextId }) : null}
+              >
+              <div>
 
                 {/* Stat cards */}
                 <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-4">
@@ -1173,6 +1162,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                   </div>
                 </div>
 
+                {selectedHasNoData ? <TeamMemberEmptyState /> : (<>
                 {/* Monthly trend chart */}
                 {hasSelectedTrend ? (
                 <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-4">
@@ -1268,6 +1258,7 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                       <Link
                         key={tab}
                         href={reportHref({ user: selectedUserId ?? "", detailTab: tab })}
+                        scroll={false}
                         className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
                           detailTab === tab
                             ? "bg-emerald-900 text-white"
@@ -1413,7 +1404,9 @@ async function SalesReportContent({ searchParams, auth }: PageProps & { auth: Aw
                     />
                   </div>
                 ) : null}
+                </>)}
               </div>
+              </TeamMemberDialog>
             ) : null}
           </div>
         ) : null}

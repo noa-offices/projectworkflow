@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { DATE_RANGE_OPTIONS } from "@/lib/insights/date-ranges";
 
@@ -8,10 +8,14 @@ export function DateRangeSelector({
   current,
   customFrom,
   customTo,
+  onPendingChange,
+  preserveScroll,
 }: {
   current: string;
   customFrom?: string;
   customTo?: string;
+  onPendingChange?: (pending: boolean) => void;
+  preserveScroll?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -19,6 +23,11 @@ export function DateRangeSelector({
   const [mode, setMode] = useState(current);
   const [from, setFrom] = useState(customFrom ?? "");
   const [to, setTo] = useState(customTo ?? "");
+  const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    onPendingChange?.(isPending);
+  }, [isPending, onPendingChange]);
 
   function navigate(range: string, nextFrom?: string, nextTo?: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -30,7 +39,7 @@ export function DateRangeSelector({
       params.delete("from");
       params.delete("to");
     }
-    router.push(`${pathname}?${params.toString()}`);
+    startTransition(() => router.push(`${pathname}?${params.toString()}`, preserveScroll ? { scroll: false } : undefined));
   }
 
   return (
