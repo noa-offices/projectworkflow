@@ -234,13 +234,17 @@ export function validateSmartSetupReviewRouting(draft: ProductTemplateDraft, pla
       if (target?.kind === "option_item") {
         const optionRoute = plan.routes.find((item) => item.sourceKind === "option" && item.sourceId === target.group_id);
         const optionGroup = draft.optionGroups.find((group) => group.id === target.group_id);
-        if (!optionRoute || optionRoute.destination === "skip" || !optionGroup?.items.some((item) => item.id === target.row_id)) errors.push(`${route.sourceName} references an option item that does not exist in its Accessory / Configuration group.`);
+        if (!optionRoute || optionRoute.destination !== "accessory" || !optionGroup?.items.some((item) => item.id === target.row_id)) errors.push(`${route.sourceName} references an option item that does not exist in its Accessory / Configuration group.`);
       } else if (target && !modelTargets.has(key)) errors.push(`${route.sourceName} references a row not routed to Base / Model, Category / Matrix, or Modular Pricing.`);
       if (rule.fixedQuantity !== undefined && (!Number.isInteger(rule.fixedQuantity) || rule.fixedQuantity <= 0)) errors.push(`${route.sourceName} has an invalid fixed quantity.`);
       if (rule.scaleWithTargetQuantity === true && rule.fixedQuantity === undefined) errors.push(`${route.sourceName} quantity scaling requires a fixed quantity.`);
       if (rule.scaleWithTargetQuantity === true && target?.kind !== "modular" && target?.kind !== "option_item" && target?.kind !== "base_model") errors.push(`${route.sourceName} quantity scaling is only supported for Modular, option item or Base/Model targets.`);
       if (route.accessory?.selection === "required_exactly_one" && rule.scaleWithTargetQuantity !== true && rule.fixedQuantity !== undefined && rule.fixedQuantity !== 1) errors.push(`${route.sourceName} must use fixed quantity 1 for Required / Exactly One.`);
       if (route.accessory?.selection === "required_exactly_one" && rule.scaleWithTargetQuantity === true) errors.push(`${route.sourceName} quantity scaling cannot use Required / Exactly One.`);
+      if (target?.kind === "option_item" && route.accessory?.selection === "optional_exactly_one") {
+        if (rule.scaleWithTargetQuantity === true) errors.push(`${route.sourceName} quantity scaling cannot use Exactly One.`);
+        else if (rule.fixedQuantity !== undefined && rule.fixedQuantity !== 1) errors.push(`${route.sourceName} must use total quantity 1 for Exactly One.`);
+      }
       if (rule.allowedItemIds?.length === 0) errors.push(`${route.sourceName} requires at least one allowed item when Specific Items is selected.`);
       if (rule.allowedItemIds?.some((id) => !itemIds.has(id))) errors.push(`${route.sourceName} has an allowed item that is not part of the reviewed group.`);
     });
@@ -254,7 +258,7 @@ export function validateSmartSetupReviewRouting(draft: ProductTemplateDraft, pla
   draft.optionGroups.forEach((group) => {
     const dependentRoute = plan.routes.find((item) => item.sourceKind === "option" && item.sourceId === group.id);
     if (dependentRoute?.destination !== "accessory") return;
-    (group.conditionalConfiguration?.applicability ?? []).forEach((rule) => {
+    (dependentRoute.accessory?.rules ?? group.conditionalConfiguration?.applicability ?? []).forEach((rule) => {
       if (rule.target?.kind !== "option_item") return;
       const referencedGroupId = rule.target.group_id;
       const referencedGroup = draft.optionGroups.find((item) => item.id === referencedGroupId);
