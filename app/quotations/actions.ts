@@ -42,6 +42,7 @@ import {
 } from "@/lib/products/modular-pricing";
 import { validateModularBaseModelExclusivity, validateModularCompositionGroups } from "@/lib/products/modular-composition";
 import { resolveMainAccessoryTargets } from "@/lib/products/main-accessory-targets";
+import { evaluateWithOptionItemPass, type OptionItemPassGroup } from "@/lib/products/option-item-targets";
 import { resolvedMatrixModularPricingCategory } from "@/lib/quotations/modular-pricing-category";
 import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
 import { findWorkstationPricingRow, flattenWorkstationPricingRows, workstationPricingGroups } from "@/lib/products/workstation-pricing-groups";
@@ -6621,19 +6622,28 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   if (hasConditionalAccessoryConfiguration && !selectedAccessoryModelTargets.length) {
     redirectWithMessage(redirectPath, "Select a valid Base/Model, Category/Matrix, Modular, or Workstation row before configuring required components or options.");
   }
-  const accessoryConfiguration = evaluateProductAccessorySelection({
-    accessoryGroups: authoritativeAccessoryGroups,
-    baseModelGroupId: selectedVariantGroup?.id ?? null,
-    baseModelRowId: selectedVariantPricingRow?.id ?? null,
-    selectedModelTarget: selectedAccessoryModelTargets[0] ?? null,
-    selectedModelTargets: selectedAccessoryModelTargets,
-    selectedModelTargetQuantities: Object.fromEntries([...selectedModularItems.map((item) => [
+  const accessoryTargetQuantityInputs = {
+    main: Object.fromEntries([...selectedModularItems.map((item) => [
       accessoryApplicabilityTargetKey({ kind: "modular", group_id: item.group_id, row_id: item.id }),
       item.qty,
     ]), ...(nativeSystemOption ? [[accessoryApplicabilityTargetKey({ kind: "base_model", group_id: nativeSystemOption.group.id, row_id: String(nativeSystemOption.row.id) }), systemQuantity]] : [])]),
-    selectedQuantities: Object.fromEntries(submittedAccessoryPricingQtyById),
-    allowRequiredCompanionOverrides: true,
-  });
+  };
+  // Second pass for option_item rules whose trigger is an ordinary accessory item (for example a Stirrup Kit that
+  // follows each selected Modesty Panel). Same shared helper as the quotation selector; templates without such
+  // rules make exactly one evaluation call with the same arguments as before.
+  const accessoryConfiguration = evaluateWithOptionItemPass({
+    groups: authoritativeAccessoryGroups as unknown as OptionItemPassGroup[],
+    evaluate: (extra) => evaluateProductAccessorySelection({
+      accessoryGroups: authoritativeAccessoryGroups,
+      baseModelGroupId: selectedVariantGroup?.id ?? null,
+      baseModelRowId: selectedVariantPricingRow?.id ?? null,
+      selectedModelTarget: selectedAccessoryModelTargets[0] ?? null,
+      selectedModelTargets: [...selectedAccessoryModelTargets, ...(extra?.targets ?? [])],
+      selectedModelTargetQuantities: { ...accessoryTargetQuantityInputs.main, ...(extra?.quantities ?? {}) },
+      selectedQuantities: Object.fromEntries(submittedAccessoryPricingQtyById),
+      allowRequiredCompanionOverrides: true,
+    }),
+  }).evaluation;
   const requiredComponentOverrides = requiredComponentOverrideReport(accessoryConfiguration.groups);
   if (!accessoryConfiguration.valid) {
     const invalidGroup = accessoryConfiguration.groups.find((group) => !group.valid);
