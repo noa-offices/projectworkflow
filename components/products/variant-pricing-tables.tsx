@@ -141,6 +141,8 @@ export type CategoryPricingRow = {
   modular_role?: string | null;
   /** Optional cross-group exclusivity marker: only one Direct Modular group sharing this value may hold a selection. */
   modular_selection_family?: string | null;
+  /** Optional opt-in one-way-only marker: the modular way and the Base / Model way cannot be selected together. */
+  modular_excludes_base_models?: boolean | null;
   is_active?: boolean;
   sort_order?: number;
   subgroups?: BaseModelPricingSubgroup[];
@@ -544,6 +546,7 @@ function normalizeModularGroups(rows?: CategoryPricingRow[] | null, includeDefau
       ...(!direct ? { price_columns: pricingColumns({ ...sourceGroup, price_categories: priceCategories }) } : {}),
       ...(direct ? { modular_pricing_mode: "direct" } : {}),
       ...(direct && sourceGroup.modular_composition ? { modular_composition: sourceGroup.modular_composition } : {}),
+      ...(sourceGroup.modular_excludes_base_models === true ? { modular_excludes_base_models: true } : {}),
       sort_order: Number.isFinite(Number(sourceGroup.sort_order)) ? Number(sourceGroup.sort_order) : groupIndex,
       items: (sourceGroup.items ?? []).map((item, itemIndex) =>
         direct ? normalizeDirectModularRow(item, itemIndex) : normalizeCategory({
@@ -1373,6 +1376,7 @@ export function ModularItemPricingTable({
           // Composition (starter/intermediate cardinality) applies to both Direct and Matrix Modular groups.
           ...(group.modular_composition ? { modular_composition: group.modular_composition } : {}),
           ...(group.modular_selection_family?.trim() ? { modular_selection_family: group.modular_selection_family.trim() } : {}),
+          ...(group.modular_excludes_base_models === true ? { modular_excludes_base_models: true } : {}),
           sort_order: Number.isFinite(Number((group as CategoryPricingRow).sort_order))
             ? Number((group as CategoryPricingRow).sort_order)
             : groupIndex,

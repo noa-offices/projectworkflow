@@ -33,6 +33,7 @@ export function mapDraftModularPricing(draft: ProductTemplateDraft) {
     modular_pricing_mode: DIRECT_MODULAR_PRICING_MODE,
     ...(group.composition ? { modular_composition: { min_starters: group.composition.minStarters, max_starters: group.composition.maxStarters } } : {}),
     ...(group.selectionFamily ? { modular_selection_family: group.selectionFamily } : {}),
+    ...(group.excludesBaseModels === true ? { modular_excludes_base_models: true } : {}),
     is_active: group.isActive !== false,
     sort_order: analysis.groups.length + groupIndex,
     items: (group.directRows ?? []).map((row, rowIndex) => {
@@ -68,6 +69,7 @@ export function mapDraftModularPricing(draft: ProductTemplateDraft) {
     price_columns: priceColumns,
     pricing_type: MODULAR_GROUP_PRICING_TYPE,
     ...(group.composition ? { modular_composition: { min_starters: group.composition.minStarters, max_starters: group.composition.maxStarters } } : {}),
+    ...(group.excludesBaseModels === true ? { modular_excludes_base_models: true } : {}),
     is_active: group.isActive !== false,
     sort_order: groupIndex,
     items: (group.matrix?.rows ?? []).map((row, rowIndex) => {
