@@ -10,6 +10,8 @@ const choices: Array<{ focus: ExtractionPromptFocus; label: string; description:
   { focus: "chair_seating", label: "Chair & Seating", description: "Chair-specific extraction for models, upholstery matrices, mechanisms, bases, arms, castors/glides, and seating options." },
   { focus: "sofa_lounge", label: "Sofas / Lounge / Armchairs", description: "Extract sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration." },
   { focus: "meeting_conference", label: "Meeting / Conference Tables", description: "Extract complete meeting tables, terminal/intermediate systems, top-access and related cable management." },
+  { focus: "coffee_side_tables", label: "Coffee / Side / Break Tables", description: "Extract coffee, side and break tables, frames and bases, separate tops, sizes, finish codes and top options." },
+  { focus: "dining_tables", label: "Dining Tables", description: "Extract dining tables, bases, top materials and categories, sizes, extension options and finish codes." },
   { focus: "storage_cabinets", label: "Storage / Cabinets / Credenzas", description: "Extract cabinets, credenzas, pedestals, service units, carcasses, doors, tops, shelves, locks and storage accessories." },
   { focus: "accessories_electrification", label: "Accessories / Electrification", description: "Extract standalone and product-local accessories, cable management, electrification, modules, mounting requirements, compatibility and finish codes." },
 ];

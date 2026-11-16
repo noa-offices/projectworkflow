@@ -324,8 +324,8 @@ test("AI extraction prompt preserves the approved ProductTemplateDraft v1 extrac
 });
 
 test("focused prompts retain the v1 contract, price safety, source fidelity, and relevant target", () => {
-  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
-  const targets = { full: "Full Product / Complete Extraction", base_model: "pricing.baseModelRows", workstation: "pricing.workstationRows", screens: "EXTRACTION FOCUS: Screens / Dividers", category_matrix: "pricing.priceMatrices", modular: "pricing.modularGroups", accessories: "optionGroups", accessories_electrification: "EXTRACTION FOCUS: Accessories / Electrification", product_details: "Product Details / Specifications", materials: "materialSuggestions", chair_seating: "EXTRACTION FOCUS: Chair & Seating", sofa_lounge: "EXTRACTION FOCUS: Sofas / Lounge / Armchairs", meeting_conference: "EXTRACTION FOCUS: Meeting / Conference Tables", storage_cabinets: "EXTRACTION FOCUS: Storage / Cabinets / Credenzas" } as const;
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets", "coffee_side_tables", "dining_tables"]);
+  const targets = { full: "Full Product / Complete Extraction", base_model: "pricing.baseModelRows", workstation: "pricing.workstationRows", screens: "EXTRACTION FOCUS: Screens / Dividers", category_matrix: "pricing.priceMatrices", modular: "pricing.modularGroups", accessories: "optionGroups", accessories_electrification: "EXTRACTION FOCUS: Accessories / Electrification", product_details: "Product Details / Specifications", materials: "materialSuggestions", chair_seating: "EXTRACTION FOCUS: Chair & Seating", sofa_lounge: "EXTRACTION FOCUS: Sofas / Lounge / Armchairs", meeting_conference: "EXTRACTION FOCUS: Meeting / Conference Tables", storage_cabinets: "EXTRACTION FOCUS: Storage / Cabinets / Credenzas", coffee_side_tables: "EXTRACTION FOCUS: Coffee / Side / Break Tables", dining_tables: "EXTRACTION FOCUS: Dining Tables" } as const;
   extractionPromptFocuses.forEach((focus) => {
     const prompt = getProductTemplateAiExtractionPrompt(focus);
     assert.ok(prompt.includes("ProductTemplateDraft v1"));
@@ -357,7 +357,7 @@ test("Screens / Dividers focus prioritizes screen-specific source evidence witho
 });
 
 test("base model focus adds desk safeguards without changing focus registration or generic behavior", () => {
-  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets", "coffee_side_tables", "dining_tables"]);
   const prompt = getProductTemplateAiExtractionPrompt("base_model");
   [
     "Focus on directly priced models, variants, configurations, dimensions",
@@ -779,14 +779,14 @@ test("Meeting / Conference Tables planning is compact, source-safe, and isolated
     "FINAL MEETING TABLE SOURCE GATE",
     "PRODUCT SETUP PLAN",
     "Overall:\n- Product Templates: X",
-    "PRODUCT 1 â€” [Template Name]",
+    "PRODUCT 1 — [Template Name]",
     "- Primary setup: [Base / Model | Modular | Category / Matrix if genuinely justified]",
     "- Required Components: [short factual summary or None]",
     "- Optional Components: [short factual summary or None]",
     "Return ONLY the exact PRODUCT SETUP PLAN structure above",
     "Do not output PAGE NUMBERING NOTE, Markdown bold headings, long paragraphs, blank-line-heavy formatting, Why separate, Main pages",
     "MEETING TABLE OUTPUT BREVITY RULES",
-    "roughly 10â€“25 concise lines",
+    "roughly 10–25 concise lines",
   ].forEach((expected) => assert.ok(meeting.includes(expected), `Expected Meeting planning prompt to contain: ${expected}`));
   const meetingOutputContract = meeting.slice(meeting.indexOf("Return human-readable output using exactly this structure"));
   ["PAGE NUMBERING NOTE", "Why separate", "Main pages", "source-verification notes", "evidence explanations", "architecture commentary", "nested accessory lists"].forEach((forbidden) => assert.ok(meetingOutputContract.includes(forbidden), `Expected Meeting output contract to forbid: ${forbidden}`));
@@ -798,7 +798,7 @@ test("Meeting / Conference Tables extraction is source-safe, complete, and isola
   const prompt = getProductTemplateAiExtractionPrompt("meeting_conference");
   [
     "EXTRACTION FOCUS: Meeting / Conference Tables",
-    "MIXED-PAGE CLASSIFICATION â€” HIGH PRIORITY",
+    "MIXED-PAGE CLASSIFICATION — HIGH PRIORITY",
     "Do not exclude an entire page because it contains unrelated product sections",
     "page-level proximity never overrides an explicit rendered heading",
     "Double Meeting Table Configuration",
@@ -851,7 +851,7 @@ test("Meeting extraction classifies mixed Bench and Meeting pages by rendered se
     "add extractionWarning/manual review when the apparent same SKU has different price or dimensions",
     "Extensions for Meeting Tables",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected mixed-page rule: ${expected}`));
-  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets", "coffee_side_tables", "dining_tables"]);
 });
 
 test("matrix availability contract keeps proven N/A distinct from missing, zero, and sibling prices", () => {
@@ -863,15 +863,15 @@ test("matrix availability contract keeps proven N/A distinct from missing, zero,
     "Never infer N/A from every blank, poor scan/OCR, or uncertain extraction",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected matrix availability rule: ${expected}`));
   assert.ok(prompt.includes("An explicit printed 0 or clearly stated zero-cost/included option -> JSON number 0."));
-  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets", "coffee_side_tables", "dining_tables"]);
 });
 
 test("prompt choosers expose only refined extraction focuses and preserve planning focuses", () => {
   const source = readFileSync("components/products/copy-ai-extraction-prompt.tsx", "utf8");
   const [extractionChoices, planningSection] = source.split("const planningChoices");
   const visibleExtractionFocuses = [...extractionChoices.matchAll(/\{ focus: "([^"]+)", label:/g)].map((match) => match[1]);
-  assert.deepEqual(visibleExtractionFocuses, ["base_model", "workstation", "screens", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets", "accessories_electrification"]);
-  ["Desks / Executive Desks", "Workstations / Bench Systems", "Screens / Dividers", "Chair & Seating", "Sofas / Lounge / Armchairs", "Meeting / Conference Tables", "Storage / Cabinets / Credenzas", "Accessories / Electrification"].forEach((label) => assert.ok(extractionChoices.includes(`label: "${label}"`)));
+  assert.deepEqual(visibleExtractionFocuses, ["base_model", "workstation", "screens", "chair_seating", "sofa_lounge", "meeting_conference", "coffee_side_tables", "dining_tables", "storage_cabinets", "accessories_electrification"]);
+  ["Desks / Executive Desks", "Workstations / Bench Systems", "Screens / Dividers", "Chair & Seating", "Sofas / Lounge / Armchairs", "Meeting / Conference Tables", "Coffee / Side / Break Tables", "Dining Tables", "Storage / Cabinets / Credenzas", "Accessories / Electrification"].forEach((label) => assert.ok(extractionChoices.includes(`label: "${label}"`)));
   ["Base / Model Pricing", "Category / Matrix Pricing", "Full Product / Complete Extraction", "Workstation Pricing", "Modular Pricing", "Accessories / Configuration Only", "Product Details / Specifications", "Materials / Finishes"].forEach((label) => assert.ok(!extractionChoices.includes(`label: "${label}"`)));
   assert.ok(extractionChoices.includes("Extract sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration."));
   assert.ok(extractionChoices.includes("Extract complete meeting tables, terminal/intermediate systems, top-access and related cable management."));
@@ -2879,8 +2879,8 @@ test("screen catalogue contract structurally enforces supplied hardware, cover q
     "A page referenced by a supplied page is not itself supplied evidence.",
     "Every sources[].pageNumber is from the actual source batch supplied for this extraction call.",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
-  assert.ok(!prompt.includes("CONFIGURATION-DEPENDENT â€” MANUAL DECISION"));
-  assert.ok(!prompt.includes("COMPOSED SUPPLIER CODE â€” RUNTIME SUPPORT REQUIRED"));
+  assert.ok(!prompt.includes("CONFIGURATION-DEPENDENT — MANUAL DECISION"));
+  assert.ok(!prompt.includes("COMPOSED SUPPLIER CODE — RUNTIME SUPPORT REQUIRED"));
 });
 
 test("screen catalogue contract preserves multiple required companions, unresolved mounting warnings, and supplied-page boundaries", () => {
@@ -4109,4 +4109,106 @@ test("every extraction focus carries the dimension and specification text rules,
     ]) assert.ok(prompt.includes(expected), `${focus}: missing "${expected}"`);
     assert.ok(!prompt.includes("dimension_raw") && !prompt.includes("specification_raw"), `${focus}: no new raw fields`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Coffee / Side / Break Tables and Dining Tables extraction focuses
+// ---------------------------------------------------------------------------
+
+const tableFocuses = ["coffee_side_tables", "dining_tables"] as const;
+
+test("table focuses are registered and shown in the popup right after Meeting / Conference Tables", () => {
+  tableFocuses.forEach((focus) => assert.ok(extractionPromptFocuses.includes(focus), `Expected ${focus} in extractionPromptFocuses`));
+  assert.equal(new Set(extractionPromptFocuses).size, extractionPromptFocuses.length, "focus ids must be unique");
+  const source = readFileSync("components/products/copy-ai-extraction-prompt.tsx", "utf8");
+  const [extractionChoices, planningSection] = source.split("const planningChoices");
+  const visible = [...extractionChoices.matchAll(/\{ focus: "([^"]+)", label: "([^"]+)", description: "([^"]+)"/g)];
+  const ids = visible.map((match) => match[1]);
+  assert.equal(ids[ids.indexOf("meeting_conference") + 1], "coffee_side_tables");
+  assert.equal(ids[ids.indexOf("meeting_conference") + 2], "dining_tables");
+  const coffee = visible.find((match) => match[1] === "coffee_side_tables")!;
+  const dining = visible.find((match) => match[1] === "dining_tables")!;
+  assert.equal(coffee[2], "Coffee / Side / Break Tables");
+  assert.equal(coffee[3], "Extract coffee, side and break tables, frames and bases, separate tops, sizes, finish codes and top options.");
+  assert.equal(dining[2], "Dining Tables");
+  assert.equal(dining[3], "Extract dining tables, bases, top materials and categories, sizes, extension options and finish codes.");
+  tableFocuses.forEach((focus) => assert.ok(!planningSection.includes(`focus: "${focus}"`), "planning popup must not gain table focuses"));
+  tableFocuses.forEach((focus) => assert.ok(!(productTemplateSetupPlanningFocuses as readonly string[]).includes(focus)));
+});
+
+test("table focus prompts teach frame-as-main-row, top-as-option, required-top evidence, grids, finishes, and sizes", () => {
+  const sharedRules = [
+    "FRAME / BASE AND SEPARATE TOP — HIGH PRIORITY",
+    "ONE code and ONE price is one complete authoritative row in pricing.baseModelRows; never split it",
+    "the frame/base is the MAIN priced row in pricing.baseModelRows and every separately coded top is an item in optionGroups",
+    "each keep their own code, price, and dimensions",
+    "REQUIRED TOP EVIDENCE — HIGH PRIORITY",
+    "always complete the structure with a top",
+    "role companion, target.kind base_model",
+    "allowed_item_ids listing only the tops",
+    "fixed_quantity 1",
+    "never proves a requirement: keep the top optional",
+    "reviewStatus \"needs_review\"",
+    "BASE FINISH GROUP by TOP CATEGORY",
+    "pricing.priceMatrices",
+    "in unavailableCategoryIds), never 0",
+    "never fill, interpolate, or derive a size that is not printed",
+    "one row per code",
+    "goes to materialSuggestions",
+    "part name (frame, base, top, leg) stated in notes",
+    "add an extractionWarning naming the model and the finish codes",
+    "do not invent matrix cells",
+    "Use the diameter field for round tops",
+    "Never derive an unprinted dimension",
+    "COMPLETENESS AND FINAL GATE",
+    "Before returning JSON verify:",
+    "Architectural examples only, never extraction evidence",
+  ];
+  tableFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    sharedRules.forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} to contain: ${expected}`));
+    assert.ok(prompt.includes("MIXED-PAGE CLASSIFICATION — HIGH PRIORITY"));
+    assert.ok(prompt.includes("PRICING DESTINATION — HIGH PRIORITY"));
+    assert.ok(/chairs, stools/.test(prompt) && prompt.includes("Chair & Seating focus"), `Expected ${focus} to exclude chairs`);
+    assert.ok(prompt.includes("Meeting focus"), `Expected ${focus} to leave meeting tables to Meeting`);
+    assert.ok(!prompt.includes("PLANNING FOCUS"), `${focus} must not carry planning prompt text`);
+    assert.ok(!prompt.includes("PRODUCT SETUP PLAN"), `${focus} must not carry planning prompt text`);
+    assert.ok(!prompt.includes("${"), `${focus} left an unresolved template placeholder`);
+  });
+  const coffee = getProductTemplateAiExtractionPrompt("coffee_side_tables");
+  assert.ok(coffee.includes("EXTRACTION FOCUS: Coffee / Side / Break Tables"));
+  assert.ok(coffee.includes("coffee, side, occasional, break, and high tables"));
+  assert.ok(coffee.includes("dining tables"));
+  assert.ok(!coffee.includes("EXTENSIONS AND TOP SHAPES"));
+  const dining = getProductTemplateAiExtractionPrompt("dining_tables");
+  assert.ok(dining.includes("EXTRACTION FOCUS: Dining Tables"));
+  assert.ok(dining.includes("EXTENSIONS AND TOP SHAPES — HIGH PRIORITY"));
+  assert.ok(dining.includes("only when a code and a price are printed"));
+  assert.ok(dining.includes("round, oval, and rectangular"));
+});
+
+test("table focus text contains no real catalogue brands and only the generic marked example codes", () => {
+  const source = readFileSync("lib/products/product-template-ai-extraction-prompt.ts", "utf8");
+  const start = source.indexOf("const tableFrameAndTopExtractionContract");
+  const sharedEnd = source.indexOf("const focusInstructions: Record<ExtractionPromptFocus, string>");
+  const focusStart = source.indexOf("  coffee_side_tables: `EXTRACTION FOCUS");
+  const focusEnd = source.indexOf("  chair_seating: `EXTRACTION FOCUS: Chair & Seating");
+  assert.ok(start > 0 && sharedEnd > start && focusStart > sharedEnd && focusEnd > focusStart);
+  const block = source.slice(start, sharedEnd) + source.slice(focusStart, focusEnd);
+  ["Twig", "Tatlin", "Quinti", "TTable", "Circuit", "Kartell", "Calligaris", "Fantoni", "Arper"].forEach((name) => assert.ok(!block.includes(name), `Unexpected catalogue name ${name}`));
+  const codes = block.match(/\b[A-Z]{1,4}-\d{2,}\b/g) ?? [];
+  assert.deepEqual([...new Set(codes)].sort(), ["F-100", "T-100"]);
+  assert.ok(!/\b(?:EUR|AED|USD)\s?\d/.test(block), "no price literals expected");
+});
+
+test("meeting focus keeps its text apart from the dash fix and nothing contains mojibake", () => {
+  const mojibake = "â€";
+  const source = readFileSync("lib/products/product-template-ai-extraction-prompt.ts", "utf8");
+  assert.ok(!source.includes(mojibake), "prompt source must not contain mojibake");
+  extractionPromptFocuses.forEach((focus) => assert.ok(!getProductTemplateAiExtractionPrompt(focus).includes(mojibake), `${focus} prompt contains mojibake`));
+  productTemplateSetupPlanningFocuses.forEach((focus) => assert.ok(!buildProductTemplateSetupPlanningPrompt(focus).includes(mojibake), `${focus} planning prompt contains mojibake`));
+  const meeting = getProductTemplateAiExtractionPrompt("meeting_conference");
+  assert.ok(meeting.includes("MIXED-PAGE CLASSIFICATION — HIGH PRIORITY"));
+  assert.ok(meeting.includes("Ignore desks, executive desks, workstations, bench desks, coffee/side tables, storage"));
+  assert.ok(!meeting.includes("REQUIRED TOP EVIDENCE"), "meeting focus must not gain table-focus rules");
 });

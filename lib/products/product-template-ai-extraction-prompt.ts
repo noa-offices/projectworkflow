@@ -1,7 +1,7 @@
 import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
 import { LEGACY_WORKSTATION_GROUP_ID } from "./workstation-pricing-groups";
 
-export const extractionPromptFocuses = ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"] as const;
+export const extractionPromptFocuses = ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets", "coffee_side_tables", "dining_tables"] as const;
 export type ExtractionPromptFocus = typeof extractionPromptFocuses[number];
 
 const relatedAccessoriesRule = "Also extract any clearly related accessories, options, companion components, required add-ons, optional add-ons, selection constraints, and applicability information found in the supplied source into optionGroups. Do not ignore them merely because the selected extraction focus is pricing.";
@@ -653,6 +653,21 @@ Native System/Base self-check: verify that a source-proven PRIMARY first-stage p
 Also verify that source-proven structural support was not left as a normal unrestricted accessory; structural_support was not inferred from type/name/proximity; an explicitly required support-triggered companion uses exact option_item group_id/row_id when safely supported; its unit price was not merged or multiplied; and no arbitrary multi-level chain was invented.
 Verify that no direct-priced SKU was put in Matrix; no one-column "Standard Price" Matrix was created, including as a workaround to preserve multiple Base/Model families; no Modular structure was invented; that a family with source-proven Modular composition plus manufacturer-proven category-dependent module prices was routed to Matrix Modular rather than top-level pricing.priceMatrices; that Matrix Modular row.role/group.composition were emitted only when composition is source-proven and never given pricingMode: "direct"; no distinct supplier codes were merged; compatibility did not create Required Companion; "without X" did not make X required; no unrelated manufacturer family was included; no missing price was invented; finish codes did not become pricing without evidence; and a supplemental batch preserved the existing family. For every priced row, verify that actionable language such as must, required, mandatory, or cannot belongs in importantRequirements when it expresses an obligation/restriction; importantRequirements is present for every such supported requirement; no requirement is duplicated in specification; and included facts or ordinary compatibility were not moved incorrectly. Also verify every supplier-coded priced row in the supplied scope was extracted; no representative/sample/briefness language or behavior was used; no repetitive-looking row was omitted; any output-size stop is at a page boundary with exact remaining pages declared; a partial batch did not rename or split its parent template; referenced but unsupplied companion data was not invented; known source page numbers are present in sources; and every material source page, including supplemental pages, has a distinct sources entry with a known page number. Finally verify that no synthetic bundled/quantity-multiplied item or price was created for an explicit fixed-quantity requirement; every row-specific Required Companion or Conditional Option states its exact target row identity for Review & Route instead of a global/unscoped rule; importantRequirements was emitted alongside, not instead of, that structural targeting evidence; no data was extracted from this prompt's own regression examples, unsupplied pages, or other batches outside the supplied extraction scope; and the exact response would be accepted by standard JSON.parse: no \\_, arbitrary Markdown escapes, Markdown fences, comments, trailing commas, or invalid backslash escape sequences, and embedded quotes use \\".`;
 
+const tableFrameAndTopExtractionContract = `FRAME / BASE AND SEPARATE TOP — HIGH PRIORITY
+A complete table printed with ONE code and ONE price is one complete authoritative row in pricing.baseModelRows; never split it into frame and top. When the frame/base has its own code and price and the top is sold under a separate code, the frame/base is the MAIN priced row in pricing.baseModelRows and every separately coded top is an item in optionGroups. Different top materials on the same base (for example metal, solid wood, glass, marble) each keep their own code, price, and dimensions; never merge them, average them, or copy one price onto another. Never invent a combined frame-plus-top row, code, or price. Architectural examples only, never extraction evidence: a frame printed as F-100 with a top printed as T-100 stays two source rows.
+
+REQUIRED TOP EVIDENCE — HIGH PRIORITY
+A top is a Required Companion only when the source uses mandatory wording such as "always complete the structure with a top", "must be completed with a top", "top required", "must be ordered with", or "complete with" plus a separate code and price. Then use the existing required companion mechanism: optionGroups conditionalConfiguration with role companion, target.kind base_model for the exact frame row, allowed_item_ids listing only the tops the page names or shows under that frame, and fixed_quantity 1. "Compatible with", "suitable for", "available with", "see Art. X", a photo, or page proximity alone never proves a requirement: keep the top optional. Match a top size to a frame size only when the page states the pairing. When the pairing is unclear, keep the top optional with reviewStatus "needs_review" and a short reviewReason, and do not invent conditionalConfiguration. Keep INCLUDED, REQUIRED SEPARATE, OPTIONAL, and OUT OF SCOPE distinct; a top stated as included in a row is recorded in that row specification and is not duplicated as a priced option.
+
+PRICE GRIDS, TOP MATERIALS, AND SIZE-DEPENDENT TOPS
+When a grid prices BASE FINISH GROUP by TOP CATEGORY or TOP MATERIAL (for example Category 1/2/3, or marble/metal/wood/glass columns) and each cell is the FULL price, use pricing.priceMatrices with the base/finish groups as rows and the printed categories or materials as columns, preserving printed labels and order. An empty cell, a dash "-", or a category/material not offered for that row is an unavailable cell (null price plus that matrix column id in unavailableCategoryIds), never 0. When the page prints a separate top price grid with material+finish in rows and sizes in columns (for example round D.60, square 60x60, round D.70 as architectural examples only), use a matrix or one option item per printed size, keeping size labels exactly as printed; never fill, interpolate, or derive a size that is not printed. When the colour is part of the code and each code has its own price, use one row per code.
+
+FINISH CODES AND AVAILABILITY
+A finish code list with no price difference goes to materialSuggestions: one entry per finish with its code and name, and the part name (frame, base, top, leg) stated in notes. Real finish price columns remain pricing structure. When a footnote says a finish is not available for a model and that finish is NOT a price column, add an extractionWarning naming the model and the finish codes; do not invent matrix cells and do not remove the row. When the finish IS a price column, mark that cell unavailable instead. Never invent a material-to-price mapping.
+
+SIZE AND DIMENSION FIDELITY
+Read every size exactly as printed: diameter (for example Ø45 or D.60), L x D x H (for example L.120 x p.60 x H.108), and a height printed separately (for example H60). Use the diameter field for round tops and keep rawText. Never derive an unprinted dimension and never shift a value from a neighbouring row or column. When price depends on size, emit one row or item per printed size.`;
+
 const focusInstructions: Record<ExtractionPromptFocus, string> = {
   full: `EXTRACTION FOCUS: Full Product / Complete Extraction\nExtract all clearly supported product details, pricing, options, materials, finishes, and technical information. ${relatedAccessoriesRule}`,
   base_model: `EXTRACTION FOCUS: Base / Model Pricing
@@ -863,7 +878,7 @@ Use pricing.modularGroups only for manufacturer-proven component-built compositi
   meeting_conference: `EXTRACTION FOCUS: Meeting / Conference Tables
 Extract only meeting, conference, boardroom, terminal/end, intermediate/central, extendable, multi-section, and genuinely related cable-management or structural table items. Ignore desks, executive desks, workstations, bench desks, coffee/side tables, storage, pedestals, unrelated cabinets, seating, screens, reception products, and unrelated furniture.
 
-MIXED-PAGE CLASSIFICATION â€” HIGH PRIORITY
+MIXED-PAGE CLASSIFICATION — HIGH PRIORITY
 Do not exclude an entire page because it contains unrelated product sections. Classify every visible section, table, and row independently; page-level proximity never overrides an explicit rendered heading. Ignore Bench rows when Bench is outside this Meeting scope, but extract every supported row under explicit Meeting Tables, Double/Triple Meeting Tables, Double Meeting Table Configuration, Conference Tables, Boardroom Tables, or Extensions for Meeting Tables headings. A Meeting-scope row is included unless another explicit rule excludes it, even when Bench, Workstation, Desk, Storage, or Executive Desk sections share that page. If a code repeats under Bench and Meeting headings, extract the authoritative Meeting row once; reconcile by code + dimensions + price + commercial identity. Do not silently merge conflicting duplicate evidence: add extractionWarning/manual review when the apparent same SKU has different price or dimensions.
 
 PRICING DESTINATION
@@ -886,6 +901,35 @@ Bind every row’s exact source code, name, dimensions, direct price, currency, 
 
 COMPLETENESS AND FINAL GATE
 Include every supported in-scope row; do not truncate repetitive size, intermediate, or related optional cable-management rows. For every supplied page, inspect every visible product-section heading and confirm all Meeting/Conference sections and supported rows were extracted even when unrelated sections share the page. Use extractionWarnings only for real source/schema limitations, unclear requirement status, uncertain currency, ambiguous geometry, or conflicting duplicate SKU evidence. Before returning JSON verify correct Base / Model versus Modular routing, separate terminal/intermediate and top-access rows, included components not duplicated as required, required evidence, exact code/dimension/price binding, warnings for unsupported quantity formulas/structural alternatives, and finish guidance separated from price columns. ${relatedAccessoriesRule}`,
+  coffee_side_tables: `EXTRACTION FOCUS: Coffee / Side / Break Tables
+Extract only coffee, side, occasional, break, and high tables, their frames/bases, and their separately sold tops. Ignore meeting/conference tables (Meeting focus), dining tables, desks and executive desks (Desks focus), workstations, bench systems, storage, pedestals, chairs, stools and any seating including dining chairs (Chair & Seating focus), screens, reception products, and unrelated furniture.
+
+MIXED-PAGE CLASSIFICATION — HIGH PRIORITY
+Do not exclude an entire page because it contains unrelated product sections. Classify every visible section, table, and row independently; page-level proximity never overrides an explicit rendered heading. Extract every supported row under coffee, side, occasional, break, or high table headings and ignore the rest of the page. If a code repeats under another product-type heading, extract it only where it appears under an in-scope heading.
+
+PRICING DESTINATION — HIGH PRIORITY
+Complete tables with their own code and price belong in pricing.baseModelRows, including each printed size, height, or top-material variant that has its own code. Use pricing.priceMatrices only for a genuine source price grid, never a fake one-column matrix. Do not use pricing.modularGroups unless the source explicitly defines a composition system.
+
+${tableFrameAndTopExtractionContract}
+
+COMPLETENESS AND FINAL GATE
+Include every supported in-scope row, top, and size; do not truncate repetitive size or top rows. For every supplied page inspect every visible product-section heading and confirm all Coffee / Side / Break table sections were extracted even when unrelated sections share the page. Use extractionWarnings only for real source/schema limitations, unclear requirement status, uncertain currency, ambiguous geometry, unavailable finishes, or conflicting duplicate SKU evidence. Before returning JSON verify: complete one-code tables were not split; frame rows are in pricing.baseModelRows and separate tops are in optionGroups; a top is required only with explicit mandatory wording; grid cells are source prices with unavailable cells as null plus unavailableCategoryIds; finish code lists are in materialSuggestions with the part name; availability footnotes became extractionWarnings; diameter and height are bound to the correct row; chairs, stools, desks, dining and meeting tables were excluded; no price, code, or size was invented.`,
+  dining_tables: `EXTRACTION FOCUS: Dining Tables
+Extract only dining tables, their bases/frames, and their separately sold tops, including extension options when the source prices them. Ignore meeting/conference tables (Meeting focus), coffee/side/break tables (Coffee / Side / Break Tables focus), desks and executive desks (Desks focus), workstations, bench systems, storage, chairs, stools and any seating including dining chairs (Chair & Seating focus), screens, reception products, and unrelated furniture.
+
+MIXED-PAGE CLASSIFICATION — HIGH PRIORITY
+Do not exclude an entire page because it contains unrelated product sections. Classify every visible section, table, and row independently; page-level proximity never overrides an explicit rendered heading. Extract every supported row under dining table headings and ignore chairs, side tables, and other products sharing the page. If a code repeats under another product-type heading, extract it only where it appears under an in-scope heading.
+
+PRICING DESTINATION — HIGH PRIORITY
+Complete dining tables with their own code and price belong in pricing.baseModelRows, including each printed round, oval, or rectangular size that has its own code. Use pricing.priceMatrices only for a genuine source price grid, never a fake one-column matrix. Do not use pricing.modularGroups unless the source explicitly defines a composition system.
+
+${tableFrameAndTopExtractionContract}
+
+EXTENSIONS AND TOP SHAPES — HIGH PRIORITY
+Preserve round, oval, and rectangular sizes exactly as printed, each with its own dimensions. An extension mechanism or extension leaf becomes an option item or a separate row only when a code and a price are printed for it. A printed extended length or extension capability without its own code and price belongs in the row specification, not in a priced option; never invent an extension price. Base type (for example pedestal, four-leg, trestle) and top material/category follow the pricing destinations above: a base row plus separate tops, or a base-finish by top-category matrix when each cell is the full price.
+
+COMPLETENESS AND FINAL GATE
+Include every supported in-scope row, top, and size; do not truncate repetitive size or top rows. For every supplied page inspect every visible product-section heading and confirm all Dining Table sections were extracted even when unrelated sections share the page. Use extractionWarnings only for real source/schema limitations, unclear requirement status, uncertain currency, ambiguous geometry, unavailable finishes, or conflicting duplicate SKU evidence. Before returning JSON verify: complete one-code tables were not split; base rows are in pricing.baseModelRows and separate tops are in optionGroups; a top is required only with explicit mandatory wording; grid cells are source prices with unavailable cells as null plus unavailableCategoryIds; extensions are priced only when code and price are printed; finish code lists are in materialSuggestions with the part name; availability footnotes became extractionWarnings; diameter and dimensions are bound to the correct row; chairs, desks, coffee/side, and meeting tables were excluded; no price, code, or size was invented.`,
   chair_seating: `EXTRACTION FOCUS: Chair & Seating
 Use this focus when the supplied source primarily contains chairs, seating, benches, stools, waiting seating, lounge seating, or related seating systems. Extract supplied pages faithfully; do not force all seating into one template.
 
@@ -2167,7 +2211,7 @@ Overall:
 - Families: [short family/template names]
 - Main reason: [one short sentence]
 
-PRODUCT 1 â€” [Template Name]
+PRODUCT 1 — [Template Name]
 - Primary setup: [Base / Model | Modular | Category / Matrix if genuinely justified]
 - Configuration: [one short sentence]
 - Required Components: [short factual summary or None]
@@ -2185,7 +2229,7 @@ WARNINGS
 - [only real blockers/manual risks, otherwise None]
 
 MEETING TABLE OUTPUT BREVITY RULES
-- Return ONLY the exact PRODUCT SETUP PLAN structure above; no surrounding commentary, extra sections, or text before/after it. Aim for roughly 10â€“25 concise lines for a normal family.
+- Return ONLY the exact PRODUCT SETUP PLAN structure above; no surrounding commentary, extra sections, or text before/after it. Aim for roughly 10–25 concise lines for a normal family.
 - Do not output PAGE NUMBERING NOTE, Markdown bold headings, long paragraphs, blank-line-heavy formatting, Why separate, Main pages, source-verification notes, evidence explanations, architecture commentary, repeated rationale, nested accessory lists, or extraction-order essays.
 - Main reason, Configuration, Required Components, Optional Components, Finish Guidance, Extraction, and Manual Decision are each one short line.
 - Do not list every SKU, component, or accessory. Report component-built quantity formulas and terminal-leg/gantry quantity-two alternatives only as Manual Decision when they are essential.
