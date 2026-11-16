@@ -52,6 +52,7 @@ import {
 } from "@/lib/products/modular-pricing";
 import { applyModularRowQuantity, BASE_MODEL_DISABLED_NOTE, MODULAR_DISABLED_NOTE, modularGroupsExcludeBaseModels, SINGLE_STARTER_HINT, validateModularCompositionGroups } from "@/lib/products/modular-composition";
 import { resolveMainAccessoryTargets } from "@/lib/products/main-accessory-targets";
+import { deriveOptionItemTargets, hasOrdinaryOptionItemRules, ordinaryOptionItemDependentItemIds, ordinaryOptionItemGroupIds, withoutOrdinaryOptionItemDependentQuantities, type OptionItemExtraTargets, type OptionItemPassGroup } from "@/lib/products/option-item-targets";
 import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
 import { flattenBaseModelPricingRows, type BaseModelPricingGroup } from "@/lib/products/base-model-pricing-groups";
 import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
@@ -695,7 +696,10 @@ function AccessoryConfigurationFields({
   isGroupExpanded,
   onGroupExpandedChange,
   onResetRequired,
+  ordinaryOptionGroupIds,
 }: {
+  /** Groups whose option_item rules are triggered by an ordinary accessory item (for example a Stirrup Kit). Empty/absent = unchanged display. */
+  ordinaryOptionGroupIds?: ReadonlySet<string>;
   onResetRequired: (itemId: string) => void;
   evaluations: AccessoryGroupEvaluation[];
   groups: ReturnType<typeof activeAccessoryRows>;
@@ -715,7 +719,9 @@ function AccessoryConfigurationFields({
 
   return sections.map((section) => {
     const sectionGroups = evaluations.flatMap((evaluation) => {
-      if (!evaluation.visible || evaluation.role !== section.role) return [];
+      // An optional (not required) companion that follows another item is listed with the optional items.
+      const sectionRole = ordinaryOptionGroupIds?.has(evaluation.groupId) && evaluation.role === "companion" && !evaluation.required ? "accessory" : evaluation.role;
+      if (!evaluation.visible || sectionRole !== section.role) return [];
       const group = groups.find((candidate) => candidate.id === evaluation.groupId);
       if (!group) return [];
       const allowed = new Set(evaluation.allowedItemIds);
@@ -763,7 +769,7 @@ function AccessoryConfigurationFields({
                     return (
                       <label key={itemId} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
                         <span className="min-w-0">
-                          <input type="checkbox" checked={quantity > 0} onChange={(event) => onQuantityChange(groupItemIds, itemId, event.target.checked ? (isRequired ? evaluation.requiredQuantity ?? 1 : Math.max(1, quantity || 1)) : 0, false)} className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle" />
+                          <input type="checkbox" checked={quantity > 0} onChange={(event) => onQuantityChange(groupItemIds, itemId, event.target.checked ? (isRequired ? evaluation.requiredQuantity ?? 1 : ordinaryOptionGroupIds?.has(group.id) && evaluation.fixedQuantity !== null ? evaluation.fixedQuantity : Math.max(1, quantity || 1)) : 0, false)} className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle" />
                           <span className="font-medium text-zinc-900">{item.item_name}</span>
                           {item.supplier_price_list_code ? <span className="mt-1 block text-[11px] text-zinc-500"><span className="font-semibold text-zinc-700">Supplier Code:</span> {item.supplier_price_list_code}</span> : null}<AccessoryItemMetadata groupId={group.id} item={item} rowReferences={rowReferences} onViewDiagram={onViewDiagram} />
                         </span>
@@ -2015,19 +2021,39 @@ export function ProductLibrarySelector({
                   ]);
                   const requiredComponentTrigger = requiredComponentTriggerKey(selectedAccessoryModelTargets, accessoryTargetQuantities);
                   const templateRequiredOverrides = requiredOverrides[template.id] ?? {};
-                  const evaluateAccessories = (selectedQuantities: Record<string, number>) => evaluateProductAccessorySelection({
+                  // option_item rules whose trigger is an ordinary accessory item (for example a Stirrup Kit following each
+                  // Modesty Panel). The gate is off for every template without such rules, which keeps the old evaluation exactly.
+                  const optionItemGroups = allAccessoryGroups as unknown as OptionItemPassGroup[];
+                  const optionItemPassEnabled = hasOrdinaryOptionItemRules(optionItemGroups);
+                  const ordinaryOptionGroupIds = ordinaryOptionItemGroupIds(optionItemGroups);
+                  const ordinaryOptionDependentItemIds = ordinaryOptionItemDependentItemIds(optionItemGroups);
+                  const evaluateAccessoriesWith = (selectedQuantities: Record<string, number>, extra: OptionItemExtraTargets | null) => evaluateProductAccessorySelection({
                     accessoryGroups: allAccessoryGroups,
                     baseModelGroupId: usesVariantPricing ? selectedVariantGroup?.id : null,
                     baseModelRowId: usesVariantPricing ? selectedVariantRow?.id : null,
                     selectedModelTarget: selectedAccessoryModelTarget,
-                    selectedModelTargets: selectedAccessoryModelTargets,
-                    selectedModelTargetQuantities: accessoryTargetQuantities,
+                    selectedModelTargets: [...selectedAccessoryModelTargets, ...(extra?.targets ?? [])],
+                    selectedModelTargetQuantities: { ...accessoryTargetQuantities, ...(extra?.quantities ?? {}) },
                     selectedQuantities,
                     allowRequiredCompanionOverrides: true,
                   });
+                  const evaluateAccessories = (selectedQuantities: Record<string, number>) => evaluateAccessoriesWith(selectedQuantities, null);
+                  // First pass cannot show dependent groups, so their stale quantities are left out of it.
+                  const firstPassQuantities = optionItemPassEnabled ? withoutOrdinaryOptionItemDependentQuantities(optionItemGroups, templatePricingAccessoryQuantities) : templatePricingAccessoryQuantities;
                   // Required companions auto-select at the derived quantity; a manual override made under the current trigger wins.
-                  const requiredEffectiveQuantities = effectiveRequiredQuantities(evaluateAccessories(templatePricingAccessoryQuantities).groups.filter((group) => !allAccessoryGroups.some((candidate) => candidate.id === group.groupId && candidate.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item"))), templateRequiredOverrides, requiredComponentTrigger);
-                  const accessoryConfiguration = evaluateAccessories({ ...templatePricingAccessoryQuantities, ...requiredEffectiveQuantities });
+                  const requiredEffectiveQuantities = effectiveRequiredQuantities(evaluateAccessories(firstPassQuantities).groups.filter((group) => !allAccessoryGroups.some((candidate) => candidate.id === group.groupId && candidate.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item"))), templateRequiredOverrides, requiredComponentTrigger);
+                  const firstPassAccessoryConfiguration = evaluateAccessories({ ...firstPassQuantities, ...requiredEffectiveQuantities });
+                  // Second pass: a selected, eligible trigger item (for example a Modesty Panel) makes its dependent group visible.
+                  const optionItemExtra = optionItemPassEnabled ? deriveOptionItemTargets({ groups: optionItemGroups, activeQuantities: firstPassAccessoryConfiguration.activeQuantities }) : null;
+                  const optionItemPassActive = Boolean(optionItemExtra?.targets.length);
+                  // Its own trigger key, so a panel change only resets overrides of the companions that follow panels.
+                  const optionItemRequiredTrigger = optionItemExtra ? requiredComponentTriggerKey(optionItemExtra.targets, optionItemExtra.quantities) : requiredComponentTrigger;
+                  const optionItemRequiredEffectiveQuantities = optionItemPassActive
+                    ? effectiveRequiredQuantities(evaluateAccessoriesWith({ ...templatePricingAccessoryQuantities, ...requiredEffectiveQuantities }, optionItemExtra).groups.filter((group) => ordinaryOptionGroupIds.has(group.groupId)), templateRequiredOverrides, optionItemRequiredTrigger)
+                    : {};
+                  const accessoryConfiguration = optionItemPassActive
+                    ? evaluateAccessoriesWith({ ...templatePricingAccessoryQuantities, ...requiredEffectiveQuantities, ...optionItemRequiredEffectiveQuantities }, optionItemExtra)
+                    : firstPassAccessoryConfiguration;
                   const overriddenRequiredComponents = requiredComponentOverrideReport(accessoryConfiguration.groups);
                   const updateStructuralSupportQuantity = (groupId: string, itemId: string, quantity: number) => {
                     // Switching structural support can make the currently selected Base/Model row
@@ -3487,7 +3513,7 @@ export function ProductLibrarySelector({
                             ) : null}
                           </div>
                         ) : null}
-                        <StructuralSupportFields groups={allAccessoryGroups} evaluations={accessoryConfiguration.groups} quantities={templatePricingAccessoryQuantities} rowCurrency={rowCurrency} onQuantityChange={updateStructuralSupportQuantity} />
+                        <StructuralSupportFields groups={allAccessoryGroups} evaluations={accessoryConfiguration.groups.filter((evaluation) => !ordinaryOptionGroupIds.has(evaluation.groupId))} quantities={templatePricingAccessoryQuantities} rowCurrency={rowCurrency} onQuantityChange={updateStructuralSupportQuantity} />
                         {usesVariantPricing ? (
                           <div className="mt-3 space-y-2">
                             {nativeSystem.active ? (
@@ -3591,8 +3617,9 @@ export function ProductLibrarySelector({
                         ) : null}
                         <AccessoryConfigurationFields
                           evaluations={accessoryConfiguration.groups.filter((evaluation) =>
-                            allAccessoryGroups.some((group) => group.id === evaluation.groupId && Boolean(group.conditional_configuration) && !group.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item")),
+                            allAccessoryGroups.some((group) => group.id === evaluation.groupId && Boolean(group.conditional_configuration) && (ordinaryOptionGroupIds.has(group.id) || !group.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item"))),
                           )}
+                          ordinaryOptionGroupIds={ordinaryOptionGroupIds}
                           groups={allAccessoryGroups}
                           quantities={templatePricingAccessoryQuantities}
                           rowCurrency={rowCurrency}
@@ -3603,7 +3630,7 @@ export function ProductLibrarySelector({
                           onResetRequired={(itemId) => setRequiredOverrides((current) => ({ ...current, [template.id]: withoutRequiredOverride(current[template.id] ?? {}, itemId) }))}
                           onQuantityChange={(groupItemIds, itemId, quantity, replaceGroup) => {
                             if (!replaceGroup && requiredCompanionItems(accessoryConfiguration.groups).some((entry) => entry.itemId === itemId)) {
-                              setRequiredOverrides((current) => ({ ...current, [template.id]: withRequiredOverride(current[template.id] ?? {}, itemId, quantity, requiredComponentTrigger) }));
+                              setRequiredOverrides((current) => ({ ...current, [template.id]: withRequiredOverride(current[template.id] ?? {}, itemId, quantity, ordinaryOptionDependentItemIds.has(itemId) ? optionItemRequiredTrigger : requiredComponentTrigger) }));
                               return;
                             }
                             setPricingAccessoryQuantities((current) => {
