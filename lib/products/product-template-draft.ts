@@ -157,6 +157,11 @@ export type ProductTemplateDraftModularGroup = {
    * exclusivity constraint (today's fully backward-compatible behavior).
    */
   selectionFamily?: string;
+  /**
+   * Optional opt-in "one way only" marker. When true the workstation (modular) way and the Base / Model
+   * (desk size) way of this template cannot be selected together. Absent or false keeps both allowed.
+   */
+  excludesBaseModels?: boolean;
   /** Absent means legacy "matrix" mode. */
   pricingMode?: ProductTemplateDraftModularPricingMode;
   /** Present for matrix mode only. */
@@ -763,6 +768,10 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
     const path = `draft.pricing.modularGroups[${index}]`;
     const item = object(value, path, issues);
     const selectionFamily = nullableText(item.selectionFamily, `${path}.selectionFamily`, issues);
+    if (item.excludesBaseModels !== undefined && item.excludesBaseModels !== null && typeof item.excludesBaseModels !== "boolean") {
+      error(issues, `${path}.excludesBaseModels`, "excludesBaseModels must be a boolean.");
+    }
+    const excludesBaseModels = item.excludesBaseModels === true;
     const base = {
       id: requiredId(item.id, `${path}.id`, issues),
       label: nullableText(item.label, `${path}.label`, issues),
@@ -786,6 +795,7 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
       const matrixResult = matrix(item.matrix, `${path}.matrix`, issues);
       return {
         ...base,
+        ...(excludesBaseModels ? { excludesBaseModels: true as const } : {}),
         ...(declaredMode ? { pricingMode: "matrix" as const } : {}),
         matrix: matrixResult,
         ...(item.composition === undefined ? {} : { composition: modularComposition(item.composition, `${path}.composition`, issues, matrixResult.rows) }),
@@ -808,6 +818,7 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
     return {
       ...base,
       ...(selectionFamily ? { selectionFamily } : {}),
+      ...(excludesBaseModels ? { excludesBaseModels: true as const } : {}),
       pricingMode: "direct" as const,
       directRows,
       ...(item.composition === undefined ? {} : { composition: modularComposition(item.composition, `${path}.composition`, issues, directRows) }),

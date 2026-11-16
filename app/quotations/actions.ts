@@ -40,7 +40,8 @@ import {
   modularPricingDefaultsFromRows,
   modularRowRole,
 } from "@/lib/products/modular-pricing";
-import { validateModularCompositionGroups } from "@/lib/products/modular-composition";
+import { validateModularBaseModelExclusivity, validateModularCompositionGroups } from "@/lib/products/modular-composition";
+import { resolveMainAccessoryTargets } from "@/lib/products/main-accessory-targets";
 import { resolvedMatrixModularPricingCategory } from "@/lib/quotations/modular-pricing-category";
 import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
 import { findWorkstationPricingRow, flattenWorkstationPricingRows, workstationPricingGroups } from "@/lib/products/workstation-pricing-groups";
@@ -6587,18 +6588,36 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   if (usesModularPricing && modularCompositionIssue) {
     redirectWithMessage(redirectPath, modularCompositionIssue.message);
   }
-  const selectedAccessoryModelTargets = selectedSizePricing?.id && selectedWorkstationGroup
-    ? [{ kind: "workstation" as const, group_id: selectedWorkstationGroup.id, row_id: selectedSizePricing.id }]
-    : selectedVariantPricingRow && selectedVariantGroup
-    ? nativeBaseModelTargets({
-        mainGroupId: selectedVariantGroup.id,
-        mainRowId: selectedVariantPricingRow.id ?? "",
-        systemGroupId: nativeSystemOption?.group.id,
-        systemRowId: nativeSystemOption?.row.id,
-      })
-    : selectedCategoryPricingRow && selectedCategoryGroup
+  // Opt-in one-way-only (modular_excludes_base_models): never trust the client to keep the two ways apart.
+  const modularBaseModelExclusivityIssue = usesModularPricing
+    ? validateModularBaseModelExclusivity(
+        modularGroups,
+        (groupId, rowId) => modularQtyById.get(`${groupId}\u0000${rowId}`) ?? modularQtyById.get(rowId) ?? 0,
+        Boolean(selectedVariantPricingRow),
+      )
+    : null;
+  if (modularBaseModelExclusivityIssue) {
+    redirectWithMessage(redirectPath, modularBaseModelExclusivityIssue.message);
+  }
+  // Same priority as the quotation selector (shared helper): workstation, modular, Base / Model, Price Matrix.
+  const selectedAccessoryModelTargets = resolveMainAccessoryTargets({
+    workstation: selectedSizePricing?.id && selectedWorkstationGroup
+      ? [{ kind: "workstation" as const, group_id: selectedWorkstationGroup.id, row_id: selectedSizePricing.id }]
+      : [],
+    usesModularPricing,
+    modular: selectedModularItems.map((item) => ({ kind: "modular" as const, group_id: item.group_id, row_id: item.id })),
+    baseModel: selectedVariantPricingRow && selectedVariantGroup
+      ? nativeBaseModelTargets({
+          mainGroupId: selectedVariantGroup.id,
+          mainRowId: selectedVariantPricingRow.id ?? "",
+          systemGroupId: nativeSystemOption?.group.id,
+          systemRowId: nativeSystemOption?.row.id,
+        })
+      : [],
+    priceMatrix: selectedCategoryPricingRow && selectedCategoryGroup
       ? [{ kind: "price_matrix" as const, group_id: selectedCategoryGroup.id ?? "", row_id: selectedCategoryPricingRow.id ?? "" }]
-      : selectedModularItems.map((item) => ({ kind: "modular" as const, group_id: item.group_id, row_id: item.id }));
+      : [],
+  });
   if (hasConditionalAccessoryConfiguration && !selectedAccessoryModelTargets.length) {
     redirectWithMessage(redirectPath, "Select a valid Base/Model, Category/Matrix, Modular, or Workstation row before configuring required components or options.");
   }

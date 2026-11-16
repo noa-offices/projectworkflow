@@ -165,6 +165,7 @@ export function categoryPricingValue(rawValue: string, modularRawValue: string, 
         const selectionFamily = typeof group.modular_selection_family === "string" && group.modular_selection_family.trim()
           ? group.modular_selection_family.trim()
           : null;
+        const excludesBaseModels = group.modular_excludes_base_models === true;
         const items = isDirect
           ? (Array.isArray(group.items) ? group.items : [])
               .map((item, itemIndex) => normalizeDirectModularRow(item as Record<string, unknown>, itemIndex))
@@ -186,6 +187,7 @@ export function categoryPricingValue(rawValue: string, modularRawValue: string, 
           ...(isDirect ? { modular_pricing_mode: "direct" as const } : {}),
           ...(composition ? { modular_composition: composition } : {}),
           ...(selectionFamily ? { modular_selection_family: selectionFamily } : {}),
+          ...(excludesBaseModels ? { modular_excludes_base_models: true } : {}),
           items,
         };
       })

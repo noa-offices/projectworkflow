@@ -25,6 +25,11 @@ export type ModularCategoryPricingShape = {
   modular_composition?: ModularCompositionShape | null;
   modular_role?: string | null;
   modular_selection_family?: string | null;
+  /**
+   * Opt-in one-way-only marker: when true, the modular (workstation system) way and the Base / Model
+   * (desk size) way of the same template cannot be selected together. Absent/false = both allowed.
+   */
+  modular_excludes_base_models?: boolean | null;
   price?: number | null;
 };
 
@@ -32,6 +37,16 @@ export type ModularCategoryPricingShape = {
 export function modularSelectionFamily(group: ModularCategoryPricingShape | null | undefined) {
   const family = typeof group?.modular_selection_family === "string" ? group.modular_selection_family.trim() : "";
   return family || null;
+}
+
+/** True only for an explicit boolean true; absent, false, or any other value keeps today's behaviour. */
+export function modularExcludesBaseModels(group: ModularCategoryPricingShape | null | undefined) {
+  return group?.modular_excludes_base_models === true;
+}
+
+/** True when the starter composition allows exactly one starter in total (max_starters === 1). */
+export function isSingleStarterModularGroup(group: ModularCategoryPricingShape | null | undefined) {
+  return modularCompositionRule(group)?.maxStarters === 1;
 }
 
 /** Direct-priced modular groups are opt-in; every legacy group stays matrix-priced. */

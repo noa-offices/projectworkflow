@@ -43,13 +43,15 @@ import {
 } from "@/lib/products/category-pricing-groups";
 import {
   isDirectModularPricingGroup,
+  isSingleStarterModularGroup,
   modularItemPricingGroups,
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
   modularRowRole,
   modularSelectionFamily,
 } from "@/lib/products/modular-pricing";
-import { validateModularCompositionGroups } from "@/lib/products/modular-composition";
+import { applyModularRowQuantity, BASE_MODEL_DISABLED_NOTE, MODULAR_DISABLED_NOTE, modularGroupsExcludeBaseModels, SINGLE_STARTER_HINT, validateModularCompositionGroups } from "@/lib/products/modular-composition";
+import { resolveMainAccessoryTargets } from "@/lib/products/main-accessory-targets";
 import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
 import { flattenBaseModelPricingRows, type BaseModelPricingGroup } from "@/lib/products/base-model-pricing-groups";
 import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
@@ -239,6 +241,8 @@ type CategoryPricingRow = {
   modular_pricing_mode?: string | null;
   modular_composition?: { min_starters?: number | null; max_starters?: number | null } | null;
   modular_role?: string | null;
+  /** Opt-in one-way-only marker: the modular way and the Base Size / Main Price way cannot be selected together. */
+  modular_excludes_base_models?: boolean | null;
   is_active?: boolean;
   sort_order?: number;
 };
@@ -585,6 +589,7 @@ function activeModularGroups(rows?: CategoryPricingRow[] | null) {
       // Preserve the Phase 2 direct-pricing mode and composition contract.
       modular_pricing_mode: sourceGroup.modular_pricing_mode ?? null,
       modular_composition: sourceGroup.modular_composition ?? null,
+      modular_excludes_base_models: sourceGroup.modular_excludes_base_models === true,
       items: (sourceGroup.items ?? [])
         .filter((row) => row.is_active !== false)
         .filter((row) => row.variant_name || row.display_name || row.dimension || numberValue(row.price) > 0 || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
@@ -1857,6 +1862,12 @@ export function ProductLibrarySelector({
                     modularGroups,
                     (groupId, rowId) => numberValue(templateModularQuantities[rowId] ?? 0) * (modularGroups.some((group) => group.id === groupId && group.items.some((row) => (row.id ?? "") === rowId)) ? 1 : 0),
                   );
+                  // Opt-in one-way-only: only a template whose modular group sets modular_excludes_base_models is affected.
+                  const excludesBaseModels = usesModularPricing && modularGroupsExcludeBaseModels(modularGroups);
+                  const baseSectionDisabled = excludesBaseModels && selectedModularItems.length > 0;
+                  const modularSectionDisabled = excludesBaseModels && Boolean(selectedVariantRow);
+                  const clearModularSelection = () => setSelectedModularQuantities((current) => { const next = { ...current }; delete next[template.id]; return next; });
+                  const clearBaseModelSelection = () => setSelectedVariantRows((current) => { const next = { ...current }; delete next[template.id]; return next; });
                   const hasUnavailableSelectedPrice = (usesModularPricing && !usesDirectModularPricing && selectedModularItems.some((line) => line.row.unavailable_categories?.includes(selectedFabricCategory))) || Boolean(usesCategoryPricing && selectedCategoryRow?.unavailable_categories?.includes(selectedFabricCategory));
                   // All modular groups (Direct and Matrix alike) share the same compact accordion; for an
                   // all-Direct template this is identical to the old direct-only id list, so X3 is unaffected.
@@ -1881,6 +1892,7 @@ export function ProductLibrarySelector({
                   }
                   const modularSelectionFamilyNotice = modularSelectionFamilyNoticeByTemplate[template.id] ?? null;
                   const setDirectModularRowQuantity = (groupId: string, rowId: string, nextQty: number) => {
+                    if (modularSectionDisabled) return;
                     const group = modularGroups.find((candidate) => candidate.id === groupId) ?? null;
                     const family = group ? modularSelectionFamily(group) : null;
                     if (nextQty > 0 && family) {
@@ -1896,9 +1908,10 @@ export function ProductLibrarySelector({
                     if (modularSelectionFamilyNotice) {
                       setModularSelectionFamilyNoticeByTemplate((current) => ({ ...current, [template.id]: null }));
                     }
+                    // A single-starter group (max_starters === 1) replaces the starter instead of adding a second one.
                     setSelectedModularQuantities((current) => ({
                       ...current,
-                      [template.id]: { ...(current[template.id] ?? {}), [rowId]: nextQty },
+                      [template.id]: applyModularRowQuantity(group, current[template.id] ?? {}, rowId, nextQty),
                     }));
                   };
                   const groupSelectionSummaryForAi = usesDirectModularPricing
@@ -1966,15 +1979,18 @@ export function ProductLibrarySelector({
                     systemRowId: nativeSystem.selected?.row.id,
                   });
                   const missingRequiredSystemSelection = usesVariantPricing && nativeSystem.requiresSystem && (!nativeSystem.selected || !selectedVariantRow);
-                  const selectedMainAccessoryTargets = usesWorkstationFlow && selectedWorkstationGroup?.id && selectedSizeRow?.id
-                    ? [{ kind: "workstation" as const, group_id: selectedWorkstationGroup.id, row_id: selectedSizeRow.id }]
-                    : usesModularPricing
-                    ? selectedModularItems.map((item) => ({ kind: "modular" as const, group_id: item.groupId, row_id: item.id }))
-                    : usesVariantPricing && variantModelTargets.length
-                      ? variantModelTargets
-                      : usesCategoryPricing && selectedCategoryGroup?.id && selectedCategoryRow?.id
-                        ? [{ kind: "price_matrix" as const, group_id: selectedCategoryGroup.id, row_id: selectedCategoryRow.id }]
-                        : [];
+                  // Same priority as the server action (shared helper): workstation, modular, Base / Model, Price Matrix.
+                  const selectedMainAccessoryTargets = resolveMainAccessoryTargets({
+                    workstation: usesWorkstationFlow && selectedWorkstationGroup?.id && selectedSizeRow?.id
+                      ? [{ kind: "workstation" as const, group_id: selectedWorkstationGroup.id, row_id: selectedSizeRow.id }]
+                      : [],
+                    usesModularPricing,
+                    modular: selectedModularItems.map((item) => ({ kind: "modular" as const, group_id: item.groupId, row_id: item.id })),
+                    baseModel: usesVariantPricing ? variantModelTargets : [],
+                    priceMatrix: usesCategoryPricing && selectedCategoryGroup?.id && selectedCategoryRow?.id
+                      ? [{ kind: "price_matrix" as const, group_id: selectedCategoryGroup.id, row_id: selectedCategoryRow.id }]
+                      : [],
+                  });
                   const selectedStructuralSupportTargets = allAccessoryGroups.flatMap((group) =>
                     group.items
                       .filter((item) => item.role === "structural_support" && Number(templatePricingAccessoryQuantities[item.id ?? ""]) > 0)
@@ -3415,7 +3431,13 @@ export function ProductLibrarySelector({
                               </label>
                             </div> : null}
                             {/* Quotation specification is edited from Final Details -> Final Specification only, matching Direct Modular's existing presentation rule. */}
-                            <div className="space-y-2">
+                            {modularSectionDisabled ? (
+                              <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                                <span>{MODULAR_DISABLED_NOTE}</span>
+                                <button type="button" onClick={clearBaseModelSelection} className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-100">Clear selection</button>
+                              </div>
+                            ) : null}
+                            <fieldset disabled={modularSectionDisabled} className={`m-0 min-w-0 space-y-2 border-0 p-0${modularSectionDisabled ? " opacity-60" : ""}`}>
                               {modularGroups.map((group) => {
                                 const directModularGroupCard = isDirectModularPricingGroup(group);
                                 const groupSelections = selectedModularItems.filter((line) => line.groupId === group.id);
@@ -3453,13 +3475,13 @@ export function ProductLibrarySelector({
                                       const rows = group.items.filter((row) => (modularRowRole(row) ?? "none") === role);
                                       if (!rows.length) return null;
                                       const heading = role === "none" ? "Modules" : `${role[0].toUpperCase()}${role.slice(1)}${role === "intermediate" ? " Modules" : "s"}`;
-                                      return <section key={role}><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">{heading}</p><div className="overflow-x-auto rounded-md border border-zinc-200"><table className="w-full min-w-[680px] text-left text-xs"><thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500"><tr><th className="w-16 px-2 py-1.5"><span className="sr-only">Image</span></th><th className="px-2 py-1.5">Module</th><th className="px-2 py-1.5">Supplier Code</th><th className="px-2 py-1.5">Dimension</th><th className="px-2 py-1.5">Price</th><th className="w-20 px-2 py-1.5">Qty</th><th className="w-16 px-2 py-1.5" /></tr></thead><tbody>{rows.map((row) => { const modularRowId = row.id ?? row.variant_name ?? row.display_name ?? ""; const expanded = expandedDirectModularRow === `${template.id}:${modularRowId}`; const rowLabel = pricingDisplayName(row) || row.variant_name || "Modular item"; const rowReference = rowReferenceImages[productTemplateRowReferenceKey("modular", group.id ?? "", modularRowId)]; const rowUnitPrice = directModularGroupCard ? numberValue(row.price) : numberValue(row.prices?.[selectedFabricCategory]); const rowUnavailable = !directModularGroupCard && Boolean(row.unavailable_categories?.includes(selectedFabricCategory)); return <><tr key={modularRowId} className="border-t border-zinc-100"><td className="px-2 py-1.5">{rowReference?.previewUrl ? <button type="button" onClick={() => setDiagramPreview({ label: "Module diagram", templateId: template.id, title: rowLabel, url: rowReference.previewUrl! })} className="block h-12 w-12 overflow-hidden rounded-md border border-zinc-200 bg-white transition hover:opacity-80" aria-label={`View larger diagram for ${rowLabel}`}><img src={rowReference.previewUrl} alt="" className="h-full w-full object-contain" loading="lazy" /></button> : <span className="flex h-12 w-12 items-center justify-center rounded-md border border-dashed border-zinc-200 bg-zinc-50 text-center text-[9px] leading-tight text-zinc-400" aria-hidden="true">No image</span>}</td><td className="px-2 py-1.5 font-medium text-zinc-950">{rowLabel}</td><td className="px-2 py-1.5 text-zinc-600">{row.supplier_price_list_code || "—"}</td><td className="px-2 py-1.5 text-zinc-600">{row.dimension || "—"}</td><td className="px-2 py-1.5 font-semibold">{rowUnavailable ? "N/A" : formatMoney(row.currency ?? template.currency, rowUnitPrice)}</td><td className="px-2 py-1.5"><input aria-label={`Quantity for ${rowLabel}`} type="number" min={0} step={1} value={templateModularQuantities[modularRowId] ?? 0} onChange={(event) => setDirectModularRowQuantity(group.id ?? "", modularRowId, Math.max(0, Math.trunc(Number(event.target.value) || 0)))} className="h-7 w-16 border border-zinc-300 bg-white px-1 text-right outline-none focus:border-emerald-800" /></td><td className="px-2 py-1.5"><button type="button" onClick={() => setExpandedDirectModularRow(expanded ? null : `${template.id}:${modularRowId}`)} className="text-[11px] font-semibold text-emerald-900">Details</button></td></tr>{expanded ? <tr key={`${modularRowId}-details`} className="border-t border-zinc-100 bg-zinc-50"><td colSpan={7} className="px-2 py-2 text-xs text-zinc-700">{row.specification ? <p>{row.specification}</p> : null}<ImportantRequirementsBlock requirements={row.importantRequirements} /></td></tr> : null}</>; })}</tbody></table></div></section>;
+                                      return <section key={role}><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">{heading}</p>{role === "starter" && isSingleStarterModularGroup(group) ? <p className="mb-1 text-[11px] text-zinc-600">{SINGLE_STARTER_HINT}</p> : null}<div className="overflow-x-auto rounded-md border border-zinc-200"><table className="w-full min-w-[680px] text-left text-xs"><thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500"><tr><th className="w-16 px-2 py-1.5"><span className="sr-only">Image</span></th><th className="px-2 py-1.5">Module</th><th className="px-2 py-1.5">Supplier Code</th><th className="px-2 py-1.5">Dimension</th><th className="px-2 py-1.5">Price</th><th className="w-20 px-2 py-1.5">Qty</th><th className="w-16 px-2 py-1.5" /></tr></thead><tbody>{rows.map((row) => { const modularRowId = row.id ?? row.variant_name ?? row.display_name ?? ""; const expanded = expandedDirectModularRow === `${template.id}:${modularRowId}`; const rowLabel = pricingDisplayName(row) || row.variant_name || "Modular item"; const rowReference = rowReferenceImages[productTemplateRowReferenceKey("modular", group.id ?? "", modularRowId)]; const rowUnitPrice = directModularGroupCard ? numberValue(row.price) : numberValue(row.prices?.[selectedFabricCategory]); const rowUnavailable = !directModularGroupCard && Boolean(row.unavailable_categories?.includes(selectedFabricCategory)); return <><tr key={modularRowId} className="border-t border-zinc-100"><td className="px-2 py-1.5">{rowReference?.previewUrl ? <button type="button" onClick={() => setDiagramPreview({ label: "Module diagram", templateId: template.id, title: rowLabel, url: rowReference.previewUrl! })} className="block h-12 w-12 overflow-hidden rounded-md border border-zinc-200 bg-white transition hover:opacity-80" aria-label={`View larger diagram for ${rowLabel}`}><img src={rowReference.previewUrl} alt="" className="h-full w-full object-contain" loading="lazy" /></button> : <span className="flex h-12 w-12 items-center justify-center rounded-md border border-dashed border-zinc-200 bg-zinc-50 text-center text-[9px] leading-tight text-zinc-400" aria-hidden="true">No image</span>}</td><td className="px-2 py-1.5 font-medium text-zinc-950">{rowLabel}</td><td className="px-2 py-1.5 text-zinc-600">{row.supplier_price_list_code || "—"}</td><td className="px-2 py-1.5 text-zinc-600">{row.dimension || "—"}</td><td className="px-2 py-1.5 font-semibold">{rowUnavailable ? "N/A" : formatMoney(row.currency ?? template.currency, rowUnitPrice)}</td><td className="px-2 py-1.5"><input aria-label={`Quantity for ${rowLabel}`} type="number" min={0} max={role === "starter" && isSingleStarterModularGroup(group) ? 1 : undefined} step={1} value={templateModularQuantities[modularRowId] ?? 0} onChange={(event) => setDirectModularRowQuantity(group.id ?? "", modularRowId, Math.max(0, Math.trunc(Number(event.target.value) || 0)))} className="h-7 w-16 border border-zinc-300 bg-white px-1 text-right outline-none focus:border-emerald-800" /></td><td className="px-2 py-1.5"><button type="button" onClick={() => setExpandedDirectModularRow(expanded ? null : `${template.id}:${modularRowId}`)} className="text-[11px] font-semibold text-emerald-900">Details</button></td></tr>{expanded ? <tr key={`${modularRowId}-details`} className="border-t border-zinc-100 bg-zinc-50"><td colSpan={7} className="px-2 py-2 text-xs text-zinc-700">{row.specification ? <p>{row.specification}</p> : null}<ImportantRequirementsBlock requirements={row.importantRequirements} /></td></tr> : null}</>; })}</tbody></table></div></section>;
                                     })}
                                   </div> : null}
                                 </div>
                                 );
                               })}
-                            </div>
+                            </fieldset>
                             {modularSelectionFamilyNotice ? (
                               <p className="text-xs leading-5 text-amber-700">{modularSelectionFamilyNotice}</p>
                             ) : null}
@@ -3529,7 +3551,15 @@ export function ProductLibrarySelector({
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
                               {nativeSystem.active ? "Main Product" : "Base Size / Main Price"}
                             </p>
+                            {baseSectionDisabled ? (
+                              <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                                <span>{BASE_MODEL_DISABLED_NOTE}</span>
+                                <button type="button" onClick={clearModularSelection} className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-100">Clear selection</button>
+                              </div>
+                            ) : null}
+                            <fieldset disabled={baseSectionDisabled} className={`m-0 min-w-0 border-0 p-0${baseSectionDisabled ? " opacity-60" : ""}`}>
                             <BaseModelHierarchySelector key={nativeSystem.selected?.row.id ?? "no-system"} currency={template.currency} groups={filteredVariantGroups} rowReferences={rowReferenceImages} subgroupReferences={subgroupReferenceImages} selectedRowId={selectedVariantRow?.id ?? null} onSelect={(nextRowId) => { const nextGroupId = variantGroups.find((group) => group.items.some((row) => row.id === nextRowId))?.id ?? null; setSelectedVariantRows((current) => ({ ...current, [template.id]: nextRowId })); setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, baseModelGroupId: nextGroupId, baseModelRowId: nextRowId, ...(nativeSystem.selected ? { selectedModelTargets: nativeBaseModelTargets({ mainGroupId: nextGroupId, mainRowId: nextRowId, systemGroupId: nativeSystem.selected.group.id, systemRowId: nativeSystem.selected.row.id }) } : {}), selectedQuantities: current[template.id] ?? {} }).activeQuantities })); }} />
+                            </fieldset>
                             <div>
                               {selectedVariantRow ? (
                                 <div className="mt-2 flex gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
