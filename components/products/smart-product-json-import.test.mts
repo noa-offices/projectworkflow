@@ -640,6 +640,6 @@ test("accessory availability controls reuse safe helpers and never drop hidden s
   assert.ok(authoring.includes("visibleChoices.forEach((choice) => next.add(choice.key))") && authoring.includes("visibleChoices.forEach((choice) => next.delete(choice.key))"));
   // Unsafe transitions are blocked rather than silently reinterpreted.
   assert.ok(authoring.includes("Excluding every model would leave no applicable model") && authoring.includes("No models selected. Choose at least one model, or use All Models."));
-  assert.ok(authoring.includes("if (rules.length) { setModelSelectionError("), "All Models must not claim availability while unmanaged rules remain");
+  assert.ok(authoring.includes("const unmanagedModels = modelApplicabilityRules(rules);") && authoring.includes("if (unmanagedModels.length) { setModelSelectionError("), "All Models must not claim availability while unmanaged rules remain");
   assert.ok(source.includes("Review applicability") && source.includes('"smart-setup-review-applicability"'));
 });

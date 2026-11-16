@@ -219,3 +219,38 @@ test("a reviewed accessory-routed conditional_option group with an unsafe raw se
   assert.equal(mapped.groups[0].id, "og-custom-modules");
   assert.ok(mapped.groups[0].items.some((item) => item.id === "ogi-pcmpc004"));
 });
+
+test("opening and re-applying a saved five-option companion preserves its rules and group settings", () => {
+  const source = draft("required_choose_at_least_one", 1, null);
+  const applicability = Array.from({ length: 5 }, (_, index) => ({
+    target: { kind: "option_item" as const, group_id: "panels", row_id: `panel-${index}` },
+    visible: true, required: true, fixed_quantity: 1, scale_with_target_quantity: true,
+  }));
+  source.optionGroups[0].conditionalConfiguration = { role: "companion", selection: "at_least_one", applicability };
+  const before = structuredClone(source);
+  const plan = createSmartSetupReviewRouting(source);
+  const saved = mapDraftOptionGroupsToAccessories(source, plan).groups[0];
+  assert.deepEqual(saved.conditional_configuration, before.optionGroups[0].conditionalConfiguration);
+  assert.equal(saved.group_is_required, true);
+  assert.equal(saved.group_name, "Feet");
+  assert.deepEqual(source, before);
+});
+
+test("omitted false scaling and redundant legacy target ids do not change evaluation or validation", () => {
+  const source = draft("required_choose_at_least_one", 1, null);
+  source.optionGroups[0].conditionalConfiguration = {
+    role: "companion", selection: "at_least_one", applicability: [{
+      target: { kind: "option_item", group_id: "panels", row_id: "panel" },
+      base_model_group_id: "unused", base_model_row_id: "unused",
+      visible: true, required: true, fixed_quantity: 1, scale_with_target_quantity: false,
+    }],
+  };
+  const raw = mapDraftOptionGroupsToAccessories(source).groups;
+  const reviewed = mapDraftOptionGroupsToAccessories(source, createSmartSetupReviewRouting(source)).groups;
+  const evaluate = (accessoryGroups: unknown) => evaluateAccessoryConfigurationForModel({
+    accessoryGroups, baseModelGroupId: null, baseModelRowId: null,
+    selectedModelTargets: [{ kind: "option_item", group_id: "panels", row_id: "panel" }],
+    selectedQuantitiesByGroupId: { feet: { standard: 1 } },
+  });
+  assert.deepEqual(evaluate(reviewed), evaluate(raw));
+});
