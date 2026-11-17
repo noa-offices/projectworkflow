@@ -5,6 +5,8 @@ import { ManualPriceLinesButton } from "./manual-price-lines-button";
 import { SupplierPriceLinesAction } from "./supplier-price-lines-popup";
 import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
+import { SaveToMyCollectionButton } from "./save-to-my-collection-button";
+import type { SavedSetupPlainState } from "@/lib/products/saved-setups/recipe";
 import { listProductTemplateRowReferences } from "@/app/products/templates/row-reference-actions";
 import { listProductTemplateSubgroupReferences } from "@/app/products/templates/subgroup-reference-actions";
 import {
@@ -2892,6 +2894,54 @@ export function ProductLibrarySelector({
                     updated_at: localNow(),
                     source_item_id: null,
                   };
+                  // My Collection: plain, price-free snapshot of this template's selections (additive; not part of the line).
+                  const savedSetupState: SavedSetupPlainState = {
+                    templateId: template.id,
+                    variantRowId: selectedVariantRow?.id ?? null,
+                    systemRowId: nativeSystem.selected ? String(nativeSystem.selected.row.id) : null,
+                    systemQuantity: nativeSystem.selected ? systemQuantity : null,
+                    categoryGroupId: selectedCategoryGroup?.id ?? null,
+                    categoryRowId: selectedCategoryRow?.id ?? null,
+                    fabricCategory: usesModularPricing || selectedCategoryRow ? selectedFabricCategory : null,
+                    workstationSizeId: usesWorkstationFlow ? selectedSizeRow?.id ?? null : null,
+                    workstationLayout: usesWorkstationFlow ? selectedWorkstationLayout : null,
+                    additionalClusterQuantity: additionalClusterQty,
+                    modularQuantities: templateModularQuantities,
+                    pricingAccessoryQuantities: templatePricingAccessoryQuantities,
+                    componentAccessoryQuantities: templateAccessoryQuantities,
+                    requiredOverrides: templateRequiredOverrides,
+                    componentOptionSelections: templateSelections,
+                    accessoryCategoryChoices: Object.fromEntries(
+                      Object.entries(selectedAccessoryCategories).filter(([key]) => key.startsWith(`${template.id}:`)),
+                    ),
+                    finishes: selectedFinishes as Array<Record<string, unknown>>,
+                    selectedImage: selectedImage || null,
+                    linkedInstances: Object.fromEntries(
+                      templateLinkedFamilies.map((link) => [link.id, linkedInstancesForLink(link).map((instance) => instance.id)]),
+                    ),
+                    linkedSelections: Object.fromEntries(
+                      templateLinkedFamilies.flatMap((link) =>
+                        linkedInstancesForLink(link).map((instance) => {
+                          const instanceKey = linkedProductInstanceKey(link.id, instance.id);
+                          return [instanceKey, {
+                            variantRowId: selectedLinkedVariants[instanceKey] ?? null,
+                            categoryGroupId: selectedLinkedCategoryGroups[instanceKey] ?? null,
+                            categoryId: selectedLinkedCategories[instanceKey] ?? null,
+                            fabricCategory: selectedLinkedFabricCategories[instanceKey] ?? null,
+                            quantity: linkedProductQuantities[instanceKey] ?? null,
+                            accessoryQuantities: linkedAccessoryQuantities[instanceKey] ?? {},
+                          }] as const;
+                        }),
+                      ),
+                    ),
+                    dimensionOverride: hasConfiguredDimensionOverride ? configuredDimensions[template.id]?.trim() || null : null,
+                    workstationSpecification: configuredSpecifications[template.id] ?? null,
+                    brandOverride: quotationBrands[template.id]?.trim() || null,
+                    originOverride: quotationOrigins[template.id]?.trim() || null,
+                    specificationEdited: finalSpecificationWasEdited,
+                    editedSpecification: finalSpecificationWasEdited ? finalSpecification : null,
+                    generatedSpecification: generatedFinalSpecification,
+                  };
                   const mainItemCurrency = normalizeCurrency(
                     usesWorkstationFlow
                       ? selectedSizeRow?.currency ?? rowCurrency
@@ -5021,6 +5071,11 @@ export function ProductLibrarySelector({
                                   Add
                                 </button>
                               )}
+                              <SaveToMyCollectionButton
+                                defaultName={template.template_name}
+                                state={savedSetupState}
+                                templateId={template.id}
+                              />
                             </div>
                           </div>
                         </aside>
