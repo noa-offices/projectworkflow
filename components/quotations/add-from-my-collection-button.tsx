@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { CustomItemPickerPane, CustomItemTargetContext } from "@/components/quotations/custom-item-picker-pane";
 import { SetupThumbnail } from "@/components/products/my-collection-list";
 import { listPickerSetups, loadSetupForReplay, markSetupUsed } from "@/lib/products/saved-setups/actions";
 import { filterSetups, groupByBrandProduct, recentlyUsed, setupCountLabel, sortSetups } from "@/lib/products/saved-setups/collection-view";
@@ -43,6 +45,9 @@ export function AddFromMyCollectionButton({
   const [search, setSearch] = useState("");
   const [notice, setNotice] = useState("");
   const [pending, startTransition] = useTransition();
+  const customTarget = useContext(CustomItemTargetContext);
+  const [tab, setTab] = useState<"configured" | "custom">("configured");
+  const showConfigured = tab === "configured" || !customTarget;
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -51,6 +56,7 @@ export function AddFromMyCollectionButton({
 
   function openPicker() {
     setOpen(true);
+    setTab("configured");
     setNotice("");
     setSearch("");
     startTransition(async () => {
@@ -117,6 +123,14 @@ export function AddFromMyCollectionButton({
                 </div>
                 <button type="button" onClick={() => setOpen(false)} className="shrink-0 rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">Close</button>
               </div>
+              {customTarget ? (
+                <div role="tablist" aria-label="My Collection" className="flex gap-2 border-b border-zinc-200">
+                  {([["configured", "Configured products"], ["custom", "Custom items"]] as const).map(([value, label]) => (
+                    <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)} className={`h-9 border-b-2 px-3 text-sm font-semibold transition ${tab === value ? "border-emerald-900 text-emerald-900" : "border-transparent text-zinc-500 hover:text-zinc-800"}`}>{label}</button>
+                  ))}
+                </div>
+              ) : null}
+              {showConfigured ? (
               <div className="flex flex-wrap items-center gap-3">
                 <input
                   ref={searchRef}
@@ -130,7 +144,10 @@ export function AddFromMyCollectionButton({
                   Manage My Collection
                 </Link>
               </div>
+              ) : null}
             </div>
+            {!showConfigured && customTarget ? <CustomItemPickerPane target={customTarget} onClose={() => setOpen(false)} /> : null}
+            {showConfigured ? (<>
             {notice ? <p role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900 sm:px-5">{notice}</p> : null}
             <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-4 sm:px-5">
               {setups === null || (pending && setups.length === 0) ? (
@@ -169,6 +186,7 @@ export function AddFromMyCollectionButton({
                 </>
               )}
             </div>
+            </>) : null}
           </div>
         </div>
       ) : null}

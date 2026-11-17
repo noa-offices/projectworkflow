@@ -123,3 +123,39 @@ export async function listCustomItemsForUser(supabase: SupabaseClient, userId: s
     useCount: row.use_count ?? 0,
   }));
 }
+
+/** Loads ONE of the caller's own items (owner filter + RLS). Another user's item is "not found". */
+export async function loadCustomItemForUser(
+  supabase: SupabaseClient,
+  userId: string,
+  itemId: string,
+): Promise<{ ok: true; item: CustomItemListItem } | { ok: false; error: string }> {
+  if (!isUuid(itemId)) return { ok: false, error: NOT_FOUND };
+  const items = await listCustomItemsForUser(supabase, userId);
+  const item = items.find((entry) => entry.id === itemId);
+  return item ? { ok: true, item } : { ok: false, error: NOT_FOUND };
+}
+
+/** Best effort, owner-only. A failure never blocks adding the item to a quote. */
+export async function markCustomItemUsedForUser(supabase: SupabaseClient, userId: string, itemId: string): Promise<CustomItemActionResult> {
+  try {
+    if (!isUuid(itemId)) return { ok: false, error: NOT_FOUND };
+    const { data: current } = await supabase
+      .from("saved_custom_items")
+      .select("use_count")
+      .eq("id", itemId)
+      .eq("owner_id", userId)
+      .maybeSingle();
+    if (!current) return { ok: false, error: NOT_FOUND };
+    const { data, error } = await supabase
+      .from("saved_custom_items")
+      .update({ use_count: Number((current as { use_count: number | null }).use_count ?? 0) + 1, last_used_at: new Date().toISOString() })
+      .eq("id", itemId)
+      .eq("owner_id", userId)
+      .select("id");
+    if (error || !data || data.length === 0) return { ok: false, error: NOT_FOUND };
+    return { ok: true, id: itemId };
+  } catch {
+    return { ok: false, error: "Usage could not be recorded." };
+  }
+}

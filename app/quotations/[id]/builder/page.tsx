@@ -1,5 +1,7 @@
 import { loadBrandPriceAnnouncements, type AnnouncementView } from "@/lib/products/price-announcements";
 import Link from "next/link";
+import { SaveAsCustomItemButton } from "@/components/quotations/save-as-custom-item-button";
+import { CustomItemTargetProvider } from "@/components/quotations/custom-item-picker-pane";
 import { SaveLineToMyCollectionButton } from "@/components/quotations/save-line-to-my-collection-button";
 import { LockedQuotationView } from "@/components/quotations/quotation-locked-view";
 import { isQuotationLocked } from "@/lib/quotations/quotation-lock";
@@ -2101,6 +2103,7 @@ function RowActionPanel({
   return (
     <div className="border border-zinc-300 bg-zinc-50 p-3">
       <div className="flex flex-wrap items-center gap-2">
+        <CustomItemTargetProvider value={{ kind: "server", quotationId: quotation.id, sectionId }}>
         <ProductLibrarySelector
           pricingRule={readPricingRule(quotation.layout_settings)}
           brands={brands}
@@ -2117,6 +2120,7 @@ function RowActionPanel({
           templateMaterialGroups={templateMaterialGroups}
           templates={productTemplates}
         />
+        </CustomItemTargetProvider>
         <OptimisticAddRowButton
           quotationId={quotation.id}
           returnTo={returnTo}
@@ -3002,6 +3006,22 @@ function InlineRowActions({
               <CopyQuotationRowButton
                 payload={rowClipboardPayload({ item, quotation })}
               />
+              {item.item_type === "custom" && !item.source_template_id ? (
+                <SaveAsCustomItemButton
+                  row={{
+                    item_type: item.item_type,
+                    line_style: item.line_style,
+                    source_template_id: item.source_template_id,
+                    item_name_snapshot: item.item_name_snapshot,
+                    item_code_snapshot: item.item_code_snapshot,
+                    brand_name_snapshot: item.brand_name_snapshot,
+                    specification_snapshot: item.specification_snapshot,
+                    unit_label: item.unit_label,
+                    unit_price: item.unit_price,
+                    currency: item.currency,
+                  }}
+                />
+              ) : null}
               <DeactivateRowAction item={item} quotationId={quotation.id} returnTo={returnTo} />
             </>
           )}

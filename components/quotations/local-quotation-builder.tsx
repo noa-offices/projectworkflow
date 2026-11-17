@@ -1,6 +1,10 @@
 "use client";
 
 import { SaveLineToMyCollectionButton } from "@/components/quotations/save-line-to-my-collection-button";
+import { SaveAsCustomItemButton } from "@/components/quotations/save-as-custom-item-button";
+import { CustomItemTargetProvider } from "@/components/quotations/custom-item-picker-pane";
+import { overlayFields, rowOverlayFromCustomItem } from "@/lib/products/saved-setups/custom-item-line";
+import type { CustomItemListItem } from "@/lib/products/saved-setups/custom-item";
 import { announcedSnapshotOf } from "@/lib/products/price-announcements";
 import { readPricingRule, type PricingRule } from "@/lib/quotation-pricing";
 import { formatRoundingDifference, lineRoundingAdjustment } from "@/lib/quotations/quotation-total-display";
@@ -2495,6 +2499,23 @@ export function LocalQuotationBuilder({
     }));
   }
 
+  // My Collection custom item -> an ORDINARY manual row: createEmptyItem plus only the overlay (name, code, brand,
+  // specification, unit, price, currency). A foreign-currency item gets price 0 and the existing manual-source keys.
+  // The local builder has no conversion tool, so a short note tells the user to convert the price.
+  function addCustomItemRow(sectionId: string, item: CustomItemListItem): string | null {
+    const overlay = rowOverlayFromCustomItem(item, workspace.currency);
+    const { source_component_data: sourceData, ...fields } = overlayFields(overlay);
+    commit((current) => ({
+      ...current,
+      items: [
+        ...current.items,
+        { ...createEmptyItem(current, "custom", sectionId), ...fields, ...(sourceData ? { source_component_data: sourceData } : {}) },
+      ],
+    }));
+    if (overlay.conversionNote) setSaveMessage(overlay.conversionNote);
+    return overlay.conversionNote;
+  }
+
   function addProductItem(sectionId: string, item: LocalQuotationItem) {
     commit((current) => ({
       ...current,
@@ -4967,7 +4988,7 @@ export function LocalQuotationBuilder({
                                       <span className={`text-[10px] font-semibold ${workspace.has_unsaved_changes && recentEditedRowId === item.id ? "text-zinc-500" : "text-emerald-800"}`}>{rowLocalStatus(item.id, recentEditedRowId, localDraftSaved, workspace.has_unsaved_changes)}</span>
                                       {copiedRowId === item.id ? (<span className="text-[10px] font-semibold text-emerald-800">Copied</span>) : null}
                                       <div className="flex items-center gap-1"><button type="button" onClick={() => moveItem(section.id, item.id, -1)} className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">^</button><button type="button" onClick={() => moveItem(section.id, item.id, 1)} className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">v</button></div>
-                                      <SharedQuotationMoreMenu actionButtons={(<>{item.item_type === "product" && item.source_template_id ? (<SaveLineToMyCollectionButton line={item} />) : null}{copiedRowClipboard ? (<><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "above")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row above</button><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "below")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row below</button></>) : null}<button type="button" onClick={() => copyItem(item.id)} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Copy row</button><button type="button" onClick={() => duplicateItem(item.id)} className="h-7 w-full border border-zinc-300 bg-white px-2 text-left text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Duplicate below</button><button type="button" onClick={() => removeItem(item.id)} className="h-7 w-full border border-red-200 bg-white px-2 text-left text-xs font-semibold text-red-700 transition hover:border-red-300 hover:text-red-800">Remove</button></>)} itemId={item.id} menuClassName="absolute right-0 z-30 mt-1 w-56 border border-zinc-300 bg-white p-2 text-left shadow-lg" mergeControl={(<><label className="grid gap-1"><span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span><select value={mergeModeForItem(item)} onChange={(event) => updateItem(item.id, updateItemMergeMode(item, event.target.value))} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"><option value="none">No merge</option><option value="merge_specification">Merge spec</option><option value="merge_full_row">Merge full row</option></select></label><label className="grid gap-1 mt-2"><span className="text-[10px] font-semibold uppercase text-zinc-500">Row Height (px)</span><input type="number" min={40} value={item.row_height || ""} onChange={(event) => updateItem(item.id, { row_height: event.target.value ? clampRowHeight(Number(event.target.value)) : null })} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" placeholder="Auto" /></label></>)} />
+                                      <SharedQuotationMoreMenu actionButtons={(<>{item.item_type === "product" && item.source_template_id ? (<SaveLineToMyCollectionButton line={item} />) : null}{copiedRowClipboard ? (<><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "above")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row above</button><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "below")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row below</button></>) : null}<button type="button" onClick={() => copyItem(item.id)} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Copy row</button><button type="button" onClick={() => duplicateItem(item.id)} className="h-7 w-full border border-zinc-300 bg-white px-2 text-left text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Duplicate below</button><button type="button" onClick={() => removeItem(item.id)} className="h-7 w-full border border-red-200 bg-white px-2 text-left text-xs font-semibold text-red-700 transition hover:border-red-300 hover:text-red-800">Remove</button><SaveAsCustomItemButton row={item} /></>)} itemId={item.id} menuClassName="absolute right-0 z-30 mt-1 w-56 border border-zinc-300 bg-white p-2 text-left shadow-lg" mergeControl={(<><label className="grid gap-1"><span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span><select value={mergeModeForItem(item)} onChange={(event) => updateItem(item.id, updateItemMergeMode(item, event.target.value))} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"><option value="none">No merge</option><option value="merge_specification">Merge spec</option><option value="merge_full_row">Merge full row</option></select></label><label className="grid gap-1 mt-2"><span className="text-[10px] font-semibold uppercase text-zinc-500">Row Height (px)</span><input type="number" min={40} value={item.row_height || ""} onChange={(event) => updateItem(item.id, { row_height: event.target.value ? clampRowHeight(Number(event.target.value)) : null })} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" placeholder="Auto" /></label></>)} />
                                     </div>
                                   </td>;
                                 default:
@@ -5002,7 +5023,9 @@ export function LocalQuotationBuilder({
                                 </span>
                               </>
                             ) : null}
-                            <ProductLibrarySelector
+                            <CustomItemTargetProvider value={{ kind: "local", onAdd: (item) => addCustomItemRow(section.id, item) }}>
+                            <CustomItemTargetProvider value={{ kind: "local", onAdd: (item) => addCustomItemRow(section.id, item) }}>
+                  <ProductLibrarySelector
                               brands={productBrands}
                               canManageProductLibrary={canManageProductLibrary}
                               categories={productCategories}
@@ -5019,6 +5042,8 @@ export function LocalQuotationBuilder({
                               templateMaterialGroups={templateMaterialGroups}
                               templates={productTemplates}
                             />
+                  </CustomItemTargetProvider>
+                            </CustomItemTargetProvider>
                             <span className="ml-auto text-xs text-zinc-500">Save to Software before preview/download.</span>
                           </div>
                         </td>
@@ -5299,7 +5324,7 @@ export function LocalQuotationBuilder({
                         ) : null}
                         {mobileMoreItemId === item.id ? (
                           <div className="mt-3 grid min-w-0 gap-2 border border-zinc-300 bg-zinc-50 p-3">
-                            {item.item_type === "product" && item.source_template_id ? (<SaveLineToMyCollectionButton line={item} />) : null}
+                            {item.item_type === "product" && item.source_template_id ? (<SaveLineToMyCollectionButton line={item} />) : null}<SaveAsCustomItemButton row={item} />
                             {itemType !== "blank" ? (
                               <>
                                 <button

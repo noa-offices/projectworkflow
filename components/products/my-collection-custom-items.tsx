@@ -33,7 +33,7 @@ const primaryButton =
 const inputClass =
   "h-9 w-full rounded-md border border-zinc-300 px-2 text-sm outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
 
-type FormValues = {
+export type FormValues = {
   brandName: string;
   itemName: string;
   itemCode: string;
@@ -66,8 +66,8 @@ function Field({ label, error, children }: { label: string; error?: string; chil
 }
 
 // One form for "Add custom item" and for editing. Errors come from the shared validator (shown next to each field).
-function CustomItemForm({ item, onDone }: { item: CustomItemListItem | null; onDone: () => void }) {
-  const [values, setValues] = useState<FormValues>(() => valuesFor(item));
+export function CustomItemForm({ item, defaults, onDone, onSaved }: { item: CustomItemListItem | null; defaults?: FormValues; onDone: () => void; onSaved?: () => void }) {
+  const [values, setValues] = useState<FormValues>(() => defaults ?? valuesFor(item));
   const [errors, setErrors] = useState<CustomItemFieldErrors>({});
   const [formError, setFormError] = useState("");
   const [pending, startTransition] = useTransition();
@@ -77,7 +77,7 @@ function CustomItemForm({ item, onDone }: { item: CustomItemListItem | null; onD
     startTransition(async () => {
       const result = item ? await updateCustomItem(item.id, values) : await createCustomItem(values);
       if (result.ok) {
-        onDone();
+        (onSaved ?? onDone)();
         return;
       }
       setErrors(result.fieldErrors ?? {});
