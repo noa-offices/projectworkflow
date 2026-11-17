@@ -18,6 +18,8 @@ export type CollectionDisplayItem = {
   createdAt?: string | null;
   lastUsedAt?: string | null;
   useCount?: number | null;
+  /** Optional extra search text (custom items: the item code). */
+  code?: string | null;
 };
 
 function time(value: string | null | undefined): number {
@@ -33,7 +35,7 @@ function byName(a: CollectionDisplayItem, b: CollectionDisplayItem) {
 export function filterSetups<T extends CollectionDisplayItem>(items: readonly T[], query: string): T[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return [...items];
-  return items.filter((item) => [item.setupName, item.productName, item.brandName].some((value) => value.toLowerCase().includes(needle)));
+  return items.filter((item) => [item.setupName, item.productName, item.brandName, item.code ?? ""].some((value) => value.toLowerCase().includes(needle)));
 }
 
 /**
@@ -71,6 +73,21 @@ export function groupByBrandProduct<T extends CollectionDisplayItem>(items: read
     count: Array.from(products.values()).reduce((sum, setups) => sum + setups.length, 0),
     products: Array.from(products, ([productName, setups]) => ({ productName, setups })).sort((a, b) => compare(a.productName, b.productName)),
   })).sort((a, b) => compare(a.brandName, b.brandName));
+}
+
+export type FlatBrandGroup<T> = { brandName: string; count: number; items: T[] };
+
+/** Brand > items (custom items). Brands A-Z; items keep the order they were given, so the chosen sort is respected. */
+export function groupByBrand<T extends CollectionDisplayItem>(items: readonly T[]): FlatBrandGroup<T>[] {
+  const brands = new Map<string, T[]>();
+  for (const item of items) brands.set(item.brandName, [...(brands.get(item.brandName) ?? []), item]);
+  return Array.from(brands, ([brandName, list]) => ({ brandName, count: list.length, items: list })).sort((a, b) =>
+    a.brandName.localeCompare(b.brandName, undefined, { sensitivity: "base", numeric: true }),
+  );
+}
+
+export function itemCountLabel(count: number): string {
+  return `${count} ${count === 1 ? "item" : "items"}`;
 }
 
 export function setupCountLabel(count: number): string {

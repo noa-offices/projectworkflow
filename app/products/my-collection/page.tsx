@@ -1,6 +1,7 @@
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
-import { MyCollectionList } from "@/components/products/my-collection-list";
+import { MyCollectionTabs } from "@/components/products/my-collection-tabs";
 import { requireActiveUser } from "@/lib/auth";
+import { listCustomItemsForUser } from "@/lib/products/saved-setups/saved-custom-items-service";
 import { listSetupsForUser } from "@/lib/products/saved-setups/saved-setups-service";
 import { createClient } from "@/lib/supabase/server";
 
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 export default async function MyCollectionPage() {
   const { user, profile, displayName } = await requireActiveUser();
   const supabase = await createClient();
-  const items = await listSetupsForUser(supabase, user.id);
+  const [items, customItems] = await Promise.all([listSetupsForUser(supabase, user.id), listCustomItemsForUser(supabase, user.id)]);
 
   return (
     <ErpAppShell
@@ -22,7 +23,7 @@ export default async function MyCollectionPage() {
       userAvatarUrl={profile?.avatar_url ?? null}
       userRole={profile?.role ?? null}
     >
-      <MyCollectionList items={items} />
+      <MyCollectionTabs items={items} customItems={customItems} />
     </ErpAppShell>
   );
 }
