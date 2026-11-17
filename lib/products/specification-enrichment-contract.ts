@@ -1,4 +1,15 @@
 import type { OriginalImportedJsonSource } from "./original-imported-json-sources";
+import type { ProductTemplateDraft } from "./product-template-draft";
+
+export type BatchSpecificationSourceMode = "original_json" | "saved_data";
+export type BatchSpecificationEnrichmentRequest = { draft: ProductTemplateDraft; originalImportedJsonSources?: OriginalImportedJsonSource[]; sourceMode?: BatchSpecificationSourceMode };
+
+/** Omitted mode preserves the existing import request. Fragments are never a request field. */
+export function isBatchSpecificationEnrichmentRequest(value: unknown): value is BatchSpecificationEnrichmentRequest {
+  if (!record(value) || !record(value.draft) || Object.keys(value).some((key) => !["draft", "originalImportedJsonSources", "sourceMode"].includes(key))) return false;
+  if (value.sourceMode !== undefined && value.sourceMode !== "original_json" && value.sourceMode !== "saved_data") return false;
+  return value.sourceMode !== "saved_data" || value.originalImportedJsonSources === undefined || (Array.isArray(value.originalImportedJsonSources) && value.originalImportedJsonSources.length === 0);
+}
 
 export const SPEC_ENRICHMENT_DISPLAY_NAME_MAX = 160;
 export const SPEC_ENRICHMENT_SPECIFICATION_MAX = 1000;

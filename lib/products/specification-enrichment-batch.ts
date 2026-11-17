@@ -1,11 +1,11 @@
 import type { OriginalImportedJsonSource } from "./original-imported-json-sources";
 import { draftModularRows, type ProductTemplateDraft, type ProductTemplateDraftMatrixRow, type ProductTemplateDraftPricedRow } from "./product-template-draft";
 import type { SpecificationEnrichmentContext, SpecificationEnrichmentRow } from "./specification-enrichment-contract";
-import type { BatchSpecificationEnrichmentProviderItem } from "./specification-enrichment-contract";
+import type { BatchSpecificationEnrichmentProviderItem, BatchSpecificationSourceMode } from "./specification-enrichment-contract";
 import { matchSpecificationEnrichmentSourceContext } from "./specification-enrichment-source-context";
 
 export const SPECIFICATION_ENRICHMENT_BATCH_SIZE = 6;
-const MAX_MATCHED_SOURCE_FRAGMENT_BYTES = 32 * 1024;
+export const MAX_MATCHED_SOURCE_FRAGMENT_BYTES = 32 * 1024;
 export type BatchSpecificationTargetKind = "base_model" | "workstation" | "matrix" | "modular" | "option";
 export type BatchSpecificationTarget = {
   targetId: string;
@@ -105,10 +105,11 @@ function fingerprintText(value: string) {
   return (hash >>> 0).toString(36);
 }
 
-export function batchSpecificationFingerprint(draft: ProductTemplateDraft, sources: OriginalImportedJsonSource[]) {
+export function batchSpecificationFingerprint(draft: ProductTemplateDraft, sources: OriginalImportedJsonSource[], sourceMode: BatchSpecificationSourceMode = "original_json") {
   return fingerprintText(JSON.stringify({
     targets: flattenBatchSpecificationTargets(draft).map(({ targetId: id, row, context }) => ({ id, row, context })),
-    sources,
+    sources: sourceMode === "saved_data" ? [] : sources,
+    ...(sourceMode === "saved_data" ? { sourceMode } : {}),
   }));
 }
 

@@ -27,15 +27,17 @@ type ReviewState = {
   edits: EditableBatchSpecificationSuggestion[];
 };
 
-export function BatchSpecificationEnrichmentControl({ draft, originalImportedJsonSources, onApply }: {
+export function BatchSpecificationEnrichmentControl({ draft, originalImportedJsonSources, onApply, editMode = false }: {
   draft: ProductTemplateDraft;
   originalImportedJsonSources: OriginalImportedJsonSource[];
   onApply: (draft: ProductTemplateDraft) => void;
+  editMode?: boolean;
 }) {
   const [pending, setPending] = useState(false);
   const [review, setReview] = useState<ReviewState | null>(null);
   const [showChanges, setShowChanges] = useState(false);
-  const fingerprint = useMemo(() => batchSpecificationFingerprint(draft, originalImportedJsonSources), [draft, originalImportedJsonSources]);
+  const sourceMode = editMode ? "saved_data" : "original_json";
+  const fingerprint = useMemo(() => batchSpecificationFingerprint(draft, originalImportedJsonSources, sourceMode), [draft, originalImportedJsonSources, sourceMode]);
   const targets = useMemo(() => flattenBatchSpecificationTargets(draft), [draft]);
   const summary = review ? summarizeBatchSpecificationSuggestions(targets, review.results, review.skippedTargetIds) : null;
   const applySuggestions = review ? selectedBatchSpecificationSuggestions(review.edits) : [];
@@ -48,7 +50,7 @@ export function BatchSpecificationEnrichmentControl({ draft, originalImportedJso
     setShowChanges(false);
     const requestFingerprint = fingerprint;
     try {
-      const response = await runBatchSpecificationEnrichment({ draft, originalImportedJsonSources });
+      const response = await runBatchSpecificationEnrichment(editMode ? { draft, sourceMode: "saved_data" } : { draft, originalImportedJsonSources });
       setReview({
         fingerprint: requestFingerprint,
         results: response.results,
@@ -73,12 +75,14 @@ export function BatchSpecificationEnrichmentControl({ draft, originalImportedJso
     setReview((current) => current ? { ...current, edits: updateEditableBatchSpecificationSuggestion(current.edits, targetId, patch) } : current);
   };
 
-  if (!review) return <button type="button" disabled={pending || !targets.length} onClick={() => void generate()} className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-50">
+  const disclosure = editMode ? <p className="mt-1 text-xs text-zinc-600">Uses saved product data only. Does not check the supplier catalogue.</p> : null;
+  if (!review) return <><button type="button" disabled={pending || !targets.length} onClick={() => void generate()} className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-50">
     {pending ? "Improving specifications..." : "Improve All Specifications with AI"}
-  </button>;
+  </button>{disclosure}</>;
 
   return <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm">
     <h3 className="font-semibold text-emerald-950">AI Specification Review</h3>
+    {disclosure}
     <p className="mt-1 text-xs text-emerald-900">Changed: {summary?.changed ?? 0} · Unchanged: {summary?.unchanged ?? 0} · Skipped: {summary?.skipped ?? 0}</p>
     {review.message ? <p className="mt-2 text-xs text-amber-800">{review.message}</p> : null}
     {stale ? <p className="mt-2 text-xs font-semibold text-red-700">The reviewed draft or imported source changed. Regenerate suggestions before applying.</p> : null}
