@@ -52,6 +52,8 @@ export type SavedSetupPlainState = {
   workstationSpecification?: string | null;
   brandOverride?: string | null;
   originOverride?: string | null;
+  /** Display-only: main code of the configuration (e.g. "EV211") at save time. Never used for pricing. */
+  mainCode?: string | null;
   specificationEdited?: boolean;
   editedSpecification?: string | null;
   /** Generated specification at save time. Only its hash is stored. */
@@ -61,6 +63,8 @@ export type SavedSetupPlainState = {
 export type SavedSetupRecipeV1 = {
   recipe_version: 1;
   template_id: string;
+  /** Display-only hints (additive; rows saved before this field existed simply have none). */
+  display?: { main_code?: string };
   selections: {
     variant_row_id?: string;
     system_row_id?: string;
@@ -235,6 +239,7 @@ export function buildRecipe(state: SavedSetupPlainState): BuiltSavedSetup {
   const recipe: SavedSetupRecipeV1 = {
     recipe_version: SAVED_SETUP_RECIPE_VERSION,
     template_id: state.templateId,
+    ...(text(state.mainCode) ? { display: { main_code: text(state.mainCode) } } : {}),
     selections: {
       ...(text(state.variantRowId) ? { variant_row_id: text(state.variantRowId) } : {}),
       ...(text(state.systemRowId) ? { system_row_id: text(state.systemRowId) } : {}),
@@ -274,9 +279,10 @@ export function buildRecipe(state: SavedSetupPlainState): BuiltSavedSetup {
 
 /** Inverse of buildRecipe: rebuilds the plain selector state (for replay and for the round-trip test). */
 export function restorePlainState(recipe: SavedSetupRecipeV1, specOverrides?: SavedSetupSpecOverrides | null): SavedSetupPlainState {
-  const s = recipe.selections;
+  // Defensive: rows saved by older code (or hand-edited) may lack optional blocks; never crash on them.
+  const s: Partial<SavedSetupRecipeV1["selections"]> = recipe.selections ?? {};
   const linkedSelections: Record<string, SavedSetupLinkedSelection> = {};
-  for (const [key, value] of Object.entries(recipe.linked.selections)) {
+  for (const [key, value] of Object.entries(recipe.linked?.selections ?? {})) {
     linkedSelections[key] = {
       variantRowId: value.variant_row_id ?? null,
       categoryGroupId: value.category_group_id ?? null,
@@ -288,6 +294,7 @@ export function restorePlainState(recipe: SavedSetupRecipeV1, specOverrides?: Sa
   }
   return {
     templateId: recipe.template_id,
+    mainCode: recipe.display?.main_code ?? null,
     variantRowId: s.variant_row_id ?? null,
     systemRowId: s.system_row_id ?? null,
     systemQuantity: s.system_quantity ?? null,
@@ -297,16 +304,16 @@ export function restorePlainState(recipe: SavedSetupRecipeV1, specOverrides?: Sa
     workstationSizeId: s.workstation_size_id ?? null,
     workstationLayout: s.workstation_layout ?? null,
     additionalClusterQuantity: s.additional_cluster_quantity ?? null,
-    modularQuantities: s.modular_quantities,
-    pricingAccessoryQuantities: s.pricing_accessory_quantities,
-    componentAccessoryQuantities: s.component_accessory_quantities,
-    skippedAccessoryGroupIds: s.skipped_accessory_group_ids,
-    requiredOverrides: s.required_overrides,
-    componentOptionSelections: s.component_option_selections,
-    accessoryCategoryChoices: s.accessory_category_choices,
-    finishes: recipe.finishes,
-    selectedImage: recipe.selected_image,
-    linkedInstances: recipe.linked.instances,
+    modularQuantities: s.modular_quantities ?? {},
+    pricingAccessoryQuantities: s.pricing_accessory_quantities ?? {},
+    componentAccessoryQuantities: s.component_accessory_quantities ?? {},
+    skippedAccessoryGroupIds: s.skipped_accessory_group_ids ?? [],
+    requiredOverrides: s.required_overrides ?? {},
+    componentOptionSelections: s.component_option_selections ?? {},
+    accessoryCategoryChoices: s.accessory_category_choices ?? {},
+    finishes: recipe.finishes ?? [],
+    selectedImage: recipe.selected_image ?? null,
+    linkedInstances: recipe.linked?.instances ?? {},
     linkedSelections,
     dimensionOverride: specOverrides?.dimension ?? null,
     workstationSpecification: specOverrides?.workstation_specification ?? null,

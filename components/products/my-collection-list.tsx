@@ -1,6 +1,11 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import {
+  markQuotationImagePathFailed,
+  normalizeProductImageSnapshotPath,
+  resolveQuotationImageUrl,
+} from "@/lib/quotation-image-path";
 import { clearRemovedSetups, deleteSetup, renameSetup } from "@/lib/products/saved-setups/actions";
 import type { SetupListItem } from "@/lib/products/saved-setups/saved-setups-service";
 
@@ -18,6 +23,54 @@ function groupSetups(items: SetupListItem[]): BrandGroup[] {
     brandName,
     products: Array.from(products, ([productName, setups]) => ({ productName, setups })),
   }));
+}
+
+// Small fixed-size picture. The stored path is resolved to a URL by the existing image helper (signed in the
+// browser under the user's own session); no picture file is ever copied. No path or failure => placeholder.
+function SetupThumbnail({ path, alt }: { path: string | null; alt: string }) {
+  const [url, setUrl] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!path) {
+      window.queueMicrotask(() => {
+        if (!cancelled) setUrl("");
+      });
+      return;
+    }
+    void resolveQuotationImageUrl(normalizeProductImageSnapshotPath(path) ?? path)
+      .then((resolved) => {
+        if (!cancelled) setUrl(resolved);
+      })
+      .catch(() => {
+        if (!cancelled) setUrl("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  return (
+    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded border border-zinc-200 bg-zinc-50 text-[9px] text-zinc-400">
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={url}
+          alt={alt}
+          loading="lazy"
+          width={48}
+          height={48}
+          onError={() => {
+            if (path) markQuotationImagePathFailed(normalizeProductImageSnapshotPath(path) ?? path);
+            setUrl("");
+          }}
+          className="block h-full w-full object-contain"
+        />
+      ) : (
+        <span aria-hidden="true">No image</span>
+      )}
+    </div>
+  );
 }
 
 function SetupRow({ item, onMessage }: { item: SetupListItem; onMessage: (message: string) => void }) {
@@ -58,8 +111,9 @@ function SetupRow({ item, onMessage }: { item: SetupListItem; onMessage: (messag
         </>
       ) : (
         <>
+          <SetupThumbnail path={item.imagePath} alt={item.setupName} />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-zinc-900">{item.setupName}</p>
+            <p className="truncate text-base font-bold text-zinc-900">{item.setupName}</p>
             {item.note ? <p className="truncate text-xs text-zinc-500">{item.note}</p> : null}
           </div>
           {!item.usable ? <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">Unavailable</span> : null}

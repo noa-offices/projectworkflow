@@ -18,6 +18,7 @@ export function SaveToMyCollectionButton({
 }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(defaultName);
+  // An empty name is sent as-is: the server's existing validation message is shown.
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -45,7 +46,7 @@ export function SaveToMyCollectionButton({
               // This sits inside the Add form in the server builder: Enter must never submit that form.
               if (event.key === "Enter") {
                 event.preventDefault();
-                if (!pending && name.trim()) submit();
+                if (!pending) submit();
               }
             }}
             aria-label="Setup name"
@@ -55,7 +56,7 @@ export function SaveToMyCollectionButton({
           <div className="flex gap-2">
             <button
               type="button"
-              disabled={pending || !name.trim()}
+              disabled={pending}
               onClick={submit}
               className="h-9 flex-1 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
             >
@@ -76,6 +77,8 @@ export function SaveToMyCollectionButton({
           type="button"
           onClick={() => {
             setMessage(null);
+            // Start from the current main code (e.g. EV211); the user can extend, edit or clear it.
+            setName(defaultName);
             setOpen(true);
           }}
           className="h-10 w-full border border-emerald-900 bg-white px-3 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-50"
