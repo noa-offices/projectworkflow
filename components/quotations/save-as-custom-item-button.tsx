@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CustomItemForm } from "@/components/products/my-collection-custom-items";
 import { customItemFromRow, type ManualRowLike } from "@/lib/products/saved-setups/custom-item-line";
+import { distinctBrands, type BrandCount } from "@/lib/products/saved-setups/custom-brands";
+import { listCustomItems } from "@/lib/products/saved-setups/saved-custom-items-actions";
 
 // Row More-menu entry for MANUAL item rows ("+ Item Row"): opens a popup (a real modal, not inside the menu)
 // with the form prefilled from the row. Product, note, blank and heading rows render nothing.
@@ -11,6 +13,18 @@ import { customItemFromRow, type ManualRowLike } from "@/lib/products/saved-setu
 export function SaveAsCustomItemButton({ row }: { row: ManualRowLike }) {
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [brands, setBrands] = useState<BrandCount[]>([]);
+
+  // The brand list comes from the owner's own items (existing list action; caller's session, no admin client).
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    listCustomItems()
+      .then((items) => { if (!cancelled) setBrands(distinctBrands(items)); })
+      .catch(() => { if (!cancelled) setBrands([]); });
+    return () => { cancelled = true; };
+  }, [open]);
+
   const prefilled = customItemFromRow(row);
   if (!prefilled.ok) return null;
 
@@ -52,7 +66,7 @@ export function SaveAsCustomItemButton({ row }: { row: ManualRowLike }) {
                 <Link href="/products/my-collection" className="font-semibold underline">Open My Collection</Link>
               </p>
             ) : (
-              <CustomItemForm item={null} defaults={prefilled.defaults} onDone={close} onSaved={() => setSaved(true)} />
+              <CustomItemForm item={null} defaults={prefilled.defaults} brands={brands} onDone={close} onSaved={() => setSaved(true)} />
             )}
           </div>
         </div>

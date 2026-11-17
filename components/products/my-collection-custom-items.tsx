@@ -1,7 +1,17 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { BrandCombobox, BrandFilterList } from "@/components/products/brand-combobox";
 import { createCustomItem, deleteCustomItem, updateCustomItem } from "@/lib/products/saved-setups/saved-custom-items-actions";
+import { renameCustomBrand } from "@/lib/products/saved-setups/saved-custom-brands-actions";
+import {
+  CUSTOM_BRAND_PAGE_SIZE,
+  distinctBrands,
+  filterByBrand,
+  normaliseBrandKey,
+  resolveBrandInput,
+  type BrandCount,
+} from "@/lib/products/saved-setups/custom-brands";
 import {
   COLLECTION_SORT_OPTIONS,
   filterSetups,
@@ -11,7 +21,6 @@ import {
   type CollectionSortMode,
 } from "@/lib/products/saved-setups/collection-view";
 import {
-  CUSTOM_ITEM_BRAND_MAX,
   CUSTOM_ITEM_CODE_MAX,
   CUSTOM_ITEM_CURRENCIES,
   CUSTOM_ITEM_DEFAULT_UNIT,
@@ -66,7 +75,7 @@ function Field({ label, error, children }: { label: string; error?: string; chil
 }
 
 // One form for "Add custom item" and for editing. Errors come from the shared validator (shown next to each field).
-export function CustomItemForm({ item, defaults, onDone, onSaved }: { item: CustomItemListItem | null; defaults?: FormValues; onDone: () => void; onSaved?: () => void }) {
+export function CustomItemForm({ item, defaults, brands = [], onDone, onSaved }: { item: CustomItemListItem | null; defaults?: FormValues; brands?: BrandCount[]; onDone: () => void; onSaved?: () => void }) {
   const [values, setValues] = useState<FormValues>(() => defaults ?? valuesFor(item));
   const [errors, setErrors] = useState<CustomItemFieldErrors>({});
   const [formError, setFormError] = useState("");
@@ -74,8 +83,15 @@ export function CustomItemForm({ item, defaults, onDone, onSaved }: { item: Cust
   const set = (key: keyof FormValues) => (event: { target: { value: string } }) => setValues((current) => ({ ...current, [key]: event.target.value }));
 
   function submit() {
+    // The brand is required; a name matching an existing brand (ignoring case and spaces) uses the existing spelling.
+    const brand = resolveBrandInput(values.brandName, brands);
+    if (!brand.ok) {
+      setErrors({ brandName: brand.error });
+      return;
+    }
+    const payload = { ...values, brandName: brand.name };
     startTransition(async () => {
-      const result = item ? await updateCustomItem(item.id, values) : await createCustomItem(values);
+      const result = item ? await updateCustomItem(item.id, payload) : await createCustomItem(payload);
       if (result.ok) {
         (onSaved ?? onDone)();
         return;
@@ -95,9 +111,7 @@ export function CustomItemForm({ item, defaults, onDone, onSaved }: { item: Cust
       className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm"
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Brand" error={errors.brandName}>
-          <input value={values.brandName} maxLength={CUSTOM_ITEM_BRAND_MAX} onChange={set("brandName")} aria-label="Brand" className={inputClass} />
-        </Field>
+        <BrandCombobox brands={brands} value={values.brandName} error={errors.brandName} onChange={(value) => setValues((current) => ({ ...current, brandName: value }))} />
         <Field label="Item name" error={errors.itemName}>
           <input value={values.itemName} maxLength={CUSTOM_ITEM_NAME_MAX} onChange={set("itemName")} aria-label="Item name" className={inputClass} />
         </Field>
@@ -128,7 +142,7 @@ export function CustomItemForm({ item, defaults, onDone, onSaved }: { item: Cust
   );
 }
 
-function CustomItemCard({ item, onMessage }: { item: CustomItemListItem; onMessage: (message: string) => void }) {
+function CustomItemCard({ item, brands, onMessage }: { item: CustomItemListItem; brands: BrandCount[]; onMessage: (message: string) => void }) {
   const [pending, startTransition] = useTransition();
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -141,7 +155,7 @@ function CustomItemCard({ item, onMessage }: { item: CustomItemListItem; onMessa
     });
   }
 
-  if (editing) return <li className="sm:col-span-2 xl:col-span-3"><CustomItemForm item={item} onDone={() => setEditing(false)} /></li>;
+  if (editing) return <li className="sm:col-span-2 xl:col-span-3"><CustomItemForm item={item} brands={brands} onDone={() => setEditing(false)} /></li>;
 
   return (
     <li className="flex min-w-0 flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
@@ -172,18 +186,67 @@ function CustomItemCard({ item, onMessage }: { item: CustomItemListItem; onMessa
   );
 }
 
+function RenameBrand({ brand, onDone, onMessage }: { brand: string; onDone: (newName: string, count: number) => void; onMessage: (message: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(brand);
+  const [pending, startTransition] = useTransition();
+
+  function submit() {
+    startTransition(async () => {
+      const result = await renameCustomBrand(brand, name);
+      if (!result.ok) {
+        onMessage(result.error);
+        return;
+      }
+      setOpen(false);
+      onDone(result.brandName, result.count);
+    });
+  }
+
+  if (!open) {
+    return <button type="button" onClick={() => { setName(brand); setOpen(true); }} aria-label={`Rename brand ${brand}`} className="text-[11px] font-semibold normal-case tracking-normal text-emerald-900 underline">Rename brand</button>;
+  }
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2 normal-case tracking-normal">
+      <input
+        value={name}
+        maxLength={80}
+        onChange={(event) => setName(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") submit();
+          if (event.key === "Escape") setOpen(false);
+        }}
+        aria-label="New brand name"
+        className="h-8 rounded-md border border-zinc-300 px-2 text-xs outline-none focus:border-emerald-800"
+      />
+      <button type="button" disabled={pending} onClick={submit} className={primaryButton}>Save</button>
+      <button type="button" disabled={pending} onClick={() => setOpen(false)} className={secondaryButton}>Cancel</button>
+    </span>
+  );
+}
+
 export function MyCollectionCustomItems({ items }: { items: CustomItemListItem[] }) {
   const [message, setMessage] = useState("");
+  const [info, setInfo] = useState("");
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<CollectionSortMode>("recent");
+  const [brandFilter, setBrandFilter] = useState<string | null>(null);
+  const [shown, setShown] = useState<Record<string, number>>({});
 
+  const brands = useMemo(() => distinctBrands(items), [items]);
+  // A brand that no longer exists (renamed, or all its items deleted) falls back to All brands.
+  const activeBrand = brandFilter && brands.some((brand) => normaliseBrandKey(brand.brandName) === normaliseBrandKey(brandFilter)) ? brandFilter : null;
   const entries = useMemo(() => items.map(toCollectionItem), [items]);
-  const groups = useMemo(() => groupByBrand(sortSetups(filterSetups(entries, search), sort)), [entries, search, sort]);
+  const groups = useMemo(
+    () => groupByBrand(sortSetups(filterSetups(filterByBrand(entries, activeBrand), search), sort)),
+    [entries, activeBrand, search, sort],
+  );
 
   return (
     <div className="space-y-6">
       {message ? <p role="alert" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{message}</p> : null}
+      {info ? <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{info}</p> : null}
 
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
         {items.length > 0 ? (
@@ -210,28 +273,59 @@ export function MyCollectionCustomItems({ items }: { items: CustomItemListItem[]
         <button type="button" onClick={() => setAdding(true)} disabled={adding} className={`${primaryButton} h-10 ml-auto`}>Add custom item</button>
       </div>
 
-      {adding ? <CustomItemForm item={null} onDone={() => setAdding(false)} /> : null}
+      {adding ? <CustomItemForm item={null} brands={brands} onDone={() => setAdding(false)} /> : null}
 
       {items.length === 0 ? (
         <p className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-10 text-center text-sm text-zinc-500">
           Add an item that is not in the Product Library, with your own price.
         </p>
-      ) : groups.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-10 text-center text-sm text-zinc-500">
-          No item matches your search.
-        </p>
       ) : (
-        <div className="space-y-8">
-          {groups.map((brand) => (
-            <section key={brand.brandName} aria-label={brand.brandName}>
-              <h2 className="border-b border-zinc-200 pb-2 text-xs font-bold uppercase tracking-[0.14em] text-emerald-900">
-                {brand.brandName} <span className="font-semibold text-zinc-500">· {itemCountLabel(brand.count)}</span>
-              </h2>
-              <ul className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {brand.items.map((entry) => <CustomItemCard key={entry.id} item={entry.item} onMessage={setMessage} />)}
-              </ul>
-            </section>
-          ))}
+        <div className="flex flex-col gap-4 md:flex-row md:items-start">
+          <div className="md:w-56 md:shrink-0">
+            <BrandFilterList brands={brands} total={items.length} selected={activeBrand} onSelect={(brand) => { setBrandFilter(brand); setInfo(""); }} />
+          </div>
+          <div className="min-w-0 flex-1">
+            {groups.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-10 text-center text-sm text-zinc-500">
+                No item matches your search.
+              </p>
+            ) : (
+              <div className="space-y-8">
+                {groups.map((brand) => {
+                  const limit = shown[normaliseBrandKey(brand.brandName)] ?? CUSTOM_BRAND_PAGE_SIZE;
+                  const visible = brand.items.slice(0, limit);
+                  return (
+                    <section key={brand.brandName} aria-label={brand.brandName}>
+                      <h2 className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-zinc-200 pb-2 text-xs font-bold uppercase tracking-[0.14em] text-emerald-900">
+                        <span>{brand.brandName} <span className="font-semibold text-zinc-500">· {itemCountLabel(brand.count)}</span></span>
+                        <RenameBrand
+                          brand={brand.brandName}
+                          onMessage={setMessage}
+                          onDone={(newName, count) => {
+                            setMessage("");
+                            setBrandFilter(activeBrand ? newName : null);
+                            setInfo(`${count} ${count === 1 ? "item" : "items"} updated to brand "${newName}".`);
+                          }}
+                        />
+                      </h2>
+                      <ul className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        {visible.map((entry) => <CustomItemCard key={entry.id} item={entry.item} brands={brands} onMessage={setMessage} />)}
+                      </ul>
+                      {brand.items.length > visible.length ? (
+                        <button
+                          type="button"
+                          onClick={() => setShown((current) => ({ ...current, [normaliseBrandKey(brand.brandName)]: limit + CUSTOM_BRAND_PAGE_SIZE }))}
+                          className={`${secondaryButton} mt-3`}
+                        >
+                          Show more ({brand.items.length - visible.length} more)
+                        </button>
+                      ) : null}
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
