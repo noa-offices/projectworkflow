@@ -12,6 +12,7 @@ import {
   type SavedSetupPlainState,
 } from "./recipe";
 import { isSetupUsable } from "./usable";
+import type { SavedSetupRecipeV1, SavedSetupSpecOverrides } from "./recipe";
 
 export type SetupActionResult = { ok: true; id?: string; count?: number } | { ok: false; error: string };
 
@@ -220,4 +221,96 @@ export async function clearRemovedSetupsForUser(supabase: SupabaseClient, userId
     .select("id");
   if (error) return { ok: false, error: "Removed setups could not be cleared." };
   return { ok: true, count: data?.length ?? 0 };
+}
+
+export type PickerSetup = {
+  id: string;
+  brandName: string;
+  productName: string;
+  setupName: string;
+  imagePath: string | null;
+};
+
+/** The caller's USABLE setups only, for the "Add from My Collection" picker. Two batched queries in total. */
+export async function listUsableSetupsForUser(supabase: SupabaseClient, userId: string): Promise<PickerSetup[]> {
+  const items = await listSetupsForUser(supabase, userId);
+  return items
+    .filter((item) => item.usable)
+    .map((item) => ({
+      id: item.id,
+      brandName: item.brandName,
+      productName: item.productName,
+      setupName: item.setupName,
+      imagePath: item.imagePath,
+    }));
+}
+
+export type SetupForUse = {
+  id: string;
+  templateId: string;
+  setupName: string;
+  recipe: SavedSetupRecipeV1;
+  specOverrides: SavedSetupSpecOverrides;
+};
+
+/** Loads ONE of the caller's own setups for replay. Unusable (removed / archived / inactive template) => error. */
+export async function loadSetupForUse(
+  supabase: SupabaseClient,
+  userId: string,
+  setupId: string,
+): Promise<{ ok: true; setup: SetupForUse } | { ok: false; error: string }> {
+  if (!isUuid(setupId)) return { ok: false, error: "Setup not found." };
+  const { data, error } = await supabase
+    .from("saved_setups")
+    .select("id,template_id,setup_name,recipe,spec_overrides,product_templates(is_active,lifecycle_status)")
+    .eq("id", setupId)
+    .eq("owner_id", userId)
+    .maybeSingle();
+  if (error || !data) return { ok: false, error: "Setup not found." };
+  const row = data as unknown as {
+    id: string;
+    template_id: string | null;
+    setup_name: string;
+    recipe: unknown;
+    spec_overrides: unknown;
+    product_templates: SetupRow["product_templates"];
+  };
+  const template = Array.isArray(row.product_templates) ? row.product_templates[0] ?? null : row.product_templates;
+  if (!isSetupUsable(row, template) || !row.template_id) return { ok: false, error: "This product is no longer available." };
+  const shape = validateRecipeShape(row.recipe, row.spec_overrides ?? {});
+  if (!shape.ok) return { ok: false, error: shape.error };
+  return {
+    ok: true,
+    setup: {
+      id: row.id,
+      templateId: row.template_id,
+      setupName: row.setup_name,
+      recipe: row.recipe as SavedSetupRecipeV1,
+      specOverrides: ((row.spec_overrides as SavedSetupSpecOverrides | null) ?? {}) as SavedSetupSpecOverrides,
+    },
+  };
+}
+
+/** Best effort: use_count + 1 and last_used_at for the caller's own setup. Never throws. */
+export async function markSetupUsedForUser(supabase: SupabaseClient, userId: string, setupId: string): Promise<SetupActionResult> {
+  try {
+    if (!isUuid(setupId)) return { ok: false, error: "Setup not found." };
+    const { data: current } = await supabase
+      .from("saved_setups")
+      .select("use_count")
+      .eq("id", setupId)
+      .eq("owner_id", userId)
+      .maybeSingle();
+    if (!current) return { ok: false, error: "Setup not found." };
+    const { data, error } = await supabase
+      .from("saved_setups")
+      .update({ use_count: Number((current as { use_count: number | null }).use_count ?? 0) + 1, last_used_at: new Date().toISOString() })
+      .eq("id", setupId)
+      .eq("owner_id", userId)
+      .select("id");
+    if (error || !data || data.length === 0) return { ok: false, error: "Setup not found." };
+    return { ok: true, id: setupId };
+  } catch {
+    return { ok: false, error: "Usage could not be recorded." };
+  }
 }

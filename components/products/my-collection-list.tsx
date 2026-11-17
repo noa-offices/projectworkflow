@@ -27,7 +27,7 @@ function groupSetups(items: SetupListItem[]): BrandGroup[] {
 
 // Small fixed-size picture. The stored path is resolved to a URL by the existing image helper (signed in the
 // browser under the user's own session); no picture file is ever copied. No path or failure => placeholder.
-function SetupThumbnail({ path, alt }: { path: string | null; alt: string }) {
+export function SetupThumbnail({ path, alt }: { path: string | null; alt: string }) {
   const [url, setUrl] = useState("");
 
   useEffect(() => {
