@@ -2974,20 +2974,6 @@ function InlineRowActions({
         <SharedQuotationMoreMenu
           actionButtons={(
             <>
-              <form action={duplicateQuotationItemBelow}>
-                <input type="hidden" name="id" value={item.id} />
-                <input type="hidden" name="quotation_id" value={quotation.id} />
-                <input type="hidden" name="return_to" value={returnTo} />
-                <button
-                  type="submit"
-                  className="h-7 w-full border border-zinc-300 bg-white px-2 text-left text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
-                >
-                  Duplicate below
-                </button>
-              </form>
-              <CopyQuotationRowButton
-                payload={rowClipboardPayload({ item, quotation })}
-              />
               {item.item_type === "product" && item.source_template_id ? (
                 <SaveLineToMyCollectionButton
                   line={{
@@ -3002,6 +2988,20 @@ function InlineRowActions({
                   }}
                 />
               ) : null}
+              <form action={duplicateQuotationItemBelow}>
+                <input type="hidden" name="id" value={item.id} />
+                <input type="hidden" name="quotation_id" value={quotation.id} />
+                <input type="hidden" name="return_to" value={returnTo} />
+                <button
+                  type="submit"
+                  className="h-7 w-full border border-zinc-300 bg-white px-2 text-left text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                >
+                  Duplicate below
+                </button>
+              </form>
+              <CopyQuotationRowButton
+                payload={rowClipboardPayload({ item, quotation })}
+              />
               <DeactivateRowAction item={item} quotationId={quotation.id} returnTo={returnTo} />
             </>
           )}
