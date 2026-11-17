@@ -8,6 +8,7 @@ import type { AppRole } from "@/lib/supabase/types";
 import { canViewInventory } from "@/lib/inventory/access";
 import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 import { ReadCacheSignOut } from "@/components/local-read-cache/sign-out";
+import { isMyCollectionActive } from "@/lib/products/saved-setups/collection-view";
 import { INVENTORY_NOTIFICATIONS_PATH, INVENTORY_PROFILE_PATH, isInventoryPath, profileHref } from "@/lib/inventory/profile";
 import {
   Archive,
@@ -15,6 +16,7 @@ import {
   BadgeCheck,
   BadgeDollarSign,
   Bell,
+  Bookmark,
   Building2,
   CheckCircle2,
   ChevronDown,
@@ -314,9 +316,10 @@ export function ErpSidebar({
       },
       {
         title: "Products",
-        hiddenSection: !canManageProducts,
         iconColors: { bg: "bg-amber-100", icon: "text-amber-700" },
         items: [
+          // Private, owner-only saved setups: visible to every signed-in user of this sidebar (not gated by canManageProducts).
+          { label: "My Collection", href: "/products/my-collection", icon: Bookmark, active: isMyCollectionActive(pathname) },
           { label: "Product Library", href: "/products", icon: Package, active: isProductLibraryActive(pathname, priceStatus, manage), hidden: !canManageProducts },
           { label: "Product Management", href: "/products/manage", icon: SlidersHorizontal, active: isProductManagementActive(pathname, manage), hidden: !canManageProducts },
           { label: "Brands", href: "/products/brands", icon: Tag, active: pathname === "/products/brands", hidden: !canManageProducts },

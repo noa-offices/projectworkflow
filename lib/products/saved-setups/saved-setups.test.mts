@@ -471,7 +471,7 @@ test("picker loader: only the caller's USABLE setups, in two batched queries, wi
   assert.deepEqual(items.map((item) => item.id).sort(), ["ok-1", "ok-2"]);
   assert.equal(counter.saved_setups, 1);
   assert.equal(counter.product_templates, 1);
-  assert.ok(items.every((item) => Object.keys(item).sort().join() === "brandName,id,imagePath,productName,setupName"), "only what the picker needs");
+  assert.ok(items.every((item) => Object.keys(item).sort().join() === "brandName,createdAt,id,imagePath,lastUsedAt,productName,setupName,useCount"), "only what the picker needs");
 });
 
 test("loadSetupForUse: owner only; unusable or invalid setups are refused; the recipe is returned without any price", async () => {
