@@ -8,6 +8,7 @@ import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import { SaveToMyCollectionButton } from "./save-to-my-collection-button";
 import type { SavedSetupPlainState } from "@/lib/products/saved-setups/recipe";
 import { defaultSetupName } from "@/lib/products/saved-setups/default-name";
+import { LINE_RECIPE_FORM_FIELD, buildLineConfigurationRecipe, withConfigurationRecipe } from "@/lib/products/saved-setups/line-recipe";
 import { baseModelPlacement } from "@/lib/products/saved-setups/base-model-placement";
 import { AddFromMyCollectionButton } from "./add-from-my-collection-button";
 import { SetupReplayBanner } from "./setup-replay-banner";
@@ -3034,6 +3035,11 @@ export function ProductLibrarySelector({
                     editedSpecification: finalSpecificationWasEdited ? finalSpecification : null,
                     generatedSpecification: generatedFinalSpecification,
                   };
+                  // My Collection: additive only. configuration_recipe is the one key added to the line snapshot; nothing else changes.
+                  localProductItem.source_component_data = withConfigurationRecipe(
+                    localProductItem.source_component_data as Record<string, unknown>,
+                    savedSetupState,
+                  );
                   const mainItemCurrency = normalizeCurrency(
                     usesWorkstationFlow
                       ? selectedSizeRow?.currency ?? rowCurrency
@@ -5208,6 +5214,9 @@ export function ProductLibrarySelector({
                           <input type="hidden" name="quotation_id" value={quotationId} />
                           <input type="hidden" name="section_id" value={sectionId} />
                           <input type="hidden" name="template_id" value={template.id} />
+                          {!isLocalMode ? (
+                            <input type="hidden" name={LINE_RECIPE_FORM_FIELD} value={JSON.stringify(buildLineConfigurationRecipe(savedSetupState))} />
+                          ) : null}
                           <input
                             type="hidden"
                             name="final_specification_was_edited"

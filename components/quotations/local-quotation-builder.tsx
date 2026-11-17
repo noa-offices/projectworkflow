@@ -1,5 +1,6 @@
 "use client";
 
+import { SaveLineToMyCollectionButton } from "@/components/quotations/save-line-to-my-collection-button";
 import { announcedSnapshotOf } from "@/lib/products/price-announcements";
 import { readPricingRule, type PricingRule } from "@/lib/quotation-pricing";
 import { formatRoundingDifference, lineRoundingAdjustment } from "@/lib/quotations/quotation-total-display";
@@ -3357,6 +3358,12 @@ export function LocalQuotationBuilder({
               </div>
             </div>
           </fieldset>
+
+          {item.item_type === "product" && item.source_template_id ? (
+            <div className="border border-zinc-300 bg-white p-3">
+              <SaveLineToMyCollectionButton line={item} />
+            </div>
+          ) : null}
 
           {sourceSummaryRows.length ? (
             <fieldset className="border border-zinc-300 bg-white p-3">

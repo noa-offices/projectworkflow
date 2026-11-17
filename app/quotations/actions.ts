@@ -31,6 +31,7 @@ import type { AccessoryConditionalConfiguration } from "@/lib/products/accessory
 import { evaluateProductAccessorySelection, parseSubmittedAccessoryQuantities } from "@/lib/quotations/product-accessory-configuration";
 import { baseModelPriceOrDefault, sameCurrencyUnitSum } from "@/lib/quotations/source-price-components";
 import { requiredComponentOverrideReport } from "@/lib/quotations/required-component-overrides";
+import { LINE_RECIPE_FORM_FIELD, LINE_RECIPE_KEY, parseLineConfigurationRecipe } from "@/lib/products/saved-setups/line-recipe";
 import { announcedQuotationDelta, announcedSnapshot, announcedTotals, loadBrandPriceAnnouncements } from "@/lib/products/price-announcements";
 import { activeBaseModelPricingGroups, composeSystemAndMainSpecification, currentSystemPricing, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, remapBaseModelTargetsToOwnerGroups, strictSystemQuantity, systemPriceContribution, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
 import {
@@ -7297,12 +7298,16 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     selectedWorkstationVariantPricingRow?.supplier_price_list_code?.trim() ||
     null;
   const submittedFinishSelections = finishSelectionsValue(formData);
+  const submittedRecipe = parseLineConfigurationRecipe(formData.get(LINE_RECIPE_FORM_FIELD), template.id);
+  const submittedConfigurationRecipe = submittedRecipe ? { [LINE_RECIPE_KEY]: submittedRecipe } : {};
   const payload = {
     quotation_id: quotationId,
     section_id: sectionId,
     item_type: "product",
     source_template_id: template.id,
     source_component_data: {
+      // My Collection: the client's recipe is stored only if it passes the shape, price/quantity, size and template-id checks.
+      ...submittedConfigurationRecipe,
       template_code: template.template_code,
       template_name: template.template_name,
       brand_id: template.brand_id,
