@@ -350,14 +350,25 @@ test("the existing Add path is untouched: Add / Add to Local Workspace unchanged
 });
 
 // ── PR 1b-1: default name, display block, pictures ─────────────────────────────────────────────────────────────
-test("defaultSetupName: main code when present (trimmed), otherwise the template name", () => {
-  assert.equal(defaultSetupName({ mainCode: "EV211", templateName: "Silver 262S" }), "EV211");
-  assert.equal(defaultSetupName({ mainCode: "  EV 211  ", templateName: "Silver" }), "EV 211");
+test("defaultSetupName: template name first, then the main code", () => {
+  assert.equal(defaultSetupName({ mainCode: "159 913", templateName: "Jera Meeting" }), "Jera Meeting 159 913");
+  assert.equal(defaultSetupName({ mainCode: "EV211", templateName: "Every" }), "Every EV211");
+  assert.equal(defaultSetupName({ mainCode: "  EV211  ", templateName: " Every " }), "Every EV211");
+  // Only one of them present, or neither.
   assert.equal(defaultSetupName({ mainCode: "", templateName: "Silver 262S" }), "Silver 262S");
-  assert.equal(defaultSetupName({ mainCode: "   ", templateName: " Silver 262S " }), "Silver 262S");
   assert.equal(defaultSetupName({ mainCode: null, templateName: "Silver 262S" }), "Silver 262S");
   assert.equal(defaultSetupName({ templateName: "Silver 262S" }), "Silver 262S");
+  assert.equal(defaultSetupName({ mainCode: "EV211", templateName: "  " }), "EV211");
+  assert.equal(defaultSetupName({ mainCode: "159 913", templateName: null }), "159 913");
+  assert.equal(defaultSetupName({ mainCode: "", templateName: "" }), "");
   assert.equal(defaultSetupName({}), "");
+  // The code is not repeated when the template name already ends with it (case-insensitive).
+  assert.equal(defaultSetupName({ mainCode: "EV211", templateName: "Every EV211" }), "Every EV211");
+  assert.equal(defaultSetupName({ mainCode: "ev211", templateName: "Every EV211" }), "Every EV211");
+  assert.equal(defaultSetupName({ mainCode: "159 913", templateName: "Jera Meeting 159 913" }), "Jera Meeting 159 913");
+  // Extra spaces in the template name collapse; the code keeps its inner space unchanged.
+  assert.equal(defaultSetupName({ mainCode: "159 913", templateName: "  Jera    Meeting  " }), "Jera Meeting 159 913");
+  assert.equal(defaultSetupName({ mainCode: "159  913", templateName: "Jera" }), "Jera 159  913");
 });
 
 test("the main code is stored only as a display hint; the recipe stays price- and quantity-free; the guard also checks display", () => {
