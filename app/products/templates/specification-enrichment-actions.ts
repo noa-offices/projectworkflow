@@ -1,11 +1,12 @@
 "use server";
 import { requireProductLibraryManager } from "@/lib/auth";
 import { batchSpecificationChunks, flattenBatchSpecificationTargets, prepareBatchSpecificationEnrichment, processSpecificationBatchesSequentially } from "@/lib/products/specification-enrichment-batch";
-import { isSpecificationEnrichmentRequest, type BatchSpecificationEnrichmentActionResult, type SpecificationEnrichmentActionResult, type SpecificationEnrichmentRequest } from "@/lib/products/specification-enrichment-contract";
+import { isBatchSpecificationEnrichmentRequest, isSpecificationEnrichmentRequest, type BatchSpecificationEnrichmentRequest, type BatchSpecificationEnrichmentActionResult, type SpecificationEnrichmentActionResult, type SpecificationEnrichmentRequest } from "@/lib/products/specification-enrichment-contract";
 import { enrichSpecificationBatchWithProvider, enrichSpecificationWithProvider, SpecificationEnrichmentProviderError } from "@/lib/products/specification-enrichment-provider.server";
 import { matchSpecificationEnrichmentSourceContext } from "@/lib/products/specification-enrichment-source-context";
-import { validateOriginalImportedJsonSources, type OriginalImportedJsonSource } from "@/lib/products/original-imported-json-sources";
-import { normalizeProductTemplateDraft, type ProductTemplateDraft } from "@/lib/products/product-template-draft";
+import { validateOriginalImportedJsonSources } from "@/lib/products/original-imported-json-sources";
+import { normalizeProductTemplateDraft } from "@/lib/products/product-template-draft";
+import { prepareSavedSpecificationEnrichment, specificationEnrichmentValidationCopy } from "@/lib/products/specification-enrichment-saved-data";
 
 export async function runSpecificationEnrichment(request: SpecificationEnrichmentRequest): Promise<SpecificationEnrichmentActionResult> {
   await requireProductLibraryManager();
@@ -17,16 +18,18 @@ export async function runSpecificationEnrichment(request: SpecificationEnrichmen
   try { return { ok: true, result: await enrichSpecificationWithProvider({ row, context, sourceFragment: matched.fragment }) }; } catch (error) { const notConfigured = error instanceof SpecificationEnrichmentProviderError && error.kind === "not_configured"; return { ok: false, code: notConfigured ? "not_configured" : "provider_failed", message: notConfigured ? "Specification enrichment is not configured." : error instanceof SpecificationEnrichmentProviderError ? error.message : "Specification enrichment could not be completed." }; }
 }
 
-export async function runBatchSpecificationEnrichment(request: { draft: ProductTemplateDraft; originalImportedJsonSources: OriginalImportedJsonSource[] }): Promise<BatchSpecificationEnrichmentActionResult> {
+export async function runBatchSpecificationEnrichment(request: BatchSpecificationEnrichmentRequest): Promise<BatchSpecificationEnrichmentActionResult> {
   await requireProductLibraryManager();
-  const normalized = normalizeProductTemplateDraft(request?.draft);
+  if (!isBatchSpecificationEnrichmentRequest(request)) return { ok: false, code: "invalid_request", message: "A valid reviewed product draft is required.", results: [], skippedTargetIds: [] };
+  const savedData = request.sourceMode === "saved_data";
+  const normalized = normalizeProductTemplateDraft(savedData ? specificationEnrichmentValidationCopy(request.draft) : request.draft);
   if (!normalized.valid || !normalized.draft) return { ok: false, code: "invalid_request", message: "A valid reviewed product draft is required.", results: [], skippedTargetIds: [] };
-  const sources = validateOriginalImportedJsonSources(request.originalImportedJsonSources);
+  const sources = savedData ? { valid: true as const, sources: [] } : validateOriginalImportedJsonSources(request.originalImportedJsonSources);
   if (!sources.valid) return { ok: false, code: "invalid_request", message: sources.message, results: [], skippedTargetIds: [] };
   const targets = flattenBatchSpecificationTargets(normalized.draft);
   if (targets.length > 120 || new Set(targets.map((target) => target.targetId)).size !== targets.length) return { ok: false, code: "invalid_request", message: "Specification enrichment targets are invalid.", results: [], skippedTargetIds: [] };
 
-  const { eligible, skippedTargetIds } = prepareBatchSpecificationEnrichment(targets, sources.sources);
+  const { eligible, skippedTargetIds } = savedData ? prepareSavedSpecificationEnrichment(targets) : prepareBatchSpecificationEnrichment(targets, sources.sources);
 
   const results: BatchSpecificationEnrichmentActionResult["results"] = [];
   const batches = batchSpecificationChunks(eligible);
