@@ -7,6 +7,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } fr
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import { SaveToMyCollectionButton } from "./save-to-my-collection-button";
 import type { SavedSetupPlainState } from "@/lib/products/saved-setups/recipe";
+import { defaultSetupName } from "@/lib/products/saved-setups/default-name";
 import { listProductTemplateRowReferences } from "@/app/products/templates/row-reference-actions";
 import { listProductTemplateSubgroupReferences } from "@/app/products/templates/subgroup-reference-actions";
 import {
@@ -2897,6 +2898,8 @@ export function ProductLibrarySelector({
                   // My Collection: plain, price-free snapshot of this template's selections (additive; not part of the line).
                   const savedSetupState: SavedSetupPlainState = {
                     templateId: template.id,
+                    // Display-only main code: supplier code of the first selected main row (first modular item / base size).
+                    mainCode: (selectedSupplierPriceListCode ?? "").split(",")[0]?.trim() || null,
                     variantRowId: selectedVariantRow?.id ?? null,
                     systemRowId: nativeSystem.selected ? String(nativeSystem.selected.row.id) : null,
                     systemQuantity: nativeSystem.selected ? systemQuantity : null,
@@ -5072,7 +5075,7 @@ export function ProductLibrarySelector({
                                 </button>
                               )}
                               <SaveToMyCollectionButton
-                                defaultName={template.template_name}
+                                defaultName={defaultSetupName({ mainCode: savedSetupState.mainCode, templateName: template.template_name })}
                                 state={savedSetupState}
                                 templateId={template.id}
                               />

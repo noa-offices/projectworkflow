@@ -32,6 +32,8 @@ export type SetupListItem = {
   removed: boolean;
   useCount: number;
   updatedAt: string;
+  /** Stored image path (resolved to a URL by the browser's existing image helper). null = placeholder. */
+  imagePath: string | null;
 };
 
 const NOT_AVAILABLE = "This product is not available to you or is no longer active.";
@@ -136,22 +138,60 @@ type SetupRow = {
   template_id: string | null;
   use_count: number | null;
   updated_at: string;
+  selected_image?: string | null;
   product_templates: { is_active: boolean | null; lifecycle_status: string | null } | Array<{ is_active: boolean | null; lifecycle_status: string | null }> | null;
 };
 
+const PROPOSED_IMAGE_FIELDS = Array.from({ length: 20 }, (_, index) => `proposed_image_url_${index + 1}`);
+const TEMPLATE_IMAGE_SELECT = ["id", "default_image_url", ...PROPOSED_IMAGE_FIELDS].join(",");
+
+function templateImagePaths(template: Record<string, unknown>): string[] {
+  return PROPOSED_IMAGE_FIELDS.flatMap((field) => {
+    const value = field === "proposed_image_url_1" ? template[field] ?? template.default_image_url : template[field];
+    return typeof value === "string" && value.trim() ? [value] : [];
+  });
+}
+
+/**
+ * One batched query for ALL template ids on the page, under the CALLER's RLS (no elevated client).
+ * Picture = the image the user had selected at save time if the template still has it, else the template's
+ * main picture (proposed image 1, then default). Unreadable or missing template => no entry => placeholder.
+ */
+async function templateImagesFor(supabase: SupabaseClient, templateIds: string[]) {
+  const byTemplate = new Map<string, Record<string, unknown>>();
+  if (templateIds.length === 0) return byTemplate;
+  const { data } = await supabase.from("product_templates").select(TEMPLATE_IMAGE_SELECT).in("id", templateIds);
+  for (const row of (data ?? []) as unknown as Array<Record<string, unknown>>) byTemplate.set(String(row.id), row);
+  return byTemplate;
+}
+
 /** The caller's own setups (owner filter + RLS), with usability computed by isSetupUsable. */
-export async function listSetupsForUser(supabase: SupabaseClient, userId: string): Promise<SetupListItem[]> {
+export async function listSetupsForUser(
+  supabase: SupabaseClient,
+  userId: string,
+  options: { withImages?: boolean } = {},
+): Promise<SetupListItem[]> {
   const { data, error } = await supabase
     .from("saved_setups")
-    .select("id,brand_name,product_name,setup_name,note,template_id,use_count,updated_at,product_templates(is_active,lifecycle_status)")
+    .select("id,brand_name,product_name,setup_name,note,template_id,use_count,updated_at,selected_image:recipe->>selected_image,product_templates(is_active,lifecycle_status)")
     .eq("owner_id", userId)
     .eq("archived", false)
     .order("brand_name", { ascending: true })
     .order("product_name", { ascending: true })
     .order("setup_name", { ascending: true });
   if (error || !data) return [];
-  return (data as unknown as SetupRow[]).map((row) => {
+  const rows = data as unknown as SetupRow[];
+  const images = options.withImages === false
+    ? new Map<string, Record<string, unknown>>()
+    : await templateImagesFor(supabase, Array.from(new Set(rows.flatMap((row) => (row.template_id ? [row.template_id] : [])))));
+  return rows.map((row) => {
     const template = Array.isArray(row.product_templates) ? row.product_templates[0] ?? null : row.product_templates;
+    const templateImages = row.template_id ? images.get(row.template_id) : undefined;
+    let imagePath: string | null = null;
+    if (templateImages) {
+      const available = templateImagePaths(templateImages);
+      imagePath = row.selected_image && available.includes(row.selected_image) ? row.selected_image : available[0] ?? null;
+    }
     return {
       id: row.id,
       brandName: row.brand_name,
@@ -162,13 +202,14 @@ export async function listSetupsForUser(supabase: SupabaseClient, userId: string
       removed: !row.template_id,
       useCount: row.use_count ?? 0,
       updatedAt: row.updated_at,
+      imagePath,
     };
   });
 }
 
 /** Deletes ONLY the caller's own removed/unavailable setups. */
 export async function clearRemovedSetupsForUser(supabase: SupabaseClient, userId: string): Promise<SetupActionResult> {
-  const items = await listSetupsForUser(supabase, userId);
+  const items = await listSetupsForUser(supabase, userId, { withImages: false });
   const ids = items.filter((item) => !item.usable).map((item) => item.id);
   if (ids.length === 0) return { ok: true, count: 0 };
   const { data, error } = await supabase

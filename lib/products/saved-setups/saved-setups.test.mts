@@ -19,6 +19,7 @@ import {
   saveSetupForUser,
 } from "./saved-setups-service";
 import { isSetupUsable } from "./usable";
+import { defaultSetupName } from "./default-name";
 
 const USER_A = "11111111-1111-4111-8111-111111111111";
 const USER_B = "22222222-2222-4222-8222-222222222222";
@@ -43,7 +44,7 @@ function newDb(): Db {
   };
 }
 
-function fake(db: Db, session: string, options: { rls?: boolean; hiddenTemplates?: string[] } = {}) {
+function fake(db: Db, session: string, options: { rls?: boolean; hiddenTemplates?: string[]; counter?: Record<string, number> } = {}) {
   const rls = options.rls ?? true;
   const hidden = new Set(options.hiddenTemplates ?? []);
   let counter = 0;
@@ -69,6 +70,7 @@ function fake(db: Db, session: string, options: { rls?: boolean; hiddenTemplates
     }
     private run(): { data: Row[] | null; error: { message: string } | null } {
       const rows = db[this.table];
+      if (options.counter && this.op === "select") options.counter[this.table] = (options.counter[this.table] ?? 0) + 1;
       if (this.op === "insert") {
         if (rls && this.table === "saved_setups" && this.payload.owner_id !== session) return { data: null, error: { message: "rls" } };
         const row = { id: `00000000-0000-4000-8000-${String(++counter).padStart(12, "0")}`, use_count: 0, archived: false, updated_at: "2026-01-01", ...this.payload };
@@ -84,6 +86,9 @@ function fake(db: Db, session: string, options: { rls?: boolean; hiddenTemplates
           ...row,
           product_templates: db.product_templates.find((tpl) => tpl.id === row.template_id && !hidden.has(tpl.id)) ?? null,
         }));
+      }
+      if (this.table === "saved_setups" && this.projection.includes("selected_image")) {
+        out = out.map((row) => ({ ...row, selected_image: row.recipe?.selected_image ?? null }));
       }
       for (const column of [...this.orders].reverse()) out.sort((a, b) => String(a[column]).localeCompare(String(b[column])));
       return { data: out, error: null };
@@ -342,4 +347,97 @@ test("the existing Add path is untouched: Add / Add to Local Workspace unchanged
   assert.ok(!button.includes("@/app/quotations/actions"));
   assert.ok(!/type="submit"/.test(button));
   assert.match(button, /event\.preventDefault\(\)/);
+});
+
+// ── PR 1b-1: default name, display block, pictures ─────────────────────────────────────────────────────────────
+test("defaultSetupName: main code when present (trimmed), otherwise the template name", () => {
+  assert.equal(defaultSetupName({ mainCode: "EV211", templateName: "Silver 262S" }), "EV211");
+  assert.equal(defaultSetupName({ mainCode: "  EV 211  ", templateName: "Silver" }), "EV 211");
+  assert.equal(defaultSetupName({ mainCode: "", templateName: "Silver 262S" }), "Silver 262S");
+  assert.equal(defaultSetupName({ mainCode: "   ", templateName: " Silver 262S " }), "Silver 262S");
+  assert.equal(defaultSetupName({ mainCode: null, templateName: "Silver 262S" }), "Silver 262S");
+  assert.equal(defaultSetupName({ templateName: "Silver 262S" }), "Silver 262S");
+  assert.equal(defaultSetupName({}), "");
+});
+
+test("the main code is stored only as a display hint; the recipe stays price- and quantity-free; the guard also checks display", () => {
+  const { recipe } = buildRecipe({ ...baseState, mainCode: " EV211 ", variantRowId: "v" });
+  assert.deepEqual(recipe.display, { main_code: "EV211" });
+  assert.equal(recipe.recipe_version, 1);
+  assert.equal(findForbiddenRecipeKey(recipe), null);
+  assert.equal(restorePlainState(recipe).mainCode, "EV211");
+  assert.equal(buildRecipe({ ...baseState, mainCode: "" }).recipe.display, undefined);
+  for (const key of ["price", "unit_price", "total", "exchange_rate", "internal_cost"]) {
+    assert.equal(validateRecipeShape({ ...recipe, display: { main_code: "EV211", [key]: 1 } }).ok, false, `${key} inside display`);
+  }
+});
+
+test("old saved rows without recipe.display (or without selected_image) still list, with the template picture", async () => {
+  const db = newDb();
+  db.product_templates[0].proposed_image_url_1 = "product-templates/silver/main.png";
+  db.saved_setups.push({
+    id: "old-1", owner_id: USER_A, template_id: TPL_OK, brand_name: "Interstuhl", product_name: "Silver 262S", setup_name: "Old",
+    note: null, recipe: { recipe_version: 1, template_id: TPL_OK, selections: {} }, use_count: 0, archived: false, updated_at: "2026-01-01",
+  });
+  const [item] = await listSetupsForUser(fake(db, USER_A), USER_A);
+  assert.equal(item.setupName, "Old");
+  assert.equal(item.imagePath, "product-templates/silver/main.png");
+  assert.equal(restorePlainState({ recipe_version: 1, template_id: TPL_OK, selections: {} } as never).mainCode, null);
+});
+
+test("picture: the selected image wins while the template still has it, else the template's main picture, else placeholder", async () => {
+  const db = newDb();
+  Object.assign(db.product_templates[0], { default_image_url: "product-templates/d.png", proposed_image_url_1: "product-templates/1.png", proposed_image_url_2: "product-templates/2.png" });
+  const base = { brand_name: "B", product_name: "P", note: null, use_count: 0, archived: false, updated_at: "2026-01-01" };
+  db.saved_setups.push(
+    { ...base, id: "s-selected", owner_id: USER_A, template_id: TPL_OK, setup_name: "a", recipe: { selected_image: "product-templates/2.png" } },
+    { ...base, id: "s-gone", owner_id: USER_A, template_id: TPL_OK, setup_name: "b", recipe: { selected_image: "product-templates/removed.png" } },
+    { ...base, id: "s-none", owner_id: USER_A, template_id: TPL_OK, setup_name: "c", recipe: {} },
+    { ...base, id: "s-noimage-template", owner_id: USER_A, template_id: TPL_ARCHIVED, setup_name: "d", recipe: { selected_image: "product-templates/2.png" } },
+    { ...base, id: "s-deleted", owner_id: USER_A, template_id: null, setup_name: "e", recipe: { selected_image: "product-templates/2.png" } },
+    { ...base, id: "s-hidden", owner_id: USER_A, template_id: TPL_HIDDEN, setup_name: "f", recipe: { selected_image: "product-templates/2.png" } },
+  );
+  const items = await listSetupsForUser(fake(db, USER_A, { hiddenTemplates: [TPL_HIDDEN] }), USER_A);
+  const path = (id: string) => items.find((item) => item.id === id)?.imagePath;
+  assert.equal(path("s-selected"), "product-templates/2.png");
+  assert.equal(path("s-gone"), "product-templates/1.png");
+  assert.equal(path("s-none"), "product-templates/1.png");
+  assert.equal(path("s-noimage-template"), null);
+  assert.equal(path("s-deleted"), null, "removed template => placeholder");
+  assert.equal(path("s-hidden"), null, "template the caller cannot read => placeholder");
+});
+
+test("the picture lookup is ONE batched template query for many setups", async () => {
+  const db = newDb();
+  const base = { brand_name: "B", product_name: "P", note: null, use_count: 0, archived: false, updated_at: "2026-01-01", recipe: {} };
+  for (let index = 0; index < 8; index += 1) {
+    db.saved_setups.push({ ...base, id: `s${index}`, owner_id: USER_A, template_id: index % 2 ? TPL_OK : TPL_ARCHIVED, setup_name: `n${index}` });
+  }
+  const counter: Record<string, number> = {};
+  await listSetupsForUser(fake(db, USER_A, { counter }), USER_A);
+  assert.equal(counter.product_templates, 1);
+  assert.equal(counter.saved_setups, 1);
+  // Clear-removed does not need pictures at all.
+  const counter2: Record<string, number> = {};
+  await clearRemovedSetupsForUser(fake(db, USER_A, { counter: counter2 }), USER_A);
+  assert.equal(counter2.product_templates ?? 0, 0);
+});
+
+test("pictures never use an elevated client, and the thumbnail reuses the existing image helper (no new storage layer)", () => {
+  const service = read("./saved-setups-service.ts");
+  assert.ok(!/service[_-]?role|createAdmin|storage/i.test(service));
+  const list = read("../../../components/products/my-collection-list.tsx");
+  assert.match(list, /resolveQuotationImageUrl/);
+  assert.match(list, /loading="lazy"/);
+  assert.ok(!/createSignedUrl|supabase/i.test(list));
+});
+
+test("PR 1b-1 leaves the Add / Add to Local Workspace code paths unchanged in the selector", () => {
+  const source = read("../../../components/quotations/product-library-selector.tsx");
+  assert.ok(source.includes("onAddLocalItem?.(localProductItem);"));
+  assert.ok(source.includes("action={addProductTemplateToQuotation}"));
+  assert.ok(source.includes("                                  Add to Local Workspace"));
+  const lineStart = source.indexOf("const localProductItem: LocalQuotationItem = {");
+  const stateStart = source.indexOf("const savedSetupState: SavedSetupPlainState = {");
+  assert.ok(!source.slice(lineStart, stateStart).includes("mainCode"), "mainCode must not enter the quotation line");
 });
