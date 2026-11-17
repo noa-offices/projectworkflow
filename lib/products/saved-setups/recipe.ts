@@ -61,6 +61,8 @@ export type SavedSetupPlainState = {
   editedSpecification?: string | null;
   /** Generated specification at save time. Only its hash is stored. */
   generatedSpecification?: string | null;
+  /** Used instead of hashing generatedSpecification when only the stored hash is known (saving from a quote line). */
+  generatedSpecificationHash?: string | null;
 };
 
 export type SavedSetupRecipeV1 = {
@@ -278,7 +280,7 @@ export function buildRecipe(state: SavedSetupPlainState): BuiltSavedSetup {
     ...(text(state.originOverride) ? { origin: text(state.originOverride) } : {}),
     specification_edited: edited,
     edited_specification: edited ? (state.editedSpecification as string) : null,
-    generated_specification_hash: hashSpecificationText(state.generatedSpecification),
+    generated_specification_hash: state.generatedSpecificationHash ?? hashSpecificationText(state.generatedSpecification),
   };
 
   return { recipe, specOverrides };

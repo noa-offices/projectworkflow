@@ -1,5 +1,6 @@
 import { loadBrandPriceAnnouncements, type AnnouncementView } from "@/lib/products/price-announcements";
 import Link from "next/link";
+import { SaveLineToMyCollectionButton } from "@/components/quotations/save-line-to-my-collection-button";
 import { LockedQuotationView } from "@/components/quotations/quotation-locked-view";
 import { isQuotationLocked } from "@/lib/quotations/quotation-lock";
 import { notFound } from "next/navigation";
@@ -2987,6 +2988,20 @@ function InlineRowActions({
               <CopyQuotationRowButton
                 payload={rowClipboardPayload({ item, quotation })}
               />
+              {item.item_type === "product" && item.source_template_id ? (
+                <SaveLineToMyCollectionButton
+                  line={{
+                    item_type: item.item_type,
+                    source_template_id: item.source_template_id,
+                    source_component_data: {
+                      template_name: recordValue(item.source_component_data)?.template_name,
+                      configuration_recipe: recordValue(item.source_component_data)?.configuration_recipe,
+                    },
+                    specification_snapshot: item.specification_snapshot,
+                    item_name_snapshot: item.item_name_snapshot,
+                  }}
+                />
+              ) : null}
               <DeactivateRowAction item={item} quotationId={quotation.id} returnTo={returnTo} />
             </>
           )}
