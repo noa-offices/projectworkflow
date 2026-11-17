@@ -324,7 +324,7 @@ test("migration: template delete is never blocked, own-only RLS, narrow grants, 
 test("server actions authenticate with requireActiveUser, use the caller's client, never an admin client, never read owner from input", () => {
   const actions = read("./actions.ts");
   assert.ok(actions.startsWith('"use server"'));
-  assert.equal((actions.match(/await requireActiveUser\(\)/g) ?? []).length, 4);
+  assert.equal((actions.match(/await requireActiveUser\(\)/g) ?? []).length, 7);
   assert.match(actions, /from "@\/lib\/supabase\/server"/);
   assert.ok(!/service[_-]?role|admin/i.test(actions));
   assert.ok(!/owner/i.test(actions.replace(/owner-only|\(never from client input\)|owner from/gi, "")), "actions must not read an owner from input");
@@ -451,4 +451,66 @@ test("PR 1b-1 leaves the Add / Add to Local Workspace code paths unchanged in th
   const lineStart = source.indexOf("const localProductItem: LocalQuotationItem = {");
   const stateStart = source.indexOf("const savedSetupState: SavedSetupPlainState = {");
   assert.ok(!source.slice(lineStart, stateStart).includes("mainCode"), "mainCode must not enter the quotation line");
+});
+
+// ── PR 1b-2: picker data, loading for use, marking use ─────────────────────────────────────────────────────────
+test("picker loader: only the caller's USABLE setups, in two batched queries, with the caller's client", async () => {
+  const db = newDb();
+  const base = { brand_name: "Interstuhl", product_name: "P", note: null, use_count: 0, archived: false, updated_at: "2026-01-01", recipe: {} };
+  db.saved_setups.push(
+    { ...base, id: "ok-1", owner_id: USER_A, template_id: TPL_OK, setup_name: "usable 1" },
+    { ...base, id: "ok-2", owner_id: USER_A, template_id: TPL_OK, setup_name: "usable 2" },
+    { ...base, id: "archived", owner_id: USER_A, template_id: TPL_ARCHIVED, setup_name: "archived template" },
+    { ...base, id: "removed", owner_id: USER_A, template_id: null, setup_name: "template deleted" },
+    { ...base, id: "hidden", owner_id: USER_A, template_id: TPL_HIDDEN, setup_name: "template unreadable" },
+    { ...base, id: "theirs", owner_id: USER_B, template_id: TPL_OK, setup_name: "someone else" },
+  );
+  const counter: Record<string, number> = {};
+  const { listUsableSetupsForUser } = await import("./saved-setups-service");
+  const items = await listUsableSetupsForUser(fake(db, USER_A, { counter, hiddenTemplates: [TPL_HIDDEN] }), USER_A);
+  assert.deepEqual(items.map((item) => item.id).sort(), ["ok-1", "ok-2"]);
+  assert.equal(counter.saved_setups, 1);
+  assert.equal(counter.product_templates, 1);
+  assert.ok(items.every((item) => Object.keys(item).sort().join() === "brandName,id,imagePath,productName,setupName"), "only what the picker needs");
+});
+
+test("loadSetupForUse: owner only; unusable or invalid setups are refused; the recipe is returned without any price", async () => {
+  const { loadSetupForUse } = await import("./saved-setups-service");
+  const db = newDb();
+  const { recipe, specOverrides } = buildRecipe({ templateId: TPL_OK, variantRowId: "v", modularQuantities: { m: 2 } });
+  const base = { brand_name: "B", product_name: "P", note: null, use_count: 0, archived: false, updated_at: "2026-01-01" };
+  db.saved_setups.push(
+    { ...base, id: "11111111-aaaa-4aaa-8aaa-000000000001", owner_id: USER_A, template_id: TPL_OK, setup_name: "mine", recipe, spec_overrides: specOverrides },
+    { ...base, id: "11111111-aaaa-4aaa-8aaa-000000000002", owner_id: USER_A, template_id: TPL_ARCHIVED, setup_name: "archived", recipe, spec_overrides: specOverrides },
+    { ...base, id: "11111111-aaaa-4aaa-8aaa-000000000003", owner_id: USER_A, template_id: TPL_OK, setup_name: "dirty", recipe: { ...recipe, price: 5 }, spec_overrides: specOverrides },
+  );
+  const ok = await loadSetupForUse(fake(db, USER_A), USER_A, "11111111-aaaa-4aaa-8aaa-000000000001");
+  assert.equal(ok.ok, true);
+  assert.equal(findForbiddenRecipeKey((ok as { setup: unknown }).setup), null);
+  for (const rls of [true, false]) {
+    assert.equal((await loadSetupForUse(fake(db, USER_B, { rls }), USER_B, "11111111-aaaa-4aaa-8aaa-000000000001")).ok, false, "another user cannot load it");
+  }
+  assert.equal((await loadSetupForUse(fake(db, USER_A), USER_A, "11111111-aaaa-4aaa-8aaa-000000000002")).ok, false, "archived template");
+  assert.equal((await loadSetupForUse(fake(db, USER_A), USER_A, "11111111-aaaa-4aaa-8aaa-000000000003")).ok, false, "price-like key in a stored recipe");
+  assert.equal((await loadSetupForUse(fake(db, USER_A), USER_A, "nope")).ok, false);
+});
+
+test("markSetupUsed: owner only, +1 and last_used_at; another user's setup is unchanged; a failure never throws", async () => {
+  const { markSetupUsedForUser } = await import("./saved-setups-service");
+  const id = "22222222-aaaa-4aaa-8aaa-000000000001";
+  for (const rls of [true, false]) {
+    const db = newDb();
+    db.saved_setups.push({ id, owner_id: USER_A, template_id: TPL_OK, brand_name: "B", product_name: "P", setup_name: "n", note: null, recipe: {}, use_count: 4, archived: false, last_used_at: null, updated_at: "2026-01-01" });
+    const stranger = await markSetupUsedForUser(fake(db, USER_B, { rls }), USER_B, id);
+    assert.equal(stranger.ok, false);
+    assert.equal(db.saved_setups[0].use_count, 4);
+    assert.equal(db.saved_setups[0].last_used_at, null);
+    const mine = await markSetupUsedForUser(fake(db, USER_A, { rls }), USER_A, id);
+    assert.equal(mine.ok, true);
+    assert.equal(db.saved_setups[0].use_count, 5);
+    assert.ok(typeof db.saved_setups[0].last_used_at === "string");
+  }
+  const exploding = { from() { throw new Error("database down"); } } as unknown as SupabaseClient;
+  assert.deepEqual(await markSetupUsedForUser(exploding, USER_A, id), { ok: false, error: "Usage could not be recorded." });
+  assert.equal((await markSetupUsedForUser(fake(newDb(), USER_A), USER_A, "not-a-uuid")).ok, false);
 });

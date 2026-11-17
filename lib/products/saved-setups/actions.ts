@@ -6,10 +6,15 @@ import { createClient } from "@/lib/supabase/server";
 import {
   clearRemovedSetupsForUser,
   deleteSetupForUser,
+  listUsableSetupsForUser,
+  loadSetupForUse,
+  markSetupUsedForUser,
   renameSetupForUser,
   saveSetupForUser,
+  type PickerSetup,
   type SaveSetupInput,
   type SetupActionResult,
+  type SetupForUse,
 } from "./saved-setups-service";
 
 // Server Actions are public POST endpoints: every action authenticates inside, derives the owner from the
@@ -52,4 +57,35 @@ export async function clearRemovedSetups(): Promise<SetupActionResult> {
   const result = await clearRemovedSetupsForUser(supabase, user.id);
   if (result.ok) revalidatePath(MY_COLLECTION_PATH);
   return result;
+}
+
+// ── Use (PR 1b-2). Read-only picker data and replay data come from the caller's own rows (RLS stays on). ──
+
+export async function listPickerSetups(): Promise<PickerSetup[]> {
+  const { user } = await requireActiveUser();
+  const supabase = await createClient();
+  return listUsableSetupsForUser(supabase, user.id);
+}
+
+export async function loadSetupForReplay(setupId: string): Promise<{ ok: true; setup: SetupForUse } | { ok: false; error: string }> {
+  const { user } = await requireActiveUser();
+  const supabase = await createClient();
+  return loadSetupForUse(supabase, user.id, String(setupId ?? ""));
+}
+
+function isNextRedirect(error: unknown) {
+  const digest = (error as { digest?: unknown } | null)?.digest;
+  return typeof digest === "string" && digest.startsWith("NEXT_REDIRECT");
+}
+
+/** Best effort. A failure must never block the user, so only an authentication redirect is rethrown. */
+export async function markSetupUsed(setupId: string): Promise<SetupActionResult> {
+  try {
+    const { user } = await requireActiveUser();
+    const supabase = await createClient();
+    return await markSetupUsedForUser(supabase, user.id, String(setupId ?? ""));
+  } catch (error) {
+    if (isNextRedirect(error)) throw error;
+    return { ok: false, error: "Usage could not be recorded." };
+  }
 }

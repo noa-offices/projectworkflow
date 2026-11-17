@@ -3,11 +3,16 @@
 import { SupplierCoverageAction } from "./supplier-coverage-popup";
 import { ManualPriceLinesButton } from "./manual-price-lines-button";
 import { SupplierPriceLinesAction } from "./supplier-price-lines-popup";
-import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, useTransition, type Dispatch, type SetStateAction } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import { SaveToMyCollectionButton } from "./save-to-my-collection-button";
 import type { SavedSetupPlainState } from "@/lib/products/saved-setups/recipe";
 import { defaultSetupName } from "@/lib/products/saved-setups/default-name";
+import { AddFromMyCollectionButton } from "./add-from-my-collection-button";
+import { SetupReplayBanner } from "./setup-replay-banner";
+import { evaluateSetup, type SetupProblem } from "@/lib/products/saved-setups/replay";
+import type { SavedSetupSpecOverrides } from "@/lib/products/saved-setups/recipe";
+import type { SetupForUse } from "@/lib/products/saved-setups/saved-setups-service";
 import { listProductTemplateRowReferences } from "@/app/products/templates/row-reference-actions";
 import { listProductTemplateSubgroupReferences } from "@/app/products/templates/subgroup-reference-actions";
 import {
@@ -1331,6 +1336,8 @@ export function ProductLibrarySelector({
     templateId: string;
   } | null>(null);
 
+  // My Collection replay: set only when a saved setup was opened; null in the normal Product Library flow.
+  const [replay, setReplay] = useState<{ key: number; problems: SetupProblem[]; setupName: string; specOverrides: SavedSetupSpecOverrides; templateId: string } | null>(null);
   const brandNameById = useMemo(
     () => new Map(brands.map((brand) => [brand.id, brand.name])),
     [brands],
@@ -1478,6 +1485,83 @@ export function ProductLibrarySelector({
   };
   const accessoryGroupExpansionKey = (templateId: string, groupId: string) => `${templateId}:${groupId}`;
 
+  // "Add from My Collection": hydrate the EXISTING per-template state from a saved recipe, then open the normal
+  // configurator. Nothing is added to the quotation and no price is restored; the Add path prices as usual.
+  const openSetupFromCollection = (setup: SetupForUse): string | null => {
+    const template = templateById.get(setup.templateId);
+    if (!template) return "This product is not available in this Product Library.";
+    const evaluation = evaluateSetup(setup.recipe, setup.specOverrides, template, {
+      componentIds: (componentsByTemplate.get(template.id) ?? []).map((component) => component.id),
+      materialIds: materials.map((material) => material.id),
+      linkedFamilyIds: (linkedFamiliesByParent.get(template.id) ?? []).map((link) => link.id),
+    });
+    const plain = evaluation.state;
+    if (!plain) return "This product is no longer available.";
+    const tid = template.id;
+    const put = <T,>(setter: Dispatch<SetStateAction<Record<string, T>>>, value: T | null | undefined) =>
+      setter((current) => {
+        const next = { ...current };
+        if (value === null || value === undefined || value === "") delete next[tid]; else next[tid] = value;
+        return next;
+      });
+    const putKeyed = <T,>(setter: Dispatch<SetStateAction<Record<string, T>>>, key: string, value: T | null | undefined) =>
+      setter((current) => {
+        const next = { ...current };
+        if (value === null || value === undefined || value === "") delete next[key]; else next[key] = value;
+        return next;
+      });
+    put(setSelectedVariantRows, plain.variantRowId);
+    put(setSelectedSystemRows, plain.systemRowId);
+    put(setSelectedSystemQuantities, plain.systemQuantity);
+    put(setSelectedCategoryGroups, plain.categoryGroupId);
+    put(setSelectedCategoryRows, plain.categoryRowId);
+    put(setSelectedFabricCategories, plain.fabricCategory);
+    put(setSelectedDeskingSizes, plain.workstationSizeId);
+    put(setSelectedWorkstationLayouts, plain.workstationLayout);
+    put(setAdditionalClusterQuantities, plain.additionalClusterQuantity);
+    put(setSelectedModularQuantities, plain.modularQuantities);
+    put(setPricingAccessoryQuantities, plain.pricingAccessoryQuantities);
+    put(setAccessoryQuantities, plain.componentAccessoryQuantities);
+    put(setRequiredOverrides, plain.requiredOverrides);
+    put(setSelectedOptions, plain.componentOptionSelections);
+    put(setSelectedFinishesByTemplate, plain.finishes as FinishSelectionEditorRow[] | undefined);
+    put(setSelectedImages, plain.selectedImage);
+    put(setConfiguredDimensions, plain.dimensionOverride);
+    put<boolean>(setConfiguredDimensionEditedByTemplate, plain.dimensionOverride ? true : null);
+    put(setConfiguredSpecifications, plain.workstationSpecification);
+    put(setQuotationBrands, plain.brandOverride);
+    put(setQuotationOrigins, plain.originOverride);
+    // The edited specification is applied (or offered) by the banner, which can see the CURRENT generated text.
+    put(setFinalSpecifications, null);
+    put(setFinalSpecificationEditedByTemplate, null);
+    setSelectedAccessoryCategories((current) => ({
+      ...Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${tid}:`))),
+      ...(plain.accessoryCategoryChoices ?? {}),
+    }));
+    for (const link of linkedFamiliesByParent.get(tid) ?? []) {
+      const ids = plain.linkedInstances?.[link.id];
+      setLinkedProductInstancesByLinkId((current) => {
+        const next = { ...current };
+        if (ids?.length) next[link.id] = ids.map((id) => ({ id, label: "" })); else delete next[link.id];
+        return next;
+      });
+      for (const id of ids ?? [`${link.id}-default`]) {
+        const key = linkedProductInstanceKey(link.id, id);
+        const selection = plain.linkedSelections?.[key];
+        putKeyed(setSelectedLinkedVariants, key, selection?.variantRowId);
+        putKeyed(setSelectedLinkedCategoryGroups, key, selection?.categoryGroupId);
+        putKeyed(setSelectedLinkedCategories, key, selection?.categoryId);
+        putKeyed(setSelectedLinkedFabricCategories, key, selection?.fabricCategory);
+        putKeyed(setLinkedProductQuantities, key, selection?.quantity);
+        putKeyed(setLinkedAccessoryQuantities, key, selection?.accessoryQuantities);
+      }
+    }
+    setReplay({ key: Date.now(), problems: evaluation.validation.problems, setupName: setup.setupName, specOverrides: setup.specOverrides, templateId: tid });
+    setSelectedTemplateId(tid);
+    setIsOpen(true);
+    return null;
+  };
+
   return (
     <>
       <button
@@ -1487,6 +1571,7 @@ export function ProductLibrarySelector({
       >
         {triggerLabel}
       </button>
+      <AddFromMyCollectionButton onChoose={openSetupFromCollection} />
 
       {isOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/30 p-0 sm:px-4 sm:py-6">
@@ -3148,6 +3233,24 @@ export function ProductLibrarySelector({
                           <AnnouncedPriceBadge announcement={template.announced_price_change} />
                         </div>
                       </div>
+                      {replay && replay.templateId === template.id ? (
+                        <SetupReplayBanner
+                          key={replay.key}
+                          generatedSpecification={generatedFinalSpecification}
+                          onApplyEditedText={(text) => {
+                            setFinalSpecifications((current) => ({ ...current, [template.id]: text }));
+                            setFinalSpecificationEditedByTemplate((current) => ({ ...current, [template.id]: true }));
+                          }}
+                          onDismiss={() => setReplay(null)}
+                          onUseGeneratedText={() => {
+                            setFinalSpecifications((current) => { const next = { ...current }; delete next[template.id]; return next; });
+                            setFinalSpecificationEditedByTemplate((current) => ({ ...current, [template.id]: false }));
+                          }}
+                          problems={replay.problems}
+                          setupName={replay.setupName}
+                          specOverrides={replay.specOverrides}
+                        />
+                      ) : null}
                       <form
                         action={addProductTemplateToQuotation}
                         className="grid gap-4 p-4 lg:p-6 xl:grid-cols-[minmax(0,1fr)_320px]"
