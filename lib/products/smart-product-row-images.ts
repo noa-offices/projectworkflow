@@ -104,11 +104,11 @@ export async function uploadPendingRowImagesAfterSave<TEntry, TIdentity>({ entri
   return { attempted, failed };
 }
 
-/** Read-only saved picture for a review row. Only "matrix:<groupId>" (finish_category) and "modular:<groupId>" (modular) are mapped; any other source key finds nothing. */
+/** Read-only saved picture for an explicit review group; ungrouped and unknown scopes find nothing. */
 export function savedPictureForReviewRow<T>(references: Readonly<Record<string, T>>, sourceKey: string, rowId: string): T | null {
   const separator = sourceKey.indexOf(":");
   const prefix = sourceKey.slice(0, separator), groupId = sourceKey.slice(separator + 1);
-  const pricingType = prefix === "matrix" ? "finish_category" : prefix === "modular" ? "modular" : null;
+  const pricingType = prefix === "matrix" ? "finish_category" : prefix === "modular" ? "modular" : prefix === "base_model_group" ? "base_model" : prefix === "option" ? "accessory" : null;
   return separator > 0 && pricingType && groupId && rowId ? references[productTemplateRowReferenceKey(pricingType, groupId, rowId)] ?? null : null;
 }
 /** A staged (pasted or cropped) picture always wins over the saved one. */

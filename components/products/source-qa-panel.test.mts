@@ -11,6 +11,26 @@ const { SourceQaPanel, sourceQaAiDisplaySeverity, sourceQaAiIssueDetails, source
 const { SmartSetupCropAvailableContext, SmartSetupSavedPicturesContext, StagedPricingRowReferenceImage } = await import("./staged-pricing-row-reference-image.js");
 const workspace = productTemplateFormSmartWorkspace({ desking_size_pricing: "[]", variant_pricing: "[]", category_pricing: "[]", modular_item_pricing: "[]", accessory_pricing: "[]", currency: "EUR" });
 
+test("saved grouped base and accessory pictures render read-only with staged replacement priority", () => {
+  for (const [sourceKey, pricingType, groupId, rowId] of [
+    ["base_model_group:legacy-base-model-main", "base_model", "legacy-base-model-main", "oxi-q-desk-60-599"],
+    ["option:oxi-q-modesty-panels", "accessory", "oxi-q-modesty-panels", "oxi-q-panel-445"],
+  ] as const) {
+    const saved = { [`${pricingType}\u0000${groupId}\u0000${rowId}`]: { id: "saved", pricingType, groupId, rowId, previewUrl: "https://saved.example/row.webp", caption: null } };
+    const staged = { file: new File(["image"], "row.webp", { type: "image/webp" }), sourceKey, sourceRowId: rowId, previewUrl: "blob:staged" };
+    let changes = 0;
+    const render = (image: typeof staged | null) => renderToStaticMarkup(createElement(SmartSetupCropAvailableContext.Provider, { value: false }, createElement(SmartSetupSavedPicturesContext.Provider, { value: saved }, createElement(StagedPricingRowReferenceImage, { sourceKey, rowId, image, onChange() { changes++; } }))));
+    const html = render(null);
+    assert.ok(html.includes('src="https://saved.example/row.webp"'));
+    assert.ok(html.includes('alt="Saved row reference"'));
+    assert.ok(!html.includes("Crop from PDF"));
+    assert.ok(!html.includes(">Remove<"));
+    assert.ok(render(staged).includes('src="blob:staged"'));
+    assert.ok(render(null).includes('src="https://saved.example/row.webp"'));
+    assert.equal(changes, 0, "rendering must never stage or delete a picture");
+  }
+});
+
 test("edit mode renders local PDF cropping and its paste guidance without Source QA", () => {
   const html = renderToStaticMarkup(createElement(SourceQaPanel, { draft: workspace.draft, originalImportedJsonSources: [], images: {}, editMode: true, onImageChange() {} }));
   for (const text of ["PDF Crop", "Choose PDF", "Crop Images", "Choose the price list PDF to crop pictures onto rows. The PDF is not uploaded."] ) assert.ok(html.includes(text), text);
