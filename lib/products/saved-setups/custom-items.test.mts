@@ -230,7 +230,7 @@ test("service: another user cannot update or delete an item; delete is never blo
 test("actions: every action authenticates first, uses the caller's client, never an admin client, never reads an owner from input", () => {
   const actions = read("./saved-custom-items-actions.ts");
   assert.match(actions, /^"use server";/);
-  assert.equal((actions.match(/await requireActiveUser\(\)/g) ?? []).length, 4);
+  assert.equal((actions.match(/await requireActiveUser\(\)/g) ?? []).length, 5); // PR 2b-2 added markCustomItemUsed
   assert.match(actions, /from "@\/lib\/supabase\/server"/);
   assert.ok(!/service[_-]?role|createAdmin|admin/i.test(actions.replace(/never an admin client/gi, "")));
   assert.ok(!/input\??\.(owner|source|shared)/i.test(actions));
@@ -329,7 +329,8 @@ test("page: two tabs, form fields, two-step delete, empty state; the Configured 
   assert.match(page, /listCustomItemsForUser\(supabase, user\.id\)/);
   assert.match(page, /Your saved product setups\. Prices are always recalculated from the current price lists when you use one\./);
   // no picker tab and no quote-builder change in this PR
-  for (const file of ["components/quotations/add-from-my-collection-button.tsx", "components/quotations/local-quotation-builder.tsx", "components/quotations/product-library-selector.tsx", "app/quotations/[id]/builder/page.tsx"]) {
+  // PR 2b-2 adds the picker tab and the builder entries; the Product Library selector must stay untouched.
+  for (const file of ["components/quotations/product-library-selector.tsx"]) {
     assert.doesNotMatch(read(`../../../${file}`), /saved-custom-items|custom-item/, file);
   }
 });

@@ -7,6 +7,7 @@ import {
   createCustomItemForUser,
   deleteCustomItemForUser,
   listCustomItemsForUser,
+  markCustomItemUsedForUser,
   updateCustomItemForUser,
   type CustomItemActionResult,
 } from "./saved-custom-items-service";
@@ -57,4 +58,21 @@ export async function listCustomItems(): Promise<CustomItemListItem[]> {
   const { user } = await requireActiveUser();
   const supabase = await createClient();
   return listCustomItemsForUser(supabase, user.id);
+}
+
+function isNextRedirect(error: unknown) {
+  const digest = (error as { digest?: unknown } | null)?.digest;
+  return typeof digest === "string" && digest.startsWith("NEXT_REDIRECT");
+}
+
+/** Best effort. A failure must never block the user, so only an authentication redirect is rethrown. */
+export async function markCustomItemUsed(itemId: string): Promise<CustomItemActionResult> {
+  try {
+    const { user } = await requireActiveUser();
+    const supabase = await createClient();
+    return await markCustomItemUsedForUser(supabase, user.id, String(itemId ?? ""));
+  } catch (error) {
+    if (isNextRedirect(error)) throw error;
+    return { ok: false, error: "Usage could not be recorded." };
+  }
 }

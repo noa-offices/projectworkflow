@@ -31,6 +31,8 @@ import type { AccessoryConditionalConfiguration } from "@/lib/products/accessory
 import { evaluateProductAccessorySelection, parseSubmittedAccessoryQuantities } from "@/lib/quotations/product-accessory-configuration";
 import { baseModelPriceOrDefault, sameCurrencyUnitSum } from "@/lib/quotations/source-price-components";
 import { requiredComponentOverrideReport } from "@/lib/quotations/required-component-overrides";
+import { rowOverlayFromCustomItem } from "@/lib/products/saved-setups/custom-item-line";
+import { loadCustomItemForUser, markCustomItemUsedForUser } from "@/lib/products/saved-setups/saved-custom-items-service";
 import { LINE_RECIPE_FORM_FIELD, LINE_RECIPE_KEY, parseLineConfigurationRecipe } from "@/lib/products/saved-setups/line-recipe";
 import { announcedQuotationDelta, announcedSnapshot, announcedTotals, loadBrandPriceAnnouncements } from "@/lib/products/price-announcements";
 import { activeBaseModelPricingGroups, composeSystemAndMainSpecification, currentSystemPricing, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, remapBaseModelTargetsToOwnerGroups, strictSystemQuantity, systemPriceContribution, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
@@ -6168,12 +6170,15 @@ export async function createBlankQuotationItem(formData: FormData) {
 async function createBlankQuotationItemRecord({
   displayName,
   formData,
+  overlay,
   quotationId,
   sectionId,
   userId,
 }: {
   displayName: string;
   formData: FormData;
+  /** My Collection custom item: the only fields laid over the ordinary blank-row payload. */
+  overlay?: Record<string, unknown>;
   quotationId: string;
   sectionId: string | null;
   userId: string;
@@ -6229,7 +6234,7 @@ async function createBlankQuotationItemRecord({
 
   const { data: createdItem, error } = await supabase
     .from("quotation_items")
-    .insert(payload)
+    .insert(overlay ? { ...payload, ...overlay } : payload)
     .select("id,item_name_snapshot")
     .single<{ id: string; item_name_snapshot: string | null }>();
 
@@ -6288,6 +6293,61 @@ export async function createBlankQuotationItemOptimistic(formData: FormData) {
     itemId: result.itemId,
     message: "Blank row added.",
   };
+}
+
+
+/**
+ * My Collection custom item -> an ORDINARY manual row (same payload as the blank row, plus only the overlay from
+ * rowOverlayFromCustomItem). Same permission and lock checks as the blank-row path. The item is loaded under the
+ * caller's own session, so another user's item is "not found". Marking it used is best effort.
+ */
+export async function addCustomItemToQuotation(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const lockFailure = await quotationFormLockReason(formData, "quotation");
+  if (lockFailure) return { ok: false as const, message: lockFailure };
+  const quotationId = textValue(formData, "quotation_id");
+  const sectionId = optionalTextValue(formData, "section_id");
+  const customItemId = textValue(formData, "custom_item_id");
+
+  if (!quotationId) return { ok: false as const, message: "Quotation is required." };
+
+  const supabase = await createSupabaseClient();
+  const loaded = await loadCustomItemForUser(supabase, user.id, customItemId);
+  if (!loaded.ok) return { ok: false as const, message: "This custom item was not found." };
+
+  const { data: quotation } = await supabase
+    .from("quotations")
+    .select("currency")
+    .eq("id", quotationId)
+    .maybeSingle<{ currency: string | null }>();
+  const overlay = rowOverlayFromCustomItem(loaded.item, quotation?.currency ?? defaultCurrency);
+  const pricingRule = await quotationPricingRule(supabase, quotationId);
+  const linePricing = roundedLinePricing(overlay.unit_price, "amount", 0, 1, pricingRule);
+  const { conversionNote, ...fields } = overlay;
+
+  const result = await createBlankQuotationItemRecord({
+    displayName,
+    formData,
+    overlay: {
+      ...fields,
+      unit_price: linePricing.unitPrice,
+      discount_value: linePricing.discountValue,
+      net_price: linePricing.netPrice,
+      net_total: linePricing.netTotal,
+    },
+    quotationId,
+    sectionId,
+    userId: user.id,
+  });
+  if (!result.ok) return result;
+
+  await recalculateQuotationTotals(quotationId);
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/quotations/${quotationId}/builder`);
+  // Best effort: a failure here never blocks the add.
+  await markCustomItemUsedForUser(supabase, user.id, customItemId).catch(() => undefined);
+
+  return { ok: true as const, itemId: result.itemId, message: "Custom item added.", note: conversionNote };
 }
 
 export async function addProductTemplateToQuotation(formData: FormData) {
