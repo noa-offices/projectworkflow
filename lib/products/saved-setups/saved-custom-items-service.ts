@@ -6,6 +6,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isUuid } from "./recipe";
+import { distinctBrands, normaliseBrandKey, resolveBrandInput } from "./custom-brands";
 import {
   firstCustomItemError,
   validateCustomItem,
@@ -27,9 +28,12 @@ export async function createCustomItemForUser(
 ): Promise<CustomItemActionResult> {
   const checked = validateCustomItem(input);
   if (!checked.ok) return { ok: false, error: firstCustomItemError(checked.errors), fieldErrors: checked.errors };
+  // A brand matching one of the owner's existing brands (ignoring case and extra spaces) reuses that spelling.
+  const brand = resolveBrandInput(checked.value.brand_name, distinctBrands(await listCustomItemsForUser(supabase, userId)));
+  const value = { ...checked.value, brand_name: brand.ok ? brand.name : checked.value.brand_name };
   const { data, error } = await supabase
     .from("saved_custom_items")
-    .insert({ owner_id: userId, ...checked.value, price_saved_at: new Date().toISOString() })
+    .insert({ owner_id: userId, ...value, price_saved_at: new Date().toISOString() })
     .select("id")
     .single();
   if (error || !data) return { ok: false, error: "The item could not be saved." };
@@ -57,9 +61,13 @@ export async function updateCustomItemForUser(
   // The saved-price date moves only when the price or the currency actually changed.
   const priceChanged =
     Number(current.selling_price) !== checked.value.selling_price || String(current.currency) !== checked.value.currency;
+  // Existing spelling is reused, but never the item's own old spelling (so a case-only fix of the only item works).
+  const others = (await listCustomItemsForUser(supabase, userId)).filter((entry) => entry.id !== itemId);
+  const brand = resolveBrandInput(checked.value.brand_name, distinctBrands(others));
+  const value = { ...checked.value, brand_name: brand.ok ? brand.name : checked.value.brand_name };
   const { data, error } = await supabase
     .from("saved_custom_items")
-    .update({ ...checked.value, ...(priceChanged ? { price_saved_at: new Date().toISOString() } : {}) })
+    .update({ ...value, ...(priceChanged ? { price_saved_at: new Date().toISOString() } : {}) })
     .eq("id", itemId)
     .eq("owner_id", userId)
     .select("id");
@@ -158,4 +166,34 @@ export async function markCustomItemUsedForUser(supabase: SupabaseClient, userId
   } catch {
     return { ok: false, error: "Usage could not be recorded." };
   }
+}
+
+export type RenameBrandResult = { ok: true; count: number; brandName: string } | { ok: false; error: string };
+
+/**
+ * Renames a brand on ALL of the caller's items with that brand: one UPDATE restricted to the owner's matching ids
+ * (caller's client, RLS applies). If the new name matches ANOTHER existing brand (ignoring case and spaces), the items
+ * merge into that brand's spelling. Only brand_name is written, so no saved-price date moves.
+ */
+export async function renameCustomBrandForUser(
+  supabase: SupabaseClient,
+  userId: string,
+  fromBrand: unknown,
+  toBrand: unknown,
+): Promise<RenameBrandResult> {
+  const items = await listCustomItemsForUser(supabase, userId);
+  const fromKey = normaliseBrandKey(fromBrand);
+  const ids = items.filter((item) => normaliseBrandKey(item.brandName) === fromKey).map((item) => item.id);
+  if (!fromKey || ids.length === 0) return { ok: false, error: "Brand not found." };
+  const otherBrands = distinctBrands(items.filter((item) => normaliseBrandKey(item.brandName) !== fromKey));
+  const target = resolveBrandInput(toBrand, otherBrands);
+  if (!target.ok) return { ok: false, error: target.error };
+  const { data, error } = await supabase
+    .from("saved_custom_items")
+    .update({ brand_name: target.name })
+    .eq("owner_id", userId)
+    .in("id", ids)
+    .select("id");
+  if (error || !data) return { ok: false, error: "The brand could not be renamed." };
+  return { ok: true, count: data.length, brandName: target.name };
 }

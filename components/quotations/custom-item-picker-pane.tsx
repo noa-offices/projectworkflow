@@ -4,7 +4,9 @@ import { createContext, useEffect, useMemo, useRef, useState, useTransition, typ
 import { useRouter } from "next/navigation";
 import { addCustomItemToQuotation } from "@/app/quotations/actions";
 import { listCustomItems, markCustomItemUsed } from "@/lib/products/saved-setups/saved-custom-items-actions";
-import { filterSetups, groupByBrand, itemCountLabel, recentlyUsed, sortSetups } from "@/lib/products/saved-setups/collection-view";
+import { BrandFilterList } from "@/components/products/brand-combobox";
+import { COLLECTION_SORT_OPTIONS, filterSetups, groupByBrand, itemCountLabel, recentlyUsed, sortSetups, type CollectionSortMode } from "@/lib/products/saved-setups/collection-view";
+import { CUSTOM_BRAND_PAGE_SIZE, CUSTOM_BRAND_RECENT_LIMIT, distinctBrands, filterByBrand, normaliseBrandKey } from "@/lib/products/saved-setups/custom-brands";
 import { customItemPriceLine, toCollectionItem, type CustomCollectionItem, type CustomItemListItem } from "@/lib/products/saved-setups/custom-item";
 
 // Where a custom item picked in "Add from My Collection" goes. Provided by the quote builders around the Product
@@ -50,6 +52,9 @@ export function CustomItemPickerPane({ target, onClose }: { target: CustomItemTa
   const router = useRouter();
   const [items, setItems] = useState<CustomItemListItem[] | null>(null);
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<CollectionSortMode>("recent");
+  const [brandFilter, setBrandFilter] = useState<string | null>(null);
+  const [shown, setShown] = useState<Record<string, number>>({});
   const [notice, setNotice] = useState("");
   const [pending, startTransition] = useTransition();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -98,51 +103,94 @@ export function CustomItemPickerPane({ target, onClose }: { target: CustomItemTa
   }
 
   const entries = useMemo(() => (items ?? []).map(toCollectionItem), [items]);
+  const brands = useMemo(() => distinctBrands(items ?? []), [items]);
+  const activeBrand = brandFilter && brands.some((brand) => normaliseBrandKey(brand.brandName) === normaliseBrandKey(brandFilter)) ? brandFilter : null;
   const searching = search.trim().length > 0;
-  const recent = useMemo(() => (searching ? [] : recentlyUsed(entries, 4)), [entries, searching]);
-  const grouped = useMemo(() => groupByBrand(sortSetups(filterSetups(entries, search), "recent")), [entries, search]);
+  // "Recently used" (up to 6) only when there is no search and All brands is selected.
+  const recent = useMemo(
+    () => (searching || activeBrand ? [] : recentlyUsed(entries, CUSTOM_BRAND_RECENT_LIMIT)),
+    [entries, searching, activeBrand],
+  );
+  const grouped = useMemo(
+    () => groupByBrand(sortSetups(filterSetups(filterByBrand(entries, activeBrand), search), sort)),
+    [entries, activeBrand, search, sort],
+  );
 
   return (
     <>
-      <div className="border-b border-zinc-200 px-4 py-3 sm:px-5">
+      <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 px-4 py-3 sm:px-5">
         <input
           ref={searchRef}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search by name, code or brand"
           aria-label="Search custom items"
-          className="h-10 w-full rounded-md border border-zinc-300 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          className="h-10 min-w-0 flex-1 basis-56 rounded-md border border-zinc-300 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
         />
+        <label className="flex items-center gap-2 text-xs font-semibold uppercase text-zinc-500">
+          Sort
+          <select
+            value={sort}
+            onChange={(event) => setSort(event.target.value as CollectionSortMode)}
+            className="h-10 rounded-md border border-zinc-300 bg-white px-2 text-sm font-normal normal-case text-zinc-800 outline-none focus:border-emerald-800"
+          >
+            {COLLECTION_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
       </div>
       {notice ? <p role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900 sm:px-5">{notice}</p> : null}
-      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-4 sm:px-5">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
         {items === null ? (
           <p className="text-sm text-zinc-500">Loading...</p>
-        ) : grouped.length === 0 ? (
+        ) : items.length === 0 ? (
           <p className="rounded-lg border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500">
-            {items.length === 0 ? "No custom items yet. Add an item that is not in the Product Library, with your own price." : "No item matches your search."}
+            No custom items yet. Add an item that is not in the Product Library, with your own price.
           </p>
         ) : (
-          <>
-            {recent.length > 0 ? (
-              <section aria-label="Recently used">
-                <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-emerald-900">Recently used</h3>
-                <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {recent.map((entry) => <CustomPickCard key={`recent-${entry.id}`} entry={entry} disabled={pending} onPick={pick} />)}
-                </ul>
-              </section>
-            ) : null}
-            {grouped.map((brand) => (
-              <section key={brand.brandName} aria-label={brand.brandName}>
-                <h3 className="border-b border-zinc-200 pb-1 text-xs font-bold uppercase tracking-[0.14em] text-emerald-900">
-                  {brand.brandName} <span className="font-semibold text-zinc-500">· {itemCountLabel(brand.count)}</span>
-                </h3>
-                <ul className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {brand.items.map((entry) => <CustomPickCard key={entry.id} entry={entry} disabled={pending} onPick={pick} />)}
-                </ul>
-              </section>
-            ))}
-          </>
+          <div className="flex flex-col gap-4 md:flex-row md:items-start">
+            <div className="md:w-48 md:shrink-0">
+              <BrandFilterList brands={brands} total={items.length} selected={activeBrand} onSelect={setBrandFilter} />
+            </div>
+            <div className="min-w-0 flex-1 space-y-6">
+              {grouped.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500">No item matches your search.</p>
+              ) : (
+                <>
+                  {recent.length > 0 ? (
+                    <section aria-label="Recently used">
+                      <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-emerald-900">Recently used</h3>
+                      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {recent.map((entry) => <CustomPickCard key={`recent-${entry.id}`} entry={entry} disabled={pending} onPick={pick} />)}
+                      </ul>
+                    </section>
+                  ) : null}
+                  {grouped.map((brand) => {
+                    const limit = shown[normaliseBrandKey(brand.brandName)] ?? CUSTOM_BRAND_PAGE_SIZE;
+                    const visible = brand.items.slice(0, limit);
+                    return (
+                      <section key={brand.brandName} aria-label={brand.brandName}>
+                        <h3 className="border-b border-zinc-200 pb-1 text-xs font-bold uppercase tracking-[0.14em] text-emerald-900">
+                          {brand.brandName} <span className="font-semibold text-zinc-500">· {itemCountLabel(brand.count)}</span>
+                        </h3>
+                        <ul className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {visible.map((entry) => <CustomPickCard key={entry.id} entry={entry} disabled={pending} onPick={pick} />)}
+                        </ul>
+                        {brand.items.length > visible.length ? (
+                          <button
+                            type="button"
+                            onClick={() => setShown((current) => ({ ...current, [normaliseBrandKey(brand.brandName)]: limit + CUSTOM_BRAND_PAGE_SIZE }))}
+                            className="mt-3 h-8 rounded-md border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900"
+                          >
+                            Show more ({brand.items.length - visible.length} more)
+                          </button>
+                        ) : null}
+                      </section>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          </div>
         )}
       </div>
     </>

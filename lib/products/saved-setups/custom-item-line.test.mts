@@ -194,7 +194,8 @@ test("picker: two tabs; the Configured tab keeps its behaviour and shows no pric
   assert.doesNotMatch(picker, /sellingPrice|customItemPriceLine|selling_price/, "no price in the Configured tab file");
   const pane = read("../../../components/quotations/custom-item-picker-pane.tsx");
   assert.match(pane, /customItemPriceLine\(item\)/);
-  assert.match(pane, /groupByBrand\(sortSetups\(filterSetups\(entries, search\), "recent"\)\)/);
+  // PR 2b-2b: the picker now filters by brand and has a sort choice (default "recent").
+  assert.match(pane, /groupByBrand\(sortSetups\(filterSetups\(filterByBrand\(entries, activeBrand\), search\), sort\)\)/);
   assert.match(pane, /Search by name, code or brand/);
   assert.match(pane, /No image/);
   assert.match(pane, /markCustomItemUsed\(item\.id\)\.catch/);
