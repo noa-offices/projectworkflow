@@ -7,6 +7,7 @@ import {
   hashSpecificationText,
   type SavedSetupPlainState,
 } from "./recipe";
+import { baseModelPlacementFromTemplate } from "./base-model-placement";
 import {
   evaluateSetup,
   recipeToSelectorState,
@@ -181,7 +182,10 @@ for (const [name, state, template] of productTypes) {
     const built = buildRecipe(state);
     const restored = recipeToSelectorState(built.recipe, template, { componentIds: ["opt-1"] }, built.specOverrides);
     assert.ok(restored);
-    assert.deepEqual(buildRecipe(restored), built, "restored state rebuilds the identical recipe");
+    // The only addition is the Product Family / Configuration derived from the row against the template.
+    const placement = baseModelPlacementFromTemplate(template.variant_pricing, state.variantRowId);
+    const expected = buildRecipe(placement ? { ...state, variantGroupId: placement.groupId, subgroupId: placement.subgroupId } : state);
+    assert.deepEqual(buildRecipe(restored), expected, "restored state rebuilds the same recipe");
     assert.equal(validateSetupAgainstTemplate(built.recipe, template, { componentIds: ["opt-1"] }, built.specOverrides).status, "ok");
   });
 }
@@ -269,4 +273,99 @@ test("picker and banner show no price and never use an elevated client; actions 
   assert.ok(!/service[_-]?role|createAdmin/i.test(actions));
   const service = read("./saved-setups-service.ts");
   assert.ok(!/service[_-]?role|createAdmin/i.test(service));
+});
+
+// ── Product Family / Configuration restored from the model row (Jera-style: several groups and subgroups) ─────────
+const sg = (id: string, name: string, rowIds: string[], sort: number) => ({ id, subgroup_name: name, sort_order: sort, is_active: true, row_ids: rowIds });
+const item = (id: string, price: number, sort: number) => ({ id, display_name: id, price, is_active: true, sort_order: sort });
+const jeraLike = [
+  {
+    id: "grpA", pricing_type: "base_model_group", group_name: "Meeting", is_active: true, sort_order: 0,
+    items: [item("rowA1", 100, 0), item("rowA2", 110, 1), item("rowA3", 120, 2)],
+    subgroups: [sg("s1", "Two doors", ["rowA1", "rowA2"], 0), sg("s2", "Open", ["rowA3"], 1)],
+  },
+  {
+    id: "grpB", pricing_type: "base_model_group", group_name: "Storage", is_active: true, sort_order: 1,
+    items: [item("rowB1", 200, 0), item("rowB2", 210, 1)],
+    subgroups: [sg("sb1", "Low", ["rowB1"], 0)],
+  },
+];
+
+test("old recipe with only variant_row_id (2 groups, subgroups) replays ok and derives the right group and subgroup", () => {
+  for (const [rowId, groupId, subgroupId] of [["rowA3", "grpA", "s2"], ["rowA1", "grpA", "s1"], ["rowB1", "grpB", "sb1"], ["rowB2", "grpB", "__ungrouped__"]] as const) {
+    const { recipe } = recipeOf({ variantRowId: rowId });
+    assert.equal(recipe.selections.variant_group_id, undefined, "old format: no group id stored");
+    const evaluation = evaluateSetup(recipe, undefined, tpl({ variant_pricing: jeraLike }));
+    assert.deepEqual(evaluation.validation, { status: "ok", problems: [] }, rowId);
+    assert.equal(evaluation.state?.variantGroupId, groupId);
+    assert.equal(evaluation.state?.subgroupId, subgroupId);
+    assert.equal(evaluation.state?.variantRowId, rowId);
+  }
+});
+
+test("without the derivation the same old recipe WOULD report a missing Base / Model group (what the owner saw)", () => {
+  // Guard against regressing the engine call: group and subgroup must be passed to it.
+  const source = readFileSync(new URL("./replay.ts", import.meta.url), "utf8");
+  assert.match(source, /variantGroupId,\s*\n\s*subgroupId,/);
+});
+
+test("new recipe stores the group and subgroup ids (ids only) and round-trips", () => {
+  const built = buildRecipe({ templateId: TPL, variantRowId: "rowA3", variantGroupId: "grpA", subgroupId: "s2" });
+  assert.equal(built.recipe.selections.variant_group_id, "grpA");
+  assert.equal(built.recipe.selections.subgroup_id, "s2");
+  assert.equal(findForbiddenRecipeKey(built.recipe), null);
+  assert.deepEqual(validateSetupAgainstTemplate(built.recipe, tpl({ variant_pricing: jeraLike }), {}, built.specOverrides), { status: "ok", problems: [] });
+  const restored = recipeToSelectorState(built.recipe, tpl({ variant_pricing: jeraLike }), {}, built.specOverrides);
+  assert.deepEqual(buildRecipe(restored!), built);
+  // The ids are only stored together with a model row.
+  assert.equal(buildRecipe({ templateId: TPL, variantGroupId: "grpA", subgroupId: "s2" }).recipe.selections.variant_group_id, undefined);
+});
+
+test("row removed from the template: needs_review with the removed-model message (with and without saved group ids)", () => {
+  for (const state of [{ variantRowId: "rowGone" }, { variantRowId: "rowGone", variantGroupId: "grpA", subgroupId: "s1" }]) {
+    const evaluation = evaluateSetup(recipeOf(state).recipe, undefined, tpl({ variant_pricing: jeraLike }));
+    assert.equal(evaluation.validation.status, "needs_review");
+    assert.ok(evaluation.validation.problems.some((problem) => problem.kind === "model_removed"));
+    assert.equal(evaluation.state?.variantRowId, null);
+  }
+});
+
+test("row moved to another group / subgroup: derived from the CURRENT template, no false banner", () => {
+  const { recipe } = recipeOf({ variantRowId: "rowA1", variantGroupId: "grpA", subgroupId: "s1" });
+  const moved = [
+    { ...jeraLike[0], items: jeraLike[0].items.filter((row) => row.id !== "rowA1"), subgroups: [sg("s1", "Two doors", ["rowA2"], 0), sg("s2", "Open", ["rowA3"], 1)] },
+    { ...jeraLike[1], items: [item("rowA1", 100, 0), ...jeraLike[1].items], subgroups: [sg("sb1", "Low", ["rowB1", "rowA1"], 0)] },
+  ];
+  const evaluation = evaluateSetup(recipe, undefined, tpl({ variant_pricing: moved }));
+  assert.deepEqual(evaluation.validation, { status: "ok", problems: [] });
+  assert.equal(evaluation.state?.variantGroupId, "grpB");
+  assert.equal(evaluation.state?.subgroupId, "sb1");
+});
+
+test("baseModelPlacement: single group without subgroups, ungrouped rows, no row", () => {
+  assert.deepEqual(baseModelPlacementFromTemplate(variantTwoRows, "row2"), { groupId: "grp1", subgroupId: "" });
+  assert.deepEqual(baseModelPlacementFromTemplate(jeraLike, "rowB2"), { groupId: "grpB", subgroupId: "__ungrouped__" });
+  assert.equal(baseModelPlacementFromTemplate(jeraLike, null), null);
+  assert.equal(baseModelPlacementFromTemplate(jeraLike, "rowGone"), null);
+  // Inactive subgroups do not count as a configuration choice.
+  const inactive = [{ ...jeraLike[1], subgroups: [{ ...sg("sb1", "Low", ["rowB1"], 0), is_active: false }] }];
+  assert.deepEqual(baseModelPlacementFromTemplate(inactive, "rowB1"), { groupId: "grpB", subgroupId: "" });
+});
+
+test("selector: dropdowns start from the selected row (unchanged when none), the Save block only gains the two ids, Add paths unchanged", () => {
+  const source = readFileSync(new URL("../../../components/quotations/product-library-selector.tsx", import.meta.url), "utf8");
+  assert.ok(source.includes('useState(() => baseModelPlacement(groups, selectedRowId)?.groupId ?? groups[0]?.id ?? "")'));
+  assert.ok(source.includes('useState(() => baseModelPlacement(groups, selectedRowId)?.subgroupId ?? "")'));
+  assert.ok(source.includes("onAddLocalItem?.(localProductItem);"));
+  assert.ok(source.includes("action={addProductTemplateToQuotation}"));
+  assert.ok(source.includes("                                  Add to Local Workspace"));
+  const lineStart = source.indexOf("const localProductItem: LocalQuotationItem = {");
+  const stateStart = source.indexOf("const savedSetupState: SavedSetupPlainState = {");
+  assert.ok(!/baseModelPlacement|variantGroupId|subgroupId/.test(source.slice(lineStart, stateStart)), "the quotation line is untouched");
+  const saveBlock = source.slice(stateStart, source.indexOf("const mainItemCurrency", stateStart));
+  assert.equal((saveBlock.match(/baseModelPlacement\(/g) ?? []).length, 2);
+  // No-replay flow: the family/configuration selector key only changes when a setup is replayed.
+  assert.ok(source.includes('key={`${nativeSystem.selected?.row.id ?? "no-system"}:${replay?.key ?? 0}`}'));
+  const helper = readFileSync(new URL("./base-model-placement.ts", import.meta.url), "utf8");
+  assert.ok(!/price|qty|quantity/i.test(helper.replace(/no prices/gi, "")), "placement helper deals with ids only");
 });

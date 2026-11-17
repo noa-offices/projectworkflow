@@ -29,6 +29,9 @@ export type SavedSetupLinkedSelection = {
 export type SavedSetupPlainState = {
   templateId: string;
   variantRowId?: string | null;
+  /** Product Family and Configuration of the model row (ids only; re-derived from the row on replay). */
+  variantGroupId?: string | null;
+  subgroupId?: string | null;
   systemRowId?: string | null;
   systemQuantity?: number | null;
   categoryGroupId?: string | null;
@@ -67,6 +70,8 @@ export type SavedSetupRecipeV1 = {
   display?: { main_code?: string };
   selections: {
     variant_row_id?: string;
+    variant_group_id?: string;
+    subgroup_id?: string;
     system_row_id?: string;
     system_quantity?: number;
     category_group_id?: string;
@@ -242,6 +247,8 @@ export function buildRecipe(state: SavedSetupPlainState): BuiltSavedSetup {
     ...(text(state.mainCode) ? { display: { main_code: text(state.mainCode) } } : {}),
     selections: {
       ...(text(state.variantRowId) ? { variant_row_id: text(state.variantRowId) } : {}),
+      ...(text(state.variantRowId) && text(state.variantGroupId) ? { variant_group_id: text(state.variantGroupId) } : {}),
+      ...(text(state.variantRowId) && text(state.subgroupId) ? { subgroup_id: text(state.subgroupId) } : {}),
       ...(text(state.systemRowId) ? { system_row_id: text(state.systemRowId) } : {}),
       ...(text(state.systemRowId) && Number.isFinite(systemQuantity) && systemQuantity > 0 ? { system_quantity: systemQuantity } : {}),
       ...(text(state.categoryGroupId) ? { category_group_id: text(state.categoryGroupId) } : {}),
@@ -296,6 +303,8 @@ export function restorePlainState(recipe: SavedSetupRecipeV1, specOverrides?: Sa
     templateId: recipe.template_id,
     mainCode: recipe.display?.main_code ?? null,
     variantRowId: s.variant_row_id ?? null,
+    variantGroupId: s.variant_group_id ?? null,
+    subgroupId: s.subgroup_id ?? null,
     systemRowId: s.system_row_id ?? null,
     systemQuantity: s.system_quantity ?? null,
     categoryGroupId: s.category_group_id ?? null,

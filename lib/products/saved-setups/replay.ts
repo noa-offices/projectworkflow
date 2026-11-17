@@ -18,6 +18,7 @@ import {
   type ProductConfigurationSelections,
   type ProductConfigurationTemplateInput,
 } from "../product-configuration-state";
+import { baseModelPlacementFromTemplate } from "./base-model-placement";
 import {
   hashSpecificationText,
   restorePlainState,
@@ -141,8 +142,18 @@ export function evaluateSetup(
   const state: SavedSetupPlainState = { ...plain, templateId: template.id };
 
   // 1. Engine: stale ids, unresolved required steps, rule problems.
+  // The Product Family / Configuration are derived from the row against the CURRENT template (so setups saved with
+  // only a row id still work, and a row that moved is found where it is now). If the row no longer exists, the saved
+  // ids (when present) are passed so the engine reports the removed model instead of a missing group.
+  const placement = baseModelPlacementFromTemplate(template.variant_pricing, plain.variantRowId);
+  const variantGroupId = placement?.groupId ?? plain.variantGroupId ?? undefined;
+  const subgroupId = placement ? placement.subgroupId || undefined : plain.subgroupId ?? undefined;
+  state.variantGroupId = variantGroupId ?? null;
+  state.subgroupId = subgroupId ?? null;
   const selections: ProductConfigurationSelections = {
     variantRowId: plain.variantRowId ?? undefined,
+    variantGroupId,
+    subgroupId,
     systemRowId: plain.systemRowId ?? undefined,
     systemQuantity: plain.systemQuantity ?? undefined,
     categoryGroupId: plain.categoryGroupId ?? undefined,
