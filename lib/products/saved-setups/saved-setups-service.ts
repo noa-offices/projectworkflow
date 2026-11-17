@@ -33,6 +33,8 @@ export type SetupListItem = {
   removed: boolean;
   useCount: number;
   updatedAt: string;
+  createdAt: string;
+  lastUsedAt: string | null;
   /** Stored image path (resolved to a URL by the browser's existing image helper). null = placeholder. */
   imagePath: string | null;
 };
@@ -139,6 +141,8 @@ type SetupRow = {
   template_id: string | null;
   use_count: number | null;
   updated_at: string;
+  created_at: string;
+  last_used_at: string | null;
   selected_image?: string | null;
   product_templates: { is_active: boolean | null; lifecycle_status: string | null } | Array<{ is_active: boolean | null; lifecycle_status: string | null }> | null;
 };
@@ -174,7 +178,7 @@ export async function listSetupsForUser(
 ): Promise<SetupListItem[]> {
   const { data, error } = await supabase
     .from("saved_setups")
-    .select("id,brand_name,product_name,setup_name,note,template_id,use_count,updated_at,selected_image:recipe->>selected_image,product_templates(is_active,lifecycle_status)")
+    .select("id,brand_name,product_name,setup_name,note,template_id,use_count,updated_at,created_at,last_used_at,selected_image:recipe->>selected_image,product_templates(is_active,lifecycle_status)")
     .eq("owner_id", userId)
     .eq("archived", false)
     .order("brand_name", { ascending: true })
@@ -203,6 +207,8 @@ export async function listSetupsForUser(
       removed: !row.template_id,
       useCount: row.use_count ?? 0,
       updatedAt: row.updated_at,
+      createdAt: row.created_at,
+      lastUsedAt: row.last_used_at ?? null,
       imagePath,
     };
   });
@@ -229,6 +235,9 @@ export type PickerSetup = {
   productName: string;
   setupName: string;
   imagePath: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  useCount: number;
 };
 
 /** The caller's USABLE setups only, for the "Add from My Collection" picker. Two batched queries in total. */
@@ -242,6 +251,9 @@ export async function listUsableSetupsForUser(supabase: SupabaseClient, userId: 
       productName: item.productName,
       setupName: item.setupName,
       imagePath: item.imagePath,
+      createdAt: item.createdAt,
+      lastUsedAt: item.lastUsedAt,
+      useCount: item.useCount,
     }));
 }
 
