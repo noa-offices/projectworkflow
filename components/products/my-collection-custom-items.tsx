@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { BrandCombobox, BrandFilterList } from "@/components/products/brand-combobox";
+import { PanelBackBar } from "@/components/products/my-collection-shared";
 import { ShareControl } from "@/components/products/my-collection-share-send";
 import { useEscapeLayer } from "@/components/products/escape-layer";
 import { createCustomItem, deleteCustomItem, updateCustomItem } from "@/lib/products/saved-setups/saved-custom-items-actions";
@@ -230,13 +231,17 @@ function CustomItemImageField({ busy, error, note, onPick, onRetry, onRemove, st
 }
 
 // One form for "Add custom item" and for editing. Errors come from the shared validator (shown next to each field).
-export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null, onDone, onSaved }: { item: CustomItemWithImage | null; defaults?: FormValues; brands?: BrandCount[]; rowImageRef?: string | null; onDone: () => void; onSaved?: () => void }) {
+export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null, onDone, onSaved, showBack = false }: { item: CustomItemWithImage | null; defaults?: FormValues; brands?: BrandCount[]; rowImageRef?: string | null; onDone: () => void; onSaved?: () => void; showBack?: boolean }) {
   const [values, setValues] = useState<FormValues>(() => defaults ?? valuesFor(item));
   const [errors, setErrors] = useState<CustomItemFieldErrors>({});
   const [formError, setFormError] = useState("");
   const [pending, startTransition] = useTransition();
   const [image, setImage] = useState<ImageState>(() => (item?.imagePath ? { kind: "saved", path: item.imagePath } : rowImageRef ? { kind: "row", ref: rowImageRef } : { kind: "none" }));
   // "Compressing..." / "Uploading..." while a picture is being prepared; Save is disabled so a half-uploaded picture is never saved.
+  // "Unsaved typing": any field or picture change since the form opened (used by the popup's Back button).
+  const [initialValues] = useState<FormValues>(() => defaults ?? valuesFor(item));
+  const [initialImageKind] = useState(() => (item?.imagePath ? "saved" : rowImageRef ? "row" : "none"));
+  const dirty = JSON.stringify(values) !== JSON.stringify(initialValues) || image.kind !== initialImageKind || image.kind === "uploaded";
   const [imageBusy, setImageBusy] = useState<string | null>(null);
   const [imageError, setImageError] = useState("");
   const [imageNote, setImageNote] = useState("");
@@ -346,6 +351,7 @@ export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null
       aria-label={item ? "Edit custom item" : "Add custom item"}
       className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm"
     >
+      {showBack ? <PanelBackBar dirty={dirty} onBack={cancel} /> : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <BrandCombobox brands={brands} value={values.brandName} error={errors.brandName} onChange={(value) => setValues((current) => ({ ...current, brandName: value }))} />
         <Field label="Item name" error={errors.itemName}>

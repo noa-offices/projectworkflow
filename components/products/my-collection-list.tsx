@@ -182,6 +182,7 @@ function SetupCard({ item, onMessage, callbacks }: { item: SetupListItem; onMess
             <p className="break-words text-base font-bold leading-snug text-zinc-900">{item.setupName}</p>
           )}
           <p className="mt-1 truncate text-xs text-zinc-500">{item.productName}</p>
+          {item.productCode ? <p className="mt-1 truncate text-xs text-zinc-400">{item.productCode}</p> : null}
           <p className="mt-1 text-xs text-zinc-500">{savedLine(item)}</p>
           {item.note ? <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{item.note}</p> : null}
           {!item.usable ? <span className="mt-2 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">Unavailable</span> : null}

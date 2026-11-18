@@ -37,6 +37,8 @@ export type SetupListItem = {
   lastUsedAt: string | null;
   /** Stored image path (resolved to a URL by the browser's existing image helper). null = placeholder. */
   imagePath: string | null;
+  /** The product's main code (the saved configuration's main code, else the product's item code). Display and search only; absent when there is none. */
+  productCode?: string;
 };
 
 const NOT_AVAILABLE = "This product is not available to you or is no longer active.";
@@ -144,7 +146,8 @@ type SetupRow = {
   created_at: string;
   last_used_at: string | null;
   selected_image?: string | null;
-  product_templates: { is_active: boolean | null; lifecycle_status: string | null } | Array<{ is_active: boolean | null; lifecycle_status: string | null }> | null;
+  main_code?: string | null;
+  product_templates: { is_active: boolean | null; lifecycle_status: string | null; item_code?: string | null } | Array<{ is_active: boolean | null; lifecycle_status: string | null; item_code?: string | null }> | null;
 };
 
 const PROPOSED_IMAGE_FIELDS = Array.from({ length: 20 }, (_, index) => `proposed_image_url_${index + 1}`);
@@ -170,6 +173,13 @@ async function templateImagesFor(supabase: SupabaseClient, templateIds: string[]
   return byTemplate;
 }
 
+/** Main code for display and search: the saved configuration's main code (for example "EV211"), else the product's item code. */
+function productCodeOf(row: { main_code?: string | null }, template: { item_code?: string | null } | null): string {
+  const saved = typeof row.main_code === "string" ? row.main_code.trim() : "";
+  if (saved) return saved;
+  return typeof template?.item_code === "string" ? template.item_code.trim() : "";
+}
+
 /** The caller's own setups (owner filter + RLS), with usability computed by isSetupUsable. */
 export async function listSetupsForUser(
   supabase: SupabaseClient,
@@ -178,7 +188,7 @@ export async function listSetupsForUser(
 ): Promise<SetupListItem[]> {
   const { data, error } = await supabase
     .from("saved_setups")
-    .select("id,brand_name,product_name,setup_name,note,template_id,use_count,updated_at,created_at,last_used_at,selected_image:recipe->>selected_image,product_templates(is_active,lifecycle_status)")
+    .select("id,brand_name,product_name,setup_name,note,template_id,use_count,updated_at,created_at,last_used_at,selected_image:recipe->>selected_image,main_code:recipe->display->>main_code,product_templates(is_active,lifecycle_status,item_code)")
     .eq("owner_id", userId)
     .eq("archived", false)
     .order("brand_name", { ascending: true })
@@ -210,6 +220,7 @@ export async function listSetupsForUser(
       createdAt: row.created_at,
       lastUsedAt: row.last_used_at ?? null,
       imagePath,
+      ...(productCodeOf(row, template) ? { productCode: productCodeOf(row, template) } : {}),
     };
   });
 }
@@ -238,6 +249,8 @@ export type PickerSetup = {
   createdAt: string;
   lastUsedAt: string | null;
   useCount: number;
+  /** Main code for display and search (absent when the setup has none). */
+  productCode?: string;
 };
 
 /** The caller's USABLE setups only, for the "Add from My Collection" picker. Two batched queries in total. */
@@ -254,6 +267,7 @@ export async function listUsableSetupsForUser(supabase: SupabaseClient, userId: 
       createdAt: item.createdAt,
       lastUsedAt: item.lastUsedAt,
       useCount: item.useCount,
+      ...(item.productCode ? { productCode: item.productCode } : {}),
     }));
 }
 
