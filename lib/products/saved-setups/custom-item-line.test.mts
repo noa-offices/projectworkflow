@@ -197,7 +197,7 @@ test("picker: two tabs; the Configured tab keeps its behaviour and shows no pric
   // PR 2b-2b: the picker now filters by brand and has a sort choice (default "recent").
   assert.match(pane, /groupByBrand\(sortSetups\(filterSetups\(filterByBrand\(entries, activeBrand\), search\), sort\)\)/);
   assert.match(pane, /Search by name, code or brand/);
-  assert.match(pane, /No image/);
+  assert.match(pane, /CustomItemThumb/);
   assert.match(pane, /markCustomItemUsed\(item\.id\)\.catch/);
   assert.match(pane, /form\.set\("custom_item_id", item\.id\)/);
   assert.doesNotMatch(pane, /unit_price|net_total|qty/);

@@ -5,12 +5,22 @@ import { useEffect, useState } from "react";
 import { CustomItemForm } from "@/components/products/my-collection-custom-items";
 import { customItemFromRow, type ManualRowLike } from "@/lib/products/saved-setups/custom-item-line";
 import { distinctBrands, type BrandCount } from "@/lib/products/saved-setups/custom-brands";
+import { quoteImageStoragePath } from "@/lib/products/saved-setups/custom-item-image";
 import { listCustomItems } from "@/lib/products/saved-setups/saved-custom-items-actions";
 
 // Row More-menu entry for MANUAL item rows ("+ Item Row"): opens a popup (a real modal, not inside the menu)
 // with the form prefilled from the row. Product, note, blank and heading rows render nothing.
-// The popup saves through the existing createCustomItem action (owner from the session). No image in this step.
-export function SaveAsCustomItemButton({ row }: { row: ManualRowLike }) {
+// The popup saves through the existing createCustomItem action (owner from the session).
+// A picture on the row is preselected (Remove / Replace work) and copied into My Collection on save.
+// The row's own picture ("quote-images:quotation-items/...") is offered in the popup and copied only when the user saves.
+export type ManualRowWithImages = ManualRowLike & { proposed_image_url_snapshot?: string | null; specified_image_url_snapshot?: string | null };
+
+function rowPictureRef(row: ManualRowWithImages): string | null {
+  const ref = row.proposed_image_url_snapshot || row.specified_image_url_snapshot;
+  return typeof ref === "string" && quoteImageStoragePath(ref) ? ref : null;
+}
+
+export function SaveAsCustomItemButton({ row }: { row: ManualRowWithImages }) {
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState(false);
   const [brands, setBrands] = useState<BrandCount[]>([]);
@@ -66,7 +76,7 @@ export function SaveAsCustomItemButton({ row }: { row: ManualRowLike }) {
                 <Link href="/products/my-collection" className="font-semibold underline">Open My Collection</Link>
               </p>
             ) : (
-              <CustomItemForm item={null} defaults={prefilled.defaults} brands={brands} onDone={close} onSaved={() => setSaved(true)} />
+              <CustomItemForm item={null} defaults={prefilled.defaults} brands={brands} rowImageRef={rowPictureRef(row)} onDone={close} onSaved={() => setSaved(true)} />
             )}
           </div>
         </div>

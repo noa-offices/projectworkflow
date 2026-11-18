@@ -1,9 +1,12 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { BrandCombobox, BrandFilterList } from "@/components/products/brand-combobox";
 import { createCustomItem, deleteCustomItem, updateCustomItem } from "@/lib/products/saved-setups/saved-custom-items-actions";
 import { renameCustomBrand } from "@/lib/products/saved-setups/saved-custom-brands-actions";
+import { copyQuoteImageToCollection, removeCustomItemImage, signCustomItemImageUrls, uploadCustomItemImage } from "@/lib/products/saved-setups/saved-custom-images-actions";
+import { resolveQuotationImageUrl } from "@/lib/quotation-image-path";
+import type { CustomItemWithImage } from "@/lib/products/saved-setups/custom-item-image";
 import {
   CUSTOM_BRAND_PAGE_SIZE,
   distinctBrands,
@@ -74,12 +77,155 @@ function Field({ label, error, children }: { label: string; error?: string; chil
   );
 }
 
+// ── Pictures (PR 2b-3) ───────────────────────────────────────────────────────────────────────────────────────
+// Thumbnails use short-lived signed links made by the server for the CALLER's own pictures only. Links are requested
+// in one batch for the thumbnails that are actually on screen (lazy: only when scrolled near), cached for 50 minutes.
+const SIGNED_REUSE_MS = 3000 * 1000;
+const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+let signQueue = new Map<string, Array<(url: string | null) => void>>();
+let signTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function flushSignQueue() {
+  const batch = signQueue;
+  signQueue = new Map();
+  signTimer = null;
+  const paths = Array.from(batch.keys());
+  for (let start = 0; start < paths.length; start += 60) {
+    const chunk = paths.slice(start, start + 60);
+    let urls: Record<string, string> = {};
+    try {
+      urls = await signCustomItemImageUrls(chunk);
+    } catch {
+      urls = {};
+    }
+    for (const path of chunk) {
+      const url = urls[path] ?? null;
+      if (url) signedUrlCache.set(path, { url, expiresAt: Date.now() + SIGNED_REUSE_MS });
+      for (const resolve of batch.get(path) ?? []) resolve(url);
+    }
+  }
+}
+
+function requestSignedUrl(path: string): Promise<string | null> {
+  const cached = signedUrlCache.get(path);
+  if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.url);
+  return new Promise((resolve) => {
+    signQueue.set(path, [...(signQueue.get(path) ?? []), resolve]);
+    if (!signTimer) signTimer = setTimeout(() => { void flushSignQueue(); }, 30);
+  });
+}
+
+// The picture of a custom item (or the "No image" box). Pictures are loaded only when the thumbnail is near the screen.
+export function CustomItemThumb({ imagePath, size, name }: { imagePath?: string | null; size: number; name: string }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [near, setNear] = useState(false);
+  const [resolved, setResolved] = useState<{ path: string; url: string | null } | null>(null);
+  const [failedPath, setFailedPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!imagePath) return;
+    const node = boxRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") {
+      setNear(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setNear(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "200px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [imagePath]);
+
+  useEffect(() => {
+    if (!imagePath || !near) return;
+    let cancelled = false;
+    requestSignedUrl(imagePath).then((url) => { if (!cancelled) setResolved({ path: imagePath, url }); });
+    return () => { cancelled = true; };
+  }, [imagePath, near]);
+
+  const url = imagePath && resolved?.path === imagePath && failedPath !== imagePath ? resolved.url : null;
+  return (
+    <div ref={boxRef} style={{ width: size, height: size }} className="flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 text-[10px] text-zinc-400">
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element -- short-lived signed private link, not optimisable by next/image
+        <img src={url} alt={name} loading="lazy" decoding="async" onError={() => { signedUrlCache.delete(imagePath ?? ""); setFailedPath(imagePath ?? null); }} className="h-full w-full object-contain" />
+      ) : (
+        <span aria-hidden="true">No image</span>
+      )}
+    </div>
+  );
+}
+
+// What the form holds for the picture. "row" = the quote row's own picture, copied into My Collection only when saving.
+type ImageState =
+  | { kind: "none" }
+  | { kind: "saved"; path: string }
+  | { kind: "uploaded"; path: string }
+  | { kind: "row"; ref: string };
+
+function RowPicturePreview({ imageRef }: { imageRef: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    resolveQuotationImageUrl(imageRef).then((resolved) => { if (!cancelled) setUrl(resolved); }).catch(() => { if (!cancelled) setUrl(null); });
+    return () => { cancelled = true; };
+  }, [imageRef]);
+  return (
+    <div style={{ width: 96, height: 96 }} className="flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 text-[10px] text-zinc-400">
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element -- short-lived signed link
+        <img src={url} alt="Row picture" decoding="async" className="h-full w-full object-contain" />
+      ) : <span aria-hidden="true">No image</span>}
+    </div>
+  );
+}
+
+function CustomItemImageField({ busy, error, onPick, onRemove, state }: { busy: boolean; error: string; onPick: (file: File) => void; onRemove: () => void; state: ImageState }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <div className="rounded-md border border-zinc-200 p-3">
+      <p className="mb-2 text-xs font-semibold text-zinc-600">Image (optional)</p>
+      <div className="flex flex-wrap items-center gap-3">
+        {state.kind === "row" ? <RowPicturePreview imageRef={state.ref} /> : <CustomItemThumb imagePath={state.kind === "none" ? null : state.path} size={96} name="Item picture" />}
+        <div className="min-w-0 space-y-2">
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            aria-label="Item picture file"
+            className="sr-only"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) onPick(file);
+            }}
+          />
+          <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={busy} onClick={() => inputRef.current?.click()} className={secondaryButton}>
+              {busy ? "Uploading..." : state.kind === "none" ? "Upload picture" : "Replace picture"}
+            </button>
+            {state.kind !== "none" ? <button type="button" disabled={busy} onClick={onRemove} className={secondaryButton}>Remove picture</button> : null}
+          </div>
+          <p className="text-[11px] text-zinc-500">PNG, JPG or WebP, up to 5 MB.{state.kind === "row" ? " This is the row's current picture; it is copied when you save." : ""}</p>
+        </div>
+      </div>
+      {error ? <p role="alert" className="mt-2 text-xs text-red-700">{error}</p> : null}
+    </div>
+  );
+}
+
 // One form for "Add custom item" and for editing. Errors come from the shared validator (shown next to each field).
-export function CustomItemForm({ item, defaults, brands = [], onDone, onSaved }: { item: CustomItemListItem | null; defaults?: FormValues; brands?: BrandCount[]; onDone: () => void; onSaved?: () => void }) {
+export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null, onDone, onSaved }: { item: CustomItemWithImage | null; defaults?: FormValues; brands?: BrandCount[]; rowImageRef?: string | null; onDone: () => void; onSaved?: () => void }) {
   const [values, setValues] = useState<FormValues>(() => defaults ?? valuesFor(item));
   const [errors, setErrors] = useState<CustomItemFieldErrors>({});
   const [formError, setFormError] = useState("");
   const [pending, startTransition] = useTransition();
+  const [image, setImage] = useState<ImageState>(() => (item?.imagePath ? { kind: "saved", path: item.imagePath } : rowImageRef ? { kind: "row", ref: rowImageRef } : { kind: "none" }));
+  const [imageBusy, setImageBusy] = useState(false);
+  const [imageError, setImageError] = useState("");
   const set = (key: keyof FormValues) => (event: { target: { value: string } }) => setValues((current) => ({ ...current, [key]: event.target.value }));
 
   function submit() {
@@ -89,16 +235,69 @@ export function CustomItemForm({ item, defaults, brands = [], onDone, onSaved }:
       setErrors({ brandName: brand.error });
       return;
     }
-    const payload = { ...values, brandName: brand.name };
     startTransition(async () => {
+      // Picture: a row picture is COPIED into My Collection now; an uploaded one is already there.
+      // undefined = leave the saved picture alone, null = remove it, a path = use it.
+      let imagePath: string | null | undefined = item ? undefined : null;
+      let copiedPath: string | null = null;
+      if (image.kind === "uploaded") imagePath = image.path;
+      else if (image.kind === "none") imagePath = item ? null : undefined;
+      else if (image.kind === "row") {
+        const copied = await copyQuoteImageToCollection(image.ref);
+        if (!copied.ok) {
+          setImageError(`${copied.error} Remove the picture to save without it, or try again.`);
+          return;
+        }
+        imagePath = copiedPath = copied.path;
+      }
+      const payload = { ...values, brandName: brand.name, imagePath };
       const result = item ? await updateCustomItem(item.id, payload) : await createCustomItem(payload);
       if (result.ok) {
         (onSaved ?? onDone)();
         return;
       }
+      // A copy made for this save is not kept when the save fails (no orphan). An uploaded picture is removed by the
+      // server when the save itself failed; after a plain field error it stays so the user can fix the field and retry.
+      if (copiedPath) void removeCustomItemImage(copiedPath);
+      if (image.kind === "uploaded" && !result.fieldErrors) {
+        setImage({ kind: "none" });
+        setImageError("The picture was not saved. Add it again.");
+      }
       setErrors(result.fieldErrors ?? {});
       setFormError(result.fieldErrors ? "" : result.error);
     });
+  }
+
+  async function pickImage(file: File) {
+    setImageBusy(true);
+    setImageError("");
+    try {
+      const body = new FormData();
+      body.set("file", file);
+      const result = await uploadCustomItemImage(body);
+      if (!result.ok) {
+        setImageError(result.error);
+        return;
+      }
+      // Replacing a picture that was uploaded in this form but never saved: the earlier file goes (best effort).
+      if (image.kind === "uploaded") void removeCustomItemImage(image.path);
+      setImage({ kind: "uploaded", path: result.path });
+    } catch {
+      setImageError("The picture could not be uploaded. Try again.");
+    } finally {
+      setImageBusy(false);
+    }
+  }
+
+  function removeImage() {
+    if (image.kind === "uploaded") void removeCustomItemImage(image.path);
+    setImage({ kind: "none" });
+    setImageError("");
+  }
+
+  function cancel() {
+    if (image.kind === "uploaded") void removeCustomItemImage(image.path);
+    onDone();
   }
 
   return (
@@ -133,16 +332,17 @@ export function CustomItemForm({ item, defaults, brands = [], onDone, onSaved }:
       <Field label="Specification (optional)" error={errors.specification}>
         <textarea value={values.specification} maxLength={CUSTOM_ITEM_SPEC_MAX} rows={3} onChange={set("specification")} aria-label="Specification" className="w-full rounded-md border border-zinc-300 px-2 py-2 text-sm outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10" />
       </Field>
+      <CustomItemImageField state={image} busy={imageBusy} error={imageError} onPick={(file) => { void pickImage(file); }} onRemove={removeImage} />
       {formError ? <p role="alert" className="text-xs text-red-700">{formError}</p> : null}
       <div className="flex gap-2">
-        <button type="submit" disabled={pending} className={primaryButton}>{pending ? "Saving..." : "Save item"}</button>
-        <button type="button" disabled={pending} onClick={onDone} className={secondaryButton}>Cancel</button>
+        <button type="submit" disabled={pending || imageBusy} className={primaryButton}>{pending ? "Saving..." : "Save item"}</button>
+        <button type="button" disabled={pending} onClick={cancel} className={secondaryButton}>Cancel</button>
       </div>
     </form>
   );
 }
 
-function CustomItemCard({ item, brands, onMessage }: { item: CustomItemListItem; brands: BrandCount[]; onMessage: (message: string) => void }) {
+function CustomItemCard({ item, brands, onMessage }: { item: CustomItemWithImage; brands: BrandCount[]; onMessage: (message: string) => void }) {
   const [pending, startTransition] = useTransition();
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -160,7 +360,7 @@ function CustomItemCard({ item, brands, onMessage }: { item: CustomItemListItem;
   return (
     <li className="flex min-w-0 flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
       <div className="flex min-w-0 gap-3">
-        <div aria-hidden="true" style={{ width: 104, height: 104 }} className="flex shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-[10px] text-zinc-400">No image</div>
+        <CustomItemThumb imagePath={item.imagePath} size={104} name={item.itemName} />
         <div className="min-w-0 flex-1">
           <p className="break-words text-base font-bold leading-snug text-zinc-900">{item.itemName}</p>
           {item.itemCode ? <p className="mt-1 truncate text-xs text-zinc-500">{item.itemCode}</p> : null}
@@ -225,7 +425,7 @@ function RenameBrand({ brand, onDone, onMessage }: { brand: string; onDone: (new
   );
 }
 
-export function MyCollectionCustomItems({ items }: { items: CustomItemListItem[] }) {
+export function MyCollectionCustomItems({ items }: { items: CustomItemWithImage[] }) {
   const [message, setMessage] = useState("");
   const [info, setInfo] = useState("");
   const [adding, setAdding] = useState(false);

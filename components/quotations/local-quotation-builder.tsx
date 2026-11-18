@@ -5,6 +5,8 @@ import { SaveAsCustomItemButton } from "@/components/quotations/save-as-custom-i
 import { CustomItemTargetProvider } from "@/components/quotations/custom-item-picker-pane";
 import { overlayFields, rowOverlayFromCustomItem } from "@/lib/products/saved-setups/custom-item-line";
 import type { CustomItemListItem } from "@/lib/products/saved-setups/custom-item";
+import type { CustomItemWithImage } from "@/lib/products/saved-setups/custom-item-image";
+import { copyCustomItemImageToQuote } from "@/lib/products/saved-setups/saved-custom-images-actions";
 import { announcedSnapshotOf } from "@/lib/products/price-announcements";
 import { readPricingRule, type PricingRule } from "@/lib/quotation-pricing";
 import { formatRoundingDifference, lineRoundingAdjustment } from "@/lib/quotations/quotation-total-display";
@@ -2505,14 +2507,30 @@ export function LocalQuotationBuilder({
   function addCustomItemRow(sectionId: string, item: CustomItemListItem): string | null {
     const overlay = rowOverlayFromCustomItem(item, workspace.currency);
     const { source_component_data: sourceData, ...fields } = overlayFields(overlay);
+    // The row id is fixed up front so the item's picture can be copied under THIS row's own quote-images path.
+    const rowId = createEmptyItem(workspace, "custom", sectionId).id;
     commit((current) => ({
       ...current,
       items: [
         ...current.items,
-        { ...createEmptyItem(current, "custom", sectionId), ...fields, ...(sourceData ? { source_component_data: sourceData } : {}) },
+        { ...createEmptyItem(current, "custom", sectionId), ...fields, ...(sourceData ? { source_component_data: sourceData } : {}), id: rowId },
       ],
     }));
     if (overlay.conversionNote) setSaveMessage(overlay.conversionNote);
+    // Picture (best effort, after the row exists): the server COPIES it into quote-images; the row then holds the usual
+    // "bucket:path" in its picture field. A failure leaves the row without a picture and says so.
+    if ((item as CustomItemWithImage).imagePath) {
+      const pictureFailed = () => setSaveMessage("The picture could not be copied, so the row was added without it.");
+      copyCustomItemImageToQuote(item.id, workspace.server_quotation_id, rowId)
+        .then((copied) => {
+          if (!copied.ok) return pictureFailed();
+          commit((current) => ({
+            ...current,
+            items: current.items.map((row) => (row.id === rowId ? { ...row, proposed_image_url_snapshot: copied.ref, updated_at: localNow() } : row)),
+          }));
+        })
+        .catch(pictureFailed);
+    }
     return overlay.conversionNote;
   }
 
