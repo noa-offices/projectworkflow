@@ -33,6 +33,8 @@ import { baseModelPriceOrDefault, sameCurrencyUnitSum } from "@/lib/quotations/s
 import { requiredComponentOverrideReport } from "@/lib/quotations/required-component-overrides";
 import { rowOverlayFromCustomItem } from "@/lib/products/saved-setups/custom-item-line";
 import { addCustomItemPictureToQuoteRow, loadCustomItemForUser, markCustomItemUsedForUser } from "@/lib/products/saved-setups/saved-custom-items-service";
+import { clientHistoryMessage } from "@/lib/quotations/client-history/client-history";
+import { addHistoryPictureToQuoteRow, getClientHistoryItemForAdd } from "@/lib/quotations/client-history/client-history-service";
 import { LINE_RECIPE_FORM_FIELD, LINE_RECIPE_KEY, parseLineConfigurationRecipe } from "@/lib/products/saved-setups/line-recipe";
 import { announcedQuotationDelta, announcedSnapshot, announcedTotals, loadBrandPriceAnnouncements } from "@/lib/products/price-announcements";
 import { activeBaseModelPricingGroups, composeSystemAndMainSpecification, currentSystemPricing, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, remapBaseModelTargetsToOwnerGroups, strictSystemQuantity, systemPriceContribution, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
@@ -6361,6 +6363,73 @@ export async function addCustomItemToQuotation(formData: FormData) {
   const note = [conversionNote, picture.ok ? null : picture.note].filter(Boolean).join(" ") || null;
 
   return { ok: true as const, itemId: result.itemId, message: "Custom item added.", note };
+}
+
+/**
+ * Client history (a MANUAL item quoted before for this client) -> an ORDINARY manual row: the same payload and currency rule as
+ * addCustomItemToQuotation (a different currency than the quote = price 0 plus the existing manual-source keys). The history row
+ * must belong to the quotation's own client (read from the quotation, never from the browser). The old picture is copied under the
+ * NEW row's own quote-images path; if it is gone or cannot be copied the row is still added and a note says so.
+ * Configured and library rows are not added here: they go through the existing Product Library replay in the browser.
+ */
+export async function addHistoryItemToQuotation(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const lockFailure = await quotationFormLockReason(formData, "quotation");
+  if (lockFailure) return { ok: false as const, message: lockFailure };
+  const quotationId = textValue(formData, "quotation_id");
+  const sectionId = optionalTextValue(formData, "section_id");
+  const historyId = textValue(formData, "history_id");
+  if (!quotationId) return { ok: false as const, message: "Quotation is required." };
+
+  const supabase = await createSupabaseClient();
+  const { data: quotation } = await supabase
+    .from("quotations")
+    .select("client_id,currency")
+    .eq("id", quotationId)
+    .maybeSingle<{ client_id: string | null; currency: string | null }>();
+  if (!quotation?.client_id) return { ok: false as const, message: clientHistoryMessage("invalid_request") };
+
+  const loaded = await getClientHistoryItemForAdd(supabase, { id: historyId, clientId: quotation.client_id });
+  if (!loaded.ok) return { ok: false as const, message: clientHistoryMessage(loaded.kind) };
+  if (loaded.item.kind !== "custom") return { ok: false as const, message: clientHistoryMessage("not_a_custom_item") };
+  const item = loaded.item;
+
+  const overlay = rowOverlayFromCustomItem(
+    { brandName: item.brand, itemName: item.itemName, itemCode: item.itemCode, specification: item.specification, unitLabel: item.unitLabel, sellingPrice: item.price, currency: item.currency },
+    quotation.currency ?? defaultCurrency,
+  );
+  const pricingRule = await quotationPricingRule(supabase, quotationId);
+  const linePricing = roundedLinePricing(overlay.unit_price, "amount", 0, 1, pricingRule);
+  const { conversionNote, ...fields } = overlay;
+
+  const result = await createBlankQuotationItemRecord({
+    displayName,
+    formData,
+    overlay: {
+      ...fields,
+      unit_price: linePricing.unitPrice,
+      discount_value: linePricing.discountValue,
+      net_price: linePricing.netPrice,
+      net_total: linePricing.netTotal,
+    },
+    quotationId,
+    sectionId,
+    userId: user.id,
+  });
+  if (!result.ok) return result;
+
+  await recalculateQuotationTotals(quotationId);
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/quotations/${quotationId}/builder`);
+
+  const picture = await addHistoryPictureToQuoteRow(supabase, { pictureRef: item.pictureRef, quotationId, rowId: result.itemId });
+  if (picture.ok && picture.attached) {
+    revalidatePath(`/quotations/${quotationId}`);
+    revalidatePath(`/quotations/${quotationId}/builder`);
+  }
+  const note = [conversionNote, picture.ok ? null : clientHistoryMessage(picture.kind)].filter(Boolean).join(" ") || null;
+
+  return { ok: true as const, itemId: result.itemId, message: "History item added.", note };
 }
 
 export async function addProductTemplateToQuotation(formData: FormData) {
