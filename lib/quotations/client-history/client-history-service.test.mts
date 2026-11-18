@@ -219,14 +219,14 @@ test("add data: custom -> field values and the picture reference; configured -> 
     historyRow({ id: H3, kind: "library", template_id: TEMPLATE, item_name: "Chair", picture_ref: null }),
   ];
   const custom: any = await actions.getClientHistoryItemForAddAction({ historyId: H1, clientId: CLIENT });
-  assert.deepEqual(custom.item, { kind: "custom", id: H1, itemName: "Meeting table", itemCode: "MT-1", brand: "Acme", specification: "Solid oak top", unitLabel: "Pc", price: 1200, currency: "AED", pictureRef: PIC });
+  assert.deepEqual(custom.item, { kind: "custom", id: H1, itemName: "Meeting table", itemCode: "MT-1", brand: "Acme", specification: "Solid oak top", unitLabel: "Pc", price: 1200, currency: "AED", listUnitPrice: null, discountType: null, discountValue: null, qty: 2, pictureRef: PIC });
   const configured: any = await actions.getClientHistoryItemForAddAction({ historyId: H2, clientId: CLIENT });
   assert.equal(configured.item.kind, "configured");
   assert.deepEqual(Object.keys(configured.item.setup).sort(), ["id", "recipe", "setupName", "specOverrides", "templateId"]);
   assert.equal(configured.item.setup.templateId, TEMPLATE);
   assert.equal(configured.item.setup.recipe.template_id, TEMPLATE);
   const library: any = await actions.getClientHistoryItemForAddAction({ historyId: H3, clientId: CLIENT });
-  assert.deepEqual(library.item, { kind: "library", id: H3, templateId: TEMPLATE, itemName: "Chair", recipeUnavailable: false });
+  assert.deepEqual(library.item, { kind: "library", id: H3, templateId: TEMPLATE, itemName: "Chair", recipeUnavailable: false, currency: "AED", discountType: null, discountValue: null });
 });
 
 test("add data: an unreadable recipe falls back to opening the product; an inactive product is unavailable", async () => {
@@ -238,6 +238,34 @@ test("add data: an unreadable recipe falls back to opening the product; an inact
   assert.equal(fallback.item.recipeUnavailable, true);
   world.tables.product_templates = [{ id: TEMPLATE, is_active: true, lifecycle_status: "archived" }];
   assert.deepEqual(await actions.getClientHistoryItemForAddAction({ historyId: H1, clientId: CLIENT }), { ok: false, message: CLIENT_HISTORY_MESSAGES.product_unavailable });
+});
+
+test("list and add data carry list price and discount; old rows (null fields) have none", async () => {
+  reset();
+  world.tables.product_templates = [{ id: TEMPLATE, is_active: true, lifecycle_status: "active" }];
+  const entry = { price: 2114.15, currency: "AED", qty: 3, at: "2026-11-01T00:00:00Z", quotation_id: OLD_QUOTE, quotation_no: "QN-1", list_price: 2487, discount_type: "percent", discount_value: 15 };
+  world.tables.client_quote_history = [
+    historyRow({ last_unit_price: 2114.15, list_unit_price: 2487, discount_type: "percent", discount_value: 15, qty: 3, last_prices: [entry, { price: 1000, currency: "AED" }] }),
+    historyRow({ id: H2, kind: "configured", template_id: TEMPLATE, picture_ref: null, line_recipe: recipe, list_unit_price: 500, discount_type: "amount", discount_value: 50, last_unit_price: 450 }),
+    historyRow({ id: H3, kind: "library", template_id: TEMPLATE, picture_ref: null }),
+  ];
+  const listed: any = await actions.listClientHistoryAction({ clientId: CLIENT });
+  const select = world.selects.find((item) => item.table === "client_quote_history")!.columns;
+  for (const column of ["list_unit_price", "discount_type", "discount_value"]) assert.ok(select.split(",").includes(column), column);
+  assert.doesNotMatch(select.replace(/line_recipe->/g, ""), /line_recipe/);
+  const [withDiscount, , oldRow] = listed.items;
+  assert.deepEqual([withDiscount.listUnitPrice, withDiscount.discountType, withDiscount.discountValue], [2487, "percent", 15]);
+  assert.deepEqual(withDiscount.priceHistory[0], { price: 2114.15, currency: "AED", qty: 3, at: "2026-11-01T00:00:00Z", quotationNo: "QN-1", listPrice: 2487, discountType: "percent", discountValue: 15 });
+  assert.deepEqual(Object.keys(withDiscount.priceHistory[1]).sort(), ["at", "currency", "price", "qty", "quotationNo"], "old entries have no list/discount keys");
+  assert.deepEqual([oldRow.listUnitPrice, oldRow.discountType, oldRow.discountValue], [null, null, null]);
+  const custom: any = await actions.getClientHistoryItemForAddAction({ historyId: H1, clientId: CLIENT });
+  assert.deepEqual([custom.item.price, custom.item.listUnitPrice, custom.item.discountType, custom.item.discountValue, custom.item.qty], [2114.15, 2487, "percent", 15, 3]);
+  const configured: any = await actions.getClientHistoryItemForAddAction({ historyId: H2, clientId: CLIENT });
+  assert.deepEqual([configured.item.discountType, configured.item.discountValue, configured.item.currency], ["amount", 50, "AED"]);
+  const library: any = await actions.getClientHistoryItemForAddAction({ historyId: H3, clientId: CLIENT });
+  assert.deepEqual([library.item.discountType, library.item.discountValue], [null, null]);
+  const addSelect = world.selects.filter((item) => item.table === "client_quote_history").at(-1)!.columns;
+  for (const column of ["list_unit_price", "discount_type", "discount_value", "qty"]) assert.ok(addSelect.split(",").includes(column), column);
 });
 
 // ── delete ─────────────────────────────────────────────────────────────────

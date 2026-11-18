@@ -1346,7 +1346,7 @@ export function ProductLibrarySelector({
 
   // My Collection replay: set only when a saved setup was opened; null in the normal Product Library flow.
   // "Add from {client} history": the discount of the old line, shown as one short line in the configurator for that product.
-  const [historyNote, setHistoryNote] = useState<{ templateId: string; text: string } | null>(null);
+  const [historyNote, setHistoryNote] = useState<{ templateId: string; text: string; type: string; value: string } | null>(null);
   const [replay, setReplay] = useState<{ key: number; problems: SetupProblem[]; setupName: string; specOverrides: SavedSetupSpecOverrides; templateId: string } | null>(null);
   const brandNameById = useMemo(
     () => new Map(brands.map((brand) => [brand.id, brand.name])),
@@ -1497,18 +1497,14 @@ export function ProductLibrarySelector({
 
   // "Add from My Collection": hydrate the EXISTING per-template state from a saved recipe, then open the normal
   // configurator. Nothing is added to the quotation and no price is restored; the Add path prices as usual.
-  // historyDiscount: undefined = opened from My Collection (nothing touched); null = from client history, the old line had no discount.
-  const applyHistoryDiscount = (tid: string, historyDiscount: HistoryDiscount | null | undefined) => {
-    if (historyDiscount === undefined) {
-      setHistoryNote(null);
-      return;
-    }
+  // historyDiscount: null = the old line had no discount (the configurator discount is cleared); a value = applied to this product.
+  const applyHistoryDiscount = (tid: string, historyDiscount: HistoryDiscount | null) => {
     setDiscountTypes((current) => ({ ...current, [tid]: historyDiscount ? historyDiscount.discountType : "none" }));
     setDiscountValues((current) => ({ ...current, [tid]: historyDiscount ? String(historyDiscount.discountValue) : "" }));
-    setHistoryNote(historyDiscount ? { templateId: tid, text: historyDiscountNote(historyDiscount) } : null);
+    setHistoryNote(historyDiscount ? { templateId: tid, text: historyDiscountNote(historyDiscount), type: historyDiscount.discountType, value: String(historyDiscount.discountValue) } : null);
   };
 
-  const openSetupFromCollection = (setup: SetupForUse, historyDiscount?: HistoryDiscount | null): string | null => {
+  const openSetupFromCollection = (setup: SetupForUse): string | null => {
     const template = templateById.get(setup.templateId);
     if (!template) return "This product is not available in this Product Library.";
     const evaluation = evaluateSetup(setup.recipe, setup.specOverrides, template, {
@@ -1577,15 +1573,21 @@ export function ProductLibrarySelector({
         putKeyed(setLinkedAccessoryQuantities, key, selection?.accessoryQuantities);
       }
     }
-    applyHistoryDiscount(tid, historyDiscount);
     setReplay({ key: Date.now(), problems: evaluation.validation.problems, setupName: setup.setupName, specOverrides: setup.specOverrides, templateId: tid });
     setSelectedTemplateId(tid);
     setIsOpen(true);
     return null;
   };
 
+  // "Add from {client} history" (configured item): the EXISTING replay above, then the old line's discount on top of it.
+  const openSetupFromHistory = (setup: SetupForUse, historyDiscount: HistoryDiscount | null): string | null => {
+    const problem = openSetupFromCollection(setup);
+    if (!problem) applyHistoryDiscount(setup.templateId, historyDiscount);
+    return problem;
+  };
+
   // "Add from {client} history" (library item): open the normal product view for that product. Nothing is added or priced here.
-  const openProductFromHistory = (templateId: string, historyDiscount?: HistoryDiscount | null): string | null => {
+  const openProductFromHistory = (templateId: string, historyDiscount: HistoryDiscount | null): string | null => {
     if (!templateById.get(templateId)) return "This product is not available in this Product Library.";
     setReplay(null);
     applyHistoryDiscount(templateId, historyDiscount);
@@ -1605,7 +1607,7 @@ export function ProductLibrarySelector({
       </button>
       <AddFromMyCollectionButton onChoose={openSetupFromCollection} />
       {clientHistory ? (
-        <AddFromClientHistoryButton clientId={clientHistory.clientId} clientName={clientHistory.clientName} quoteCurrency={clientHistory.quoteCurrency ?? null} onOpenProduct={openProductFromHistory} onOpenSetup={openSetupFromCollection} />
+        <AddFromClientHistoryButton clientId={clientHistory.clientId} clientName={clientHistory.clientName} quoteCurrency={clientHistory.quoteCurrency ?? null} onOpenProduct={openProductFromHistory} onOpenSetup={openSetupFromHistory} />
       ) : null}
 
       {isOpen ? (
@@ -3275,7 +3277,7 @@ export function ProductLibrarySelector({
                           <AnnouncedPriceBadge announcement={template.announced_price_change} />
                         </div>
                       </div>
-                      {historyNote && historyNote.templateId === template.id ? (
+                      {historyNote && historyNote.templateId === template.id && discountTypes[template.id] === historyNote.type && discountValues[template.id] === historyNote.value ? (
                         <p role="status" className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-900 lg:px-6">{historyNote.text}</p>
                       ) : null}
                       {replay && replay.templateId === template.id ? (

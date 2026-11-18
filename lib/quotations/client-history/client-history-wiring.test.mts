@@ -144,9 +144,12 @@ test("addHistoryItemToQuotation follows addCustomItemToQuotation step by step (p
   // currency rule + pricing: the same helpers as the My Collection custom item
   assert.match(addBody, /rowOverlayFromCustomItem\(/);
   assert.match(addBody, /quotation\.currency \?\? defaultCurrency/);
-  for (const shared of ["quotationPricingRule(supabase, quotationId)", 'roundedLinePricing(overlay.unit_price, "amount", 0, 1, pricingRule)', "recalculateQuotationTotals(quotationId)"]) {
+  for (const shared of ["quotationPricingRule(supabase, quotationId)", "recalculateQuotationTotals(quotationId)"]) {
     assert.ok(addBody.includes(shared) && referenceBody.includes(shared), shared);
   }
+  // H-D: the same line (list price, the stored discount, the last quantity) through the SAME pricing helper
+  assert.ok(addBody.includes("roundedLinePricing(overlay.unit_price, line.discountType, line.discountValue, line.qty, pricingRule)"));
+  assert.ok(addBody.includes("historyCustomLine(item, quotation.currency ?? defaultCurrency)"));
   // exactly ONE row insert, ONE total recalculation, ONE picture step
   assert.equal((addBody.match(/createBlankQuotationItemRecord\(/g) ?? []).length, 1);
   assert.equal((addBody.match(/recalculateQuotationTotals\(/g) ?? []).length, 1);
@@ -169,7 +172,11 @@ test("the new action sits next to the existing ones and changes nothing else in 
     return;
   }
   const removed = before.split("\n").filter((line) => !quotationsSource.includes(line));
-  assert.deepEqual(removed, [], "no existing line was removed or changed");
+  // H-D changed exactly these existing lines: the import and the overlay price (now the list price). The pricing call line also exists, unchanged, in addCustomItemToQuotation.
+  assert.deepEqual(removed.map((line) => line.trim()), [
+    'import { clientHistoryMessage } from "@/lib/quotations/client-history/client-history";',
+    "{ brandName: item.brand, itemName: item.itemName, itemCode: item.itemCode, specification: item.specification, unitLabel: item.unitLabel, sellingPrice: item.price, currency: item.currency },",
+  ]);
 });
 
 // ── migrations and diff guard ──────────────────────────────────────────────
