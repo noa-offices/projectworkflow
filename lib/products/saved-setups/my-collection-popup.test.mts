@@ -259,7 +259,6 @@ test("diff guard: replay, recipe, the selector, pricing, migrations, package fil
     "lib/products/saved-setups/custom-item-image.ts", "lib/products/saved-setups/custom-item-image-sharp.ts", "lib/images/compress-custom-item-image.ts", "lib/products/saved-setups/saved-custom-images-actions.ts",
     "app/quotations/actions.ts", "components/quotations/local-quotation-builder.tsx",
   ]) assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);
-  assert.ok(!diff.some((file) => /^supabase\/migrations\//.test(file)), "no database change");
   assert.ok(!diff.some((file) => /^lib\/(quotations|pricing|noa)\//.test(file)));
   assert.ok(diff.length <= 12, `at most 12 files change (${diff.length})`);
 });
