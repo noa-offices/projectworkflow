@@ -2072,6 +2072,7 @@ function RowActionPanel({
   brands,
   canManageProductLibrary,
   categories,
+  clientName,
   components,
   linkedFamilies,
   materialGroups,
@@ -2086,6 +2087,7 @@ function RowActionPanel({
   brands: ProductLibraryBrand[];
   canManageProductLibrary: boolean;
   categories: ProductLibraryCategory[];
+  clientName: string;
   components: ProductLibraryComponent[];
   productTemplates: ProductLibraryTemplate[];
   linkedFamilies: ProductLibraryLinkedFamily[];
@@ -2109,6 +2111,7 @@ function RowActionPanel({
           brands={brands}
           canManageProductLibrary={canManageProductLibrary}
           categories={categories}
+          clientHistory={{ clientId: quotation.client_id, clientName }}
           components={components}
           linkedFamilies={linkedFamilies}
           materialGroups={materialGroups}
@@ -4654,6 +4657,7 @@ export default async function QuotationBuilderPage({
                               brands={productBrands ?? []}
                               canManageProductLibrary={canManageProductLibrary}
                               categories={productCategories ?? []}
+                              clientName={client?.company_name ?? ""}
                               components={productComponents ?? []}
                               linkedFamilies={linkedFamilies ?? []}
                               materialGroups={materialGroups ?? []}

@@ -7,6 +7,7 @@ import { listCustomItems, markCustomItemUsed } from "@/lib/products/saved-setups
 import { BrandFilterList } from "@/components/products/brand-combobox";
 import { CustomItemActionRow, CustomItemForm, CustomItemThumb, RenameBrand } from "@/components/products/my-collection-custom-items";
 import { ShareControl } from "@/components/products/my-collection-share-send";
+import type { ClientHistoryAddItem } from "@/lib/quotations/client-history/client-history-service";
 import type { CustomItemWithImage } from "@/lib/products/saved-setups/custom-item-image";
 import { COLLECTION_SORT_OPTIONS, filterSetups, groupByBrand, itemCountLabel, recentlyUsed, sortSetups, type CollectionSortMode } from "@/lib/products/saved-setups/collection-view";
 import { CUSTOM_BRAND_PAGE_SIZE, CUSTOM_BRAND_RECENT_LIMIT, distinctBrands, filterByBrand, normaliseBrandKey } from "@/lib/products/saved-setups/custom-brands";
@@ -17,7 +18,12 @@ import { customItemPriceLine, toCollectionItem, type CustomCollectionItem, type 
 //  - local:  the local builder adds an ordinary manual row to its workspace; returns a note (or null).
 //  - server: the picker calls the addCustomItemToQuotation server action for this quotation and section.
 export type CustomItemTarget =
-  | { kind: "local"; onAdd: (item: CustomItemListItem) => string | null }
+  | {
+      kind: "local";
+      onAdd: (item: CustomItemListItem) => string | null;
+      // "Add from {client} history": a CUSTOM history item as an ordinary manual row (the builder also copies its picture); returns a note or null.
+      onAddHistory?: (item: Extract<ClientHistoryAddItem, { kind: "custom" }>) => string | null;
+    }
   | { kind: "server"; quotationId: string; sectionId: string | null };
 
 export const CustomItemTargetContext = createContext<CustomItemTarget | null>(null);
