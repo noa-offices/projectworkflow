@@ -190,7 +190,7 @@ test("picker: two tabs; the Configured tab keeps its behaviour and shows no pric
   assert.match(picker, /customTarget \? \(\s*<div role="tablist"/);
   assert.match(picker, /const showConfigured = tab === "configured" \|\| !customTarget;/);
   // existing lines are untouched
-  for (const line of ["const result = await loadSetupForReplay(id);", "const problem = onChoose(result.setup);", "void markSetupUsed(id).catch(() => undefined);", "setSetups(await listPickerSetups());", "Search by name, product or brand", "Manage My Collection"]) assert.ok(picker.includes(line), line);
+  for (const line of ["const result = await loadSetupForReplay(id);", "const problem = onChoose(result.setup);", "void markSetupUsed(id).catch(() => undefined);", "setSetups(await listPickerSetups());", "Search by name, product or brand", "Open My Collection page"]) assert.ok(picker.includes(line), line);
   assert.doesNotMatch(picker, /sellingPrice|customItemPriceLine|selling_price/, "no price in the Configured tab file");
   const pane = read("../../../components/quotations/custom-item-picker-pane.tsx");
   assert.match(pane, /customItemPriceLine\(item\)/);

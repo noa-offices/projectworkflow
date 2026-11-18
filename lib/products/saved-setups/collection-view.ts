@@ -86,6 +86,49 @@ export function groupByBrand<T extends CollectionDisplayItem>(items: readonly T[
   );
 }
 
+// ── Configured products: brand / product filters (popup; PR "My Collection popup manager") ─────────────────────────
+export const CONFIGURED_PAGE_SIZE = 12;
+export const CONFIGURED_RECENT_LIMIT = 6;
+
+export type CountEntry = { name: string; count: number };
+export type ConfiguredFilter = { brand?: string | null; product?: string | null; query?: string | null };
+
+const compareNames = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }) || (a < b ? -1 : a > b ? 1 : 0);
+
+/** "All brands" column: each brand with its setup count, A-Z. */
+export function brandsWithCounts<T extends { brandName: string }>(items: readonly T[]): CountEntry[] {
+  const counts = new Map<string, number>();
+  for (const item of items) counts.set(item.brandName, (counts.get(item.brandName) ?? 0) + 1);
+  return Array.from(counts, ([name, count]) => ({ name, count })).sort((a, b) => compareNames(a.name, b.name));
+}
+
+/** Products of ONE brand with their setup counts, A-Z (the second list under a selected brand). */
+export function productsForBrand<T extends { brandName: string; productName: string }>(items: readonly T[], brand: string | null | undefined): CountEntry[] {
+  if (!brand) return [];
+  const counts = new Map<string, number>();
+  for (const item of items) if (item.brandName === brand) counts.set(item.productName, (counts.get(item.productName) ?? 0) + 1);
+  return Array.from(counts, ([name, count]) => ({ name, count })).sort((a, b) => compareNames(a.name, b.name));
+}
+
+/** Brand, then product (within that brand), then the case-insensitive search (name, product, brand, code). Order is kept. */
+export function filterConfigured<T extends CollectionDisplayItem>(items: readonly T[], filter: ConfiguredFilter): T[] {
+  let list: readonly T[] = items;
+  if (filter.brand) list = list.filter((item) => item.brandName === filter.brand);
+  if (filter.product) list = list.filter((item) => item.productName === filter.product);
+  return filterSetups(list, filter.query ?? "");
+}
+
+/** True when any filter narrows the list ("Clear filters" is shown). */
+export function hasActiveFilters(filter: ConfiguredFilter): boolean {
+  return Boolean(filter.brand || filter.product || (filter.query ?? "").trim());
+}
+
+/** First `limit` items and how many are still hidden ("Show more (N more)"). */
+export function showMoreSlice<T>(items: readonly T[], limit: number): { visible: T[]; remaining: number } {
+  const visible = items.slice(0, Math.max(0, limit));
+  return { visible, remaining: items.length - visible.length };
+}
+
 export function itemCountLabel(count: number): string {
   return `${count} ${count === 1 ? "item" : "items"}`;
 }

@@ -157,11 +157,11 @@ test("picker: lists only what listPickerSetups returns (usable setups), shows no
 test("picker: search box is focused on open, Escape closes, wide dialog with a sticky header, Manage link kept", () => {
   assert.match(picker, /searchRef\.current\?\.focus\(\)/);
   assert.match(picker, /event\.key === "Escape"[\s\S]{0,80}setOpen\(false\)/);
-  assert.match(picker, /max-w-\[880px\]/);
+  assert.match(picker, /sm:max-w-\[1200px\]/);
   assert.match(picker, /sticky top-0/);
   assert.match(picker, /role="dialog"/);
   assert.match(picker, /href="\/products\/my-collection"/);
-  assert.match(picker, /Manage My Collection/);
+  assert.match(picker, /Open My Collection page/);
   assert.match(picker, /Recently used/);
 });
 
