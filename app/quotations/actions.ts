@@ -32,7 +32,7 @@ import { evaluateProductAccessorySelection, parseSubmittedAccessoryQuantities } 
 import { baseModelPriceOrDefault, sameCurrencyUnitSum } from "@/lib/quotations/source-price-components";
 import { requiredComponentOverrideReport } from "@/lib/quotations/required-component-overrides";
 import { rowOverlayFromCustomItem } from "@/lib/products/saved-setups/custom-item-line";
-import { loadCustomItemForUser, markCustomItemUsedForUser } from "@/lib/products/saved-setups/saved-custom-items-service";
+import { addCustomItemPictureToQuoteRow, loadCustomItemForUser, markCustomItemUsedForUser } from "@/lib/products/saved-setups/saved-custom-items-service";
 import { LINE_RECIPE_FORM_FIELD, LINE_RECIPE_KEY, parseLineConfigurationRecipe } from "@/lib/products/saved-setups/line-recipe";
 import { announcedQuotationDelta, announcedSnapshot, announcedTotals, loadBrandPriceAnnouncements } from "@/lib/products/price-announcements";
 import { activeBaseModelPricingGroups, composeSystemAndMainSpecification, currentSystemPricing, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, remapBaseModelTargetsToOwnerGroups, strictSystemQuantity, systemPriceContribution, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
@@ -6347,7 +6347,20 @@ export async function addCustomItemToQuotation(formData: FormData) {
   // Best effort: a failure here never blocks the add.
   await markCustomItemUsedForUser(supabase, user.id, customItemId).catch(() => undefined);
 
-  return { ok: true as const, itemId: result.itemId, message: "Custom item added.", note: conversionNote };
+  // The item's picture is COPIED into quote-images under the new row's own path (never a My Collection path).
+  // If the copy fails the row stays without a picture and the user is told.
+  const picture = await addCustomItemPictureToQuoteRow(supabase, user.id, {
+    imagePath: loaded.item.imagePath,
+    quotationId,
+    rowId: result.itemId,
+  });
+  if (picture.ok && picture.attached) {
+    revalidatePath(`/quotations/${quotationId}`);
+    revalidatePath(`/quotations/${quotationId}/builder`);
+  }
+  const note = [conversionNote, picture.ok ? null : picture.note].filter(Boolean).join(" ") || null;
+
+  return { ok: true as const, itemId: result.itemId, message: "Custom item added.", note };
 }
 
 export async function addProductTemplateToQuotation(formData: FormData) {

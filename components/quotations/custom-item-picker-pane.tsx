@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { addCustomItemToQuotation } from "@/app/quotations/actions";
 import { listCustomItems, markCustomItemUsed } from "@/lib/products/saved-setups/saved-custom-items-actions";
 import { BrandFilterList } from "@/components/products/brand-combobox";
+import { CustomItemThumb } from "@/components/products/my-collection-custom-items";
+import type { CustomItemWithImage } from "@/lib/products/saved-setups/custom-item-image";
 import { COLLECTION_SORT_OPTIONS, filterSetups, groupByBrand, itemCountLabel, recentlyUsed, sortSetups, type CollectionSortMode } from "@/lib/products/saved-setups/collection-view";
 import { CUSTOM_BRAND_PAGE_SIZE, CUSTOM_BRAND_RECENT_LIMIT, distinctBrands, filterByBrand, normaliseBrandKey } from "@/lib/products/saved-setups/custom-brands";
 import { customItemPriceLine, toCollectionItem, type CustomCollectionItem, type CustomItemListItem } from "@/lib/products/saved-setups/custom-item";
@@ -36,7 +38,7 @@ function CustomPickCard({ disabled, entry, onPick }: { disabled: boolean; entry:
         onClick={() => onPick(item)}
         className="flex h-full w-full items-center gap-3 rounded-lg border border-zinc-200 bg-white p-3 text-left shadow-sm transition hover:border-emerald-700 hover:bg-emerald-50 focus-visible:border-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800 disabled:cursor-wait disabled:opacity-60"
       >
-        <span aria-hidden="true" style={{ width: 88, height: 88 }} className="flex shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-[10px] text-zinc-400">No image</span>
+        <CustomItemThumb imagePath={(item as CustomItemWithImage).imagePath} size={88} name={item.itemName} />
         <span className="min-w-0 flex-1">
           <span className="block break-words text-sm font-bold leading-snug text-zinc-900">{item.itemName}</span>
           {item.itemCode ? <span className="mt-1 block truncate text-xs text-zinc-500">{item.itemCode}</span> : null}

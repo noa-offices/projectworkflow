@@ -10,16 +10,20 @@ import {
   markCustomItemUsedForUser,
   updateCustomItemForUser,
   type CustomItemActionResult,
+  type CustomItemSaveInput,
 } from "./saved-custom-items-service";
-import type { CustomItemInput, CustomItemListItem } from "./custom-item";
+import type { CustomItemWithImage } from "./custom-item-image";
 
 // Server Actions are public POST endpoints: every action authenticates inside, derives the owner from the session
 // (never from client input), uses the CALLER's Supabase client (RLS stays on), and returns { ok, id?, error?, fieldErrors? }.
 // Only the form fields below are read: ownership and sharing columns can never come from the client.
 const MY_COLLECTION_PATH = "/products/my-collection";
 
-function pickInput(input: CustomItemInput | null | undefined): CustomItemInput {
+// imagePath is only ever CHECKED by the service (it must be inside the session user's own folder); undefined leaves the
+// item's picture unchanged, null removes it.
+function pickInput(input: CustomItemSaveInput | null | undefined): CustomItemSaveInput {
   return {
+    imagePath: input?.imagePath,
     brandName: input?.brandName,
     itemName: input?.itemName,
     itemCode: input?.itemCode,
@@ -30,7 +34,7 @@ function pickInput(input: CustomItemInput | null | undefined): CustomItemInput {
   };
 }
 
-export async function createCustomItem(input: CustomItemInput): Promise<CustomItemActionResult> {
+export async function createCustomItem(input: CustomItemSaveInput): Promise<CustomItemActionResult> {
   const { user } = await requireActiveUser();
   const supabase = await createClient();
   const result = await createCustomItemForUser(supabase, user.id, pickInput(input));
@@ -38,7 +42,7 @@ export async function createCustomItem(input: CustomItemInput): Promise<CustomIt
   return result;
 }
 
-export async function updateCustomItem(itemId: string, input: CustomItemInput): Promise<CustomItemActionResult> {
+export async function updateCustomItem(itemId: string, input: CustomItemSaveInput): Promise<CustomItemActionResult> {
   const { user } = await requireActiveUser();
   const supabase = await createClient();
   const result = await updateCustomItemForUser(supabase, user.id, String(itemId ?? ""), pickInput(input));
@@ -54,7 +58,7 @@ export async function deleteCustomItem(itemId: string): Promise<CustomItemAction
   return result;
 }
 
-export async function listCustomItems(): Promise<CustomItemListItem[]> {
+export async function listCustomItems(): Promise<CustomItemWithImage[]> {
   const { user } = await requireActiveUser();
   const supabase = await createClient();
   return listCustomItemsForUser(supabase, user.id);

@@ -3019,6 +3019,8 @@ function InlineRowActions({
                     unit_label: item.unit_label,
                     unit_price: item.unit_price,
                     currency: item.currency,
+                    proposed_image_url_snapshot: item.proposed_image_url_snapshot,
+                    specified_image_url_snapshot: item.specified_image_url_snapshot,
                   }}
                 />
               ) : null}
