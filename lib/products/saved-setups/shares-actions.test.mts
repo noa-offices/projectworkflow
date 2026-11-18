@@ -18,7 +18,7 @@ function makeWorld() {
   return {
     user: A,
     authMode: "ok" as "ok" | "redirect",
-    tables: { my_collection_shares: [] as Row[], saved_custom_items: [] as Row[] },
+    tables: { my_collection_shares: [] as Row[], saved_custom_items: [] as Row[], saved_setups: [] as Row[] },
     files: new Map<string, { type: string; bytes: Uint8Array }>(),
     rpc: {} as Record<string, Rpc>,
     calls: [] as string[],
@@ -302,7 +302,7 @@ test("accept custom item: the recipient's edits are validated first; their own b
 
   reset(B);
   world.tables.my_collection_shares.push(shareRow({ picture_path: null }));
-  world.tables.saved_custom_items.push({ ...customItemRow({ id: C, owner_id: B, brand_name: "Acme Office", image_path: null }) });
+  world.tables.saved_custom_items.push({ ...customItemRow({ id: C, owner_id: B, brand_name: "Acme Office", item_name: "Another desk", image_path: null }) });
   world.rpc.my_collection_accept_custom_item = () => ({ data: NEW_ITEM, error: null });
   await actions.acceptCustomItemShareAction(accept({ brand: "  acme   OFFICE ", price: "99.5", currency: "EUR", pictureMode: "keep" }));
   const args = world.rpcCalls.at(-1)!.args;
@@ -488,4 +488,97 @@ test("incoming list never carries a setup's recipe; pending count is a cheap cou
 
 test("no action ever touched the admin client", async () => {
   assert.equal(world.adminCalls, 0);
+});
+
+// ── PR 7: duplicate warning when accepting a share ───────────────────────────────────────────────────────────
+const SETUP_TEMPLATE = "88888888-8888-4888-8888-888888888888";
+const sharedRecipe = { recipe_version: 1, template_id: SETUP_TEMPLATE, selections: { variant_row_id: "v1", modular_quantities: { m: 2 } }, finishes: [], display: { main_code: "EV211" }, selected_image: "x.png" };
+const setupShareRow = (extra: Row = {}): Row => shareRow({ kind: "setup", item_name: "Every white", picture_path: null, payload: { recipe: sharedRecipe, spec_overrides: {}, setup_name: "Every white", brand_name: "Interstuhl", product_name: "Every" }, ...extra });
+const ownSetupRow = (extra: Row = {}): Row => ({ id: C, owner_id: B, template_id: SETUP_TEMPLATE, brand_name: "Interstuhl", product_name: "Every", setup_name: "My Every", recipe: { selections: { modular_quantities: { m: 2 }, variant_row_id: "v1" }, template_id: SETUP_TEMPLATE, recipe_version: 1, finishes: [], display: { main_code: "OTHER" }, selected_image: null }, spec_overrides: {}, archived: false, created_at: "2026-05-01T00:00:00Z", ...extra });
+
+test("accept custom item: an equal item already in the recipient's collection -> warning, NO copy and NO write; 'Add anyway' writes once", async () => {
+  reset(B);
+  world.tables.my_collection_shares.push(shareRow());
+  world.tables.saved_custom_items.push(customItemRow({ id: C, owner_id: B, brand_name: "ACME", item_name: "desk", selling_price: 1200, currency: "AED", image_path: null }));
+  world.files.set(`my-collection-images/${incoming}`, { type: "image/webp", bytes: webp });
+  world.rpc.my_collection_accept_custom_item = () => ({ data: NEW_ITEM, error: null });
+  const first = await actions.acceptCustomItemShareAction(accept()) as any;
+  assert.equal(first.ok, false);
+  assert.equal(first.duplicate.id, C);
+  assert.equal(first.duplicate.samePrice, true);
+  assert.equal(first.message, "You already have desk (ACME).");
+  assert.equal(world.rpcCalls.length, 0, "no write");
+  assert.ok(!world.calls.some((call) => /^(download|upload):/.test(call)), "no picture copy");
+  assert.deepEqual(world.revalidated, []);
+  assert.ok(!JSON.stringify(first).includes("recipe"));
+
+  const confirmed = await actions.acceptCustomItemShareAction({ ...accept(), allowDuplicate: true });
+  assert.deepEqual(confirmed, { ok: true, itemId: NEW_ITEM });
+  assert.equal(world.rpcCalls.filter((entry) => entry.name === "my_collection_accept_custom_item").length, 1, "written exactly once");
+
+  // the flag also works as FormData text, and it never skips validation
+  reset(B);
+  world.tables.my_collection_shares.push(shareRow({ picture_path: null }));
+  world.tables.saved_custom_items.push(customItemRow({ id: C, owner_id: B, brand_name: "Acme", item_name: "Desk", image_path: null }));
+  const form = new FormData();
+  for (const [key, value] of Object.entries(accept({ name: "", pictureMode: "remove" }))) form.set(key, String(value));
+  form.set("allowDuplicate", "true");
+  const invalid = await actions.acceptCustomItemShareAction(form) as any;
+  assert.equal(invalid.ok, false);
+  assert.ok(invalid.fieldErrors.itemName, "validation still runs with the flag");
+  assert.equal(world.rpcCalls.length, 0);
+});
+
+test("accept custom item: the EDITED brand and name are compared; same name at a different price says so; another brand is no duplicate", async () => {
+  reset(B);
+  world.tables.my_collection_shares.push(shareRow({ picture_path: null }));
+  world.tables.saved_custom_items.push(customItemRow({ id: C, owner_id: B, brand_name: "My Brand", item_name: "Table", selling_price: 99, currency: "EUR", image_path: null }));
+  world.rpc.my_collection_accept_custom_item = () => ({ data: NEW_ITEM, error: null });
+  const hit = await actions.acceptCustomItemShareAction(accept({ brand: "my-brand", name: "TABLE", pictureMode: "remove" })) as any;
+  assert.equal(hit.ok, false);
+  assert.equal(hit.duplicate.samePrice, false);
+  assert.deepEqual(hit.duplicate.existingPrice, { currency: "EUR", amount: 99 });
+  assert.equal(world.rpcCalls.length, 0);
+  const miss = await actions.acceptCustomItemShareAction(accept({ brand: "Other Brand", name: "Table", pictureMode: "remove" }));
+  assert.deepEqual(miss, { ok: true, itemId: NEW_ITEM });
+  // another user's equal item is never looked at
+  reset(B);
+  world.tables.my_collection_shares.push(shareRow({ picture_path: null }));
+  world.tables.saved_custom_items.push(customItemRow({ id: C, owner_id: A, brand_name: "Acme", item_name: "Desk", image_path: null }));
+  world.rpc.my_collection_accept_custom_item = () => ({ data: NEW_ITEM, error: null });
+  assert.equal((await actions.acceptCustomItemShareAction(accept({ pictureMode: "remove" })) as any).ok, true);
+});
+
+test("accept setup: the same recipe (keys reordered, display ignored) already owned -> warning, NO write; 'Add anyway' writes; a different one is fine", async () => {
+  reset(B);
+  world.tables.my_collection_shares.push(setupShareRow());
+  world.tables.saved_setups.push(ownSetupRow());
+  world.rpc.my_collection_accept_setup = () => ({ data: NEW_ITEM, error: null });
+  const first = await actions.acceptSetupShareAction({ shareId: SHARE, setupName: "Every white" }) as any;
+  assert.equal(first.ok, false);
+  assert.equal(first.duplicate.id, C);
+  assert.equal(first.duplicate.kind, "setup");
+  assert.equal(first.message, "You already have My Every (Interstuhl).");
+  assert.equal(world.rpcCalls.length, 0);
+  assert.ok(!JSON.stringify(first).includes("modular_quantities"), "the recipe never goes to the browser");
+  assert.deepEqual(await actions.acceptSetupShareAction({ shareId: SHARE, setupName: "Every white", allowDuplicate: true }), { ok: true, setupId: NEW_ITEM });
+  assert.equal(world.rpcCalls.length, 1);
+
+  for (const [label, row] of [["one selection differs", ownSetupRow({ recipe: { ...ownSetupRow().recipe, selections: { variant_row_id: "v2", modular_quantities: { m: 2 } } } })], ["archived", ownSetupRow({ archived: true })], ["another template", ownSetupRow({ template_id: A })]] as const) {
+    reset(B);
+    world.tables.my_collection_shares.push(setupShareRow());
+    world.tables.saved_setups.push(row);
+    world.rpc.my_collection_accept_setup = () => ({ data: NEW_ITEM, error: null });
+    assert.equal((await actions.acceptSetupShareAction({ shareId: SHARE, setupName: "Every white" }) as any).ok, true, label);
+  }
+});
+
+test("accept: 'Skip' is the existing dismiss action; a duplicate lookup problem never blocks the accept", async () => {
+  reset(B);
+  world.rpc.my_collection_dismiss_share = () => ({ data: true, error: null });
+  assert.deepEqual(await actions.dismissShareAction(SHARE), { ok: true });
+  // setup share row missing or unreadable: no warning, the database still decides
+  reset(B);
+  world.rpc.my_collection_accept_setup = () => ({ data: NEW_ITEM, error: null });
+  assert.deepEqual(await actions.acceptSetupShareAction({ shareId: SHARE, setupName: "x" }), { ok: true, setupId: NEW_ITEM });
 });

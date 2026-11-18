@@ -17,6 +17,7 @@ import {
   formatCustomItemPrice,
   type CustomItemFieldErrors,
 } from "@/lib/products/saved-setups/custom-item";
+import { acceptDuplicateMessage, isIdenticalDuplicate, type DuplicateInfo } from "@/lib/products/saved-setups/duplicates";
 import { formatImageSize } from "@/lib/products/saved-setups/custom-item-image";
 import { SAVED_SETUP_NAME_MAX } from "@/lib/products/saved-setups/recipe";
 import {
@@ -63,6 +64,30 @@ function Field({ label, error, children }: { label: string; error?: string; chil
   );
 }
 
+// The ONE duplicate warning used on every screen (save a line, save as custom item, add / edit a custom item, accept a share).
+// It is a warning, not a block: the user chooses. The message comes from duplicates.ts; the server found the duplicate.
+export type DuplicateChoice = { label: string; onClick: () => void; tone?: "primary" | "secondary" | "danger"; highlighted?: boolean };
+export function DuplicateWarning({ message, choices, busy = false }: { message: string; choices: DuplicateChoice[]; busy?: boolean }) {
+  return (
+    <div role="alert" className="space-y-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2">
+      <p className="text-xs font-semibold text-amber-900">{message}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        {choices.map((choice) => (
+          <button
+            key={choice.label}
+            type="button"
+            disabled={busy}
+            onClick={choice.onClick}
+            className={`${choice.tone === "primary" ? primaryButton : choice.tone === "danger" ? dangerButton : secondaryButton} ${choice.highlighted ? "ring-2 ring-emerald-700 ring-offset-1" : ""}`}
+          >
+            {choice.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // "← Back to list" at the top of an edit panel (popup). Returns to the list WITHOUT saving; if there is unsaved typing it first
 // asks "Discard changes?" (two steps). Escape is not affected: it still closes the panel first, then the popup.
 export function PanelBackBar({ dirty, onBack }: { dirty: boolean; onBack: () => void }) {
@@ -101,7 +126,7 @@ const isCustomShare = (share: IncomingShareView): share is CustomShare => share.
 // ── Review & edit panel (custom item): the recipient edits their OWN copy before it is added ─────────────────────
 type PictureMode = "keep" | "remove" | "replace";
 
-function ReviewCustomItem({ share, brands, onCancel, onAccepted, showBack = false }: { share: CustomShare; brands: BrandCount[]; onCancel: () => void; onAccepted: () => void; showBack?: boolean }) {
+function ReviewCustomItem({ share, brands, onCancel, onAccepted, onSkip, showBack = false }: { share: CustomShare; brands: BrandCount[]; onCancel: () => void; onAccepted: () => void; onSkip: () => void; showBack?: boolean }) {
   const { item } = share;
   const [brand, setBrand] = useState(item.brandName);
   const [name, setName] = useState(item.itemName);
@@ -118,9 +143,11 @@ function ReviewCustomItem({ share, brands, onCancel, onAccepted, showBack = fals
   const [formError, setFormError] = useState("");
   const [pictureError, setPictureError] = useState("");
   const [note, setNote] = useState("");
+  const [duplicate, setDuplicate] = useState<{ info: DuplicateInfo; key: string } | null>(null);
   const savingRef = useRef(false);
   useEscapeLayer(true, onCancel);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
+  const edits = JSON.stringify([brand, name, code, price, currency, unit]);
   const dirty =
     brand !== item.brandName || name !== item.itemName || code !== (item.itemCode ?? "") || spec !== (item.specification ?? "") ||
     unit !== item.unitLabel || price !== String(item.sellingPrice) || currency !== item.currency ||
@@ -142,7 +169,7 @@ function ReviewCustomItem({ share, brands, onCancel, onAccepted, showBack = fals
     setMode("replace");
   }
 
-  async function submit() {
+  async function submit(allowDuplicate = false) {
     if (savingRef.current || busy) return;
     if (mode === "replace" && !file) {
       setPictureError("Choose a picture to upload, or pick another option.");
@@ -163,10 +190,16 @@ function ReviewCustomItem({ share, brands, onCancel, onAccepted, showBack = fals
       form.set("price", price);
       form.set("currency", currency);
       form.set("pictureMode", mode);
+      if (allowDuplicate) form.set("allowDuplicate", "true");
       if (mode === "replace" && file) form.set("file", file);
       const result = await acceptCustomItemShareAction(form);
       if (result.ok) {
         onAccepted();
+        return;
+      }
+      if ("duplicate" in result && result.duplicate) {
+        // Nothing was written. The user chooses; the warning is about what is typed NOW (it hides if they change it).
+        setDuplicate({ info: result.duplicate, key: edits });
         return;
       }
       setErrors(("fieldErrors" in result && result.fieldErrors) || {});
@@ -188,6 +221,17 @@ function ReviewCustomItem({ share, brands, onCancel, onAccepted, showBack = fals
     >
       {showBack ? <PanelBackBar dirty={dirty} onBack={onCancel} /> : null}
       <p className="text-xs text-zinc-600">Check and change anything you like. This becomes your own copy.</p>
+      {duplicate && duplicate.key === edits ? (
+        <DuplicateWarning
+          message={acceptDuplicateMessage(duplicate.info)}
+          busy={Boolean(busy)}
+          choices={[
+            { label: "Add anyway", onClick: () => { void submit(true); }, tone: "primary" },
+            { label: "Skip \u2014 don't add", onClick: onSkip, tone: "secondary", highlighted: isIdenticalDuplicate(duplicate.info) },
+            { label: "Cancel", onClick: () => setDuplicate(null), tone: "secondary" },
+          ]}
+        />
+      ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <BrandCombobox brands={brands} value={brand} error={errors.brandName} onChange={setBrand} />
         <Field label="Item name" error={errors.itemName}><input value={name} maxLength={CUSTOM_ITEM_NAME_MAX} onChange={(event) => setName(event.target.value)} aria-label="Item name" className={inputClass} /></Field>
@@ -248,24 +292,28 @@ function ReviewCustomItem({ share, brands, onCancel, onAccepted, showBack = fals
 }
 
 // ── Review & edit panel (setup): only the name and note can change; brand and product come from the product ──────
-function ReviewSetup({ share, onCancel, onAccepted, showBack = false }: { share: SetupShare; onCancel: () => void; onAccepted: () => void; showBack?: boolean }) {
+function ReviewSetup({ share, onCancel, onAccepted, onSkip, showBack = false }: { share: SetupShare; onCancel: () => void; onAccepted: () => void; onSkip: () => void; showBack?: boolean }) {
   const { item } = share;
   const [name, setName] = useState(item.setupName);
   const [note, setNote] = useState(item.note ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [duplicate, setDuplicate] = useState<DuplicateInfo | null>(null);
   const savingRef = useRef(false);
   useEscapeLayer(true, onCancel);
   const dirty = name !== item.setupName || note !== (item.note ?? "");
 
-  async function submit() {
+  async function submit(allowDuplicate = false) {
     if (savingRef.current) return;
     savingRef.current = true;
     setBusy(true);
     setError("");
     try {
-      const result = await acceptSetupShareAction({ shareId: share.id, setupName: name, note });
+      const result = allowDuplicate
+        ? await acceptSetupShareAction({ shareId: share.id, setupName: name, note, allowDuplicate: true })
+        : await acceptSetupShareAction({ shareId: share.id, setupName: name, note });
       if (result.ok) onAccepted();
+      else if (result.duplicate) setDuplicate(result.duplicate);
       else setError(result.message);
     } catch {
       setError("Something went wrong. Please try again.");
@@ -284,6 +332,17 @@ function ReviewSetup({ share, onCancel, onAccepted, showBack = false }: { share:
     >
       {showBack ? <PanelBackBar dirty={dirty} onBack={onCancel} /> : null}
       <p className="text-xs text-zinc-600">You can rename it. Brand and product come from the product itself.</p>
+      {duplicate ? (
+        <DuplicateWarning
+          message={acceptDuplicateMessage(duplicate)}
+          busy={busy}
+          choices={[
+            { label: "Add anyway", onClick: () => { void submit(true); }, tone: "primary" },
+            { label: "Skip \u2014 don't add", onClick: onSkip, tone: "secondary", highlighted: isIdenticalDuplicate(duplicate) },
+            { label: "Cancel", onClick: () => setDuplicate(null), tone: "secondary" },
+          ]}
+        />
+      ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Brand"><p className="flex h-9 items-center rounded-md border border-zinc-200 bg-zinc-50 px-2 text-sm text-zinc-700">{item.brandName}</p></Field>
         <Field label="Product"><p className="flex h-9 items-center rounded-md border border-zinc-200 bg-zinc-50 px-2 text-sm text-zinc-700">{item.productName}</p></Field>
@@ -364,6 +423,7 @@ export function SharedWithYouTab({ brands, onPendingChange, onOpenTab, refreshPa
   const [added, setAdded] = useState<{ tab: "configured" | "custom"; text: string } | null>(null);
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [dupe, setDupe] = useState<{ shareId: string; info: DuplicateInfo } | null>(null);
   const busyRef = useRef(false);
   const [loadedBrands, setLoadedBrands] = useState<BrandCount[]>([]);
   useEffect(() => {
@@ -418,7 +478,7 @@ export function SharedWithYouTab({ brands, onPendingChange, onOpenTab, refreshPa
     onAccepted?.(share.kind);
   }
 
-  async function run(share: IncomingShareView, action: () => Promise<{ ok: true } | { ok: false; message: string }>, onOk: () => void) {
+  async function run(share: IncomingShareView, action: () => Promise<{ ok: true } | { ok: false; message: string; duplicate?: DuplicateInfo }>, onOk: () => void) {
     if (busyRef.current) return; // one action at a time: no double click
     busyRef.current = true;
     setBusyId(share.id);
@@ -426,6 +486,7 @@ export function SharedWithYouTab({ brands, onPendingChange, onOpenTab, refreshPa
     try {
       const result = await action();
       if (result.ok) onOk();
+      else if (result.duplicate) setDupe({ shareId: share.id, info: result.duplicate }); // nothing was written; the user chooses
       else setMessage(result.message);
     } catch {
       setMessage("Something went wrong. Please try again.");
@@ -435,18 +496,24 @@ export function SharedWithYouTab({ brands, onPendingChange, onOpenTab, refreshPa
     }
   }
 
-  function addNow(share: IncomingShareView) {
+  function addNow(share: IncomingShareView, allowDuplicate = false) {
     const item = share.item;
+    setDupe(null);
     void run(
       share,
       () => item.kind === "custom_item"
-        ? acceptCustomItemShareAction({ shareId: share.id, brand: item.brandName, name: item.itemName, code: item.itemCode ?? "", spec: item.specification ?? "", unit: item.unitLabel, price: String(item.sellingPrice), currency: item.currency, pictureMode: "keep" })
-        : acceptSetupShareAction({ shareId: share.id, setupName: item.setupName, note: item.note }),
+        ? (allowDuplicate
+          ? acceptCustomItemShareAction({ shareId: share.id, brand: item.brandName, name: item.itemName, code: item.itemCode ?? "", spec: item.specification ?? "", unit: item.unitLabel, price: String(item.sellingPrice), currency: item.currency, pictureMode: "keep", allowDuplicate: true })
+          : acceptCustomItemShareAction({ shareId: share.id, brand: item.brandName, name: item.itemName, code: item.itemCode ?? "", spec: item.specification ?? "", unit: item.unitLabel, price: String(item.sellingPrice), currency: item.currency, pictureMode: "keep" }))
+        : (allowDuplicate
+          ? acceptSetupShareAction({ shareId: share.id, setupName: item.setupName, note: item.note, allowDuplicate: true })
+          : acceptSetupShareAction({ shareId: share.id, setupName: item.setupName, note: item.note })),
       () => finishAccept(share),
     );
   }
 
   function dismiss(share: IncomingShareView) {
+    setDupe(null);
     void run(share, () => dismissShareAction(share.id), () => {
       setStatus(share.id, "dismissed");
       setReviewing(null);
@@ -479,12 +546,25 @@ export function SharedWithYouTab({ brands, onPendingChange, onOpenTab, refreshPa
         <ul className="space-y-3">
           {pending.map((share) => (
             <Fragment key={share.id}>
-              <IncomingCard share={share} busy={busyId === share.id} onAddNow={() => addNow(share)} onReview={() => { setReviewing(share.id); setMessage(""); }} onDismiss={() => dismiss(share)} />
+              <IncomingCard share={share} busy={busyId === share.id} onAddNow={() => addNow(share)} onReview={() => { setReviewing(share.id); setMessage(""); setDupe(null); }} onDismiss={() => dismiss(share)} />
+              {dupe?.shareId === share.id ? (
+                <li className="list-none">
+                  <DuplicateWarning
+                    message={acceptDuplicateMessage(dupe.info)}
+                    busy={busyId === share.id}
+                    choices={[
+                      { label: "Add anyway", onClick: () => addNow(share, true), tone: "primary" },
+                      { label: "Skip \u2014 don't add", onClick: () => dismiss(share), tone: "secondary", highlighted: isIdenticalDuplicate(dupe.info) },
+                      { label: "Cancel", onClick: () => setDupe(null), tone: "secondary" },
+                    ]}
+                  />
+                </li>
+              ) : null}
               {reviewing === share.id ? (
                 <li className="list-none">
                   {isCustomShare(share)
-                    ? <ReviewCustomItem share={share} brands={brandList} showBack={showBack} onCancel={() => setReviewing(null)} onAccepted={() => finishAccept(share)} />
-                    : <ReviewSetup share={share as SetupShare} showBack={showBack} onCancel={() => setReviewing(null)} onAccepted={() => finishAccept(share)} />}
+                    ? <ReviewCustomItem share={share} brands={brandList} showBack={showBack} onSkip={() => dismiss(share)} onCancel={() => setReviewing(null)} onAccepted={() => finishAccept(share)} />
+                    : <ReviewSetup share={share as SetupShare} showBack={showBack} onSkip={() => dismiss(share)} onCancel={() => setReviewing(null)} onAccepted={() => finishAccept(share)} />}
                 </li>
               ) : null}
             </Fragment>
