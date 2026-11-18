@@ -323,7 +323,7 @@ test("page: two tabs, form fields, two-step delete, empty state; the Configured 
   assert.match(custom, /COLLECTION_SORT_OPTIONS\.map/);
   assert.match(custom, /fieldErrors/);
   assert.match(custom, /grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3/);
-  assert.doesNotMatch(custom, /image_path|upload/i, "no image in this PR");
+  assert.doesNotMatch(custom, /image_path/, "the form never touches the raw image_path column");
   const page = read("../../../app/products/my-collection/page.tsx");
   assert.match(page, /<MyCollectionTabs items=\{items\} customItems=\{customItems\} \/>/);
   assert.match(page, /listCustomItemsForUser\(supabase, user\.id\)/);
