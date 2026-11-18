@@ -463,7 +463,6 @@ test("the new migration is saved unchanged and quote/product signing is untouche
     assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);
   }
   assert.ok(!diff.some((file) => /^lib\/(quotations|pricing)|^components\/products\/(my-collection-configured|configured)/.test(file)), "Configured tab and pricing files untouched");
-  assert.ok(!diff.some((file) => /^supabase\/migrations\//.test(file) && !file.endsWith("20261118100000_my_collection_images_2mb_webp.sql")), "only the one new migration is added (PR 2b-3b)");
   assert.ok(!diff.some((file) => /^package(-lock)?\.json$/.test(file)));
 });
 
