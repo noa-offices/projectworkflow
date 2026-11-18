@@ -4,8 +4,11 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import sharp from "sharp";
 import {
-  CUSTOM_IMAGE_MAX_BYTES,
+  MAX_INPUT_BYTES,
+  MAX_STORED_BYTES,
+  isWebpBytes,
   buildImagePath,
   buildQuoteRowImagePath,
   isOwnImagePath,
@@ -34,22 +37,23 @@ const ITEM_FOLDER = "44444444-4444-4444-8444-444444444444";
 const NOW = new Date("2026-11-18T10:00:00Z");
 
 // ── Validator and paths (pure) ───────────────────────────────────────────────────────────────────────────────
-test("validateImageFile: png/jpeg/webp up to 5 MB are accepted", () => {
+test("validateImageFile: png/jpeg/webp up to 10 MB are accepted", () => {
   for (const [type, name] of [["image/png", "a.png"], ["image/jpeg", "a.jpg"], ["image/jpeg", "a.JPEG"], ["image/webp", "a.webp"], ["image/png", "camera"]] as const) {
     assert.equal(validateImageFile(type, 1000, name).ok, true, `${type} ${name}`);
   }
-  assert.equal(validateImageFile("image/png", CUSTOM_IMAGE_MAX_BYTES, "a.png").ok, true, "exactly 5 MB");
-  assert.equal(CUSTOM_IMAGE_MAX_BYTES, 5 * 1024 * 1024);
+  assert.equal(validateImageFile("image/png", MAX_INPUT_BYTES, "a.png").ok, true, "exactly 10 MB");
+  assert.equal(MAX_INPUT_BYTES, 10 * 1024 * 1024);
+  assert.equal(MAX_STORED_BYTES, 2 * 1024 * 1024);
 });
 
-test("validateImageFile: other types, 5 MB + 1, empty and unsafe names are rejected with plain English", () => {
+test("validateImageFile: other types, 10 MB + 1, empty and unsafe names are rejected with plain English", () => {
   for (const type of ["application/pdf", "image/gif", "image/svg+xml", "text/html", "", undefined, 7]) {
     const result = validateImageFile(type, 1000, "a.png");
     assert.equal(result.ok, false, String(type));
-    assert.match((result as any).error, /PNG, JPG and WebP/);
+    assert.match((result as any).error, /PNG, JPG or WebP/);
   }
-  assert.match((validateImageFile("image/png", CUSTOM_IMAGE_MAX_BYTES + 1, "a.png") as any).error, /5 MB or smaller/);
-  assert.match((validateImageFile("image/png", 0, "a.png") as any).error, /empty/);
+  assert.match((validateImageFile("image/png", MAX_INPUT_BYTES + 1, "a.png") as any).error, /under 10 MB/);
+  assert.match((validateImageFile("image/png", 0, "a.png") as any).error, /could not be opened/);
   assert.equal(validateImageFile("image/png", Number.NaN, "a.png").ok, false);
   for (const name of ["", "   ", "../a.png", "a/b.png", "a\\b.png", "a..png", "bad\u0000.png", "x".repeat(201) + ".png", "a.exe", "a.pdf"]) {
     assert.equal(validateImageFile("image/png", 1000, name).ok, false, JSON.stringify(name));
@@ -182,7 +186,10 @@ function fake(world: World, session: string) {
   return { from: (table: string) => new Query(table), storage } as unknown as SupabaseClient;
 }
 
-const png = (size = 10) => ({ type: "image/png", size, name: "Desk Photo.png", arrayBuffer: async () => new Uint8Array(size).buffer as ArrayBuffer });
+const tinyWebp = new Uint8Array(await sharp({ create: { width: 8, height: 8, channels: 3, background: "#336699" } }).webp().toBuffer());
+const tinyPng = new Uint8Array(await sharp({ create: { width: 40, height: 30, channels: 4, background: { r: 10, g: 20, b: 30, alpha: 0.5 } } }).png().toBuffer());
+// An uploaded file as the browser sends it after compression: image/webp, small, real WebP bytes.
+const png = (size = tinyWebp.byteLength, bytes: Uint8Array = tinyWebp) => ({ type: "image/webp", size, name: "Desk Photo.webp", arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer });
 const good = { brandName: "Acme", itemName: "Desk", sellingPrice: "100", currency: "AED" };
 const ownPath = (owner = USER_A, stamp = 1) => `${owner}/${ITEM_FOLDER}/${1700000000000 + stamp}-desk.png`; // real stamps are 13 digits
 const seed = (world: World, owner: string, path: string | null, extra: Row = {}) => {
@@ -200,8 +207,8 @@ test("upload: owner folder comes from the session, the path is built on the serv
   const path = (result as any).path as string;
   assert.ok(path.startsWith(`${USER_A}/`), path);
   assert.equal(isOwnImagePath(USER_A, path), true);
-  assert.match(path, new RegExp(`-desk-photo\\.png$`));
-  assert.equal(world.files.get(`my-collection-images/${path}`)?.type, "image/png");
+  assert.match(path, new RegExp(`-desk-photo\\.webp$`));
+  assert.equal(world.files.get(`my-collection-images/${path}`)?.type, "image/webp");
   assert.equal(world.calls.filter((call) => call.startsWith("upload")).length, 1);
   assert.ok(world.calls.every((call) => !call.includes(USER_B)));
 });
@@ -210,10 +217,10 @@ test("upload: wrong type or size is rejected before anything is stored", async (
   const world = newWorld();
   const client = fake(world, USER_A);
   assert.equal((await uploadCustomItemImageForUser(client, USER_A, { ...png(), type: "application/pdf", name: "a.pdf" }, NOW) as any).ok, false);
-  assert.match(((await uploadCustomItemImageForUser(client, USER_A, png(CUSTOM_IMAGE_MAX_BYTES + 1), NOW)) as any).error, /5 MB or smaller/);
+  assert.match(((await uploadCustomItemImageForUser(client, USER_A, png(MAX_STORED_BYTES + 1), NOW)) as any).error, /rejected by the server \(reason: over 2 MB\)/);
   assert.equal((await uploadCustomItemImageForUser(client, USER_A, png(0), NOW) as any).ok, false);
   // a file that claims to be small but is bigger is caught by the real byte length
-  const liar = { type: "image/png", size: 10, name: "a.png", arrayBuffer: async () => new Uint8Array(CUSTOM_IMAGE_MAX_BYTES + 5).buffer as ArrayBuffer };
+  const liar = { type: "image/webp", size: 10, name: "a.webp", arrayBuffer: async () => new Uint8Array(MAX_STORED_BYTES + 5).buffer as ArrayBuffer };
   assert.equal((await uploadCustomItemImageForUser(client, USER_A, liar, NOW) as any).ok, false);
   assert.equal(world.files.size, 0);
   assert.equal(world.calls.length, 0);
@@ -223,7 +230,7 @@ test("upload: a storage failure returns a plain message", async () => {
   const world = newWorld();
   world.failUpload!.add("my-collection-images");
   const result = await uploadCustomItemImageForUser(fake(world, USER_A), USER_A, png(), NOW);
-  assert.deepEqual(result, { ok: false, error: "The picture could not be uploaded. Try again." });
+  assert.equal((result as any).error, "The picture could not be uploaded. Check your connection and try again.");
 });
 
 // ── Save, replace, remove, delete ────────────────────────────────────────────────────────────────────────────
@@ -351,12 +358,14 @@ test("list: the picture path is returned only for items that have one", async ()
 test("save from a quote row: the row picture is COPIED into my-collection-images under the owner's folder", async () => {
   const world = newWorld();
   const source = `quotation-items/${QUOTATION}/item-1/1700000000000-chair.png`;
-  world.files.set(`quote-images/${source}`, { type: "image/png", bytes: new Uint8Array([1, 2, 3]) });
+  world.files.set(`quote-images/${source}`, { type: "image/png", bytes: tinyPng });
   const result = await copyQuoteImageToCollectionForUser(fake(world, USER_A), USER_A, `quote-images:${source}`, NOW);
   assert.equal(result.ok, true);
   const path = (result as any).path as string;
   assert.equal(isOwnImagePath(USER_A, path), true);
-  assert.deepEqual(Array.from(world.files.get(`my-collection-images/${path}`)!.bytes), [1, 2, 3]);
+  assert.ok(isWebpBytes(world.files.get(`my-collection-images/${path}`)!.bytes), "the row picture is converted to WebP");
+  assert.equal(world.files.get(`my-collection-images/${path}`)!.type, "image/webp");
+  assert.match(path, /\.webp$/);
   assert.ok(world.files.has(`quote-images/${source}`), "copy, not move: the row keeps its picture");
   // then saved with the item
   assert.equal((await createCustomItemForUser(fake(world, USER_A), USER_A, { ...good, imagePath: path })).ok, true);
@@ -413,7 +422,7 @@ test("server builder add: sets the row's usual picture field only; no other key;
   world2.quoteRows.push({ id: "row-2", quotation_id: QUOTATION, proposed_image_url_snapshot: null });
   world2.failUpload!.add("quote-images");
   const failed = await addCustomItemPictureToQuoteRow(fake(world2, USER_A), USER_A, { imagePath: path, quotationId: QUOTATION, rowId: "row-2" });
-  assert.deepEqual(failed, { ok: false, note: "The picture could not be copied, so the row was added without it." });
+  assert.deepEqual(failed, { ok: false, note: "The picture could not be copied, so the row was added without it. (Reason: storage error.)" });
   assert.equal(world2.quoteRows[0].proposed_image_url_snapshot, null);
 
   // the row update fails: the copied file is removed again
@@ -454,7 +463,7 @@ test("the new migration is saved unchanged and quote/product signing is untouche
     assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);
   }
   assert.ok(!diff.some((file) => /^lib\/(quotations|pricing)|^components\/products\/(my-collection-configured|configured)/.test(file)), "Configured tab and pricing files untouched");
-  assert.ok(!diff.some((file) => /^supabase\/migrations\//.test(file) && !file.endsWith("20261117150000_my_collection_images_bucket.sql")), "only the one migration is added");
+  assert.ok(!diff.some((file) => /^supabase\/migrations\//.test(file) && !file.endsWith("20261118100000_my_collection_images_2mb_webp.sql")), "only the one new migration is added (PR 2b-3b)");
   assert.ok(!diff.some((file) => /^package(-lock)?\.json$/.test(file)));
 });
 
