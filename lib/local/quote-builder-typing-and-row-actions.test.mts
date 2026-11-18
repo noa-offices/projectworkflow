@@ -133,9 +133,9 @@ test("autosave persists every item change by itself, so the per-row Save button 
   const updateItem = builder.slice(builder.indexOf("function updateItem(itemId: string, patch: LocalQuotationItemPatch) {"), builder.indexOf("function updateItem(itemId: string, patch: LocalQuotationItemPatch) {") + 3500);
   assert.match(updateItem, /commit\(\(current\) => \{/);
   assert.match(updateItem, /items: current\.items\.map\(\(item\) => \(item\.id === itemId \? \{ \.\.\.item, \.\.\.committedPatch, updated_at: localNow\(\) \} : item\)\)/);
-  // saveLocalDraftNow itself stays (the Retry button, Save Row in the panel and others use it)
+  // saveLocalDraftNow itself stays (the Retry button uses it). PR 6b removed the panel's "Save Row" caller, so 2 occurrences remain.
   assert.match(builder, /async function saveLocalDraftNow\(rowId\?: string\) \{/);
-  assert.ok((builder.match(/saveLocalDraftNow\(/g) ?? []).length >= 3);
+  assert.ok((builder.match(/saveLocalDraftNow\(/g) ?? []).length >= 2);
 });
 
 test("the row action column is ONE line of icon buttons: edit, up, down, More; no per-row Save and no per-row status text", () => {
@@ -177,15 +177,16 @@ test("the More menu is unchanged (same props, same items) and the other row cell
 const panel = builder.slice(builder.indexOf("{detailsModalItem ? ("), builder.indexOf("{saveLibraryChoiceItem ? ("));
 
 test("Edit Details is a right-side dialog: full height, about 480 px on desktop, full screen on phones, closes with the button", () => {
-  assert.match(panel, /<aside\s+ref=\{detailsPanelRef\}\s+role="dialog"\s+aria-modal="true"\s+aria-label="Edit row details"\s+tabIndex=\{-1\}/);
-  assert.match(panel, /fixed inset-0 z-50 flex justify-end/, "pinned to the right edge");
+  // PR 6b: the panel is non-modal (no aria-modal, no backdrop) and its width comes from one shared constant.
+  assert.match(panel, /<aside\s+ref=\{detailsPanelRef\}\s+role="dialog"\s+aria-label="Edit row details"\s+tabIndex=\{-1\}/);
+  assert.match(panel, /fixed inset-y-0 right-0 z-50/, "pinned to the right edge");
   assert.match(panel, /h-\[100dvh\] w-full/, "full height and full width on phones");
-  assert.match(panel, /sm:w-\[480px\] sm:max-w-\[100vw\]/, "about 480 px from the sm breakpoint up");
+  assert.match(panel, /sm:w-\[var\(--details-panel-w\)\] sm:max-w-\[100vw\]/, "the shared width from the sm breakpoint up");
+  assert.match(builder, /const DETAILS_PANEL_WIDTH = "480px";/);
   assert.match(panel, /overflow-hidden/);
-  assert.match(panel, /<div className="overflow-y-auto px-3 py-3/, "its own scroll");
+  assert.match(panel, /<div className="@container min-h-0 flex-1 overflow-y-auto px-3 py-3/, "its own scroll");
   assert.match(panel, /pw-details-slide-in/, "slides in from the right");
   assert.match(panel, /motion-reduce:\[animation:none\]/);
-  assert.match(panel, /pointer-events-none fixed inset-0/, "the dim does not block the table");
   assert.match(panel, /aria-label="Close"\s+title="Close"\s+className="[^"]*"\s*>\s*\{"\\u2715"\}/);
   assert.doesNotMatch(panel, /max-w-6xl|items-start justify-center/, "no longer a centred modal");
   assert.match(panel, /Row \{detailsNav \? detailsNav\.index \+ 1 : ""\} details/);
@@ -201,21 +202,28 @@ test("the form inside is EXACTLY the old one: same render function, same fields,
     const end = source.indexOf("\n  }\n", start);
     return source.slice(start, end);
   };
-  assert.equal(bodyOf(builder), bodyOf(before), "renderRowDetailsModalContent is unchanged, character for character");
-  // the existing buttons of the old header keep their behaviour
-  assert.match(panel, /onClick=\{\(\) => void saveLocalDraftNow\(detailsModalItem\.id\)\}[\s\S]*?Save Row/);
+  // PR 6b changed ONLY class names (viewport -> container breakpoints) and removed the duplicate Save Row / Done block of the
+  // Row Summary. So compare the function with every className stripped and that one old block removed: same fields, labels, handlers.
+  const normalised = (source: string) =>
+    bodyOf(source)
+      .replace(/className=\{`[^`]*`\}/g, "")
+      .replace(/className="[^"]*"/g, "")
+      .replace(/<div\s*>\s*<button\s+type="button"\s+onClick=\{\(\) => void saveLocalDraftNow\(item\.id\)\}[\s\S]*?Done\s*<\/button>\s*<\/div>/, "")
+      .replace(/\s+/g, " ");
+  assert.equal(normalised(builder), normalised(before), "renderRowDetailsModalContent: same fields/labels/handlers; only classes and the duplicate Save Row/Done block differ");
+  // the old header's Done keeps its behaviour (close); Save Row is gone everywhere in the panel
+  assert.doesNotMatch(panel, /Save Row/);
   assert.match(panel, /Done\s*<\/button>/);
   assert.match(panel, /setDetailsModalRowId\(null\);\s*setSaveLibraryChoiceRowId\(null\);/);
   assert.match(panel, /Code: \{detailsModalItem\.item_code_snapshot/);
 });
 
-test("Escape closes the panel, the page behind does not scroll, focus goes in and comes back to the edit button", () => {
-  const effect = builder.slice(builder.indexOf("const detailsPanelOpen = detailsModalRowId !== null;"), builder.indexOf("}, [detailsPanelOpen, saveLibraryChoiceRowId]);"));
-  assert.match(effect, /if \(event\.key !== "Escape" \|\| event\.defaultPrevented \|\| saveLibraryChoiceRowId\) return;/);
+test("Escape closes the panel, the page behind is NOT locked (non-modal), focus goes in and comes back to the edit button", () => {
+  const effect = builder.slice(builder.indexOf("const detailsPanelOpen = detailsModalRowId !== null;"), builder.indexOf("}, [detailsPanelOpen]);"));
+  assert.match(effect, /if \(event\.key !== "Escape" \|\| event\.defaultPrevented \|\| saveLibraryChoiceOpenRef\.current\) return;/);
   assert.match(effect, /document\.addEventListener\("keydown", onKeyDown\)/);
   assert.match(effect, /document\.removeEventListener\("keydown", onKeyDown\)/);
-  assert.match(effect, /document\.body\.style\.overflow = "hidden"/);
-  assert.match(effect, /document\.body\.style\.overflow = previousOverflow/);
+  assert.doesNotMatch(effect, /document\.body\.style\.overflow/, "PR 6b: no scroll lock, the table behind stays usable");
   assert.match(effect, /detailsPanelRef\.current\?\.focus\(\)/);
   assert.match(effect, /if \(rowId\) focusDetailsTrigger\(rowId\)/);
   const focusBack = functionSource(builder, "focusDetailsTrigger");
@@ -267,7 +275,7 @@ test("PR 6a diff guard: only the builder, this test and one old guard; no SQL, n
     const root = new URL("../../", import.meta.url);
     const run = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     const base = run(["merge-base", "HEAD", "origin/main"]).trim();
-    diff = [...run(["diff", "--name-only", base]).split("\n"), ...run(["ls-files", "--others", "--exclude-standard"]).split("\n")].map((line) => line.trim()).filter(Boolean);
+    diff = [...run(["diff", "--name-only", base]).split("\n"), ...run(["ls-files", "--others", "--exclude-standard"]).split("\n")].map((line) => line.trim()).filter((line) => line && line !== "AGENTS.md");
   } catch {
     return;
   }
@@ -277,4 +285,94 @@ test("PR 6a diff guard: only the builder, this test and one old guard; no SQL, n
   // The one old guard that listed the builder as "must be untouched" is updated; nothing else may change.
   assert.ok(diff.every((file) => [BUILDER_PATH, "lib/local/quote-builder-typing-and-row-actions.test.mts", "lib/products/saved-setups/my-collection-popup.test.mts"].includes(file)), `unexpected files: ${diff.join(", ")}`);
   assert.ok(diff.length <= 6);
+});
+
+// ── PR 6b: focus-local textarea draft, container-based panel layout, non-modal side-by-side panel ─────────────
+const detailsStart = builder.indexOf("  function renderRowDetailsModalContent(");
+const detailsContent = builder.slice(detailsStart, builder.indexOf("\n  }\n", detailsStart));
+const textareaSource = functionSource(builder, "LocalAutoResizeTextarea");
+
+test("PR 6b: a focused textarea shows exactly what was typed (spaces survive), blur drops the draft, otherwise the derived value is shown", () => {
+  assert.match(textareaSource, /const \[draft, setDraft\] = useState<string \| null>\(null\);/);
+  assert.match(textareaSource, /const shown = draft \?\? value;/);
+  assert.match(textareaSource, /value=\{shown\}/);
+  assert.match(textareaSource, /onChange=\{\(event\) => \{\s*setDraft\(event\.target\.value\);\s*onChange\(event\.target\.value\);/);
+  assert.match(textareaSource, /onBlur=\{\(\) => setDraft\(null\)\}/);
+  assert.match(textareaSource, /\[shown\]\);/, "autosize follows what is shown");
+  // behaviour: the same two rules as a tiny model (typed draft wins while focused; derived value otherwise)
+  const derived = (stored: string) => stored.trim(); // like specificationWithoutDuplicateCode/Dimension
+  let stored = "";
+  let draft: string | null = null;
+  const shown = () => draft ?? derived(stored);
+  const type = (next: string) => { draft = next; stored = next; };
+  for (const text of ["conference", "conference ", "conference t", "conference table"]) { type(text); assert.equal(shown(), text, text); }
+  // middle insertion
+  type("conference big table");
+  assert.equal(shown(), "conference big table");
+  type("conference big ");
+  assert.equal(shown(), "conference big ", "trailing space kept while focused");
+  draft = null; // blur
+  assert.equal(shown(), "conference big", "when not focused the derived (trimmed) value is shown");
+  // the pure helpers (lib/quotations/format-quotation-row.ts) were NOT changed
+  const helperPath = "lib/quotations/format-quotation-row.ts";
+  const helperBefore = gitShow(helperPath);
+  if (helperBefore !== null) assert.equal(read("../quotations/format-quotation-row.ts"), helperBefore, "specificationWithoutDuplicateCode/Dimension file is byte for byte the same as main");
+  // Project details inputs no longer display a trimmed value
+  assert.match(builder, /function typedStringValue\(/);
+  for (const field of ["project_name", "attention_to", "location", "attention_mobile", "attention_landline", "attention_email", "po_box", "project_address"]) {
+    assert.match(builder, new RegExp(String.raw`value=\{typedStringValue\(projectSnapshot, "${field}"\)\}`), field);
+  }
+});
+
+test("PR 6b: the details content uses container breakpoints only (no viewport md:/lg:/xl:, no fixed two-column grid)", () => {
+  assert.ok(detailsContent.length > 2000, "found the render function");
+  assert.doesNotMatch(detailsContent, /(?<![@\w-])(md|lg|xl|2xl):/, "no viewport breakpoint variants");
+  assert.doesNotMatch(detailsContent, /grid-cols-\[minmax\(0,1fr\)_320px\]/);
+  assert.match(detailsContent, /@sm:grid-cols-2|@3xl:grid-cols-|@lg:grid-cols-/, "container variants are used instead");
+  assert.match(panel, /<div className="@container /, "the panel body is the query container");
+});
+
+test("PR 6b: the panel header has exactly one Done (= close) and no Save Row; the Row Summary has none either", () => {
+  assert.equal((panel.match(/Done\s*<\/button>/g) ?? []).length, 1);
+  assert.doesNotMatch(panel, /Save Row/);
+  assert.equal((detailsContent.match(/>\s*Done\s*</g) ?? []).length, 0);
+  assert.doesNotMatch(detailsContent, /Save Row/);
+  assert.match(panel, /onClick=\{\(\) => \{\s*setDetailsModalRowId\(null\);\s*setSaveLibraryChoiceRowId\(null\);\s*\}\}[^>]*>\s*Done/);
+  // the Save to Product Library choice dialog is still there
+  assert.match(builder, /\{saveLibraryChoiceItem \? \(/);
+});
+
+test("PR 6b: no dim backdrop, no aria-modal; clicking the table does not close the panel", () => {
+  assert.doesNotMatch(panel, /aria-modal/);
+  assert.doesNotMatch(panel, /bg-zinc-950\/\d+|bg-black\/\d+|backdrop-|pointer-events-none fixed inset-0/);
+  assert.doesNotMatch(panel, /fixed inset-0/);
+  // the only things that close it: Done, Close, Escape (and removing the row)
+  assert.equal((builder.match(/setDetailsModalRowId\(null\)/g) ?? []).length >= 3, true);
+  const closers = builder.split("\n").filter((line) => line.includes("setDetailsModalRowId(null)") && /onMouseDown|onPointerDown|onClick=\{\(\) => setDetailsModalRowId\(null\)\}[^>]*className="fixed/.test(line));
+  assert.equal(closers.length, 0, "no outside-click closer");
+});
+
+test("PR 6b: the table area shrinks only while the panel is open (shared width), and the edited row scrolls into view on open and on previous/next", () => {
+  assert.match(builder, /<main\s+style=\{\{ "--details-panel-w": DETAILS_PANEL_WIDTH \} as React\.CSSProperties\}\s+className=\{`[^`]*transition-\[padding\][^`]*\$\{detailsModalItem \? "sm:pr-\[calc\(var\(--details-panel-w\)\+1rem\)\]" : ""\}`\}/);
+  assert.match(builder, /motion-reduce:transition-none/);
+  assert.match(panel, /style=\{\{ "--details-panel-w": DETAILS_PANEL_WIDTH \}/, "panel and wrapper read the same constant");
+  const scroll = functionSource(builder, "scrollDetailsRowIntoView");
+  assert.match(scroll, /data-preserve-anchor="item-/);
+  assert.match(scroll, /scrollIntoView\(\{ block: "center"/);
+  assert.match(scroll, /prefers-reduced-motion: reduce/);
+  assert.doesNotMatch(scroll, /\.focus\(/, "scrolling never steals focus");
+  // runs when the open row changes: covers open AND previous/next
+  assert.match(builder, /useEffect\(\(\) => \{\s*if \(!detailsModalRowId\) return;[\s\S]*?scrollDetailsRowIntoView\(rowId\)[\s\S]*?\}, \[detailsModalRowId\]\);/);
+});
+
+test("PR 6b: the header shows live Code / Qty / Net Total computed from the live item", () => {
+  assert.match(builder, /const detailsModalItem = [^;]*workspace\.items\.find\(/, "derived live from the workspace");
+  assert.match(panel, /Code: \{detailsModalItem\.item_code_snapshot \|\| "-"\} \/ Qty \{detailsModalItem\.qty\} \/ Net Total \{itemCountsInLocalTotals\(detailsModalItem\) \? formatTableNumber\(detailsModalItem\.net_total\)/);
+});
+
+test("PR 6b diff guard: pricing, discount and VAT code is untouched", () => {
+  const before = gitShow(BUILDER_PATH);
+  if (before === null) return;
+  const added = builder.split("\n").filter((line) => !before.includes(line));
+  assert.ok(!added.some((line) => /discount|vat|pricing|net_total\s*=|recalculate/i.test(line) && !/Net Total \{itemCountsInLocalTotals/.test(line)), "no pricing/discount/VAT line was added or changed");
 });

@@ -286,6 +286,14 @@ function stringValue(record: Record<string, unknown> | undefined, key: string) {
   return "";
 }
 
+// Like stringValue, but WITHOUT trimming: for inputs that are being typed into (a trimmed value would delete a typed space).
+function typedStringValue(record: Record<string, unknown> | undefined, key: string) {
+  const value = record?.[key];
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+}
+
 function statusLabel(status: string) {
   return status.replaceAll("_", " ");
 }
@@ -576,6 +584,18 @@ function focusDetailsTrigger(rowId: string) {
   }, 0);
 }
 
+// One width for the Edit Details side panel AND the space the table area gives up for it (sm and up).
+const DETAILS_PANEL_WIDTH = "480px";
+
+// Bring the edited row into view (centered, smooth unless the user prefers reduced motion). It never moves focus.
+function scrollDetailsRowIntoView(rowId: string) {
+  const anchor = document.querySelector<HTMLElement>(`[data-preserve-anchor="item-${rowId}"]`);
+  const row = anchor?.closest("tr");
+  if (!row) return;
+  const reduce = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  row.scrollIntoView({ block: "center", inline: "nearest", behavior: reduce ? "auto" : "smooth" });
+}
+
 function itemTypeDisplay(item: LocalQuotationItem) {
   if (item.line_style === "note" || item.item_type === "note") return "note";
   if (item.line_style === "blank" || item.item_type === "blank") return "blank";
@@ -622,6 +642,11 @@ function LocalAutoResizeTextarea({
   value: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // While the user is typing, show EXACTLY what they typed. Some callers pass a cleaned value (for example the specification
+  // without its duplicate code/dimension line, which trims), and showing that while typing would delete a trailing space on
+  // every keystroke. `draft` is null when not typing: the (cleaned) value from the caller is shown, as before.
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? value;
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
@@ -629,15 +654,19 @@ function LocalAutoResizeTextarea({
 
     textarea.style.height = "auto";
     textarea.style.height = `${textarea.scrollHeight}px`;
-  }, [value]);
+  }, [shown]);
 
   return (
     <textarea
       ref={textareaRef}
       rows={1}
-      value={value}
+      value={shown}
       placeholder={placeholder}
-      onChange={(event) => onChange(event.target.value)}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        onChange(event.target.value);
+      }}
+      onBlur={() => setDraft(null)}
       className={className ?? ""}
     />
   );
@@ -1925,17 +1954,18 @@ export function LocalQuotationBuilder({
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [workspace, localDraftSaved, localPersistenceError]);
 
-  // Row details side panel: Escape closes it, the page behind does not scroll, focus moves into the panel and comes back
-  // to the row's edit button on close. Nothing typed is lost: edits already apply through updateItem as you type.
+  // Row details side panel (non-modal): Escape closes it, focus moves into the panel on open and comes back to the row's edit
+  // button on close. There is no backdrop and no page scroll lock: the table stays visible, bright and clickable.
+  // Nothing typed is lost: edits already apply through updateItem as you type.
   const detailsPanelOpen = detailsModalRowId !== null;
+  const saveLibraryChoiceOpenRef = useRef(false);
+  saveLibraryChoiceOpenRef.current = saveLibraryChoiceRowId !== null;
   useEffect(() => {
     if (!detailsPanelOpen) return;
     const rowId = detailsModalRowId;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const frame = window.requestAnimationFrame(() => detailsPanelRef.current?.focus());
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || saveLibraryChoiceRowId) return;
+      if (event.key !== "Escape" || event.defaultPrevented || saveLibraryChoiceOpenRef.current) return;
       setDetailsModalRowId(null);
       setSaveLibraryChoiceRowId(null);
     };
@@ -1943,12 +1973,19 @@ export function LocalQuotationBuilder({
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       window.cancelAnimationFrame(frame);
-      document.body.style.overflow = previousOverflow;
       if (rowId) focusDetailsTrigger(rowId);
     };
     // Row changes (previous / next) keep the panel open: only open/close re-runs this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailsPanelOpen, saveLibraryChoiceRowId]);
+  }, [detailsPanelOpen]);
+
+  // When the panel opens and when the row changes (previous / next), the edited row is scrolled into view.
+  useEffect(() => {
+    if (!detailsModalRowId) return;
+    const rowId = detailsModalRowId;
+    const frame = window.requestAnimationFrame(() => scrollDetailsRowIntoView(rowId));
+    return () => window.cancelAnimationFrame(frame);
+  }, [detailsModalRowId]);
 
   useEffect(() => {
     function syncClipboard() {
@@ -3052,11 +3089,11 @@ export function LocalQuotationBuilder({
     ].filter((row) => Boolean(row.value));
     const internalMetadata = internalItemMetadata(item);
     return (
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
+      <div className="grid gap-4">
         <div className="grid gap-4">
           <fieldset className="border border-zinc-300 bg-white p-3">
             <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Basic</legend>
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-2 @sm:grid-cols-2 @3xl:grid-cols-4">
               <label className="grid gap-1">
                 <span className="text-[10px] font-semibold uppercase text-zinc-500">Manual S.No.</span>
                 <input value={item.manual_serial ?? ""} onChange={(event) => updateItem(item.id, { manual_serial: event.target.value || null })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
@@ -3065,7 +3102,7 @@ export function LocalQuotationBuilder({
                 <span className="text-[10px] font-semibold uppercase text-zinc-500">Code</span>
                 <input value={item.item_code_snapshot ?? ""} onChange={(event) => updateItem(item.id, { item_code_snapshot: event.target.value || null })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
               </label>
-              <label className="grid gap-1 md:col-span-2">
+              <label className="grid gap-1 @sm:col-span-2">
                 <span className="text-[10px] font-semibold uppercase text-zinc-500">Item / Model Name</span>
                 <input value={item.item_name_snapshot ?? ""} onChange={(event) => updateItem(item.id, { item_name_snapshot: event.target.value || null })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
               </label>
@@ -3138,7 +3175,7 @@ export function LocalQuotationBuilder({
               </label>
               {item.is_optional ? (
                 <>
-                  <label className="grid gap-1 md:col-span-2">
+                  <label className="grid gap-1 @sm:col-span-2">
                     <span className="text-[10px] font-semibold uppercase text-zinc-500">Parent Product</span>
                     <select value={item.parent_item_id ?? ""} onChange={(event) => updateItem(item.id, { parent_item_id: event.target.value || null })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800">
                       <option value="">No parent product</option>
@@ -3164,7 +3201,7 @@ export function LocalQuotationBuilder({
 
           <fieldset className="border border-zinc-300 bg-white p-3">
             <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Specification</legend>
-            <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_240px]">
+            <div className="grid gap-2 @lg:grid-cols-[minmax(0,1fr)_240px]">
               <label className="grid gap-1">
                 <span className="text-[10px] font-semibold uppercase text-zinc-500">Main specification</span>
                 <textarea value={item.specification_snapshot ?? ""} onChange={(event) => updateItem(item.id, { specification_snapshot: event.target.value || null })} rows={5} className="w-full resize-y border border-zinc-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-emerald-800" />
@@ -3180,7 +3217,7 @@ export function LocalQuotationBuilder({
             <summary className="cursor-pointer px-3 py-2 text-[11px] font-bold uppercase text-zinc-500">
               {showOptionalDetailsOpen ? "Optional Product Details" : "Show optional product details"}
             </summary>
-            <div className="grid gap-2 border-t border-zinc-200 p-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-2 border-t border-zinc-200 p-3 @sm:grid-cols-2 @3xl:grid-cols-3">
               <label className="grid gap-1">
                 <span className="text-[10px] font-semibold uppercase text-zinc-500">Room</span>
                 <input value={item.room_name_snapshot ?? ""} onChange={(event) => updateItem(item.id, { room_name_snapshot: event.target.value || null })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
@@ -3222,7 +3259,7 @@ export function LocalQuotationBuilder({
                 />
               </label>
               {customInternalColumns.length ? (
-                <div className="grid gap-2 md:grid-cols-2">
+                <div className="grid gap-2 @sm:grid-cols-2">
                   {customInternalColumns.map((column) => {
                     const fieldValue = internalCustomColumnValue(item, column.id);
                     if (column.type === "date") {
@@ -3260,13 +3297,13 @@ export function LocalQuotationBuilder({
           {customPrintableColumnDefs.length ? (
             <fieldset className="border border-zinc-300 bg-white p-3">
               <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Custom Printable Columns</legend>
-              <div className="grid gap-2 md:grid-cols-2">
+              <div className="grid gap-2 @sm:grid-cols-2">
                 {customPrintableColumnDefs.map((column) => {
                   const fieldValue = customPrintableColumnValue(item, column.id);
 
                   if (column.type === "image") {
                     return (
-                      <label key={column.id} className="grid gap-1 md:col-span-2">
+                      <label key={column.id} className="grid gap-1 @sm:col-span-2">
                         <span className="text-[10px] font-semibold uppercase text-zinc-500">{column.label}</span>
                         <LocalQuotationCustomPrintableImageCell
                           columnId={column.id}
@@ -3314,7 +3351,7 @@ export function LocalQuotationBuilder({
 
           <fieldset className="border border-zinc-300 bg-white p-3">
             <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Image</legend>
-            <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)] md:items-start">
+            <div className="grid gap-3 @lg:grid-cols-[180px_minmax(0,1fr)] @lg:items-start">
               <div className="grid gap-2">
                 <FinishImagePreview alt={item.item_name_snapshot ?? "Item image"} className="h-28 w-full" value={imagePreviewValue} />
                 <div className="flex flex-wrap gap-2 text-[11px] font-semibold">
@@ -3379,7 +3416,7 @@ export function LocalQuotationBuilder({
           </fieldset>
         </div>
 
-        <div className="grid gap-4 lg:sticky lg:top-0">
+        <div className="grid gap-4">
           {canSaveRowToProductLibrary(item) ? (
             <fieldset className="border border-zinc-300 bg-white p-3">
               <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Product Library</legend>
@@ -3427,22 +3464,6 @@ export function LocalQuotationBuilder({
                   <p className="text-[10px] font-semibold uppercase text-zinc-500">Row total</p>
                   <p className="font-semibold text-zinc-900">{formatTableNumber(exactMoneyValue(item.qty * item.net_price))}</p>
                 </div>
-              </div>
-              <div className="flex gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => void saveLocalDraftNow(item.id)}
-                  className="h-9 flex-1 border border-emerald-900 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
-                >
-                  Save Row
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDetailsModalRowId(null)}
-                  className="h-9 flex-1 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
-                >
-                  Done
-                </button>
               </div>
             </div>
           </fieldset>
@@ -4125,21 +4146,23 @@ export function LocalQuotationBuilder({
       </header>
 
       {detailsModalItem ? (
-        <div className="pointer-events-none fixed inset-0 z-50 flex justify-end bg-zinc-950/10">
+        <>
           <style>{"@keyframes pw-details-slide-in{from{transform:translateX(100%)}to{transform:none}}"}</style>
           <aside
             ref={detailsPanelRef}
             role="dialog"
-            aria-modal="true"
             aria-label="Edit row details"
             tabIndex={-1}
-            className="pointer-events-auto flex h-[100dvh] w-full flex-col overflow-hidden bg-zinc-100 shadow-2xl outline-none [animation:pw-details-slide-in_180ms_ease-out] motion-reduce:[animation:none] sm:w-[480px] sm:max-w-[100vw] sm:border-l sm:border-zinc-300"
+            style={{ "--details-panel-w": DETAILS_PANEL_WIDTH } as React.CSSProperties}
+            className="fixed inset-y-0 right-0 z-50 flex h-[100dvh] w-full flex-col overflow-hidden bg-zinc-100 shadow-2xl outline-none [animation:pw-details-slide-in_180ms_ease-out] motion-reduce:[animation:none] sm:w-[var(--details-panel-w)] sm:max-w-[100vw] sm:border-l sm:border-zinc-300"
           >
             <div className="flex items-start justify-between gap-2 border-b border-zinc-300 bg-white px-3 py-3 sm:px-4">
               <div className="min-w-0">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Row {detailsNav ? detailsNav.index + 1 : ""} details</p>
                 <p className="truncate text-sm font-semibold text-zinc-950">{detailsModalItem.item_name_snapshot || "Unnamed item"}</p>
+                <p className="break-words text-xs text-zinc-500 sm:truncate">
                   Code: {detailsModalItem.item_code_snapshot || "-"} / Qty {detailsModalItem.qty} / Net Total {itemCountsInLocalTotals(detailsModalItem) ? formatTableNumber(detailsModalItem.net_total) : netTotalPlaceholder(detailsModalItem)}
+                </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
                 <button
@@ -4168,6 +4191,16 @@ export function LocalQuotationBuilder({
                     setDetailsModalRowId(null);
                     setSaveLibraryChoiceRowId(null);
                   }}
+                  className="h-9 border border-emerald-900 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 sm:h-8"
+                >
+                  Done
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDetailsModalRowId(null);
+                    setSaveLibraryChoiceRowId(null);
+                  }}
                   aria-label="Close"
                   title="Close"
                   className="h-9 min-w-9 border border-zinc-300 bg-white px-2 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900 sm:h-8 sm:min-w-8"
@@ -4176,30 +4209,11 @@ export function LocalQuotationBuilder({
                 </button>
               </div>
             </div>
-            <div className="flex gap-2 border-b border-zinc-300 bg-white px-3 py-2 sm:px-4">
-              <button
-                type="button"
-                onClick={() => void saveLocalDraftNow(detailsModalItem.id)}
-                className="h-9 flex-1 border border-emerald-900 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 sm:h-8 sm:flex-none"
-              >
-                Save Row
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDetailsModalRowId(null);
-                  setSaveLibraryChoiceRowId(null);
-                }}
-                className="h-9 flex-1 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900 sm:h-8 sm:flex-none"
-              >
-                Done
-              </button>
-            </div>
-            <div className="overflow-y-auto px-3 py-3 [&_input]:min-h-10 [&_input]:text-base [&_select]:min-h-10 [&_select]:text-base [&_textarea]:text-base sm:px-5 sm:py-4 sm:[&_input]:min-h-8 sm:[&_input]:text-xs sm:[&_select]:min-h-8 sm:[&_select]:text-xs sm:[&_textarea]:text-xs">
+            <div className="@container min-h-0 flex-1 overflow-y-auto px-3 py-3 [&_input]:min-h-10 [&_input]:text-base [&_select]:min-h-10 [&_select]:text-base [&_textarea]:text-base sm:px-5 sm:py-4 sm:[&_input]:min-h-8 sm:[&_input]:text-xs sm:[&_select]:min-h-8 sm:[&_select]:text-xs sm:[&_textarea]:text-xs">
               {renderRowDetailsModalContent(detailsModalItem)}
             </div>
           </aside>
-        </div>
+        </>
       ) : null}
 
       {saveLibraryChoiceItem ? (
@@ -4561,35 +4575,35 @@ export function LocalQuotationBuilder({
                   <div className="grid gap-2 md:grid-cols-2">
                     <label className="grid gap-1 md:col-span-2">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Project</span>
-                      <input value={stringValue(projectSnapshot, "project_name")} onChange={(event) => updateProjectSnapshot({ project_name: keepTypedValue(event.target.value) ?? "" })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={typedStringValue(projectSnapshot, "project_name")} onChange={(event) => updateProjectSnapshot({ project_name: keepTypedValue(event.target.value) ?? "" })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Attn / Contact</span>
-                      <input value={stringValue(projectSnapshot, "attention_to")} onChange={(event) => updateProjectSnapshot({ attention_to: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={typedStringValue(projectSnapshot, "attention_to")} onChange={(event) => updateProjectSnapshot({ attention_to: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Location</span>
-                      <input value={stringValue(projectSnapshot, "location")} onChange={(event) => updateProjectSnapshot({ location: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={typedStringValue(projectSnapshot, "location")} onChange={(event) => updateProjectSnapshot({ location: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Mobile</span>
-                      <input value={stringValue(projectSnapshot, "attention_mobile")} onChange={(event) => updateProjectSnapshot({ attention_mobile: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={typedStringValue(projectSnapshot, "attention_mobile")} onChange={(event) => updateProjectSnapshot({ attention_mobile: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Telephone</span>
-                      <input value={stringValue(projectSnapshot, "attention_landline")} onChange={(event) => updateProjectSnapshot({ attention_landline: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={typedStringValue(projectSnapshot, "attention_landline")} onChange={(event) => updateProjectSnapshot({ attention_landline: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Email</span>
-                      <input value={stringValue(projectSnapshot, "attention_email")} onChange={(event) => updateProjectSnapshot({ attention_email: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={typedStringValue(projectSnapshot, "attention_email")} onChange={(event) => updateProjectSnapshot({ attention_email: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">PO Box</span>
-                      <input value={stringValue(projectSnapshot, "po_box")} onChange={(event) => updateProjectSnapshot({ po_box: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={typedStringValue(projectSnapshot, "po_box")} onChange={(event) => updateProjectSnapshot({ po_box: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1 md:col-span-2">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Address</span>
-                      <textarea value={stringValue(projectSnapshot, "project_address")} onChange={(event) => updateProjectSnapshot({ project_address: keepTypedValue(event.target.value) })} rows={3} className="w-full resize-y border border-zinc-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-emerald-800" />
+                      <textarea value={typedStringValue(projectSnapshot, "project_address")} onChange={(event) => updateProjectSnapshot({ project_address: keepTypedValue(event.target.value) })} rows={3} className="w-full resize-y border border-zinc-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-emerald-800" />
                     </label>
                   </div>
                 </fieldset>
@@ -4611,7 +4625,10 @@ export function LocalQuotationBuilder({
         }}
       />
 
-      <main className="mx-auto max-w-[1900px] px-4 py-5">
+      <main
+        style={{ "--details-panel-w": DETAILS_PANEL_WIDTH } as React.CSSProperties}
+        className={`mx-auto max-w-[1900px] px-4 py-5 transition-[padding] duration-200 motion-reduce:transition-none ${detailsModalItem ? "sm:pr-[calc(var(--details-panel-w)+1rem)]" : ""}`}
+      >
         {localPersistenceError ? (
           <div role="alert" className="mb-4 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-950">
             <p>{localPersistenceError}</p>
