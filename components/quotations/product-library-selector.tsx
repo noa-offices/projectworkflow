@@ -10,6 +10,7 @@ import type { SavedSetupPlainState } from "@/lib/products/saved-setups/recipe";
 import { defaultSetupName } from "@/lib/products/saved-setups/default-name";
 import { LINE_RECIPE_FORM_FIELD, buildLineConfigurationRecipe, withConfigurationRecipe } from "@/lib/products/saved-setups/line-recipe";
 import { baseModelPlacement } from "@/lib/products/saved-setups/base-model-placement";
+import { AddFromClientHistoryButton } from "./add-from-client-history-button";
 import { AddFromMyCollectionButton } from "./add-from-my-collection-button";
 import { SetupReplayBanner } from "./setup-replay-banner";
 import { evaluateSetup, type SetupProblem } from "@/lib/products/saved-setups/replay";
@@ -1238,6 +1239,7 @@ export function ProductLibrarySelector({
   brands,
   canManageProductLibrary = false,
   categories,
+  clientHistory,
   components,
   linkedFamilies,
   materialGroups,
@@ -1256,6 +1258,8 @@ export function ProductLibrarySelector({
   brands: ProductLibraryBrand[];
   canManageProductLibrary?: boolean;
   categories: ProductLibraryCategory[];
+  /** The quotation's client, for "Add from {client} history" next to My Collection. Omitted => no history button. */
+  clientHistory?: { clientId: string | null; clientName: string };
   components: ProductLibraryComponent[];
   linkedFamilies: ProductLibraryLinkedFamily[];
   materialGroups: FinishMaterialGroup[];
@@ -1565,6 +1569,15 @@ export function ProductLibrarySelector({
     return null;
   };
 
+  // "Add from {client} history" (library item): open the normal product view for that product. Nothing is added or priced here.
+  const openProductFromHistory = (templateId: string): string | null => {
+    if (!templateById.get(templateId)) return "This product is not available in this Product Library.";
+    setReplay(null);
+    setSelectedTemplateId(templateId);
+    setIsOpen(true);
+    return null;
+  };
+
   return (
     <>
       <button
@@ -1575,6 +1588,9 @@ export function ProductLibrarySelector({
         {triggerLabel}
       </button>
       <AddFromMyCollectionButton onChoose={openSetupFromCollection} />
+      {clientHistory ? (
+        <AddFromClientHistoryButton clientId={clientHistory.clientId} clientName={clientHistory.clientName} onOpenProduct={openProductFromHistory} onOpenSetup={openSetupFromCollection} />
+      ) : null}
 
       {isOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/30 p-0 sm:px-4 sm:py-6">

@@ -7,6 +7,8 @@ import { overlayFields, rowOverlayFromCustomItem } from "@/lib/products/saved-se
 import type { CustomItemListItem } from "@/lib/products/saved-setups/custom-item";
 import { imageMessage, type CustomItemWithImage } from "@/lib/products/saved-setups/custom-item-image";
 import { copyCustomItemImageToQuote } from "@/lib/products/saved-setups/saved-custom-images-actions";
+import { copyHistoryPictureToLocalRowAction } from "@/lib/quotations/client-history/client-history-actions";
+import type { ClientHistoryAddItem } from "@/lib/quotations/client-history/client-history-service";
 import { announcedSnapshotOf } from "@/lib/products/price-announcements";
 import { readPricingRule, type PricingRule } from "@/lib/quotation-pricing";
 import { formatRoundingDifference, lineRoundingAdjustment } from "@/lib/quotations/quotation-total-display";
@@ -2620,6 +2622,38 @@ export function LocalQuotationBuilder({
     return overlay.conversionNote;
   }
 
+  // "Add from {client} history" (custom item): the same ordinary manual row as addCustomItemRow (same overlay and currency rule).
+  // The old picture is copied by the server under this row's own path; a failure leaves the row without a picture and never blocks.
+  function addHistoryCustomRow(sectionId: string, data: Extract<ClientHistoryAddItem, { kind: "custom" }>): string | null {
+    const overlay = rowOverlayFromCustomItem(
+      { brandName: data.brand, itemName: data.itemName, itemCode: data.itemCode, specification: data.specification, unitLabel: data.unitLabel, sellingPrice: data.price, currency: data.currency },
+      workspace.currency,
+    );
+    const { source_component_data: sourceData, ...fields } = overlayFields(overlay);
+    const rowId = createEmptyItem(workspace, "custom", sectionId).id;
+    commit((current) => ({
+      ...current,
+      items: [
+        ...current.items,
+        { ...createEmptyItem(current, "custom", sectionId), ...fields, ...(sourceData ? { source_component_data: sourceData } : {}), id: rowId },
+      ],
+    }));
+    if (overlay.conversionNote) setSaveMessage(overlay.conversionNote);
+    if (data.pictureRef) {
+      const pictureFailed = (message?: string) => setSaveMessage(message ?? "The row was added, but its picture could not be copied.");
+      copyHistoryPictureToLocalRowAction({ historyId: data.id, quotationId: workspace.server_quotation_id, rowId })
+        .then((copied) => {
+          if (!copied.ok) return pictureFailed(copied.message);
+          commit((current) => ({
+            ...current,
+            items: current.items.map((row) => (row.id === rowId ? { ...row, proposed_image_url_snapshot: copied.ref, updated_at: localNow() } : row)),
+          }));
+        })
+        .catch(() => pictureFailed());
+    }
+    return overlay.conversionNote;
+  }
+
   function addProductItem(sectionId: string, item: LocalQuotationItem) {
     commit((current) => ({
       ...current,
@@ -5162,12 +5196,12 @@ export function LocalQuotationBuilder({
                                 </span>
                               </>
                             ) : null}
-                            <CustomItemTargetProvider value={{ kind: "local", onAdd: (item) => addCustomItemRow(section.id, item) }}>
-                            <CustomItemTargetProvider value={{ kind: "local", onAdd: (item) => addCustomItemRow(section.id, item) }}>
+                            <CustomItemTargetProvider value={{ kind: "local", onAdd: (item) => addCustomItemRow(section.id, item), onAddHistory: (data) => addHistoryCustomRow(section.id, data) }}>
                   <ProductLibrarySelector
                               brands={productBrands}
                               canManageProductLibrary={canManageProductLibrary}
                               categories={productCategories}
+                              clientHistory={{ clientId: workspace.client_id ?? null, clientName: currentClientName === "-" ? "" : currentClientName }}
                               components={productComponents}
                               linkedFamilies={productLinkedFamilies}
                               materialGroups={materialGroups}
@@ -5181,7 +5215,6 @@ export function LocalQuotationBuilder({
                               templateMaterialGroups={templateMaterialGroups}
                               templates={productTemplates}
                             />
-                  </CustomItemTargetProvider>
                             </CustomItemTargetProvider>
                             <span className="ml-auto text-xs text-zinc-500">Save to Software before preview/download.</span>
                           </div>
@@ -5283,6 +5316,7 @@ export function LocalQuotationBuilder({
                     brands={productBrands}
                     canManageProductLibrary={canManageProductLibrary}
                     categories={productCategories}
+                    clientHistory={{ clientId: workspace.client_id ?? null, clientName: currentClientName === "-" ? "" : currentClientName }}
                     components={productComponents}
                     linkedFamilies={productLinkedFamilies}
                     materialGroups={materialGroups}
