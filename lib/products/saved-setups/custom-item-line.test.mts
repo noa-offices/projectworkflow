@@ -208,7 +208,7 @@ test("picker: two tabs; the Configured tab keeps its behaviour and shows no pric
 
 test("builders provide the target: local adds an ordinary row through the builder, server through the action", () => {
   const local = read("../../../components/quotations/local-quotation-builder.tsx");
-  assert.equal((local.match(/<CustomItemTargetProvider value=\{\{ kind: "local"/g) ?? []).length, 2);
+  assert.equal((local.match(/<CustomItemTargetProvider value=\{\{ kind: "local"/g) ?? []).length, 1);
   assert.match(local, /createEmptyItem\(current, "custom", sectionId\), \.\.\.fields/);
   assert.match(local, /rowOverlayFromCustomItem\(item, workspace\.currency\)/);
   assert.match(local, /if \(overlay\.conversionNote\) setSaveMessage\(overlay\.conversionNote\)/);
