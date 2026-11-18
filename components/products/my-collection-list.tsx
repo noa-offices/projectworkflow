@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition, type ReactNode } from "react";
 import {
   markQuotationImagePathFailed,
   normalizeProductImageSnapshotPath,
   resolveQuotationImageUrl,
 } from "@/lib/quotation-image-path";
 import { useEscapeLayer } from "@/components/products/escape-layer";
+import { ShareControl } from "@/components/products/my-collection-share-send";
 import { clearRemovedSetups, deleteSetup, renameSetup } from "@/lib/products/saved-setups/actions";
 import {
   COLLECTION_SORT_OPTIONS,
@@ -142,7 +143,8 @@ export function SetupRenameInput({ actions }: { actions: SetupActions }) {
 
 // The buttons under a setup card. Separate buttons (never inside the card's own click target); each stops the click
 // from reaching anything behind it, so renaming or deleting can never add the setup to a quote.
-export function SetupActionRow({ item, actions }: { item: { setupName: string }; actions: SetupActions }) {
+// extra: optional buttons shown after Rename / Delete (the page adds Share; the popup passes nothing).
+export function SetupActionRow({ item, actions, extra }: { item: { setupName: string }; actions: SetupActions; extra?: ReactNode }) {
   const { pending, editing, confirmingDelete } = actions;
   const stop = (run: () => void) => (event: { stopPropagation: () => void }) => { event.stopPropagation(); run(); };
   return (
@@ -161,6 +163,7 @@ export function SetupActionRow({ item, actions }: { item: { setupName: string };
         <>
           <button type="button" disabled={pending} onClick={stop(() => actions.setEditing(true))} aria-label={`Rename ${item.setupName}`} className={secondaryButton}>Rename</button>
           <button type="button" disabled={pending} onClick={stop(() => actions.setConfirmingDelete(true))} aria-label={`Delete ${item.setupName}`} className={dangerButton}>Delete</button>
+          {extra}
         </>
       )}
     </div>
@@ -184,7 +187,7 @@ function SetupCard({ item, onMessage, callbacks }: { item: SetupListItem; onMess
           {!item.usable ? <span className="mt-2 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">Unavailable</span> : null}
         </div>
       </div>
-      <SetupActionRow item={item} actions={actions} />
+      <SetupActionRow item={item} actions={actions} extra={item.usable ? <ShareControl kind="setup" itemId={item.id} itemName={item.setupName} /> : null} />
     </li>
   );
 }
