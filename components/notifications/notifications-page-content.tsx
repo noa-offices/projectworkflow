@@ -1,5 +1,6 @@
 "use client";
 import { isInventoryNotification, inventoryNotificationTime, inventoryNotificationSender } from "@/lib/inventory/notification-presentation";
+import { notificationLinkLabel } from "@/lib/products/saved-setups/shares";
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -176,7 +177,7 @@ export function NotificationsPageContent({
                       </span>
                       {item.order_no && (
                         <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 ring-1 ring-inset ring-emerald-600/20">
-                          {item.order_no}
+                          {notificationLinkLabel(item.order_no)}
                         </span>
                       )}
                     </div>

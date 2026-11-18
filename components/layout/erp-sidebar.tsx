@@ -9,6 +9,8 @@ import { canViewInventory } from "@/lib/inventory/access";
 import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 import { ReadCacheSignOut } from "@/components/local-read-cache/sign-out";
 import { isMyCollectionActive } from "@/lib/products/saved-setups/collection-view";
+import { PENDING_SHARES_EVENT } from "@/lib/products/saved-setups/shares";
+import { pendingShareCountAction } from "@/lib/products/saved-setups/shares-actions";
 import { INVENTORY_NOTIFICATIONS_PATH, INVENTORY_PROFILE_PATH, isInventoryPath, profileHref } from "@/lib/inventory/profile";
 import {
   Archive,
@@ -45,6 +47,8 @@ import {
 
 type SidebarItem = {
   active?: boolean;
+  /** Small red count (for example waiting shares). Nothing is shown for 0 or undefined. */
+  badge?: number;
   children?: SidebarItem[];
   disabled?: boolean;
   hidden?: boolean;
@@ -187,6 +191,11 @@ function NavRow({
           {item.suffix}
         </span>
       ) : null}
+      {item.badge && item.badge > 0 ? (
+        <span aria-label={`${item.badge} waiting`} className="flex min-w-[1.1rem] items-center justify-center rounded-full bg-red-500 px-1 py-px text-[10px] font-bold leading-none text-white">
+          {item.badge > 9 ? "9+" : item.badge}
+        </span>
+      ) : null}
     </>
   );
 
@@ -222,6 +231,25 @@ export function ErpSidebar({
   const searchParams = useSearchParams();
   const priceStatus = searchParams.get("priceStatus");
   const manage = searchParams.get("manage");
+
+  // Waiting shares for the My Collection entry: one light count per navigation. A failure or 0 shows no badge and never an error.
+  const [pendingShares, setPendingShares] = useState(0);
+  useEffect(() => {
+    if (role === "warehouse_staff") return;
+    let cancelled = false;
+    pendingShareCountAction()
+      .then((result) => { if (!cancelled) setPendingShares(result.ok ? result.count : 0); })
+      .catch(() => { if (!cancelled) setPendingShares(0); });
+    const onChange = (event: Event) => {
+      const count = Number((event as CustomEvent<number>).detail);
+      if (Number.isFinite(count)) setPendingShares(Math.max(0, Math.trunc(count)));
+    };
+    window.addEventListener(PENDING_SHARES_EVENT, onChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(PENDING_SHARES_EVENT, onChange);
+    };
+  }, [pathname, role]);
 
   const sections: SidebarSection[] = useMemo(
     () => {
@@ -319,7 +347,7 @@ export function ErpSidebar({
         iconColors: { bg: "bg-amber-100", icon: "text-amber-700" },
         items: [
           // Private, owner-only saved setups: visible to every signed-in user of this sidebar (not gated by canManageProducts).
-          { label: "My Collection", href: "/products/my-collection", icon: Bookmark, active: isMyCollectionActive(pathname) },
+          { label: "My Collection", href: "/products/my-collection", icon: Bookmark, active: isMyCollectionActive(pathname), badge: pendingShares },
           { label: "Product Library", href: "/products", icon: Package, active: isProductLibraryActive(pathname, priceStatus, manage), hidden: !canManageProducts },
           { label: "Product Management", href: "/products/manage", icon: SlidersHorizontal, active: isProductManagementActive(pathname, manage), hidden: !canManageProducts },
           { label: "Brands", href: "/products/brands", icon: Tag, active: pathname === "/products/brands", hidden: !canManageProducts },
@@ -368,7 +396,7 @@ export function ErpSidebar({
       },
       ];
     },
-    [manage, pathname, priceStatus, role],
+    [manage, pathname, pendingShares, priceStatus, role],
   );
   const activeSectionTitle = sections.find((section) => section.items.some((item) => item.active))?.title;
   const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set(["Workspace"]));

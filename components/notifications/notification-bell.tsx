@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { notificationsHref } from "@/lib/inventory/profile";
 import { Bell } from "lucide-react";
+import { notificationLinkLabel } from "@/lib/products/saved-setups/shares";
 import {
   getUnreadCount,
   markNotificationRead,
@@ -180,7 +181,7 @@ export function NotificationBell() {
                           </span>
                           {item.order_no && (
                             <span className="rounded-full bg-zinc-100 px-2 py-px text-[11px] font-medium text-zinc-600">
-                              {item.order_no}
+                              {notificationLinkLabel(item.order_no)}
                             </span>
                           )}
                         </div>

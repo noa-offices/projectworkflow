@@ -6,7 +6,8 @@ import { BrandCombobox } from "@/components/products/brand-combobox";
 import { useEscapeLayer } from "@/components/products/escape-layer";
 import { compressToWebp } from "@/lib/images/compress-custom-item-image";
 import { formatSavedDate } from "@/lib/products/saved-setups/collection-view";
-import type { BrandCount } from "@/lib/products/saved-setups/custom-brands";
+import { distinctBrands, type BrandCount } from "@/lib/products/saved-setups/custom-brands";
+import { listCustomItems } from "@/lib/products/saved-setups/saved-custom-items-actions";
 import {
   CUSTOM_ITEM_CODE_MAX,
   CUSTOM_ITEM_CURRENCIES,
@@ -27,6 +28,7 @@ import {
   unsendShareAction,
 } from "@/lib/products/saved-setups/shares-actions";
 import {
+  PENDING_SHARES_EVENT,
   SHARE_SETUP_NOTE_MAX,
   canUnsend,
   recipientDisplayName,
@@ -36,6 +38,7 @@ import {
   type IncomingShareView,
   type SetupShareItem,
   type SentShare,
+  type ShareKind,
   type ShareStatus,
 } from "@/lib/products/saved-setups/shares";
 
@@ -322,7 +325,11 @@ function statusChip(status: ShareStatus) {
 }
 
 // ── "Shared with you" tab ────────────────────────────────────────────────────────────────────────────────────────
-export function SharedWithYouTab({ brands, onPendingChange, onOpenTab }: { brands: BrandCount[]; onPendingChange: (count: number) => void; onOpenTab: (tab: CollectionTab) => void }) {
+// ONE implementation for the My Collection page and the quote-builder popup.
+//  - brands: the recipient's own brands for the review form. The popup passes nothing and they are loaded here.
+//  - refreshPage: the page re-reads its server lists after an accept; the popup turns this off (a refresh of the quotation
+//    page is not wanted) and refreshes its own lists through onAccepted instead.
+export function SharedWithYouTab({ brands, onPendingChange, onOpenTab, refreshPage = true, onAccepted }: { brands?: BrandCount[]; onPendingChange: (count: number) => void; onOpenTab: (tab: CollectionTab) => void; refreshPage?: boolean; onAccepted?: (kind: ShareKind) => void }) {
   const router = useRouter();
   const [shares, setShares] = useState<IncomingShareView[] | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -331,6 +338,14 @@ export function SharedWithYouTab({ brands, onPendingChange, onOpenTab }: { brand
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const busyRef = useRef(false);
+  const [loadedBrands, setLoadedBrands] = useState<BrandCount[]>([]);
+  useEffect(() => {
+    if (brands !== undefined) return;
+    let cancelled = false;
+    listCustomItems().then((list) => { if (!cancelled) setLoadedBrands(distinctBrands(list)); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [brands]);
+  const brandList = brands ?? loadedBrands;
 
   async function load() {
     const result = await listIncomingSharesAction();
@@ -358,7 +373,9 @@ export function SharedWithYouTab({ brands, onPendingChange, onOpenTab }: { brand
   const pending = useMemo(() => (shares ?? []).filter((share) => share.status === "pending"), [shares]);
   const history = useMemo(() => (shares ?? []).filter((share) => share.status !== "pending").slice(0, HISTORY_LIMIT), [shares]);
   useEffect(() => {
-    if (shares) onPendingChange(pending.length);
+    if (!shares) return;
+    onPendingChange(pending.length);
+    window.dispatchEvent(new CustomEvent(PENDING_SHARES_EVENT, { detail: pending.length })); // the sidebar badge follows
   }, [shares, pending.length, onPendingChange]);
 
   function setStatus(id: string, status: ShareStatus) {
@@ -370,7 +387,8 @@ export function SharedWithYouTab({ brands, onPendingChange, onOpenTab }: { brand
     setReviewing(null);
     setMessage("");
     setAdded({ tab: share.kind === "custom_item" ? "custom" : "configured", text: `Added "${share.itemName}" to your collection.` });
-    router.refresh(); // the Configured / Custom lists show the new item without a page reload
+    if (refreshPage) router.refresh(); // the page's Configured / Custom lists show the new item without a reload
+    onAccepted?.(share.kind);
   }
 
   async function run(share: IncomingShareView, action: () => Promise<{ ok: true } | { ok: false; message: string }>, onOk: () => void) {
@@ -438,7 +456,7 @@ export function SharedWithYouTab({ brands, onPendingChange, onOpenTab }: { brand
               {reviewing === share.id ? (
                 <li className="list-none">
                   {isCustomShare(share)
-                    ? <ReviewCustomItem share={share} brands={brands} onCancel={() => setReviewing(null)} onAccepted={() => finishAccept(share)} />
+                    ? <ReviewCustomItem share={share} brands={brandList} onCancel={() => setReviewing(null)} onAccepted={() => finishAccept(share)} />
                     : <ReviewSetup share={share as SetupShare} onCancel={() => setReviewing(null)} onAccepted={() => finishAccept(share)} />}
                 </li>
               ) : null}
