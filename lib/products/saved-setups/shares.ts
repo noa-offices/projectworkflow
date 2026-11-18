@@ -353,3 +353,15 @@ export function sharePriceNotice(kind: ShareKind, item?: { currency: string; sel
   const price = item ? ` (${formatCustomItemPrice(item.currency, item.sellingPrice)})` : "";
   return `This will share the price${price} and the picture with them.`;
 }
+
+/**
+ * Notification links: a link into My Collection shows "My Collection" instead of the raw path. Every other value is returned
+ * unchanged, so the labels of inventory and other notifications stay exactly as they are.
+ */
+export function notificationLinkLabel(orderNo: string | null | undefined): string {
+  const text = (orderNo ?? "").trim();
+  return text === "/products/my-collection" || text.startsWith("/products/my-collection?") || text.startsWith("/products/my-collection/") ? "My Collection" : (orderNo ?? "");
+}
+
+/** The My Collection page and popup announce a new pending count so the sidebar badge updates without a reload. */
+export const PENDING_SHARES_EVENT = "my-collection-pending-shares";

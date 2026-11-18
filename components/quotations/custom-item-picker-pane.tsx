@@ -6,6 +6,7 @@ import { addCustomItemToQuotation } from "@/app/quotations/actions";
 import { listCustomItems, markCustomItemUsed } from "@/lib/products/saved-setups/saved-custom-items-actions";
 import { BrandFilterList } from "@/components/products/brand-combobox";
 import { CustomItemActionRow, CustomItemForm, CustomItemThumb, RenameBrand } from "@/components/products/my-collection-custom-items";
+import { ShareControl } from "@/components/products/my-collection-share-send";
 import type { CustomItemWithImage } from "@/lib/products/saved-setups/custom-item-image";
 import { COLLECTION_SORT_OPTIONS, filterSetups, groupByBrand, itemCountLabel, recentlyUsed, sortSetups, type CollectionSortMode } from "@/lib/products/saved-setups/collection-view";
 import { CUSTOM_BRAND_PAGE_SIZE, CUSTOM_BRAND_RECENT_LIMIT, distinctBrands, filterByBrand, normaliseBrandKey } from "@/lib/products/saved-setups/custom-brands";
@@ -47,7 +48,7 @@ function CustomPickCard({ disabled, entry, onPick, onEdit, onDeleted, onMessage 
           <span className="mt-1 block text-xs text-zinc-500">Unit: {item.unitLabel}</span>
         </span>
       </button>
-      <CustomItemActionRow item={item} onEdit={() => onEdit(item as CustomItemWithImage)} onDeleted={onDeleted} onMessage={onMessage} />
+      <CustomItemActionRow item={item} onEdit={() => onEdit(item as CustomItemWithImage)} onDeleted={onDeleted} onMessage={onMessage} extra={<ShareControl kind="custom_item" itemId={item.id} itemName={item.itemName} priceItem={{ currency: item.currency, sellingPrice: item.sellingPrice }} />} />
     </li>
   );
 }

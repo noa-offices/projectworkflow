@@ -136,7 +136,7 @@ test("Escape closes the innermost open thing first, the popup only when nothing 
 
 // ── Controls inside the popup ────────────────────────────────────────────────────────────────────────────────
 test("Configured tab: Rename and two-step Delete on each card, Removed products with Clear removed, shared with the page", () => {
-  assert.match(popup, /<SetupActionRow item=\{item\} actions=\{actions\} \/>/);
+  assert.match(popup, /<SetupActionRow item=\{item\} actions=\{actions\} extra=\{<ShareControl kind="setup" itemId=\{item\.id\} itemName=\{item\.setupName\} \/>\} \/>/);
   assert.match(popup, /useSetupActions\(item, onMessage, callbacks\)/);
   assert.match(popup, /<RemovedProducts items=\{removed\}/);
   assert.match(popup, /onCleared=\{\(\) => setRemoved\(\[\]\)\}/);

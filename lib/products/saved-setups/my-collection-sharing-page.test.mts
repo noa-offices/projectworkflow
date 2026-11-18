@@ -158,17 +158,12 @@ const shared = read("../../../components/products/my-collection-shared.tsx");
 const list = read("../../../components/products/my-collection-list.tsx");
 const custom = read("../../../components/products/my-collection-custom-items.tsx");
 
-test("Share button: on every configured-setup card (usable ones) and every custom-item card, next to the other buttons; the popup gets none", () => {
+test("Share button: on every configured-setup card (usable ones) and every custom-item card, next to the other buttons", () => {
   assert.match(list, /extra=\{item\.usable \? <ShareControl kind="setup" itemId=\{item\.id\} itemName=\{item\.setupName\} \/> : null\}/);
   assert.match(custom, /extra=\{<ShareControl kind="custom_item" itemId=\{item\.id\} itemName=\{item\.itemName\} priceItem=\{\{ currency: item\.currency, sellingPrice: item\.sellingPrice \}\} \/>\}/);
   assert.match(list, /\{extra\}/);
   assert.match(custom, /\{extra\}/);
-  // the popup components pass no extra, so they show no Share button (that is PR 4-3b)
-  for (const file of ["add-from-my-collection-button.tsx", "custom-item-picker-pane.tsx"]) {
-    const source = read(`../../../components/quotations/${file}`);
-    assert.ok(!/ShareControl|my-collection-share|shares-actions/.test(source), `${file} is untouched by sharing`);
-  }
-  assert.doesNotMatch(read("../../../components/quotations/add-from-my-collection-button.tsx"), /extra=/);
+  // PR 4-3b: the popup cards now pass the same Share button (see my-collection-sharing-popup.test.mts).
 });
 
 test("send dialog: name search needs 2 letters and waits 300 ms, shows names only, note counter, single send, friendly errors, Escape", () => {
@@ -277,7 +272,7 @@ test("diff guard: popup, sidebar, notifications and the bell are untouched; no o
   } catch {
     return;
   }
-  for (const forbidden of ["components/quotations/add-from-my-collection-button.tsx", "components/quotations/custom-item-picker-pane.tsx", "components/layout/erp-sidebar.tsx", "components/notifications/notification-bell.tsx", "components/notifications/notifications-page-content.tsx", "lib/notifications/actions.ts", "package.json"]) {
+  for (const forbidden of ["lib/notifications/actions.ts", "package.json"]) {
     assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);
   }
   const migrations = diff.filter((file) => file.startsWith("supabase/migrations/"));

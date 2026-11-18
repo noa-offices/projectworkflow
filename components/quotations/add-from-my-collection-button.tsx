@@ -3,10 +3,14 @@
 import Link from "next/link";
 import { useContext, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { EscapeLayerProvider, useEscapeLayerRegistry } from "@/components/products/escape-layer";
+import { ShareControl } from "@/components/products/my-collection-share-send";
+import { SharedWithYouTab } from "@/components/products/my-collection-shared";
 import { CustomItemPickerPane, CustomItemTargetContext } from "@/components/quotations/custom-item-picker-pane";
 import { ConfiguredFilterColumn, RemovedProducts, SetupActionRow, SetupRenameInput, SetupThumbnail, useSetupActions, type SetupCallbacks } from "@/components/products/my-collection-list";
 import { listPickerSetups, loadSetupForReplay, markSetupUsed } from "@/lib/products/saved-setups/actions";
 import { listRemovedSetups } from "@/lib/products/saved-setups/saved-setups-list-actions";
+import { sharedTabLabel, type ShareKind } from "@/lib/products/saved-setups/shares";
+import { pendingShareCountAction } from "@/lib/products/saved-setups/shares-actions";
 import {
   COLLECTION_SORT_OPTIONS,
   CONFIGURED_PAGE_SIZE,
@@ -52,15 +56,18 @@ function SetupPickCard({ disabled, item, onPick, showProduct, onMessage, callbac
           </span>
         </button>
       )}
-      <SetupActionRow item={item} actions={actions} />
+      <SetupActionRow item={item} actions={actions} extra={<ShareControl kind="setup" itemId={item.id} itemName={item.setupName} />} />
     </li>
   );
 }
 
 export function AddFromMyCollectionButton({
   onChoose,
+  initialTab = "configured",
 }: {
   onChoose: (setup: SetupForUse) => string | null;
+  /** Other places can open the popup straight on a tab. The default is unchanged ("configured"). */
+  initialTab?: "configured" | "custom" | "shared";
 }) {
   const [open, setOpen] = useState(false);
   const [setups, setSetups] = useState<PickerSetup[] | null>(null);
@@ -73,7 +80,8 @@ export function AddFromMyCollectionButton({
   const [notice, setNotice] = useState("");
   const [pending, startTransition] = useTransition();
   const customTarget = useContext(CustomItemTargetContext);
-  const [tab, setTab] = useState<"configured" | "custom">("configured");
+  const [tab, setTab] = useState<"configured" | "custom" | "shared">(initialTab);
+  const [pendingShares, setPendingShares] = useState(0);
   const showConfigured = tab === "configured" || !customTarget;
   const searchRef = useRef<HTMLInputElement>(null);
   const { layers, closeTop } = useEscapeLayerRegistry();
@@ -96,7 +104,7 @@ export function AddFromMyCollectionButton({
 
   function openPicker() {
     setOpen(true);
-    setTab("configured");
+    setTab(initialTab);
     setNotice("");
     setSearch("");
     setSort("recent");
@@ -104,6 +112,12 @@ export function AddFromMyCollectionButton({
     setProduct(null);
     setShown({});
     startTransition(async () => {
+      try {
+        const waiting = await pendingShareCountAction(); // one light count; a failure just shows no count
+        setPendingShares(waiting.ok ? waiting.count : 0);
+      } catch {
+        setPendingShares(0);
+      }
       try {
         setSetups(await listPickerSetups());
       } catch {
@@ -136,6 +150,18 @@ export function AddFromMyCollectionButton({
         void markSetupUsed(id).catch(() => undefined); // best effort: never blocks the user
       } catch {
         setNotice("This setup could not be opened.");
+      }
+    });
+  }
+
+  // A shared setup that was just added shows up in the Configured list at once (the Custom tab reads its list when it opens).
+  function afterShareAccepted(kind: ShareKind) {
+    if (kind !== "setup") return;
+    startTransition(async () => {
+      try {
+        setSetups(await listPickerSetups());
+      } catch {
+        // the list refreshes the next time the popup opens
       }
     });
   }
@@ -208,6 +234,9 @@ export function AddFromMyCollectionButton({
                   {([["configured", "Configured products"], ["custom", "Custom items"]] as const).map(([value, label]) => (
                     <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)} className={`h-9 border-b-2 px-3 text-sm font-semibold transition ${tab === value ? "border-emerald-900 text-emerald-900" : "border-transparent text-zinc-500 hover:text-zinc-800"}`}>{label}</button>
                   ))}
+                  {pendingShares > 0 || tab === "shared" ? (
+                    <button type="button" role="tab" aria-selected={tab === "shared"} onClick={() => setTab("shared")} className={`h-9 border-b-2 px-3 text-sm font-semibold transition ${tab === "shared" ? "border-emerald-900 text-emerald-900" : "border-transparent text-zinc-500 hover:text-zinc-800"}`}>{sharedTabLabel(pendingShares)}</button>
+                  ) : null}
                 </div>
               ) : null}
               {showConfigured ? (
@@ -239,7 +268,22 @@ export function AddFromMyCollectionButton({
               </div>
               ) : null}
             </div>
-            {!showConfigured && customTarget ? <CustomItemPickerPane target={customTarget} onClose={() => setOpen(false)} /> : null}
+            {!showConfigured && customTarget && tab === "custom" ? <CustomItemPickerPane target={customTarget} onClose={() => setOpen(false)} /> : null}
+            {!showConfigured && customTarget && tab === "shared" ? (
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
+                {/* The SAME component and actions as the My Collection page. Accepting here refreshes this popup's own lists,
+                    never the quotation page. */}
+                <SharedWithYouTab
+                  onPendingChange={setPendingShares}
+                  onOpenTab={(next) => { if (next === "configured" || next === "custom") setTab(next); }}
+                  refreshPage={false}
+                  onAccepted={afterShareAccepted}
+                />
+                <p className="text-xs text-zinc-500">
+                  <Link href="/products/my-collection?tab=sent" target="_blank" rel="noopener noreferrer" className="font-semibold text-emerald-900 underline">View sent shares</Link> (opens My Collection in a new tab)
+                </p>
+              </div>
+            ) : null}
             {showConfigured ? (<>
             {notice ? <p role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900 sm:px-5">{notice}</p> : null}
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
