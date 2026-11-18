@@ -179,7 +179,7 @@ test("server add action: same permission and lock checks as the blank-row path, 
   // the blank-row insert gets the overlay laid over the unchanged payload
   assert.match(actions, /\.insert\(overlay \? \{ \.\.\.payload, \.\.\.overlay \} : payload\)/);
   // the blank-row and optimistic paths are not given an overlay
-  assert.equal((actions.match(/createBlankQuotationItemRecord\(\{/g) ?? []).length, 4, "definition + blank + optimistic + custom item");
+  assert.equal((actions.match(/createBlankQuotationItemRecord\(\{/g) ?? []).length, 5, "definition + blank + optimistic + custom item + client history item");
 });
 
 // ── Picker ───────────────────────────────────────────────────────────────────────────────────────────────────

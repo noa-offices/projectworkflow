@@ -1,6 +1,7 @@
 "use server";
 
 import { requireActiveUser } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { quotationLockReason } from "@/lib/quotations/quotation-lock";
@@ -148,6 +149,15 @@ export async function mergeClients(primaryId: string, duplicateId: string): Prom
     .update({ client_id: primaryId } as never)
     .eq("client_id", duplicateId);
   if (pErr) return { ok: false, error: `Failed to move projects: ${pErr.message}` };
+
+  // Client quote history follows the merge. The database function checks the caller's role itself, so it runs with the caller's own
+  // session (not the admin client). A failure never blocks the merge; only a short code is logged.
+  try {
+    const { error: historyError } = await (await createClient()).rpc("client_quote_history_merge_clients", { p_from: duplicateId, p_to: primaryId });
+    if (historyError) console.error("client history merge failed", historyError.code ?? "error");
+  } catch {
+    console.error("client history merge failed", "exception");
+  }
 
   const { error: dErr } = await client
     .from("clients")
