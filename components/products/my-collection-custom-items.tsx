@@ -6,7 +6,8 @@ import { createCustomItem, deleteCustomItem, updateCustomItem } from "@/lib/prod
 import { renameCustomBrand } from "@/lib/products/saved-setups/saved-custom-brands-actions";
 import { copyQuoteImageToCollection, removeCustomItemImage, signCustomItemImageUrls, uploadCustomItemImage } from "@/lib/products/saved-setups/saved-custom-images-actions";
 import { resolveQuotationImageUrl } from "@/lib/quotation-image-path";
-import type { CustomItemWithImage } from "@/lib/products/saved-setups/custom-item-image";
+import { formatImageSize, imageMessage, type CustomItemWithImage } from "@/lib/products/saved-setups/custom-item-image";
+import { compressToWebp } from "@/lib/images/compress-custom-item-image";
 import {
   CUSTOM_BRAND_PAGE_SIZE,
   distinctBrands,
@@ -183,7 +184,7 @@ function RowPicturePreview({ imageRef }: { imageRef: string }) {
   );
 }
 
-function CustomItemImageField({ busy, error, onPick, onRemove, state }: { busy: boolean; error: string; onPick: (file: File) => void; onRemove: () => void; state: ImageState }) {
+function CustomItemImageField({ busy, error, note, onPick, onRetry, onRemove, state }: { busy: string | null; error: string; note: string; onPick: (file: File) => void; onRetry: () => void; onRemove: () => void; state: ImageState }) {
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div className="rounded-md border border-zinc-200 p-3">
@@ -204,15 +205,24 @@ function CustomItemImageField({ busy, error, onPick, onRemove, state }: { busy: 
             }}
           />
           <div className="flex flex-wrap gap-2">
-            <button type="button" disabled={busy} onClick={() => inputRef.current?.click()} className={secondaryButton}>
-              {busy ? "Uploading..." : state.kind === "none" ? "Upload picture" : "Replace picture"}
+            <button type="button" disabled={Boolean(busy)} onClick={() => inputRef.current?.click()} className={secondaryButton}>
+              {busy ?? (state.kind === "none" ? "Upload picture" : "Replace picture")}
             </button>
-            {state.kind !== "none" ? <button type="button" disabled={busy} onClick={onRemove} className={secondaryButton}>Remove picture</button> : null}
+            {state.kind !== "none" ? <button type="button" disabled={Boolean(busy)} onClick={onRemove} className={secondaryButton}>Remove picture</button> : null}
           </div>
-          <p className="text-[11px] text-zinc-500">PNG, JPG or WebP, up to 5 MB.{state.kind === "row" ? " This is the row's current picture; it is copied when you save." : ""}</p>
+          <p className="text-[11px] text-zinc-500">PNG, JPG or WebP, up to 10 MB. We compress it to a small WebP automatically.{state.kind === "row" ? " This is the row's current picture; it is copied when you save." : ""}</p>
+          {note && !error ? <p role="status" className="text-[11px] font-semibold text-emerald-800">{note}</p> : null}
         </div>
       </div>
-      {error ? <p role="alert" className="mt-2 text-xs text-red-700">{error}</p> : null}
+      {error ? (
+        <div role="alert" className="mt-2 space-y-2">
+          <p className="text-xs text-red-700">{error}</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={Boolean(busy)} onClick={onRetry} className={secondaryButton}>Try again</button>
+            <button type="button" disabled={Boolean(busy)} onClick={() => inputRef.current?.click()} className={secondaryButton}>Choose another picture</button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -224,8 +234,11 @@ export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null
   const [formError, setFormError] = useState("");
   const [pending, startTransition] = useTransition();
   const [image, setImage] = useState<ImageState>(() => (item?.imagePath ? { kind: "saved", path: item.imagePath } : rowImageRef ? { kind: "row", ref: rowImageRef } : { kind: "none" }));
-  const [imageBusy, setImageBusy] = useState(false);
+  // "Compressing..." / "Uploading..." while a picture is being prepared; Save is disabled so a half-uploaded picture is never saved.
+  const [imageBusy, setImageBusy] = useState<string | null>(null);
   const [imageError, setImageError] = useState("");
+  const [imageNote, setImageNote] = useState("");
+  const lastFile = useRef<File | null>(null);
   const set = (key: keyof FormValues) => (event: { target: { value: string } }) => setValues((current) => ({ ...current, [key]: event.target.value }));
 
   function submit() {
@@ -245,7 +258,7 @@ export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null
       else if (image.kind === "row") {
         const copied = await copyQuoteImageToCollection(image.ref);
         if (!copied.ok) {
-          setImageError(`${copied.error} Remove the picture to save without it, or try again.`);
+          setImageError(copied.error);
           return;
         }
         imagePath = copiedPath = copied.path;
@@ -261,19 +274,29 @@ export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null
       if (copiedPath) void removeCustomItemImage(copiedPath);
       if (image.kind === "uploaded" && !result.fieldErrors) {
         setImage({ kind: "none" });
-        setImageError("The picture was not saved. Add it again.");
+        setImageError(imageMessage("unknown"));
       }
       setErrors(result.fieldErrors ?? {});
       setFormError(result.fieldErrors ? "" : result.error);
     });
   }
 
+  // Browser first (Vercel limits a request body to about 4.5 MB, so the original is never posted), then upload the small
+  // WebP. Every failure becomes a plain-English message under the field; nothing half-saved is kept.
   async function pickImage(file: File) {
-    setImageBusy(true);
+    lastFile.current = file;
     setImageError("");
+    setImageNote("");
+    setImageBusy("Compressing...");
     try {
+      const compressed = await compressToWebp(file);
+      if (!compressed.ok) {
+        setImageError(compressed.error);
+        return;
+      }
+      setImageBusy("Uploading...");
       const body = new FormData();
-      body.set("file", file);
+      body.set("file", compressed.file);
       const result = await uploadCustomItemImage(body);
       if (!result.ok) {
         setImageError(result.error);
@@ -282,17 +305,27 @@ export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null
       // Replacing a picture that was uploaded in this form but never saved: the earlier file goes (best effort).
       if (image.kind === "uploaded") void removeCustomItemImage(image.path);
       setImage({ kind: "uploaded", path: result.path });
+      setImageNote(`Saved as ${formatImageSize(result.size ?? compressed.finalBytes)}`);
+      lastFile.current = null;
     } catch {
-      setImageError("The picture could not be uploaded. Try again.");
+      setImageError(imageMessage("upload_failed"));
     } finally {
-      setImageBusy(false);
+      setImageBusy(null);
     }
+  }
+
+  // "Try again": run the same file again; if there is no file (the row picture copy failed), save again.
+  function retryImage() {
+    if (lastFile.current) void pickImage(lastFile.current);
+    else if (!pending) { setImageError(""); submit(); }
   }
 
   function removeImage() {
     if (image.kind === "uploaded") void removeCustomItemImage(image.path);
     setImage({ kind: "none" });
     setImageError("");
+    setImageNote("");
+    lastFile.current = null;
   }
 
   function cancel() {
@@ -332,10 +365,10 @@ export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null
       <Field label="Specification (optional)" error={errors.specification}>
         <textarea value={values.specification} maxLength={CUSTOM_ITEM_SPEC_MAX} rows={3} onChange={set("specification")} aria-label="Specification" className="w-full rounded-md border border-zinc-300 px-2 py-2 text-sm outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10" />
       </Field>
-      <CustomItemImageField state={image} busy={imageBusy} error={imageError} onPick={(file) => { void pickImage(file); }} onRemove={removeImage} />
+      <CustomItemImageField state={image} busy={imageBusy} error={imageError} note={imageNote} onPick={(file) => { void pickImage(file); }} onRetry={retryImage} onRemove={removeImage} />
       {formError ? <p role="alert" className="text-xs text-red-700">{formError}</p> : null}
       <div className="flex gap-2">
-        <button type="submit" disabled={pending || imageBusy} className={primaryButton}>{pending ? "Saving..." : "Save item"}</button>
+        <button type="submit" disabled={pending || Boolean(imageBusy)} className={primaryButton}>{pending ? "Saving..." : "Save item"}</button>
         <button type="button" disabled={pending} onClick={cancel} className={secondaryButton}>Cancel</button>
       </div>
     </form>

@@ -5,7 +5,7 @@ import { SaveAsCustomItemButton } from "@/components/quotations/save-as-custom-i
 import { CustomItemTargetProvider } from "@/components/quotations/custom-item-picker-pane";
 import { overlayFields, rowOverlayFromCustomItem } from "@/lib/products/saved-setups/custom-item-line";
 import type { CustomItemListItem } from "@/lib/products/saved-setups/custom-item";
-import type { CustomItemWithImage } from "@/lib/products/saved-setups/custom-item-image";
+import { imageMessage, type CustomItemWithImage } from "@/lib/products/saved-setups/custom-item-image";
 import { copyCustomItemImageToQuote } from "@/lib/products/saved-setups/saved-custom-images-actions";
 import { announcedSnapshotOf } from "@/lib/products/price-announcements";
 import { readPricingRule, type PricingRule } from "@/lib/quotation-pricing";
@@ -2520,16 +2520,16 @@ export function LocalQuotationBuilder({
     // Picture (best effort, after the row exists): the server COPIES it into quote-images; the row then holds the usual
     // "bucket:path" in its picture field. A failure leaves the row without a picture and says so.
     if ((item as CustomItemWithImage).imagePath) {
-      const pictureFailed = () => setSaveMessage("The picture could not be copied, so the row was added without it.");
+      const pictureFailed = (message?: string) => setSaveMessage(message ?? imageMessage("copy_to_quote_failed", "storage"));
       copyCustomItemImageToQuote(item.id, workspace.server_quotation_id, rowId)
         .then((copied) => {
-          if (!copied.ok) return pictureFailed();
+          if (!copied.ok) return pictureFailed(copied.error);
           commit((current) => ({
             ...current,
             items: current.items.map((row) => (row.id === rowId ? { ...row, proposed_image_url_snapshot: copied.ref, updated_at: localNow() } : row)),
           }));
         })
-        .catch(pictureFailed);
+        .catch(() => pictureFailed());
     }
     return overlay.conversionNote;
   }

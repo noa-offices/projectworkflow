@@ -9,18 +9,27 @@ import { isUuid } from "./recipe";
 import { distinctBrands, normaliseBrandKey, resolveBrandInput } from "./custom-brands";
 import {
   CUSTOM_IMAGE_BUCKET,
-  CUSTOM_IMAGE_MAX_BYTES,
+  MAX_LONG_SIDE,
+  MAX_STORED_BYTES,
   QUOTE_IMAGE_BUCKET,
+  STORED_IMAGE_TYPE,
   buildImagePath,
   buildQuoteRowImagePath,
+  classifyStorageError,
+  imageMessage,
   imageNameFromPath,
   imageTypeFromPath,
   isOwnImagePath,
+  isWebpBytes,
   quoteImageStoragePath,
   quoteRowImageRef,
+  validateCopyableStored,
   validateImageFile,
+  validateStoredWebp,
   type CustomItemWithImage,
+  type ImageErrorKind,
 } from "./custom-item-image";
+import { pictureDimensions, toStoredWebp } from "./custom-item-image-sharp";
 import {
   firstCustomItemError,
   validateCustomItem,
@@ -272,48 +281,86 @@ export async function removeUnusedCustomImageForUser(supabase: SupabaseClient, u
 }
 
 export type ImageFileInput = { type: string; size: number; name: string; arrayBuffer: () => Promise<ArrayBuffer> };
-export type ImageUploadResult = { ok: true; path: string } | { ok: false; error: string };
+// error is always a finished plain-English message (see IMAGE_MESSAGES); never a path, an id or raw storage JSON.
+export type ImageUploadResult = { ok: true; path: string; size?: number } | { ok: false; error: string; kind?: ImageErrorKind };
 
-async function putCustomImage(supabase: SupabaseClient, userId: string, body: Uint8Array, name: string, type: string, now: Date): Promise<ImageUploadResult> {
-  const path = buildImagePath(userId, crypto.randomUUID(), name, now, type);
-  const { data, error } = await supabase.storage.from(CUSTOM_IMAGE_BUCKET).upload(path, body, { cacheControl: "3600", contentType: type, upsert: false });
-  if (error || !data?.path) return { ok: false, error: "The picture could not be uploaded. Try again." };
-  return { ok: true, path: data.path };
+function fail(kind: ImageErrorKind, detail?: string | number): { ok: false; error: string; kind: ImageErrorKind } {
+  return { ok: false, error: imageMessage(kind, detail), kind };
 }
 
-/** Upload from the form: type and size are checked here (never trusted from the browser), the path is built here. */
-export async function uploadCustomItemImageForUser(supabase: SupabaseClient, userId: string, file: ImageFileInput, now: Date = new Date()): Promise<ImageUploadResult> {
-  const checked = validateImageFile(file?.type, file?.size, file?.name);
-  if (!checked.ok) return { ok: false, error: checked.error };
+/** Technical detail goes to the SERVER log only; the user sees the mapped message. */
+function logPictureProblem(where: string, problem: unknown) {
   try {
-    const body = new Uint8Array(await file.arrayBuffer());
-    if (body.byteLength !== file.size || body.byteLength > CUSTOM_IMAGE_MAX_BYTES) return { ok: false, error: "The picture must be 5 MB or smaller." };
-    return await putCustomImage(supabase, userId, body, file.name, file.type, now);
+    console.error(`custom item picture (${where}):`, problem instanceof Error ? problem.message : problem);
   } catch {
-    return { ok: false, error: "The picture could not be uploaded. Try again." };
+    // logging must never fail an action
   }
 }
 
-/** Quote row picture ("quote-images:quotation-items/...") -> a COPY in the owner's folder of my-collection-images. */
+async function putCustomImage(supabase: SupabaseClient, userId: string, body: Uint8Array, name: string, now: Date, onFail: (reason: "storage" | "not_allowed") => ImageUploadResult): Promise<ImageUploadResult> {
+  const path = buildImagePath(userId, crypto.randomUUID(), name, now, STORED_IMAGE_TYPE);
+  const { data, error } = await supabase.storage.from(CUSTOM_IMAGE_BUCKET).upload(path, body, { cacheControl: "3600", contentType: STORED_IMAGE_TYPE, upsert: false });
+  if (error || !data?.path) {
+    logPictureProblem("upload", error);
+    return onFail(classifyStorageError(error) === "not_allowed" ? "not_allowed" : "storage");
+  }
+  return { ok: true, path: data.path, size: body.byteLength };
+}
+
+/**
+ * Upload from the form. The BROWSER already compressed the picture (Vercel limits a request body to about 4.5 MB), so the
+ * server accepts only image/webp, <= 2 MB, with real WebP bytes. It never trusts the browser: type, size, magic bytes and
+ * name are re-checked here, the path is built here from the session user, and a picture over 1600 px on its long side is
+ * re-encoded with sharp as a fallback.
+ */
+export async function uploadCustomItemImageForUser(supabase: SupabaseClient, userId: string, file: ImageFileInput, now: Date = new Date()): Promise<ImageUploadResult> {
+  const checked = validateStoredWebp(file?.type, file?.size, file?.name);
+  if (!checked.ok) return { ok: false, error: checked.error, kind: checked.kind };
+  try {
+    let body: Uint8Array = new Uint8Array(await file.arrayBuffer());
+    if (body.byteLength !== file.size || body.byteLength > MAX_STORED_BYTES) return fail("server_rejected", "over_limit");
+    if (!isWebpBytes(body)) return fail("server_rejected", "invalid_webp");
+    const size = await pictureDimensions(body);
+    if (!size) return fail("server_rejected", "unreadable");
+    if (Math.max(size.width, size.height) > MAX_LONG_SIDE) {
+      const again = await toStoredWebp(body);
+      if (!again.ok) return fail("server_rejected", again.reason);
+      body = again.bytes;
+    }
+    return await putCustomImage(supabase, userId, body, checked.fileName, now, (reason) => fail(reason === "not_allowed" ? "not_allowed" : "upload_failed"));
+  } catch (error) {
+    logPictureProblem("upload", error);
+    return fail("unknown");
+  }
+}
+
+/** Quote row picture ("quote-images:quotation-items/...") -> a WebP (<= 2 MB, long side <= 1600) in the owner's folder. */
 export async function copyQuoteImageToCollectionForUser(supabase: SupabaseClient, userId: string, ref: unknown, now: Date = new Date()): Promise<ImageUploadResult> {
   const source = quoteImageStoragePath(ref);
-  if (!source) return { ok: false, error: "This picture cannot be copied." };
+  if (!source) return fail("copy_from_row_failed", "not_copyable");
   try {
     const { data, error } = await supabase.storage.from(QUOTE_IMAGE_BUCKET).download(source);
-    if (error || !data) return { ok: false, error: "The row picture could not be read." };
+    if (error || !data) {
+      logPictureProblem("copy from row (download)", error);
+      return fail("copy_from_row_failed", classifyStorageError(error) === "not_allowed" ? "not_allowed" : "not_found");
+    }
     const name = imageNameFromPath(source);
     const type = imageTypeFromPath(source) ?? (typeof data.type === "string" ? data.type : "");
     const checked = validateImageFile(type, data.size, name);
-    if (!checked.ok) return { ok: false, error: checked.error };
-    return await putCustomImage(supabase, userId, new Uint8Array(await data.arrayBuffer()), name, type, now);
-  } catch {
-    return { ok: false, error: "The picture could not be copied." };
+    if (!checked.ok) return fail("copy_from_row_failed", checked.kind === "too_large" ? "too_big_to_read" : "not_copyable");
+    const converted = await toStoredWebp(new Uint8Array(await data.arrayBuffer()));
+    if (!converted.ok) return fail("copy_from_row_failed", converted.reason);
+    return await putCustomImage(supabase, userId, converted.bytes, name, now, (reason) => fail("copy_from_row_failed", reason));
+  } catch (error) {
+    logPictureProblem("copy from row", error);
+    return fail("copy_from_row_failed", "storage");
   }
 }
 
 /**
  * My Collection picture -> a COPY in quote-images under the NEW row's own path, so a quote row never points at a private
- * My Collection path. Needs the caller to be allowed to write quote-images (the callers check that first).
+ * My Collection path. A stored WebP is copied as is (content type image/webp, a .webp name); an OLD png/jpeg picture from
+ * before PR 2b-3b is copied as is too, so it keeps working. Needs the caller to be allowed to write quote-images.
  */
 export async function copyCustomImageToQuoteRowForUser(
   supabase: SupabaseClient,
@@ -321,29 +368,38 @@ export async function copyCustomImageToQuoteRowForUser(
   input: { imagePath: unknown; quotationId: string; rowId: string },
   now: Date = new Date(),
 ): Promise<{ ok: true; ref: string } | { ok: false; error: string }> {
-  if (!isOwnImagePath(userId, input.imagePath)) return { ok: false, error: "This picture cannot be copied." };
+  if (!isOwnImagePath(userId, input.imagePath)) return fail("copy_to_quote_failed", "not_copyable");
   try {
     const { data, error } = await supabase.storage.from(CUSTOM_IMAGE_BUCKET).download(input.imagePath);
-    if (error || !data) return { ok: false, error: "The picture could not be read." };
+    if (error || !data) {
+      logPictureProblem("copy to quote (download)", error);
+      return fail("copy_to_quote_failed", "not_found");
+    }
     const name = imageNameFromPath(input.imagePath);
-    const type = imageTypeFromPath(input.imagePath) ?? (typeof data.type === "string" ? data.type : "");
-    const checked = validateImageFile(type, data.size, name);
-    if (!checked.ok) return { ok: false, error: checked.error };
+    const type = imageTypeFromPath(input.imagePath);
+    // The file name decides the type; for a .webp the stored content type must say image/webp as well.
+    if (!type || (type === STORED_IMAGE_TYPE && data.type && data.type !== STORED_IMAGE_TYPE) || !validateCopyableStored(type, data.size)) {
+      return fail("copy_to_quote_failed", "not_copyable");
+    }
     const target = buildQuoteRowImagePath(input.quotationId, input.rowId, name, now, type);
     const { data: uploaded, error: uploadError } = await supabase.storage
       .from(QUOTE_IMAGE_BUCKET)
       .upload(target, new Uint8Array(await data.arrayBuffer()), { cacheControl: "3600", contentType: type, upsert: false });
-    if (uploadError || !uploaded?.path) return { ok: false, error: "The picture could not be copied." };
+    if (uploadError || !uploaded?.path) {
+      logPictureProblem("copy to quote (upload)", uploadError);
+      return fail("copy_to_quote_failed", classifyStorageError(uploadError) === "not_allowed" ? "not_allowed" : "storage");
+    }
     return { ok: true, ref: quoteRowImageRef(uploaded.path) };
-  } catch {
-    return { ok: false, error: "The picture could not be copied." };
+  } catch (error) {
+    logPictureProblem("copy to quote", error);
+    return fail("copy_to_quote_failed", "storage");
   }
 }
 
 /**
  * Server builder: after the manual row exists, copy the item's picture into quote-images and set the row's usual picture
- * field ("bucket:path", proposed_image_url_snapshot). Never throws; a failure returns a short note and the row stays
- * without a picture (the copied file is removed again if the row could not be updated).
+ * field ("bucket:path", proposed_image_url_snapshot). Never throws; a failure returns a short note (with the reason) and the
+ * row stays without a picture (the copied file is removed again if the row could not be updated).
  */
 export async function addCustomItemPictureToQuoteRow(
   supabase: SupabaseClient,
@@ -351,9 +407,9 @@ export async function addCustomItemPictureToQuoteRow(
   input: { imagePath: string | null | undefined; quotationId: string; rowId: string },
 ): Promise<{ ok: true; attached: boolean } | { ok: false; note: string }> {
   if (!input.imagePath) return { ok: true, attached: false };
-  const note = "The picture could not be copied, so the row was added without it.";
   const copied = await copyCustomImageToQuoteRowForUser(supabase, userId, { imagePath: input.imagePath, quotationId: input.quotationId, rowId: input.rowId });
-  if (!copied.ok) return { ok: false, note };
+  if (!copied.ok) return { ok: false, note: copied.error };
+  const note = imageMessage("copy_to_quote_failed", "storage");
   try {
     const { data, error } = await supabase
       .from("quotation_items")
