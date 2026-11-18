@@ -228,6 +228,7 @@ export function CustomItemPickerPane({ target, onClose }: { target: CustomItemTa
             key={panel.mode === "edit" ? panel.item.id : "new"}
             item={panel.mode === "edit" ? panel.item : null}
             brands={brands}
+            showBack
             onDone={() => setPanel(null)}
             onSaved={() => { setPanel(null); reload(); }}
           />

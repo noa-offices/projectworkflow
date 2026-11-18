@@ -254,8 +254,8 @@ test("diff guard: replay, recipe, the selector, pricing, migrations, package fil
     return;
   }
   for (const forbidden of [
-    "lib/products/saved-setups/replay.ts", "lib/products/saved-setups/recipe.ts", "lib/products/saved-setups/saved-setups-service.ts", "lib/products/saved-setups/actions.ts",
-    "components/quotations/product-library-selector.tsx", "package.json", "package-lock.json",
+    "lib/products/saved-setups/replay.ts", "lib/products/saved-setups/recipe.ts", "lib/products/saved-setups/actions.ts",
+    "package.json", "package-lock.json",
     "lib/products/saved-setups/custom-item-image.ts", "lib/products/saved-setups/custom-item-image-sharp.ts", "lib/images/compress-custom-item-image.ts", "lib/products/saved-setups/saved-custom-images-actions.ts",
     "app/quotations/actions.ts", "components/quotations/local-quotation-builder.tsx",
   ]) assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);

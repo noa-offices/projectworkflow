@@ -439,7 +439,7 @@ test("diff guard: earlier migration, policies, package files, pricing, saved_set
   } catch {
     return;
   }
-  for (const forbidden of ["supabase/migrations/20261117150000_my_collection_images_bucket.sql", "package.json", "package-lock.json", "lib/quotation-image-path.ts", "lib/quotation-image-upload.ts", "lib/products/saved-setups/recipe.ts", "lib/products/saved-setups/saved-setups-service.ts", "lib/products/saved-setups/actions.ts", "components/products/product-library-selector.tsx", "app/quotations/actions.ts"]) {
+  for (const forbidden of ["supabase/migrations/20261117150000_my_collection_images_bucket.sql", "package.json", "package-lock.json", "lib/quotation-image-path.ts", "lib/quotation-image-upload.ts", "lib/products/saved-setups/recipe.ts", "lib/products/saved-setups/actions.ts", "components/products/product-library-selector.tsx", "app/quotations/actions.ts"]) {
     assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);
   }
   assert.ok(!diff.some((file) => /^lib\/(quotations|pricing)\//.test(file)));

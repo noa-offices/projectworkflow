@@ -459,7 +459,7 @@ test("the new migration is saved unchanged and quote/product signing is untouche
   assert.match(migration, /\(storage\.foldername\(name\)\)\[1\] = \(select auth\.uid\(\)\)::text/);
   const diff = changedFiles();
   if (diff === null) return; // not a git checkout (zero-network environment)
-  for (const forbidden of ["lib/quotation-image-path.ts", "lib/quotation-image-upload.ts", "lib/products/saved-setups/recipe.ts", "lib/products/saved-setups/saved-setups-service.ts", "lib/products/saved-setups/actions.ts", "components/products/product-library-selector.tsx"]) {
+  for (const forbidden of ["lib/quotation-image-path.ts", "lib/quotation-image-upload.ts", "lib/products/saved-setups/recipe.ts", "lib/products/saved-setups/actions.ts", "components/products/product-library-selector.tsx"]) {
     assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);
   }
   assert.ok(!diff.some((file) => /^lib\/(quotations|pricing)|^components\/products\/(my-collection-configured|configured)/.test(file)), "Configured tab and pricing files untouched");

@@ -53,6 +53,7 @@ function SetupPickCard({ disabled, item, onPick, showProduct, onMessage, callbac
           <span className="min-w-0 flex-1">
             <span className="block break-words text-sm font-bold leading-snug text-zinc-900">{item.setupName}</span>
             {showProduct ? <span className="mt-1 block truncate text-xs text-zinc-500">{item.productName}</span> : null}
+            {item.productCode ? <span className="mt-1 block truncate text-xs text-zinc-400">{item.productCode}</span> : null}
           </span>
         </button>
       )}
@@ -277,6 +278,7 @@ export function AddFromMyCollectionButton({
                   onPendingChange={setPendingShares}
                   onOpenTab={(next) => { if (next === "configured" || next === "custom") setTab(next); }}
                   refreshPage={false}
+                  showBack
                   onAccepted={afterShareAccepted}
                 />
                 <p className="text-xs text-zinc-500">

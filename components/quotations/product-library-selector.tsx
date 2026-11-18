@@ -5364,6 +5364,7 @@ export function ProductLibrarySelector({
                           <div className="max-h-[32rem] overflow-y-auto pr-1 text-left">
                             <ManufacturerFinishGuidancePanel guidance={normalizeManufacturerFinishGuidance(template.material_suggestions)} />
                             <FinishSelectionsEditor
+                              key={`finishes-${replay?.key ?? 0}`}
                               brands={finishBrands}
                               initialBrandId={template.brand_id}
                               initialFinishes={selectedFinishes}

@@ -20,6 +20,8 @@ export type CollectionDisplayItem = {
   useCount?: number | null;
   /** Optional extra search text (custom items: the item code). */
   code?: string | null;
+  /** Configured setups: the product's main code (display and search only). */
+  productCode?: string | null;
 };
 
 function time(value: string | null | undefined): number {
@@ -31,11 +33,24 @@ function byName(a: CollectionDisplayItem, b: CollectionDisplayItem) {
   return a.setupName.localeCompare(b.setupName, undefined, { sensitivity: "base", numeric: true }) || a.id.localeCompare(b.id);
 }
 
-/** Case-insensitive match on setup name, product name or brand. An empty query keeps everything. */
+/** Lower case with spaces, dashes, underscores and dots removed: "EV-211" and "ev 211" both become "ev211". */
+export function normaliseSearchKey(value: unknown): string {
+  return typeof value === "string" ? value.toLowerCase().replace(/[\s\-_.]+/g, "") : "";
+}
+
+/**
+ * Case-insensitive match on setup name, product name, brand, item code and the product's main code. An empty query keeps
+ * everything. A query also matches when it only differs by spaces or dashes ("ev211" finds "EV-211").
+ */
 export function filterSetups<T extends CollectionDisplayItem>(items: readonly T[], query: string): T[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return [...items];
-  return items.filter((item) => [item.setupName, item.productName, item.brandName, item.code ?? ""].some((value) => value.toLowerCase().includes(needle)));
+  const compact = normaliseSearchKey(needle);
+  return items.filter((item) =>
+    [item.setupName, item.productName, item.brandName, item.code ?? "", item.productCode ?? ""].some(
+      (value) => value.toLowerCase().includes(needle) || (compact !== "" && normaliseSearchKey(value).includes(compact)),
+    ),
+  );
 }
 
 /**
@@ -137,11 +152,17 @@ export function setupCountLabel(count: number): string {
   return `${count} ${count === 1 ? "setup" : "setups"}`;
 }
 
-/** "17 Nov 2026" (UTC, so the same text on server and browser). Empty when the date is missing. */
+/** The time zone of every date shown in My Collection (saved, created, shared, sent). Not the server's or the browser's zone. */
+export const COLLECTION_TIME_ZONE = "Asia/Dubai";
+
+/**
+ * "17 Nov 2026" in Dubai time, so the same text shows on the server and in every browser. ONE helper for the whole of
+ * My Collection (page, popup, Shared with you, Sent). Empty when the date is missing.
+ */
 export function formatSavedDate(value: string | null | undefined): string {
   const parsed = value ? new Date(value) : null;
   if (!parsed || Number.isNaN(parsed.getTime())) return "";
-  return parsed.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return parsed.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: COLLECTION_TIME_ZONE });
 }
 
 /** "Saved 17 Nov 2026 · Used 3 times" (or "Not used yet"). */

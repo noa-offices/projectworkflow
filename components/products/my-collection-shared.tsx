@@ -63,6 +63,26 @@ function Field({ label, error, children }: { label: string; error?: string; chil
   );
 }
 
+// "← Back to list" at the top of an edit panel (popup). Returns to the list WITHOUT saving; if there is unsaved typing it first
+// asks "Discard changes?" (two steps). Escape is not affected: it still closes the panel first, then the popup.
+export function PanelBackBar({ dirty, onBack }: { dirty: boolean; onBack: () => void }) {
+  const [asking, setAsking] = useState(false);
+  if (asking) {
+    return (
+      <div role="group" aria-label="Discard changes?" className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+        <span className="text-xs font-semibold text-amber-900">Discard changes?</span>
+        <button type="button" onClick={onBack} className="h-8 rounded-md bg-red-700 px-3 text-xs font-semibold text-white transition hover:bg-red-800">Discard changes</button>
+        <button type="button" onClick={() => setAsking(false)} className={secondaryButton}>Keep editing</button>
+      </div>
+    );
+  }
+  return (
+    <button type="button" onClick={() => (dirty ? setAsking(true) : onBack())} className="inline-flex h-8 items-center rounded-md border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">
+      &larr; Back to list
+    </button>
+  );
+}
+
 function PictureBox({ url, name }: { url: string | null; name: string }) {
   return (
     <div style={{ width: 96, height: 96 }} className="flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 text-[10px] text-zinc-400">
@@ -81,7 +101,7 @@ const isCustomShare = (share: IncomingShareView): share is CustomShare => share.
 // ── Review & edit panel (custom item): the recipient edits their OWN copy before it is added ─────────────────────
 type PictureMode = "keep" | "remove" | "replace";
 
-function ReviewCustomItem({ share, brands, onCancel, onAccepted }: { share: CustomShare; brands: BrandCount[]; onCancel: () => void; onAccepted: () => void }) {
+function ReviewCustomItem({ share, brands, onCancel, onAccepted, showBack = false }: { share: CustomShare; brands: BrandCount[]; onCancel: () => void; onAccepted: () => void; showBack?: boolean }) {
   const { item } = share;
   const [brand, setBrand] = useState(item.brandName);
   const [name, setName] = useState(item.itemName);
@@ -101,6 +121,10 @@ function ReviewCustomItem({ share, brands, onCancel, onAccepted }: { share: Cust
   const savingRef = useRef(false);
   useEscapeLayer(true, onCancel);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
+  const dirty =
+    brand !== item.brandName || name !== item.itemName || code !== (item.itemCode ?? "") || spec !== (item.specification ?? "") ||
+    unit !== item.unitLabel || price !== String(item.sellingPrice) || currency !== item.currency ||
+    mode !== (share.hasPicture ? "keep" : "remove") || file !== null;
 
   async function pick(chosen: File) {
     setPictureError("");
@@ -162,6 +186,7 @@ function ReviewCustomItem({ share, brands, onCancel, onAccepted }: { share: Cust
       onSubmit={(event) => { event.preventDefault(); void submit(); }}
       className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/40 p-4"
     >
+      {showBack ? <PanelBackBar dirty={dirty} onBack={onCancel} /> : null}
       <p className="text-xs text-zinc-600">Check and change anything you like. This becomes your own copy.</p>
       <div className="grid gap-3 sm:grid-cols-2">
         <BrandCombobox brands={brands} value={brand} error={errors.brandName} onChange={setBrand} />
@@ -223,7 +248,7 @@ function ReviewCustomItem({ share, brands, onCancel, onAccepted }: { share: Cust
 }
 
 // ── Review & edit panel (setup): only the name and note can change; brand and product come from the product ──────
-function ReviewSetup({ share, onCancel, onAccepted }: { share: SetupShare; onCancel: () => void; onAccepted: () => void }) {
+function ReviewSetup({ share, onCancel, onAccepted, showBack = false }: { share: SetupShare; onCancel: () => void; onAccepted: () => void; showBack?: boolean }) {
   const { item } = share;
   const [name, setName] = useState(item.setupName);
   const [note, setNote] = useState(item.note ?? "");
@@ -231,6 +256,7 @@ function ReviewSetup({ share, onCancel, onAccepted }: { share: SetupShare; onCan
   const [error, setError] = useState("");
   const savingRef = useRef(false);
   useEscapeLayer(true, onCancel);
+  const dirty = name !== item.setupName || note !== (item.note ?? "");
 
   async function submit() {
     if (savingRef.current) return;
@@ -256,6 +282,7 @@ function ReviewSetup({ share, onCancel, onAccepted }: { share: SetupShare; onCan
       onSubmit={(event) => { event.preventDefault(); void submit(); }}
       className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/40 p-4"
     >
+      {showBack ? <PanelBackBar dirty={dirty} onBack={onCancel} /> : null}
       <p className="text-xs text-zinc-600">You can rename it. Brand and product come from the product itself.</p>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Brand"><p className="flex h-9 items-center rounded-md border border-zinc-200 bg-zinc-50 px-2 text-sm text-zinc-700">{item.brandName}</p></Field>
@@ -329,7 +356,7 @@ function statusChip(status: ShareStatus) {
 //  - brands: the recipient's own brands for the review form. The popup passes nothing and they are loaded here.
 //  - refreshPage: the page re-reads its server lists after an accept; the popup turns this off (a refresh of the quotation
 //    page is not wanted) and refreshes its own lists through onAccepted instead.
-export function SharedWithYouTab({ brands, onPendingChange, onOpenTab, refreshPage = true, onAccepted }: { brands?: BrandCount[]; onPendingChange: (count: number) => void; onOpenTab: (tab: CollectionTab) => void; refreshPage?: boolean; onAccepted?: (kind: ShareKind) => void }) {
+export function SharedWithYouTab({ brands, onPendingChange, onOpenTab, refreshPage = true, onAccepted, showBack = false }: { brands?: BrandCount[]; onPendingChange: (count: number) => void; onOpenTab: (tab: CollectionTab) => void; refreshPage?: boolean; onAccepted?: (kind: ShareKind) => void; showBack?: boolean }) {
   const router = useRouter();
   const [shares, setShares] = useState<IncomingShareView[] | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -456,8 +483,8 @@ export function SharedWithYouTab({ brands, onPendingChange, onOpenTab, refreshPa
               {reviewing === share.id ? (
                 <li className="list-none">
                   {isCustomShare(share)
-                    ? <ReviewCustomItem share={share} brands={brandList} onCancel={() => setReviewing(null)} onAccepted={() => finishAccept(share)} />
-                    : <ReviewSetup share={share as SetupShare} onCancel={() => setReviewing(null)} onAccepted={() => finishAccept(share)} />}
+                    ? <ReviewCustomItem share={share} brands={brandList} showBack={showBack} onCancel={() => setReviewing(null)} onAccepted={() => finishAccept(share)} />
+                    : <ReviewSetup share={share as SetupShare} showBack={showBack} onCancel={() => setReviewing(null)} onAccepted={() => finishAccept(share)} />}
                 </li>
               ) : null}
             </Fragment>
