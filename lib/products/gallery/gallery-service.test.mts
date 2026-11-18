@@ -77,7 +77,6 @@ mock.module("@/lib/supabase/server", { namedExports: { createClient: async () =>
 mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => { world.adminCalls += 1; return { error: "no admin", client: null }; } } });
 
 const actions = await import("./gallery-actions");
-const service = await import("./gallery-service");
 const { GALLERY_MESSAGES } = await import("./gallery");
 
 const storedRecipe = {
