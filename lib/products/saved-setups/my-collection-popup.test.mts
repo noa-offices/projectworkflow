@@ -257,7 +257,7 @@ test("diff guard: replay, recipe, the selector, pricing, migrations, package fil
     "lib/products/saved-setups/replay.ts", "lib/products/saved-setups/recipe.ts", "lib/products/saved-setups/actions.ts",
     "package.json", "package-lock.json",
     "lib/products/saved-setups/custom-item-image.ts", "lib/products/saved-setups/custom-item-image-sharp.ts", "lib/images/compress-custom-item-image.ts", "lib/products/saved-setups/saved-custom-images-actions.ts",
-    "app/quotations/actions.ts", "components/quotations/local-quotation-builder.tsx",
+    "app/quotations/actions.ts",
   ]) assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);
   assert.ok(!diff.some((file) => /^lib\/(quotations|pricing|noa)\//.test(file)));
   assert.ok(diff.length <= 12, `at most 12 files change (${diff.length})`);

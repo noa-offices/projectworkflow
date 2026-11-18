@@ -290,9 +290,28 @@ function statusLabel(status: string) {
   return status.replaceAll("_", " ");
 }
 
-function cleanOptionalDetailValue(value: string) {
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
+// While typing, text is kept EXACTLY as typed: a trailing space must survive the next keystroke ("Meeting table", not
+// "Meetingtable"). Only an empty string becomes null. Trimming happens when the field loses focus (trimmedTextPatch).
+function keepTypedValue(value: string) {
+  return value === "" ? null : value;
+}
+
+// Fields whose text is edited inline in the table / in Project details. Returns the patch that trims the ones that
+// have leading or trailing whitespace (an empty result becomes emptyValue), or null when nothing needs trimming.
+const TRIM_ON_BLUR_ITEM_FIELDS = [
+  "item_name_snapshot", "specification_snapshot", "size_snapshot", "brand_name_snapshot", "supplier_name_snapshot",
+  "finish_snapshot", "model_snapshot", "origin_snapshot", "warranty_snapshot", "manual_serial",
+] as const;
+const TRIM_ON_BLUR_PROJECT_FIELDS = [
+  "project_name", "attention_to", "location", "attention_mobile", "attention_landline", "attention_email", "po_box", "project_address",
+] as const;
+function trimmedTextPatch(record: Record<string, unknown>, fields: readonly string[], emptyValue: "" | null = null) {
+  const patch: Record<string, string | null> = {};
+  for (const field of fields) {
+    const value = record[field];
+    if (typeof value === "string" && value !== value.trim()) patch[field] = value.trim() || (field === "project_name" && emptyValue === "" ? "" : null);
+  }
+  return Object.keys(patch).length ? patch : null;
 }
 
 function canSaveRowToProductLibrary(item?: LocalQuotationItem) {
@@ -534,6 +553,27 @@ function sectionTitleClass(section: LocalQuotationSection) {
   }
 
   return "bg-zinc-100 text-xs font-bold text-zinc-800";
+}
+
+// Row details panel: previous / next ITEM row in table order (note and blank rows never had Edit Details).
+function detailsNavigation(items: LocalQuotationItem[], sections: Array<{ id: string }>, currentId: string) {
+  const rows: LocalQuotationItem[] = [];
+  for (const section of sections) {
+    for (const item of orderedItems(items, section.id)) {
+      if (itemTypeDisplay(item) === "item") rows.push(item);
+    }
+  }
+  const index = rows.findIndex((row) => row.id === currentId);
+  if (index < 0) return null;
+  return { index, total: rows.length, previous: rows[index - 1] ?? null, next: rows[index + 1] ?? null };
+}
+
+// Focus goes back to the edit button of the row when the panel closes (the visible one: desktop table or mobile card).
+function focusDetailsTrigger(rowId: string) {
+  window.setTimeout(() => {
+    const triggers = Array.from(document.querySelectorAll<HTMLElement>("[data-details-trigger]")).filter((node) => node.dataset.detailsTrigger === rowId);
+    (triggers.find((node) => node.offsetParent !== null) ?? triggers[0])?.focus();
+  }, 0);
 }
 
 function itemTypeDisplay(item: LocalQuotationItem) {
@@ -1028,11 +1068,6 @@ function stableSerialize(value: unknown) {
   return JSON.stringify(value);
 }
 
-function cleanInlineValue(value: string) {
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-}
-
 function valuesEqual(left: unknown, right: unknown) {
   if (Object.is(left, right)) return true;
   if (typeof left === "object" && left !== null && typeof right === "object" && right !== null) {
@@ -1160,19 +1195,6 @@ function finishSelectionRows(value: unknown): FinishSelectionEditorRow[] {
   if (!Array.isArray(value)) return [];
 
   return value.filter((entry): entry is FinishSelectionEditorRow => typeof entry === "object" && entry !== null);
-}
-
-function rowLocalStatus(
-  itemId: string,
-  recentEditedRowId: string | null,
-  localDraftSaved: boolean,
-  workspaceDirty: boolean,
-) {
-  if (workspaceDirty && recentEditedRowId === itemId) {
-    return localDraftSaved ? "Unsaved local changes" : "Saving local draft...";
-  }
-
-  return "Saved locally";
 }
 
 function sectionSubtotal(items: LocalQuotationItem[]) {
@@ -1735,9 +1757,10 @@ export function LocalQuotationBuilder({
   const [hydrationRetry, setHydrationRetry] = useState(0);
   const [saveMessage, setSaveMessage] = useState("");
   const [view, setView] = useState<BuilderView>("client");
-  const [recentEditedRowId, setRecentEditedRowId] = useState<string | null>(null);
+  const [, setRecentEditedRowId] = useState<string | null>(null);
   const [editingOriginCellId, setEditingOriginCellId] = useState<string | null>(null);
   const [detailsModalRowId, setDetailsModalRowId] = useState<string | null>(null);
+  const detailsPanelRef = useRef<HTMLElement | null>(null);
   const [collapsedOptionalParentIds, setCollapsedOptionalParentIds] = useState<Set<string>>(() => new Set());
   const [saveLibraryChoiceRowId, setSaveLibraryChoiceRowId] = useState<string | null>(null);
   const [saveLibraryMode, setSaveLibraryMode] = useState<"new" | "existing">("new");
@@ -1902,6 +1925,31 @@ export function LocalQuotationBuilder({
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [workspace, localDraftSaved, localPersistenceError]);
 
+  // Row details side panel: Escape closes it, the page behind does not scroll, focus moves into the panel and comes back
+  // to the row's edit button on close. Nothing typed is lost: edits already apply through updateItem as you type.
+  const detailsPanelOpen = detailsModalRowId !== null;
+  useEffect(() => {
+    if (!detailsPanelOpen) return;
+    const rowId = detailsModalRowId;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const frame = window.requestAnimationFrame(() => detailsPanelRef.current?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || saveLibraryChoiceRowId) return;
+      setDetailsModalRowId(null);
+      setSaveLibraryChoiceRowId(null);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = previousOverflow;
+      if (rowId) focusDetailsTrigger(rowId);
+    };
+    // Row changes (previous / next) keep the panel open: only open/close re-runs this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailsPanelOpen, saveLibraryChoiceRowId]);
+
   useEffect(() => {
     function syncClipboard() {
       setCopiedRowClipboard(readLocalRowClipboard());
@@ -2013,6 +2061,7 @@ export function LocalQuotationBuilder({
   const detailsModalItem = detailsModalRowId
     ? workspace.items.find((item) => item.id === detailsModalRowId) ?? null
     : null;
+  const detailsNav = detailsModalItem ? detailsNavigation(workspace.items, orderedSectionRows, detailsModalItem.id) : null;
   const saveLibraryChoiceItem = saveLibraryChoiceRowId
     ? workspace.items.find((item) => item.id === saveLibraryChoiceRowId) ?? null
     : null;
@@ -4076,23 +4125,42 @@ export function LocalQuotationBuilder({
       </header>
 
       {detailsModalItem ? (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-zinc-950/55 sm:px-4 sm:py-6">
-          <div className="flex max-h-[100dvh] w-full max-w-6xl flex-col overflow-hidden bg-zinc-100 shadow-2xl sm:max-h-[calc(100vh-3rem)] sm:border sm:border-zinc-300">
-            <div className="flex flex-col gap-3 border-b border-zinc-300 bg-white px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 sm:px-5 sm:py-4">
+        <div className="pointer-events-none fixed inset-0 z-50 flex justify-end bg-zinc-950/10">
+          <style>{"@keyframes pw-details-slide-in{from{transform:translateX(100%)}to{transform:none}}"}</style>
+          <aside
+            ref={detailsPanelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Edit row details"
+            tabIndex={-1}
+            className="pointer-events-auto flex h-[100dvh] w-full flex-col overflow-hidden bg-zinc-100 shadow-2xl outline-none [animation:pw-details-slide-in_180ms_ease-out] motion-reduce:[animation:none] sm:w-[480px] sm:max-w-[100vw] sm:border-l sm:border-zinc-300"
+          >
+            <div className="flex items-start justify-between gap-2 border-b border-zinc-300 bg-white px-3 py-3 sm:px-4">
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Row Details</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Row {detailsNav ? detailsNav.index + 1 : ""} details</p>
                 <p className="truncate text-sm font-semibold text-zinc-950">{detailsModalItem.item_name_snapshot || "Unnamed item"}</p>
-                <p className="truncate text-xs text-zinc-500">
                   Code: {detailsModalItem.item_code_snapshot || "-"} / Qty {detailsModalItem.qty} / Net Total {itemCountsInLocalTotals(detailsModalItem) ? formatTableNumber(detailsModalItem.net_total) : netTotalPlaceholder(detailsModalItem)}
-                </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => void saveLocalDraftNow(detailsModalItem.id)}
-                  className="h-10 flex-1 border border-emerald-900 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 sm:h-9 sm:flex-none"
+                  disabled={!detailsNav?.previous}
+                  onClick={() => detailsNav?.previous && setDetailsModalRowId(detailsNav.previous.id)}
+                  aria-label="Previous row"
+                  title="Previous row"
+                  className="h-9 min-w-9 border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900 disabled:cursor-not-allowed disabled:opacity-40 sm:h-8 sm:min-w-8"
                 >
-                  Save Row
+                  {"\u25b2"}
+                </button>
+                <button
+                  type="button"
+                  disabled={!detailsNav?.next}
+                  onClick={() => detailsNav?.next && setDetailsModalRowId(detailsNav.next.id)}
+                  aria-label="Next row"
+                  title="Next row"
+                  className="h-9 min-w-9 border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900 disabled:cursor-not-allowed disabled:opacity-40 sm:h-8 sm:min-w-8"
+                >
+                  {"\u25bc"}
                 </button>
                 <button
                   type="button"
@@ -4100,16 +4168,37 @@ export function LocalQuotationBuilder({
                     setDetailsModalRowId(null);
                     setSaveLibraryChoiceRowId(null);
                   }}
-                  className="h-10 flex-1 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900 sm:h-9 sm:flex-none"
+                  aria-label="Close"
+                  title="Close"
+                  className="h-9 min-w-9 border border-zinc-300 bg-white px-2 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900 sm:h-8 sm:min-w-8"
                 >
-                  Done
+                  {"\u2715"}
                 </button>
               </div>
+            </div>
+            <div className="flex gap-2 border-b border-zinc-300 bg-white px-3 py-2 sm:px-4">
+              <button
+                type="button"
+                onClick={() => void saveLocalDraftNow(detailsModalItem.id)}
+                className="h-9 flex-1 border border-emerald-900 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 sm:h-8 sm:flex-none"
+              >
+                Save Row
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDetailsModalRowId(null);
+                  setSaveLibraryChoiceRowId(null);
+                }}
+                className="h-9 flex-1 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900 sm:h-8 sm:flex-none"
+              >
+                Done
+              </button>
             </div>
             <div className="overflow-y-auto px-3 py-3 [&_input]:min-h-10 [&_input]:text-base [&_select]:min-h-10 [&_select]:text-base [&_textarea]:text-base sm:px-5 sm:py-4 sm:[&_input]:min-h-8 sm:[&_input]:text-xs sm:[&_select]:min-h-8 sm:[&_select]:text-xs sm:[&_textarea]:text-xs">
               {renderRowDetailsModalContent(detailsModalItem)}
             </div>
-          </div>
+          </aside>
         </div>
       ) : null}
 
@@ -4461,40 +4550,46 @@ export function LocalQuotationBuilder({
                   </div>
                 </fieldset>
 
-                <fieldset className="border border-zinc-300 bg-white p-2.5">
+                <fieldset
+                  className="border border-zinc-300 bg-white p-2.5"
+                  onBlur={() => {
+                    const patch = trimmedTextPatch(projectSnapshot, TRIM_ON_BLUR_PROJECT_FIELDS, "");
+                    if (patch) updateProjectSnapshot(patch);
+                  }}
+                >
                   <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Project</legend>
                   <div className="grid gap-2 md:grid-cols-2">
                     <label className="grid gap-1 md:col-span-2">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Project</span>
-                      <input value={stringValue(projectSnapshot, "project_name")} onChange={(event) => updateProjectSnapshot({ project_name: cleanOptionalDetailValue(event.target.value) ?? "" })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={stringValue(projectSnapshot, "project_name")} onChange={(event) => updateProjectSnapshot({ project_name: keepTypedValue(event.target.value) ?? "" })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Attn / Contact</span>
-                      <input value={stringValue(projectSnapshot, "attention_to")} onChange={(event) => updateProjectSnapshot({ attention_to: cleanOptionalDetailValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={stringValue(projectSnapshot, "attention_to")} onChange={(event) => updateProjectSnapshot({ attention_to: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Location</span>
-                      <input value={stringValue(projectSnapshot, "location")} onChange={(event) => updateProjectSnapshot({ location: cleanOptionalDetailValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={stringValue(projectSnapshot, "location")} onChange={(event) => updateProjectSnapshot({ location: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Mobile</span>
-                      <input value={stringValue(projectSnapshot, "attention_mobile")} onChange={(event) => updateProjectSnapshot({ attention_mobile: cleanOptionalDetailValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={stringValue(projectSnapshot, "attention_mobile")} onChange={(event) => updateProjectSnapshot({ attention_mobile: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Telephone</span>
-                      <input value={stringValue(projectSnapshot, "attention_landline")} onChange={(event) => updateProjectSnapshot({ attention_landline: cleanOptionalDetailValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={stringValue(projectSnapshot, "attention_landline")} onChange={(event) => updateProjectSnapshot({ attention_landline: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Email</span>
-                      <input value={stringValue(projectSnapshot, "attention_email")} onChange={(event) => updateProjectSnapshot({ attention_email: cleanOptionalDetailValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={stringValue(projectSnapshot, "attention_email")} onChange={(event) => updateProjectSnapshot({ attention_email: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">PO Box</span>
-                      <input value={stringValue(projectSnapshot, "po_box")} onChange={(event) => updateProjectSnapshot({ po_box: cleanOptionalDetailValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <input value={stringValue(projectSnapshot, "po_box")} onChange={(event) => updateProjectSnapshot({ po_box: keepTypedValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                     </label>
                     <label className="grid gap-1 md:col-span-2">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Address</span>
-                      <textarea value={stringValue(projectSnapshot, "project_address")} onChange={(event) => updateProjectSnapshot({ project_address: cleanOptionalDetailValue(event.target.value) })} rows={3} className="w-full resize-y border border-zinc-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-emerald-800" />
+                      <textarea value={stringValue(projectSnapshot, "project_address")} onChange={(event) => updateProjectSnapshot({ project_address: keepTypedValue(event.target.value) })} rows={3} className="w-full resize-y border border-zinc-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-emerald-800" />
                     </label>
                   </div>
                 </fieldset>
@@ -4947,7 +5042,7 @@ export function LocalQuotationBuilder({
 
                               switch (column.key) {
                                 case "manual_serial":
-                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}><div className="grid h-full content-center"><input value={item.manual_serial ?? ""} onChange={(event) => updateItem(item.id, { manual_serial: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-center text-xs outline-none" /></div></td>;
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}><div className="grid h-full content-center"><input value={item.manual_serial ?? ""} onChange={(event) => updateItem(item.id, { manual_serial: keepTypedValue(event.target.value) })} className="w-full bg-transparent text-center text-xs outline-none" /></div></td>;
                                 case "s_no":
                                   return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}>{rowSerial || "-"}</td>;
                                 case "code":
@@ -4957,17 +5052,17 @@ export function LocalQuotationBuilder({
                                 case "proposed_image":
                                   return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="flex h-full items-center"><LocalQuotationImageCell field="proposed_image_url_snapshot" item={item} quotationId={workspace.server_quotation_id} rowHeight={imageCellHeight} updateItem={(patch) => updateItem(item.id, patch)} /></div></td>;
                                 case "specification":
-                                  return <td key={column.key} className={`${compactCellClassName} break-words whitespace-pre-wrap ${isOptionalChild ? "bg-red-50/40 pl-5" : ""}`}><div className="flex h-full min-h-full flex-col justify-center py-0.5 text-left"><div className="flex items-center gap-2">{hasOptionalChildren ? (<button type="button" onClick={() => setCollapsedOptionalParentIds((current) => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} className="h-5 w-5 border border-zinc-300 bg-white text-[11px] font-bold text-zinc-700" title={optionalChildrenCollapsed ? "Show optional items" : "Hide optional items"}>{optionalChildrenCollapsed ? ">" : "v"}</button>) : isOptionalChild ? (<span className="h-5 w-5 border-l border-red-200" />) : null}{showSpecificationTitle ? (<input value={item.item_name_snapshot ?? specificationTitle} onChange={(event) => updateItem(item.id, { item_name_snapshot: cleanInlineValue(event.target.value) })} className="min-w-0 flex-1 bg-transparent text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50" />) : (<span className="text-[10px] font-semibold uppercase text-zinc-400">Title hidden in specification</span>)}{isOptionalQuotationItem(item) ? <OptionalBadge /> : null}{item.is_rate_only || item.line_style === "rate_only" ? <RateOnlyBadge /> : null}</div><LocalAutoResizeTextarea value={cleanedSpecification ?? ""} onChange={(value) => { const original = item.specification_snapshot; const suppressed = metadataSettings.size && original !== specificationWithoutDuplicateDimension(original, item.size_snapshot); const suffix = suppressed ? original?.split(/\r?\n/).at(-1) : null; updateItem(item.id, { specification_snapshot: cleanInlineValue([value, suffix].filter(Boolean).join("\n")) }); }} placeholder="Click to add specification" className="mt-1 w-full resize-none overflow-hidden bg-transparent text-xs leading-5 text-zinc-700 outline-none focus:bg-emerald-50" />{showSpecificationDimension ? (<label className="mt-1 flex items-center gap-1 text-xs leading-4 text-zinc-500"><span className="font-semibold">Dimension:</span><input value={item.size_snapshot ?? dimensionValue ?? ""} onChange={(event) => updateItem(item.id, { size_snapshot: cleanInlineValue(event.target.value) })} placeholder="Click to add dimension" className="min-w-0 flex-1 bg-transparent text-xs text-zinc-600 outline-none focus:bg-emerald-50" /></label>) : null}{specificationDetailRows.length ? (<dl className="mt-2 grid gap-0.5 border-t border-zinc-200 pt-1.5 text-[11px] leading-4 text-zinc-500">{specificationDetailRows.map(([label, value]) => (<div key={label} className="grid grid-cols-[88px_1fr] gap-1"><dt className="font-semibold text-zinc-500">{label}:</dt><dd className="text-zinc-600">{value}</dd></div>))}</dl>) : null}</div></td>;
+                                  return <td key={column.key} className={`${compactCellClassName} break-words whitespace-pre-wrap ${isOptionalChild ? "bg-red-50/40 pl-5" : ""}`}><div className="flex h-full min-h-full flex-col justify-center py-0.5 text-left"><div className="flex items-center gap-2">{hasOptionalChildren ? (<button type="button" onClick={() => setCollapsedOptionalParentIds((current) => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} className="h-5 w-5 border border-zinc-300 bg-white text-[11px] font-bold text-zinc-700" title={optionalChildrenCollapsed ? "Show optional items" : "Hide optional items"}>{optionalChildrenCollapsed ? ">" : "v"}</button>) : isOptionalChild ? (<span className="h-5 w-5 border-l border-red-200" />) : null}{showSpecificationTitle ? (<input value={item.item_name_snapshot ?? specificationTitle} onChange={(event) => updateItem(item.id, { item_name_snapshot: keepTypedValue(event.target.value) })} className="min-w-0 flex-1 bg-transparent text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50" />) : (<span className="text-[10px] font-semibold uppercase text-zinc-400">Title hidden in specification</span>)}{isOptionalQuotationItem(item) ? <OptionalBadge /> : null}{item.is_rate_only || item.line_style === "rate_only" ? <RateOnlyBadge /> : null}</div><LocalAutoResizeTextarea value={cleanedSpecification ?? ""} onChange={(value) => { const original = item.specification_snapshot; const suppressed = metadataSettings.size && original !== specificationWithoutDuplicateDimension(original, item.size_snapshot); const suffix = suppressed ? original?.split(/\r?\n/).at(-1) : null; updateItem(item.id, { specification_snapshot: keepTypedValue([value, suffix].filter(Boolean).join("\n")) }); }} placeholder="Click to add specification" className="mt-1 w-full resize-none overflow-hidden bg-transparent text-xs leading-5 text-zinc-700 outline-none focus:bg-emerald-50" />{showSpecificationDimension ? (<label className="mt-1 flex items-center gap-1 text-xs leading-4 text-zinc-500"><span className="font-semibold">Dimension:</span><input value={item.size_snapshot ?? dimensionValue ?? ""} onChange={(event) => updateItem(item.id, { size_snapshot: keepTypedValue(event.target.value) })} placeholder="Click to add dimension" className="min-w-0 flex-1 bg-transparent text-xs text-zinc-600 outline-none focus:bg-emerald-50" /></label>) : null}{specificationDetailRows.length ? (<dl className="mt-2 grid gap-0.5 border-t border-zinc-200 pt-1.5 text-[11px] leading-4 text-zinc-500">{specificationDetailRows.map(([label, value]) => (<div key={label} className="grid grid-cols-[88px_1fr] gap-1"><dt className="font-semibold text-zinc-500">{label}:</dt><dd className="text-zinc-600">{value}</dd></div>))}</dl>) : null}</div></td>;
                                 case "origin":
-                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="flex h-full min-h-full flex-col justify-center gap-1.5 py-0.5 text-center leading-5" onBlur={(event) => { const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null; if (!event.currentTarget.contains(nextTarget)) { setEditingOriginCellId((current) => (current === item.id ? null : current)); } }}>{isEditingOriginCell ? (<><input autoFocus value={item.brand_name_snapshot ?? (originDisplay.brand ?? "")} onChange={(event) => updateItem(item.id, { brand_name_snapshot: cleanInlineValue(event.target.value) })} placeholder="Brand" className="w-full bg-transparent text-center text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50" /><input value={item.origin_snapshot ?? (originDisplay.origin ?? "")} onChange={(event) => updateItem(item.id, { origin_snapshot: cleanInlineValue(event.target.value) })} placeholder="Origin" className="w-full bg-transparent text-center text-xs text-zinc-700 outline-none focus:bg-emerald-50" /><input value={item.supplier_name_snapshot ?? (originDisplay.supplier ?? "")} onChange={(event) => updateItem(item.id, { supplier_name_snapshot: cleanInlineValue(event.target.value) })} placeholder="Supplier" className="w-full bg-transparent text-center text-xs text-zinc-500 outline-none focus:bg-emerald-50" /></>) : (<button type="button" onClick={() => setEditingOriginCellId(item.id)} className="w-full bg-transparent text-center outline-none">{originDisplay.primaryLine ? (<span className="block text-xs font-semibold uppercase text-zinc-950">{originDisplay.primaryLine}</span>) : (<span className="block text-xs text-zinc-400">Click to add origin / supplier</span>)}{originDisplay.supplier ? (<span className="mt-1 block text-[11px] text-zinc-500">Supplier: {originDisplay.supplier}</span>) : null}</button>)}</div></td>;
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="flex h-full min-h-full flex-col justify-center gap-1.5 py-0.5 text-center leading-5" onBlur={(event) => { const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null; if (!event.currentTarget.contains(nextTarget)) { setEditingOriginCellId((current) => (current === item.id ? null : current)); } }}>{isEditingOriginCell ? (<><input autoFocus value={item.brand_name_snapshot ?? (originDisplay.brand ?? "")} onChange={(event) => updateItem(item.id, { brand_name_snapshot: keepTypedValue(event.target.value) })} placeholder="Brand" className="w-full bg-transparent text-center text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50" /><input value={item.origin_snapshot ?? (originDisplay.origin ?? "")} onChange={(event) => updateItem(item.id, { origin_snapshot: keepTypedValue(event.target.value) })} placeholder="Origin" className="w-full bg-transparent text-center text-xs text-zinc-700 outline-none focus:bg-emerald-50" /><input value={item.supplier_name_snapshot ?? (originDisplay.supplier ?? "")} onChange={(event) => updateItem(item.id, { supplier_name_snapshot: keepTypedValue(event.target.value) })} placeholder="Supplier" className="w-full bg-transparent text-center text-xs text-zinc-500 outline-none focus:bg-emerald-50" /></>) : (<button type="button" onClick={() => setEditingOriginCellId(item.id)} className="w-full bg-transparent text-center outline-none">{originDisplay.primaryLine ? (<span className="block text-xs font-semibold uppercase text-zinc-950">{originDisplay.primaryLine}</span>) : (<span className="block text-xs text-zinc-400">Click to add origin / supplier</span>)}{originDisplay.supplier ? (<span className="mt-1 block text-[11px] text-zinc-500">Supplier: {originDisplay.supplier}</span>) : null}</button>)}</div></td>;
                                 case "model":
-                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.model_snapshot ?? ""} onChange={(event) => updateItem(item.id, { model_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.model_snapshot ?? ""} onChange={(event) => updateItem(item.id, { model_snapshot: keepTypedValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
                                 case "finish":
-                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><LocalAutoResizeTextarea value={item.finish_snapshot ?? ""} onChange={(value) => updateItem(item.id, { finish_snapshot: cleanInlineValue(value) })} placeholder="Click to add finish" className="w-full resize-none overflow-hidden bg-transparent text-xs leading-5 outline-none focus:bg-emerald-50" /></td>;
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><LocalAutoResizeTextarea value={item.finish_snapshot ?? ""} onChange={(value) => updateItem(item.id, { finish_snapshot: keepTypedValue(value) })} placeholder="Click to add finish" className="w-full resize-none overflow-hidden bg-transparent text-xs leading-5 outline-none focus:bg-emerald-50" /></td>;
                                 case "size":
-                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.size_snapshot ?? dimensionValue ?? ""} onChange={(event) => updateItem(item.id, { size_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.size_snapshot ?? dimensionValue ?? ""} onChange={(event) => updateItem(item.id, { size_snapshot: keepTypedValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
                                 case "warranty":
-                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.warranty_snapshot ?? ""} onChange={(event) => updateItem(item.id, { warranty_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.warranty_snapshot ?? ""} onChange={(event) => updateItem(item.id, { warranty_snapshot: keepTypedValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
                                 case "qty":
                                   return <td key={column.key} className={`${compactCellClassName} break-words text-center`}><div className="grid h-full items-center"><input type="number" min={item.item_type === "blank" || item.item_type === "note" ? 0 : 1} step="1" value={item.qty} onChange={(event) => updateItem(item.id, { qty: event.target.value })} className="w-full bg-transparent text-center text-xs outline-none" /></div></td>;
                                 case "unit_price":
@@ -4983,7 +5078,7 @@ export function LocalQuotationBuilder({
                                 case "net_total":
                                   return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs font-semibold`}>{itemCountsInLocalTotals(item) ? formatTableNumber(displayPricing.netTotal) : <span className={item.is_rate_only || item.line_style === "rate_only" ? "text-sky-700" : "text-red-700"}>{netTotalPlaceholder(item)}</span>}</td>;
                                 case "supplier_name":
-                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.supplier_name_snapshot ?? ""} onChange={(event) => updateItem(item.id, { supplier_name_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.supplier_name_snapshot ?? ""} onChange={(event) => updateItem(item.id, { supplier_name_snapshot: keepTypedValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
                                 case "internal_notes":
                                   return <td key={column.key} className={`${compactCellClassName} break-words`}><LocalAutoResizeTextarea value={internalMetadata.internalNotes ?? ""} onChange={(value) => updateItem(item.id, updateItemInternalMetadata(item, { internalNotes: value }))} placeholder="Add internal note" className="w-full resize-none overflow-hidden bg-transparent text-xs leading-5 outline-none focus:bg-emerald-50" /></td>;
                                 case "cost_price":
@@ -5001,12 +5096,14 @@ export function LocalQuotationBuilder({
                                 case "edit":
                                   return <td key={column.key} className="border border-zinc-300 px-2 py-2 align-middle text-center">
                                     <div className="grid h-full min-h-full content-center justify-items-center gap-1.5" data-preserve-anchor={`item-${item.id}`}>
-                                      <button type="button" onClick={() => void saveLocalDraftNow(item.id)} className="h-6 min-w-14 border border-emerald-900 bg-emerald-900 px-2 text-[11px] font-semibold text-white transition hover:bg-emerald-800">Save</button>
-                                      <button type="button" onClick={() => setDetailsModalRowId(item.id)} className="h-6 min-w-20 border border-zinc-300 bg-white px-2 text-[11px] font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Edit Details</button>
-                                      <span className={`text-[10px] font-semibold ${workspace.has_unsaved_changes && recentEditedRowId === item.id ? "text-zinc-500" : "text-emerald-800"}`}>{rowLocalStatus(item.id, recentEditedRowId, localDraftSaved, workspace.has_unsaved_changes)}</span>
                                       {copiedRowId === item.id ? (<span className="text-[10px] font-semibold text-emerald-800">Copied</span>) : null}
-                                      <div className="flex items-center gap-1"><button type="button" onClick={() => moveItem(section.id, item.id, -1)} className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">^</button><button type="button" onClick={() => moveItem(section.id, item.id, 1)} className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">v</button></div>
+                                      <div className="flex items-center justify-center gap-1">
+                                        {localPersistenceError ? (<span role="img" aria-label="Not saved locally" title={localPersistenceError} className="flex h-6 w-4 items-center justify-center text-sm font-bold leading-none text-red-600">!</span>) : null}
+                                        <button type="button" data-details-trigger={item.id} onClick={() => setDetailsModalRowId(item.id)} aria-label="Edit details" title="Edit details" className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"><svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 2.5l2.5 2.5L5.5 13H3v-2.5L11 2.5z" /></svg></button>
+                                        <button type="button" onClick={() => moveItem(section.id, item.id, -1)} aria-label="Move row up" title="Move row up" className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">▲</button>
+                                        <button type="button" onClick={() => moveItem(section.id, item.id, 1)} aria-label="Move row down" title="Move row down" className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">▼</button>
                                       <SharedQuotationMoreMenu actionButtons={(<>{item.item_type === "product" && item.source_template_id ? (<SaveLineToMyCollectionButton line={item} />) : null}{copiedRowClipboard ? (<><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "above")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row above</button><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "below")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row below</button></>) : null}<button type="button" onClick={() => copyItem(item.id)} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Copy row</button><button type="button" onClick={() => duplicateItem(item.id)} className="h-7 w-full border border-zinc-300 bg-white px-2 text-left text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Duplicate below</button><button type="button" onClick={() => removeItem(item.id)} className="h-7 w-full border border-red-200 bg-white px-2 text-left text-xs font-semibold text-red-700 transition hover:border-red-300 hover:text-red-800">Remove</button><SaveAsCustomItemButton row={item} /></>)} itemId={item.id} menuClassName="absolute right-0 z-30 mt-1 w-56 border border-zinc-300 bg-white p-2 text-left shadow-lg" mergeControl={(<><label className="grid gap-1"><span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span><select value={mergeModeForItem(item)} onChange={(event) => updateItem(item.id, updateItemMergeMode(item, event.target.value))} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"><option value="none">No merge</option><option value="merge_specification">Merge spec</option><option value="merge_full_row">Merge full row</option></select></label><label className="grid gap-1 mt-2"><span className="text-[10px] font-semibold uppercase text-zinc-500">Row Height (px)</span><input type="number" min={40} value={item.row_height || ""} onChange={(event) => updateItem(item.id, { row_height: event.target.value ? clampRowHeight(Number(event.target.value)) : null })} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" placeholder="Auto" /></label></>)} />
+                                      </div>
                                     </div>
                                   </td>;
                                 default:
@@ -5016,7 +5113,14 @@ export function LocalQuotationBuilder({
 
                             return (
                             <>
-                              <tr className={`align-middle ${isOptionalChild ? "bg-red-50/20" : ""}`} style={{ minHeight: `${itemRowMinHeight(item.row_height)}px` }}>
+                              <tr
+                                className={`align-middle ${isOptionalChild ? "bg-red-50/20" : ""} ${detailsModalRowId === item.id ? "bg-emerald-50/80" : ""}`}
+                                style={{ minHeight: `${itemRowMinHeight(item.row_height)}px` }}
+                                onBlur={() => {
+                                  const patch = trimmedTextPatch(item as unknown as Record<string, unknown>, TRIM_ON_BLUR_ITEM_FIELDS);
+                                  if (patch) updateItem(item.id, patch as Partial<LocalQuotationItem>);
+                                }}
+                              >
                               {visibleColumns.map((column) => renderOrderedItemCell(column))}
                             </tr>
                             <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
@@ -5285,6 +5389,7 @@ export function LocalQuotationBuilder({
                                 setMobileMoreItemId(null);
                                 setDetailsModalRowId(item.id);
                               }}
+                              data-details-trigger={item.id}
                               className="h-10 min-w-0 border border-emerald-900 bg-emerald-900 px-2 text-xs font-semibold text-white"
                             >
                               Edit item
