@@ -25,8 +25,10 @@ import {
   historySearchPattern,
   isClientHistoryKind,
   isSafeRowId,
+  readLineDiscount,
   readPriceHistory,
   specPreview,
+  type ClientHistoryDiscountType,
   type ClientHistoryListItem,
   type ClientHistoryMessageKind,
   type ClientHistoryPicture,
@@ -34,7 +36,7 @@ import {
 
 // The list NEVER selects the recipe itself: only two small values read out of it (does it have one, and its chosen picture).
 const LIST_COLUMNS = [
-  "id", "kind", "item_name", "brand", "item_code", "spec_short", "unit_label", "qty", "currency", "last_unit_price", "last_prices",
+  "id", "kind", "item_name", "brand", "item_code", "spec_short", "unit_label", "qty", "currency", "last_unit_price", "list_unit_price", "discount_type", "discount_value", "last_prices",
   "quoted_at", "last_quotation_no", "template_id", "picture_ref",
   "has_recipe:line_recipe->recipe->>template_id", "selected_image:line_recipe->recipe->>selected_image",
 ].join(",");
@@ -50,6 +52,9 @@ type HistoryRow = {
   qty: number | string | null;
   currency: string;
   last_unit_price: number | string;
+  list_unit_price: number | string | null;
+  discount_type: string | null;
+  discount_value: number | string | null;
   last_prices: unknown;
   quoted_at: string;
   last_quotation_no: string | null;
@@ -145,6 +150,7 @@ export async function listClientHistory(supabase: SupabaseClient, input: ListCli
       if (!isClientHistoryKind(row.kind)) return [];
       const lastUnitPrice = numberOrNull(row.last_unit_price);
       if (lastUnitPrice === null) return [];
+      const discount = readLineDiscount(row.list_unit_price, row.discount_type, row.discount_value);
       let picture: ClientHistoryPicture = null;
       if (row.kind === "custom") {
         const path = quoteImageStoragePath(row.picture_ref);
@@ -169,6 +175,9 @@ export async function listClientHistory(supabase: SupabaseClient, input: ListCli
         qty: numberOrNull(row.qty),
         currency: row.currency,
         lastUnitPrice,
+        listUnitPrice: discount.listUnitPrice,
+        discountType: discount.discountType,
+        discountValue: discount.discountValue,
         lastQuotedAt: row.quoted_at,
         lastQuotationNo: row.last_quotation_no,
         hasRecipe: row.has_recipe !== null && row.has_recipe !== undefined,
@@ -190,9 +199,10 @@ export async function listClientHistory(supabase: SupabaseClient, input: ListCli
 export type HistorySetupForUse = { id: string; templateId: string; setupName: string; recipe: SavedSetupRecipeV1; specOverrides: SavedSetupSpecOverrides };
 
 export type ClientHistoryAddItem =
-  | { kind: "configured"; id: string; templateId: string; itemName: string; setup: HistorySetupForUse }
+  /** discountType / discountValue / currency: the discount of the old line, carried to the configurator (null when it had none). */
+  | { kind: "configured"; id: string; templateId: string; itemName: string; setup: HistorySetupForUse; currency: string; discountType: ClientHistoryDiscountType | null; discountValue: number | null }
   /** recipeUnavailable: an older line (or an unreadable recipe): open the product, the exact setup cannot be restored. */
-  | { kind: "library"; id: string; templateId: string; itemName: string; recipeUnavailable: boolean }
+  | { kind: "library"; id: string; templateId: string; itemName: string; recipeUnavailable: boolean; currency: string; discountType: ClientHistoryDiscountType | null; discountValue: number | null }
   | {
       kind: "custom";
       id: string;
@@ -201,8 +211,15 @@ export type ClientHistoryAddItem =
       brand: string;
       specification: string | null;
       unitLabel: string;
+      /** The last NET unit price (what was charged). */
       price: number;
       currency: string;
+      /** The ORIGINAL unit price and the discount of the old line; null on rows recorded before the update. */
+      listUnitPrice: number | null;
+      discountType: ClientHistoryDiscountType | null;
+      discountValue: number | null;
+      /** The last quoted quantity (null when unknown). */
+      qty: number | null;
       pictureRef: string | null;
     };
 
@@ -210,7 +227,8 @@ export type ClientHistoryAddResult = { ok: true; item: ClientHistoryAddItem } | 
 
 type AddRow = {
   id: string; client_id: string; kind: string; template_id: string | null; item_name: string; brand: string | null; item_code: string | null;
-  spec_short: string | null; unit_label: string | null; currency: string; last_unit_price: number | string; line_recipe: unknown; picture_ref: string | null;
+  spec_short: string | null; unit_label: string | null; currency: string; last_unit_price: number | string; list_unit_price: number | string | null; discount_type: string | null; discount_value: number | string | null;
+  qty: number | string | null; line_recipe: unknown; picture_ref: string | null;
 };
 
 /** One history row for adding. The row must belong to the client passed in (the quote's client): another client's row is refused. */
@@ -219,13 +237,14 @@ export async function getClientHistoryItemForAdd(supabase: SupabaseClient, input
   try {
     const { data, error } = await supabase
       .from("client_quote_history")
-      .select("id,client_id,kind,template_id,item_name,brand,item_code,spec_short,unit_label,currency,last_unit_price,line_recipe,picture_ref")
+      .select("id,client_id,kind,template_id,item_name,brand,item_code,spec_short,unit_label,currency,last_unit_price,list_unit_price,discount_type,discount_value,qty,line_recipe,picture_ref")
       .eq("id", input.id)
       .maybeSingle();
     if (error) return { ok: false, kind: "load_failed" };
     const row = data as unknown as AddRow | null;
     if (!row) return { ok: false, kind: "item_not_found" };
     if (row.client_id !== input.clientId) return { ok: false, kind: "wrong_client" };
+    const discount = readLineDiscount(row.list_unit_price, row.discount_type, row.discount_value);
 
     if (row.kind === "custom") {
       const price = numberOrNull(row.last_unit_price);
@@ -242,6 +261,10 @@ export async function getClientHistoryItemForAdd(supabase: SupabaseClient, input
           unitLabel: row.unit_label || "Pc",
           price,
           currency: row.currency,
+          listUnitPrice: discount.listUnitPrice,
+          discountType: discount.discountType,
+          discountValue: discount.discountValue,
+          qty: numberOrNull(row.qty),
           pictureRef: quoteImageStoragePath(row.picture_ref) ? row.picture_ref : null,
         },
       };
@@ -258,11 +281,11 @@ export async function getClientHistoryItemForAdd(supabase: SupabaseClient, input
       if (parsed) {
         return {
           ok: true,
-          item: { kind: "configured", id: row.id, templateId: row.template_id, itemName: row.item_name, setup: { id: row.id, templateId: row.template_id, setupName: row.item_name, recipe: parsed.recipe, specOverrides: parsed.spec_overrides } },
+          item: { kind: "configured", id: row.id, templateId: row.template_id, itemName: row.item_name, setup: { id: row.id, templateId: row.template_id, setupName: row.item_name, recipe: parsed.recipe, specOverrides: parsed.spec_overrides }, currency: row.currency, discountType: discount.discountType, discountValue: discount.discountValue },
         };
       }
     }
-    return { ok: true, item: { kind: "library", id: row.id, templateId: row.template_id, itemName: row.item_name, recipeUnavailable: row.kind === "configured" } };
+    return { ok: true, item: { kind: "library", id: row.id, templateId: row.template_id, itemName: row.item_name, recipeUnavailable: row.kind === "configured", currency: row.currency, discountType: discount.discountType, discountValue: discount.discountValue } };
   } catch (problem) {
     logProblem("load for add", problem);
     return { ok: false, kind: "load_failed" };

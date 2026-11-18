@@ -14,11 +14,14 @@ import type { ClientHistoryListItem } from "@/lib/quotations/client-history/clie
 import {
   CLIENT_HISTORY_KIND_FILTERS,
   CLIENT_HISTORY_KIND_LABELS,
-  lastQuotedLine,
+  carriedDiscount,
+  lastQuotedMeta,
+  lastQuotedPrice,
   previousPriceChangeText,
   priceHistoryLine,
   shortClientName,
   type ClientHistoryKindFilter,
+  type HistoryDiscount,
 } from "@/lib/quotations/client-history/client-history-view";
 import type { SetupForUse } from "@/lib/products/saved-setups/saved-setups-service";
 
@@ -82,8 +85,9 @@ function HistoryCard({
           </div>
           {brandCode ? <p className="mt-1 truncate text-xs text-zinc-500">{brandCode}</p> : null}
           {item.specShort ? <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{item.specShort}</p> : null}
-          <p className="mt-1 text-xs font-semibold text-zinc-800">
-            {lastQuotedLine(item)}
+          <p className="mt-1 break-words text-xs font-semibold text-zinc-800">{lastQuotedPrice(item)}</p>
+          <p className="break-words text-xs text-zinc-500">
+            {lastQuotedMeta(item)}
             {change ? <span className="ml-2 font-medium text-zinc-600">{change}</span> : null}
           </p>
         </div>
@@ -141,11 +145,14 @@ export function AddFromClientHistoryButton({
   clientName,
   onOpenProduct,
   onOpenSetup,
+  quoteCurrency = null,
 }: {
   clientId: string | null;
   clientName: string;
-  onOpenProduct: (templateId: string) => string | null;
-  onOpenSetup: (setup: SetupForUse) => string | null;
+  /** The discount of the old line is handed over with the product (null = it had none). */
+  onOpenProduct: (templateId: string, discount: HistoryDiscount | null) => string | null;
+  onOpenSetup: (setup: SetupForUse, discount: HistoryDiscount | null) => string | null;
+  quoteCurrency?: string | null;
 }) {
   const router = useRouter();
   const target = useContext(CustomItemTargetContext);
@@ -276,14 +283,14 @@ export function AddFromClientHistoryButton({
         }
         const data = loaded.item;
         if (data.kind === "configured") {
-          // The EXISTING replay: the configurator opens pre-filled and the user confirms there. The current price comes from it.
-          const problem = onOpenSetup(data.setup);
+          // The EXISTING replay: the configurator opens pre-filled (with the old discount) and the user confirms there. The current price comes from it.
+          const problem = onOpenSetup(data.setup, carriedDiscount(data, quoteCurrency));
           if (problem) setNotice(problem);
           else setOpen(false);
           return;
         }
         if (data.kind === "library") {
-          const problem = onOpenProduct(data.templateId);
+          const problem = onOpenProduct(data.templateId, carriedDiscount(data, quoteCurrency));
           if (problem) setNotice(problem);
           else setOpen(false);
           return;

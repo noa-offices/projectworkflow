@@ -33,7 +33,7 @@ import { baseModelPriceOrDefault, sameCurrencyUnitSum } from "@/lib/quotations/s
 import { requiredComponentOverrideReport } from "@/lib/quotations/required-component-overrides";
 import { rowOverlayFromCustomItem } from "@/lib/products/saved-setups/custom-item-line";
 import { addCustomItemPictureToQuoteRow, loadCustomItemForUser, markCustomItemUsedForUser } from "@/lib/products/saved-setups/saved-custom-items-service";
-import { clientHistoryMessage } from "@/lib/quotations/client-history/client-history";
+import { clientHistoryMessage, historyCustomLine } from "@/lib/quotations/client-history/client-history";
 import { addHistoryPictureToQuoteRow, getClientHistoryItemForAdd } from "@/lib/quotations/client-history/client-history-service";
 import { LINE_RECIPE_FORM_FIELD, LINE_RECIPE_KEY, parseLineConfigurationRecipe } from "@/lib/products/saved-setups/line-recipe";
 import { announcedQuotationDelta, announcedSnapshot, announcedTotals, loadBrandPriceAnnouncements } from "@/lib/products/price-announcements";
@@ -6394,12 +6394,15 @@ export async function addHistoryItemToQuotation(formData: FormData) {
   if (loaded.item.kind !== "custom") return { ok: false as const, message: clientHistoryMessage("not_a_custom_item") };
   const item = loaded.item;
 
+  // The SAME line as before: list price + the same discount + the last quantity, priced by the existing helper and this quote's rule.
+  // A different currency gives price 0 and no discount (see historyCustomLine), so no wrong numbers.
+  const line = historyCustomLine(item, quotation.currency ?? defaultCurrency);
   const overlay = rowOverlayFromCustomItem(
-    { brandName: item.brand, itemName: item.itemName, itemCode: item.itemCode, specification: item.specification, unitLabel: item.unitLabel, sellingPrice: item.price, currency: item.currency },
+    { brandName: item.brand, itemName: item.itemName, itemCode: item.itemCode, specification: item.specification, unitLabel: item.unitLabel, sellingPrice: line.sellingPrice, currency: item.currency },
     quotation.currency ?? defaultCurrency,
   );
   const pricingRule = await quotationPricingRule(supabase, quotationId);
-  const linePricing = roundedLinePricing(overlay.unit_price, "amount", 0, 1, pricingRule);
+  const linePricing = roundedLinePricing(overlay.unit_price, line.discountType, line.discountValue, line.qty, pricingRule);
   const { conversionNote, ...fields } = overlay;
 
   const result = await createBlankQuotationItemRecord({
@@ -6407,7 +6410,9 @@ export async function addHistoryItemToQuotation(formData: FormData) {
     formData,
     overlay: {
       ...fields,
+      qty: line.qty,
       unit_price: linePricing.unitPrice,
+      discount_type: line.discountType,
       discount_value: linePricing.discountValue,
       net_price: linePricing.netPrice,
       net_total: linePricing.netTotal,
