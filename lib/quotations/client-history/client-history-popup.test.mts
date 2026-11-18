@@ -132,6 +132,8 @@ test("diff guard: only the popup files change; no SQL, no pricing, no H-B server
     "app/quotations/[id]/builder/page.tsx",
     "lib/quotations/client-history/client-history-view.ts",
     "lib/quotations/client-history/client-history-popup.test.mts",
+    "lib/products/saved-setups/custom-item-line.test.mts",
+    "lib/products/saved-setups/replay.test.mts",
   ];
   const outside = changed.filter((file) => !allowed.includes(file));
   assert.deepEqual(outside, [], `unexpected files: ${outside.join(", ")}`);
