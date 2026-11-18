@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { BrandCombobox, BrandFilterList } from "@/components/products/brand-combobox";
-import { PanelBackBar } from "@/components/products/my-collection-shared";
+import { DuplicateWarning, PanelBackBar } from "@/components/products/my-collection-shared";
+import { saveDuplicateMessage, type DuplicateInfo } from "@/lib/products/saved-setups/duplicates";
 import { ShareControl } from "@/components/products/my-collection-share-send";
 import { useEscapeLayer } from "@/components/products/escape-layer";
 import { createCustomItem, deleteCustomItem, updateCustomItem } from "@/lib/products/saved-setups/saved-custom-items-actions";
@@ -242,13 +243,17 @@ export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null
   const [initialValues] = useState<FormValues>(() => defaults ?? valuesFor(item));
   const [initialImageKind] = useState(() => (item?.imagePath ? "saved" : rowImageRef ? "row" : "none"));
   const dirty = JSON.stringify(values) !== JSON.stringify(initialValues) || image.kind !== initialImageKind || image.kind === "uploaded";
+  // "Already in your collection": found by the SERVER; nothing was written. It hides again if the user changes the form.
+  const [duplicate, setDuplicate] = useState<{ info: DuplicateInfo; key: string } | null>(null);
+  const duplicateKey = JSON.stringify(values);
   const [imageBusy, setImageBusy] = useState<string | null>(null);
   const [imageError, setImageError] = useState("");
   const [imageNote, setImageNote] = useState("");
   const lastFile = useRef<File | null>(null);
   const set = (key: keyof FormValues) => (event: { target: { value: string } }) => setValues((current) => ({ ...current, [key]: event.target.value }));
 
-  function submit() {
+  // mode "anyway": the user chose to go on despite the warning. "update": use the existing item instead (existing update action).
+  function submit(mode: "normal" | "anyway" | "update" = "normal") {
     // The brand is required; a name matching an existing brand (ignoring case and spaces) uses the existing spelling.
     const brand = resolveBrandInput(values.brandName, brands);
     if (!brand.ok) {
@@ -271,9 +276,20 @@ export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null
         imagePath = copiedPath = copied.path;
       }
       const payload = { ...values, brandName: brand.name, imagePath };
-      const result = item ? await updateCustomItem(item.id, payload) : await createCustomItem(payload);
+      const anyway = mode === "anyway";
+      const result = mode === "update" && duplicate
+        ? await updateCustomItem(duplicate.info.id, payload)
+        : item
+          ? (anyway ? await updateCustomItem(item.id, payload, { allowDuplicate: true }) : await updateCustomItem(item.id, payload))
+          : (anyway ? await createCustomItem(payload, { allowDuplicate: true }) : await createCustomItem(payload));
       if (result.ok) {
         (onSaved ?? onDone)();
+        return;
+      }
+      if (result.duplicate) {
+        // Nothing was saved. A copy made for this attempt is dropped (the row picture is copied again on the next attempt).
+        if (copiedPath) void removeCustomItemImage(copiedPath);
+        setDuplicate({ info: result.duplicate, key: duplicateKey });
         return;
       }
       // A copy made for this save is not kept when the save fails (no orphan). An uploaded picture is removed by the
@@ -377,6 +393,22 @@ export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null
       </Field>
       <CustomItemImageField state={image} busy={imageBusy} error={imageError} note={imageNote} onPick={(file) => { void pickImage(file); }} onRetry={retryImage} onRemove={removeImage} />
       {formError ? <p role="alert" className="text-xs text-red-700">{formError}</p> : null}
+      {duplicate && duplicate.key === duplicateKey ? (
+        <DuplicateWarning
+          message={saveDuplicateMessage(duplicate.info)}
+          busy={pending}
+          choices={item
+            ? [
+                { label: "Save anyway", onClick: () => submit("anyway"), tone: "primary" },
+                { label: "Cancel", onClick: () => setDuplicate(null), tone: "secondary" },
+              ]
+            : [
+                { label: "Save as new anyway", onClick: () => submit("anyway"), tone: "primary" },
+                { label: "Update the existing one", onClick: () => submit("update"), tone: "secondary" },
+                { label: "Cancel", onClick: () => setDuplicate(null), tone: "secondary" },
+              ]}
+        />
+      ) : null}
       <div className="flex gap-2">
         <button type="submit" disabled={pending || Boolean(imageBusy)} className={primaryButton}>{pending ? "Saving..." : "Save item"}</button>
         <button type="button" disabled={pending} onClick={cancel} className={secondaryButton}>Cancel</button>

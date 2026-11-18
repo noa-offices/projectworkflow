@@ -7,6 +7,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isUuid } from "./recipe";
 import { distinctBrands, normaliseBrandKey, resolveBrandInput } from "./custom-brands";
+import { findCustomDuplicate, saveDuplicateMessage, type DuplicateInfo } from "./duplicates";
 import {
   CUSTOM_IMAGE_BUCKET,
   MAX_LONG_SIDE,
@@ -42,7 +43,14 @@ export type CustomItemSaveInput = CustomItemInput & { imagePath?: unknown };
 
 export type CustomItemActionResult =
   | { ok: true; id?: string; count?: number }
-  | { ok: false; error: string; fieldErrors?: CustomItemFieldErrors };
+  | { ok: false; error: string; fieldErrors?: CustomItemFieldErrors; duplicate?: DuplicateInfo };
+
+/**
+ * warnOnDuplicate: when the caller's own collection already has an equal item, return it as data and WRITE NOTHING.
+ * The actions turn it on unless the user confirmed ("allowDuplicate"). The flag only skips the warning: validation, brand
+ * resolution, the picture check and every other rule still run first.
+ */
+export type DuplicateOptions = { warnOnDuplicate?: boolean };
 
 const NOT_FOUND = "Item not found.";
 
@@ -50,14 +58,20 @@ export async function createCustomItemForUser(
   supabase: SupabaseClient,
   userId: string,
   input: CustomItemSaveInput,
+  options: DuplicateOptions = {},
 ): Promise<CustomItemActionResult> {
   const checked = validateCustomItem(input);
   if (!checked.ok) return { ok: false, error: firstCustomItemError(checked.errors), fieldErrors: checked.errors };
   const picture = checkedImagePath(userId, input.imagePath);
   if (!picture.ok) return { ok: false, error: picture.error };
   // A brand matching one of the owner's existing brands (ignoring case and extra spaces) reuses that spelling.
-  const brand = resolveBrandInput(checked.value.brand_name, distinctBrands(await listCustomItemsForUser(supabase, userId)));
+  const owned = await listCustomItemsForUser(supabase, userId);
+  const brand = resolveBrandInput(checked.value.brand_name, distinctBrands(owned));
   const value = { ...checked.value, brand_name: brand.ok ? brand.name : checked.value.brand_name };
+  if (options.warnOnDuplicate) {
+    const duplicate = findCustomDuplicate({ brandName: value.brand_name, itemName: value.item_name, itemCode: value.item_code, sellingPrice: value.selling_price, currency: value.currency }, owned);
+    if (duplicate) return { ok: false, error: saveDuplicateMessage(duplicate), duplicate };
+  }
   const { data, error } = await supabase
     .from("saved_custom_items")
     .insert({ owner_id: userId, ...value, ...(picture.path ? { image_path: picture.path } : {}), price_saved_at: new Date().toISOString() })
@@ -76,6 +90,7 @@ export async function updateCustomItemForUser(
   userId: string,
   itemId: string,
   input: CustomItemSaveInput,
+  options: DuplicateOptions = {},
 ): Promise<CustomItemActionResult> {
   if (!isUuid(itemId)) return { ok: false, error: NOT_FOUND };
   const checked = validateCustomItem(input);
@@ -102,6 +117,11 @@ export async function updateCustomItemForUser(
   const others = (await listCustomItemsForUser(supabase, userId)).filter((entry) => entry.id !== itemId);
   const brand = resolveBrandInput(checked.value.brand_name, distinctBrands(others));
   const value = { ...checked.value, brand_name: brand.ok ? brand.name : checked.value.brand_name };
+  if (options.warnOnDuplicate) {
+    // `others` never contains the item itself, so an item is never its own duplicate.
+    const duplicate = findCustomDuplicate({ brandName: value.brand_name, itemName: value.item_name, itemCode: value.item_code, sellingPrice: value.selling_price, currency: value.currency }, others, itemId);
+    if (duplicate) return { ok: false, error: saveDuplicateMessage(duplicate), duplicate };
+  }
   const { data, error } = await supabase
     .from("saved_custom_items")
     .update({ ...value, ...pictureChange, ...(priceChanged ? { price_saved_at: new Date().toISOString() } : {}) })

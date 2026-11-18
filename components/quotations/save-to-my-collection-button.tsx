@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
+import { DuplicateWarning } from "@/components/products/my-collection-shared";
 import { saveSetup } from "@/lib/products/saved-setups/actions";
+import { saveDuplicateMessage, type DuplicateInfo } from "@/lib/products/saved-setups/duplicates";
+import { checkSetupDuplicate } from "@/lib/products/saved-setups/saved-setups-list-actions";
 import type { SavedSetupPlainState } from "@/lib/products/saved-setups/recipe";
 
 // Saves the CURRENT selections (ids + small overrides) as a private setup. Never sends a price or a line
@@ -21,9 +24,19 @@ export function SaveToMyCollectionButton({
   // An empty name is sent as-is: the server's existing validation message is shown.
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
+  // "Already in your collection": the SERVER compares this setup with the caller's own and writes nothing when it finds one.
+  const [duplicate, setDuplicate] = useState<DuplicateInfo | null>(null);
 
-  function submit() {
+  function submit(anyway = false) {
     startTransition(async () => {
+      if (!anyway) {
+        const check = await checkSetupDuplicate({ templateId, state });
+        if (check.ok && check.duplicate) {
+          setDuplicate(check.duplicate);
+          return;
+        }
+      }
+      setDuplicate(null);
       const result = await saveSetup({ templateId, setupName: name, state });
       if (result.ok) {
         setMessage({ kind: "ok", text: "Saved to My Collection." });
@@ -57,7 +70,7 @@ export function SaveToMyCollectionButton({
             <button
               type="button"
               disabled={pending}
-              onClick={submit}
+              onClick={() => submit()}
               className="h-9 flex-1 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
             >
               {pending ? "Saving..." : "Save"}
@@ -65,12 +78,23 @@ export function SaveToMyCollectionButton({
             <button
               type="button"
               disabled={pending}
-              onClick={() => setOpen(false)}
+              onClick={() => { setDuplicate(null); setOpen(false); }}
               className="h-9 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
             >
               Cancel
             </button>
           </div>
+          {duplicate ? (
+            // A setup has no "update" path today, so the choices are to save a new one anyway or to cancel.
+            <DuplicateWarning
+              message={saveDuplicateMessage(duplicate)}
+              busy={pending}
+              choices={[
+                { label: "Save as new anyway", onClick: () => submit(true), tone: "primary" },
+                { label: "Cancel", onClick: () => setDuplicate(null), tone: "secondary" },
+              ]}
+            />
+          ) : null}
         </div>
       ) : (
         <button

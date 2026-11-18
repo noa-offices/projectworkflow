@@ -34,18 +34,19 @@ function pickInput(input: CustomItemSaveInput | null | undefined): CustomItemSav
   };
 }
 
-export async function createCustomItem(input: CustomItemSaveInput): Promise<CustomItemActionResult> {
+// allowDuplicate: the user saw the "already in your collection" warning and chose to go on. It only skips that warning.
+export async function createCustomItem(input: CustomItemSaveInput, options?: { allowDuplicate?: boolean }): Promise<CustomItemActionResult> {
   const { user } = await requireActiveUser();
   const supabase = await createClient();
-  const result = await createCustomItemForUser(supabase, user.id, pickInput(input));
+  const result = await createCustomItemForUser(supabase, user.id, pickInput(input), { warnOnDuplicate: options?.allowDuplicate !== true });
   if (result.ok) revalidatePath(MY_COLLECTION_PATH);
   return result;
 }
 
-export async function updateCustomItem(itemId: string, input: CustomItemSaveInput): Promise<CustomItemActionResult> {
+export async function updateCustomItem(itemId: string, input: CustomItemSaveInput, options?: { allowDuplicate?: boolean }): Promise<CustomItemActionResult> {
   const { user } = await requireActiveUser();
   const supabase = await createClient();
-  const result = await updateCustomItemForUser(supabase, user.id, String(itemId ?? ""), pickInput(input));
+  const result = await updateCustomItemForUser(supabase, user.id, String(itemId ?? ""), pickInput(input), { warnOnDuplicate: options?.allowDuplicate !== true });
   if (result.ok) revalidatePath(MY_COLLECTION_PATH);
   return result;
 }

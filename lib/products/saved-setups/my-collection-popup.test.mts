@@ -228,9 +228,9 @@ test("the add flow is unchanged: load, hand over, close, then mark used, in that
 test("actions: only the existing ones, plus one read-only list for Removed products; authenticated, no admin client", () => {
   const listActions = read("./saved-setups-list-actions.ts");
   assert.match(listActions, /^"use server";/);
-  assert.equal((listActions.match(/await requireActiveUser\(\)/g) ?? []).length, 1);
+  assert.equal((listActions.match(/await requireActiveUser\(\)/g) ?? []).length, 2, "listRemovedSetups and (PR 7) the read-only checkSetupDuplicate");
   assert.match(listActions, /listSetupsForUser\(supabase, user\.id, \{ withImages: false \}\)\)\.filter\(\(item\) => !item\.usable\)/);
-  assert.equal((listActions.match(/export async function/g) ?? []).length, 1);
+  assert.equal((listActions.match(/export async function/g) ?? []).length, 2);
   // the existing action files are unchanged: no new action was added to them
   assert.equal((read("./actions.ts").match(/^export async function/gm) ?? []).length, 7);
   assert.equal((read("./saved-custom-items-actions.ts").match(/^export async function/gm) ?? []).length, 5);

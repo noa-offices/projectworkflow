@@ -4,9 +4,11 @@ import { revalidatePath } from "next/cache";
 import { requireActiveUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { distinctBrands } from "./custom-brands";
+import { acceptDuplicateMessage, findCustomDuplicate, type DuplicateInfo } from "./duplicates";
 import { CUSTOM_IMAGE_BUCKET } from "./custom-item-image";
 import type { CustomItemFieldErrors } from "./custom-item";
 import { listCustomItemsForUser, loadCustomItemForUser, uploadCustomItemImageForUser } from "./saved-custom-items-service";
+import { findSetupDuplicateForUser } from "./saved-setups-service";
 import {
   SHARE_PICTURE_URL_SECONDS,
   isIncomingPicturePath,
@@ -51,7 +53,7 @@ import { isUuid } from "./recipe";
 // SHARE_MESSAGES (or IMAGE_MESSAGES / the form validators for picture and field problems). Raw database text never leaves the server.
 const MY_COLLECTION_PATH = "/products/my-collection";
 
-export type ShareActionFailure = { ok: false; message: string; fieldErrors?: CustomItemFieldErrors };
+export type ShareActionFailure = { ok: false; message: string; fieldErrors?: CustomItemFieldErrors; duplicate?: DuplicateInfo };
 
 function failure(kind: ShareMessageKind, problem?: unknown): ShareActionFailure {
   // A sign-in redirect thrown by requireActiveUser becomes the "not allowed" message instead of a raw exception.
@@ -155,6 +157,8 @@ type AcceptCustomInput = {
   currency?: unknown;
   pictureMode?: unknown;
   file?: unknown;
+  /** The user saw "You already have ..." and chose "Add anyway". Only skips that warning. */
+  allowDuplicate?: unknown;
 };
 
 function readAcceptCustomInput(input: FormData | AcceptCustomInput | null | undefined): AcceptCustomInput {
@@ -163,7 +167,7 @@ function readAcceptCustomInput(input: FormData | AcceptCustomInput | null | unde
       const value = input.get(key);
       return typeof value === "string" ? value : undefined;
     };
-    return { shareId: text("shareId"), brand: text("brand"), name: text("name"), code: text("code"), spec: text("spec"), unit: text("unit"), price: text("price"), currency: text("currency"), pictureMode: text("pictureMode"), file: input.get("file") };
+    return { shareId: text("shareId"), brand: text("brand"), name: text("name"), code: text("code"), spec: text("spec"), unit: text("unit"), price: text("price"), currency: text("currency"), pictureMode: text("pictureMode"), file: input.get("file"), allowDuplicate: text("allowDuplicate") };
   }
   return input ?? {};
 }
@@ -184,13 +188,21 @@ export async function acceptCustomItemShareAction(input: FormData | AcceptCustom
     if (!mode) return failure("invalid_request");
     const supabase = await createClient();
 
-    const brands = distinctBrands(await listCustomItemsForUserSafe(supabase, user.id));
+    const owned = await listCustomItemsForUserSafe(supabase, user.id);
+    const brands = distinctBrands(owned);
     const checked = validateAcceptCustomItem({ brandName: raw.brand, itemName: raw.name, itemCode: raw.code, specification: raw.spec, unitLabel: raw.unit, sellingPrice: raw.price, currency: raw.currency }, brands);
     if (!checked.ok) return { ok: false, message: checked.error, fieldErrors: checked.fieldErrors };
 
     const share = await loadIncomingShare(supabase, user.id, raw.shareId);
     if (!share || share.kind !== "custom_item") return failure("share_not_found");
     if (share.status !== "pending" && share.status !== "accepted") return failure("no_longer_available");
+
+    // Duplicate warning (server side, the recipient's own items, the edited brand and name): NOTHING is written or copied.
+    // "Add anyway" sends allowDuplicate; it skips only this warning, never validation or any other rule.
+    if (share.status === "pending" && raw.allowDuplicate !== true && raw.allowDuplicate !== "true" && raw.allowDuplicate !== "1") {
+      const duplicate = findCustomDuplicate({ brandName: checked.value.brand_name, itemName: checked.value.item_name, itemCode: checked.value.item_code, sellingPrice: checked.value.selling_price, currency: checked.value.currency }, owned);
+      if (duplicate) return { ok: false, message: acceptDuplicateMessage(duplicate), duplicate };
+    }
 
     // Already accepted (double click, second tab): no picture work; the database returns the same item id.
     let imagePath: string | null = null;
@@ -245,19 +257,37 @@ async function dropUnusedCopy(supabase: Awaited<ReturnType<typeof createClient>>
 }
 
 /** The recipient adds a shared setup. Only the name and note can be edited; brand, product and recipe come from the share. */
-export async function acceptSetupShareAction(input: { shareId: string; setupName: string; note?: string | null }): Promise<{ ok: true; setupId: string } | ShareActionFailure> {
+export async function acceptSetupShareAction(input: { shareId: string; setupName: string; note?: string | null; allowDuplicate?: boolean }): Promise<{ ok: true; setupId: string } | ShareActionFailure> {
   try {
-    await requireActiveUser();
+    const { user } = await requireActiveUser();
     if (!isUuid(input?.shareId)) return failure("share_not_found");
     const checked = validateAcceptSetup({ setupName: input.setupName, note: input.note });
     if (!checked.ok) return { ok: false, message: checked.error };
     const supabase = await createClient();
+    // Duplicate warning: the shared recipe is read server side (the recipient's own share row); the browser never sees it.
+    if (input.allowDuplicate !== true) {
+      const duplicate = await setupDuplicateForShare(supabase, user.id, input.shareId);
+      if (duplicate) return { ok: false, message: acceptDuplicateMessage(duplicate), duplicate };
+    }
     const accepted = await acceptSetupShare(supabase, input.shareId, checked.setupName, checked.note);
     if (!accepted.ok) return failure(accepted.kind);
     revalidatePath(MY_COLLECTION_PATH);
     return { ok: true, setupId: accepted.setupId };
   } catch (problem) {
     return failure("unknown", problem);
+  }
+}
+
+/** A read problem means "no warning": the accept itself is unchanged and still checked by the database. */
+async function setupDuplicateForShare(supabase: Awaited<ReturnType<typeof createClient>>, userId: string, shareId: string): Promise<DuplicateInfo | null> {
+  try {
+    const { data } = await supabase.from("my_collection_shares").select("payload,status").eq("id", shareId).eq("recipient_id", userId).maybeSingle();
+    const row = data as { payload?: { recipe?: { template_id?: unknown }; spec_overrides?: unknown }; status?: unknown } | null;
+    const recipe = row?.payload?.recipe;
+    if (!row || row.status !== "pending" || !recipe || typeof recipe.template_id !== "string") return null;
+    return await findSetupDuplicateForUser(supabase, userId, recipe.template_id, recipe, row.payload?.spec_overrides);
+  } catch {
+    return null;
   }
 }
 

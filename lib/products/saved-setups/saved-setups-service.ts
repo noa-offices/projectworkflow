@@ -12,6 +12,7 @@ import {
   type SavedSetupPlainState,
 } from "./recipe";
 import { isSetupUsable } from "./usable";
+import { findSetupDuplicate, type DuplicateInfo } from "./duplicates";
 import type { SavedSetupRecipeV1, SavedSetupSpecOverrides } from "./recipe";
 
 export type SetupActionResult = { ok: true; id?: string; count?: number } | { ok: false; error: string };
@@ -97,6 +98,44 @@ export async function saveSetupForUser(
     .single();
   if (error || !data) return { ok: false, error: "The setup could not be saved." };
   return { ok: true, id: String(data.id) };
+}
+
+/**
+ * The caller's own live setups of ONE template (owner filter + RLS; archived and removed ones are skipped), compared with the
+ * canonical recipe. Read-only. A read problem means "no warning", never a failure of the save. The recipe is not returned.
+ */
+export async function findSetupDuplicateForUser(
+  supabase: SupabaseClient,
+  userId: string,
+  templateId: string,
+  recipe: unknown,
+  specOverrides: unknown,
+): Promise<DuplicateInfo | null> {
+  try {
+    const { data, error } = await supabase
+      .from("saved_setups")
+      .select("id,template_id,brand_name,product_name,setup_name,recipe,spec_overrides,archived,created_at")
+      .eq("owner_id", userId)
+      .eq("template_id", templateId)
+      .eq("archived", false);
+    if (error || !Array.isArray(data)) return null;
+    return findSetupDuplicate(
+      { templateId, recipe, specOverrides },
+      (data as Array<Record<string, unknown>>).map((row) => ({
+        id: String(row.id),
+        templateId: typeof row.template_id === "string" ? row.template_id : null,
+        setupName: String(row.setup_name ?? ""),
+        brandName: String(row.brand_name ?? ""),
+        productName: String(row.product_name ?? ""),
+        recipe: row.recipe,
+        specOverrides: row.spec_overrides,
+        archived: row.archived === true,
+        createdAt: typeof row.created_at === "string" ? row.created_at : null,
+      })),
+    );
+  } catch {
+    return null;
+  }
 }
 
 export async function renameSetupForUser(
