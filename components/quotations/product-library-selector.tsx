@@ -11,6 +11,7 @@ import { defaultSetupName } from "@/lib/products/saved-setups/default-name";
 import { LINE_RECIPE_FORM_FIELD, buildLineConfigurationRecipe, withConfigurationRecipe } from "@/lib/products/saved-setups/line-recipe";
 import { baseModelPlacement } from "@/lib/products/saved-setups/base-model-placement";
 import { AddFromClientHistoryButton } from "./add-from-client-history-button";
+import { historyDiscountNote, type HistoryDiscount } from "@/lib/quotations/client-history/client-history-view";
 import { AddFromMyCollectionButton } from "./add-from-my-collection-button";
 import { SetupReplayBanner } from "./setup-replay-banner";
 import { evaluateSetup, type SetupProblem } from "@/lib/products/saved-setups/replay";
@@ -1259,7 +1260,7 @@ export function ProductLibrarySelector({
   canManageProductLibrary?: boolean;
   categories: ProductLibraryCategory[];
   /** The quotation's client, for "Add from {client} history" next to My Collection. Omitted => no history button. */
-  clientHistory?: { clientId: string | null; clientName: string };
+  clientHistory?: { clientId: string | null; clientName: string; quoteCurrency?: string | null };
   components: ProductLibraryComponent[];
   linkedFamilies: ProductLibraryLinkedFamily[];
   materialGroups: FinishMaterialGroup[];
@@ -1344,6 +1345,8 @@ export function ProductLibrarySelector({
   } | null>(null);
 
   // My Collection replay: set only when a saved setup was opened; null in the normal Product Library flow.
+  // "Add from {client} history": the discount of the old line, shown as one short line in the configurator for that product.
+  const [historyNote, setHistoryNote] = useState<{ templateId: string; text: string; type: string; value: string } | null>(null);
   const [replay, setReplay] = useState<{ key: number; problems: SetupProblem[]; setupName: string; specOverrides: SavedSetupSpecOverrides; templateId: string } | null>(null);
   const brandNameById = useMemo(
     () => new Map(brands.map((brand) => [brand.id, brand.name])),
@@ -1494,6 +1497,13 @@ export function ProductLibrarySelector({
 
   // "Add from My Collection": hydrate the EXISTING per-template state from a saved recipe, then open the normal
   // configurator. Nothing is added to the quotation and no price is restored; the Add path prices as usual.
+  // historyDiscount: null = the old line had no discount (the configurator discount is cleared); a value = applied to this product.
+  const applyHistoryDiscount = (tid: string, historyDiscount: HistoryDiscount | null) => {
+    setDiscountTypes((current) => ({ ...current, [tid]: historyDiscount ? historyDiscount.discountType : "none" }));
+    setDiscountValues((current) => ({ ...current, [tid]: historyDiscount ? String(historyDiscount.discountValue) : "" }));
+    setHistoryNote(historyDiscount ? { templateId: tid, text: historyDiscountNote(historyDiscount), type: historyDiscount.discountType, value: String(historyDiscount.discountValue) } : null);
+  };
+
   const openSetupFromCollection = (setup: SetupForUse): string | null => {
     const template = templateById.get(setup.templateId);
     if (!template) return "This product is not available in this Product Library.";
@@ -1569,10 +1579,18 @@ export function ProductLibrarySelector({
     return null;
   };
 
+  // "Add from {client} history" (configured item): the EXISTING replay above, then the old line's discount on top of it.
+  const openSetupFromHistory = (setup: SetupForUse, historyDiscount: HistoryDiscount | null): string | null => {
+    const problem = openSetupFromCollection(setup);
+    if (!problem) applyHistoryDiscount(setup.templateId, historyDiscount);
+    return problem;
+  };
+
   // "Add from {client} history" (library item): open the normal product view for that product. Nothing is added or priced here.
-  const openProductFromHistory = (templateId: string): string | null => {
+  const openProductFromHistory = (templateId: string, historyDiscount: HistoryDiscount | null): string | null => {
     if (!templateById.get(templateId)) return "This product is not available in this Product Library.";
     setReplay(null);
+    applyHistoryDiscount(templateId, historyDiscount);
     setSelectedTemplateId(templateId);
     setIsOpen(true);
     return null;
@@ -1589,7 +1607,7 @@ export function ProductLibrarySelector({
       </button>
       <AddFromMyCollectionButton onChoose={openSetupFromCollection} />
       {clientHistory ? (
-        <AddFromClientHistoryButton clientId={clientHistory.clientId} clientName={clientHistory.clientName} onOpenProduct={openProductFromHistory} onOpenSetup={openSetupFromCollection} />
+        <AddFromClientHistoryButton clientId={clientHistory.clientId} clientName={clientHistory.clientName} quoteCurrency={clientHistory.quoteCurrency ?? null} onOpenProduct={openProductFromHistory} onOpenSetup={openSetupFromHistory} />
       ) : null}
 
       {isOpen ? (
@@ -3259,6 +3277,9 @@ export function ProductLibrarySelector({
                           <AnnouncedPriceBadge announcement={template.announced_price_change} />
                         </div>
                       </div>
+                      {historyNote && historyNote.templateId === template.id && discountTypes[template.id] === historyNote.type && discountValues[template.id] === historyNote.value ? (
+                        <p role="status" className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-900 lg:px-6">{historyNote.text}</p>
+                      ) : null}
                       {replay && replay.templateId === template.id ? (
                         <SetupReplayBanner
                           key={replay.key}

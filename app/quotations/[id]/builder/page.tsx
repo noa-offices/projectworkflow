@@ -2111,7 +2111,7 @@ function RowActionPanel({
           brands={brands}
           canManageProductLibrary={canManageProductLibrary}
           categories={categories}
-          clientHistory={{ clientId: quotation.client_id, clientName }}
+          clientHistory={{ clientId: quotation.client_id, clientName, quoteCurrency: quotation.currency }}
           components={components}
           linkedFamilies={linkedFamilies}
           materialGroups={materialGroups}

@@ -8,9 +8,10 @@ import type { CustomItemListItem } from "@/lib/products/saved-setups/custom-item
 import { imageMessage, type CustomItemWithImage } from "@/lib/products/saved-setups/custom-item-image";
 import { copyCustomItemImageToQuote } from "@/lib/products/saved-setups/saved-custom-images-actions";
 import { copyHistoryPictureToLocalRowAction } from "@/lib/quotations/client-history/client-history-actions";
+import { historyCustomLine } from "@/lib/quotations/client-history/client-history";
 import type { ClientHistoryAddItem } from "@/lib/quotations/client-history/client-history-service";
 import { announcedSnapshotOf } from "@/lib/products/price-announcements";
-import { readPricingRule, type PricingRule } from "@/lib/quotation-pricing";
+import { quotationLinePricing, readPricingRule, type PricingRule } from "@/lib/quotation-pricing";
 import { formatRoundingDifference, lineRoundingAdjustment } from "@/lib/quotations/quotation-total-display";
 import Link from "next/link";
 import { prepareQuotationSharedImages } from "@/app/quotations/shared-image-actions";
@@ -2625,11 +2626,25 @@ export function LocalQuotationBuilder({
   // "Add from {client} history" (custom item): the same ordinary manual row as addCustomItemRow (same overlay and currency rule).
   // The old picture is copied by the server under this row's own path; a failure leaves the row without a picture and never blocks.
   function addHistoryCustomRow(sectionId: string, data: Extract<ClientHistoryAddItem, { kind: "custom" }>): string | null {
+    // The SAME line as before: list price + the same discount + the last quantity, priced by the existing helper and this quote's rule.
+    // A different currency gives price 0 and no discount, so no wrong numbers.
+    const line = historyCustomLine(data, workspace.currency);
     const overlay = rowOverlayFromCustomItem(
-      { brandName: data.brand, itemName: data.itemName, itemCode: data.itemCode, specification: data.specification, unitLabel: data.unitLabel, sellingPrice: data.price, currency: data.currency },
+      { brandName: data.brand, itemName: data.itemName, itemCode: data.itemCode, specification: data.specification, unitLabel: data.unitLabel, sellingPrice: line.sellingPrice, currency: data.currency },
       workspace.currency,
     );
-    const { source_component_data: sourceData, ...fields } = overlayFields(overlay);
+    const { source_component_data: sourceData, ...overlayRest } = overlayFields(overlay);
+    const pricing = quotationLinePricing(readPricingRule(workspace.layout_settings), overlay.unit_price, line.discountType, line.discountValue, line.qty);
+    const hasDiscount = line.discountValue > 0;
+    const fields = {
+      ...overlayRest,
+      qty: line.qty,
+      unit_price: pricing.unitPrice,
+      discount_type: hasDiscount ? line.discountType : "none",
+      discount_value: hasDiscount ? pricing.discountValue : 0,
+      net_price: pricing.netPrice,
+      net_total: pricing.netTotal,
+    };
     const rowId = createEmptyItem(workspace, "custom", sectionId).id;
     commit((current) => ({
       ...current,
@@ -5201,7 +5216,7 @@ export function LocalQuotationBuilder({
                               brands={productBrands}
                               canManageProductLibrary={canManageProductLibrary}
                               categories={productCategories}
-                              clientHistory={{ clientId: workspace.client_id ?? null, clientName: currentClientName === "-" ? "" : currentClientName }}
+                              clientHistory={{ clientId: workspace.client_id ?? null, clientName: currentClientName === "-" ? "" : currentClientName, quoteCurrency: workspace.currency }}
                               components={productComponents}
                               linkedFamilies={productLinkedFamilies}
                               materialGroups={materialGroups}
@@ -5316,7 +5331,7 @@ export function LocalQuotationBuilder({
                     brands={productBrands}
                     canManageProductLibrary={canManageProductLibrary}
                     categories={productCategories}
-                    clientHistory={{ clientId: workspace.client_id ?? null, clientName: currentClientName === "-" ? "" : currentClientName }}
+                    clientHistory={{ clientId: workspace.client_id ?? null, clientName: currentClientName === "-" ? "" : currentClientName, quoteCurrency: workspace.currency }}
                     components={productComponents}
                     linkedFamilies={productLinkedFamilies}
                     materialGroups={materialGroups}

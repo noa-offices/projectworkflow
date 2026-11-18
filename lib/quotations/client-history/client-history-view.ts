@@ -1,4 +1,4 @@
-import { formatMoney } from "@/lib/currencies";
+import { formatMoney, normalizeCurrency } from "@/lib/currencies";
 import { formatSavedDate } from "@/lib/products/saved-setups/collection-view";
 import { priceChange, type ClientHistoryListItem, type ClientHistoryPriceEntry } from "./client-history";
 
@@ -20,10 +20,59 @@ export const CLIENT_HISTORY_KIND_LABELS: Record<ClientHistoryListItem["kind"], s
   custom: "Custom",
 };
 
-/** "Last quoted AED 1,250.00 · 12 Oct 2026 · QF-0107-001" (parts that are missing are left out). */
-export function lastQuotedLine(item: Pick<ClientHistoryListItem, "currency" | "lastUnitPrice" | "lastQuotedAt" | "lastQuotationNo">): string {
+type DiscountParts = { currency: string; listUnitPrice?: number | null; discountType?: "percent" | "amount" | null; discountValue?: number | null };
+
+function percentText(value: number): string {
+  return `${Number(value.toFixed(2))}%`;
+}
+
+/** "List AED 2,487.00 · −15% · Net AED 2,114.00" (amount discount: "−AED 100.00"); just the price without a discount (or on an old row). */
+function priceWithDiscountText(currency: string, net: number, line: DiscountParts): string {
+  const hasDiscount = Boolean(line.discountType) && typeof line.discountValue === "number" && typeof line.listUnitPrice === "number";
+  if (!hasDiscount) return formatMoney(currency, net);
+  const discount = line.discountType === "percent" ? `−${percentText(line.discountValue as number)}` : `−${formatMoney(currency, line.discountValue as number)}`;
+  return `List ${formatMoney(currency, line.listUnitPrice as number)} · ${discount} · Net ${formatMoney(currency, net)}`;
+}
+
+type LastQuotedInput = Pick<ClientHistoryListItem, "currency" | "lastUnitPrice" | "lastQuotedAt" | "lastQuotationNo"> &
+  Partial<Pick<ClientHistoryListItem, "qty" | "listUnitPrice" | "discountType" | "discountValue">>;
+
+/** First line of the card: "Last quoted AED 1,250.00" or "Last quoted List AED 2,487.00 · −15% · Net AED 2,114.00". */
+export function lastQuotedPrice(item: LastQuotedInput): string {
+  return `Last quoted ${priceWithDiscountText(item.currency, item.lastUnitPrice, item)}`;
+}
+
+/** Second line: "Qty 3 · 12 Oct 2026 · QF-0107-001" (parts that are missing are left out). */
+export function lastQuotedMeta(item: LastQuotedInput): string {
   const date = formatSavedDate(item.lastQuotedAt);
-  return [`Last quoted ${formatMoney(item.currency, item.lastUnitPrice)}`, date, item.lastQuotationNo ?? ""].filter(Boolean).join(" · ");
+  return [typeof item.qty === "number" ? `Qty ${item.qty}` : "", date, item.lastQuotationNo ?? ""].filter(Boolean).join(" · ");
+}
+
+/** Both lines in one: "Last quoted AED 1,250.00 · Qty 3 · 12 Oct 2026 · QF-0107-001". */
+export function lastQuotedLine(item: LastQuotedInput): string {
+  return [lastQuotedPrice(item), lastQuotedMeta(item)].filter(Boolean).join(" · ");
+}
+
+// ── The discount carried into the configurator (configured / library items) ─
+export type HistoryDiscount = { discountType: "percent" | "amount"; discountValue: number; currency: string };
+
+/**
+ * The old line's discount, when it is safe to reuse on a configurator line: a percent always; an amount only when it was in the
+ * quote's own currency (an amount in another currency would be a wrong number). null = no discount to carry.
+ */
+export function carriedDiscount(
+  item: { currency: string; discountType: "percent" | "amount" | null; discountValue: number | null },
+  quoteCurrency: string | null | undefined,
+): HistoryDiscount | null {
+  if (!item.discountType || typeof item.discountValue !== "number" || !(item.discountValue > 0)) return null;
+  if (item.discountType === "amount" && (!quoteCurrency || normalizeCurrency(item.currency) !== normalizeCurrency(quoteCurrency))) return null;
+  return { discountType: item.discountType, discountValue: item.discountValue, currency: item.currency };
+}
+
+/** One short line for the configurator: "Client history: 15% discount will be applied". */
+export function historyDiscountNote(discount: HistoryDiscount): string {
+  const text = discount.discountType === "percent" ? percentText(discount.discountValue) : formatMoney(discount.currency, discount.discountValue);
+  return `Client history: ${text} discount will be applied`;
 }
 
 /**
@@ -45,10 +94,11 @@ export function previousPriceChangeText(item: Pick<ClientHistoryListItem, "curre
   return `${change.direction === "up" ? "▲" : "▼"} ${amount}${percent} vs previous`;
 }
 
-/** One line of the quiet "price history" list: "AED 1,250.00 · qty 4 · 12 Oct 2026 · QF-0107-001". */
+/** One line of the quiet "price history" list: "AED 1,250.00 · qty 4 · 12 Oct 2026 · QF-0107-001" (with list, discount and net when the entry has them). */
 export function priceHistoryLine(entry: ClientHistoryPriceEntry): string {
   const date = formatSavedDate(entry.at);
-  return [formatMoney(entry.currency, entry.price), entry.qty === null ? "" : `qty ${entry.qty}`, date, entry.quotationNo ?? ""].filter(Boolean).join(" · ");
+  const price = priceWithDiscountText(entry.currency, entry.price, { currency: entry.currency, listUnitPrice: entry.listPrice, discountType: entry.discountType, discountValue: entry.discountValue });
+  return [price, entry.qty === null ? "" : `qty ${entry.qty}`, date, entry.quotationNo ?? ""].filter(Boolean).join(" · ");
 }
 
 /** The client name for the button label (long names are shortened; the full name stays in the title). */

@@ -5,6 +5,7 @@
  */
 import { normaliseSearchKey } from "../../products/saved-setups/collection-view";
 import { isUuid } from "../../products/saved-setups/recipe";
+import { normalizeCurrency } from "../../currencies";
 
 export const CLIENT_HISTORY_PAGE_SIZE = 30;
 export const CLIENT_HISTORY_SPEC_PREVIEW_CHARS = 160;
@@ -126,7 +127,36 @@ export function priceChange(last: { price: unknown; currency: unknown }, current
 }
 
 // ── What the browser receives ──────────────────────────────────────────────
-export type ClientHistoryPriceEntry = { price: number; currency: string; qty: number | null; at: string | null; quotationNo: string | null };
+export type ClientHistoryDiscountType = "percent" | "amount";
+
+/**
+ * The list price and discount of a line, read from the three database columns (or from a last_prices entry). All three are set
+ * together or all three are null: a discount needs its value AND a list price, a percent is at most 100, nothing is guessed.
+ * Rows recorded before the update have none of them (then the line is just its net price).
+ */
+export type ClientHistoryLineDiscount = { listUnitPrice: number | null; discountType: ClientHistoryDiscountType | null; discountValue: number | null };
+
+export function readLineDiscount(listUnitPrice: unknown, discountType: unknown, discountValue: unknown): ClientHistoryLineDiscount {
+  const list = finiteNumber(listUnitPrice);
+  const value = finiteNumber(discountValue);
+  const listOk = list !== null && list > 0 ? list : null;
+  if ((discountType === "percent" || discountType === "amount") && value !== null && value > 0 && listOk !== null && (discountType !== "percent" || value <= 100)) {
+    return { listUnitPrice: listOk, discountType, discountValue: value };
+  }
+  return { listUnitPrice: listOk, discountType: null, discountValue: null };
+}
+
+export type ClientHistoryPriceEntry = {
+  price: number;
+  currency: string;
+  qty: number | null;
+  at: string | null;
+  quotationNo: string | null;
+  /** Only present on entries recorded after the list price / discount update. */
+  listPrice?: number;
+  discountType?: ClientHistoryDiscountType;
+  discountValue?: number;
+};
 
 /**
  * Where the picture comes from: a product's own picture (the same path My Collection cards give to SetupThumbnail), a short-lived
@@ -145,6 +175,10 @@ export type ClientHistoryListItem = {
   qty: number | null;
   currency: string;
   lastUnitPrice: number;
+  /** The ORIGINAL unit price before the discount; null on rows recorded before the update (then there is no list/discount to show). */
+  listUnitPrice: number | null;
+  discountType: ClientHistoryDiscountType | null;
+  discountValue: number | null;
   lastQuotedAt: string;
   lastQuotationNo: string | null;
   hasRecipe: boolean;
@@ -172,13 +206,53 @@ export function readPriceHistory(value: unknown): ClientHistoryPriceEntry[] {
     const record = entry as Record<string, unknown>;
     const price = finiteNumber(record.price);
     if (price === null || typeof record.currency !== "string") continue;
+    const line = readLineDiscount(record.list_price, record.discount_type, record.discount_value);
     entries.push({
       price,
       currency: record.currency,
       qty: finiteNumber(record.qty),
       at: typeof record.at === "string" ? record.at : null,
       quotationNo: typeof record.quotation_no === "string" ? record.quotation_no : null,
+      ...(line.listUnitPrice !== null ? { listPrice: line.listUnitPrice } : {}),
+      ...(line.discountType !== null && line.discountValue !== null ? { discountType: line.discountType, discountValue: line.discountValue } : {}),
     });
   }
   return entries;
+}
+
+// ── Adding a CUSTOM history item as the same line ──────────────────────────
+export type HistoryCustomLineInput = {
+  price: number;
+  currency: string;
+  listUnitPrice: number | null;
+  discountType: ClientHistoryDiscountType | null;
+  discountValue: number | null;
+  qty: number | null;
+};
+
+/**
+ * What goes on the new row, BEFORE the existing pricing helpers compute net price and net total:
+ *  - same currency as the quote: unit price = the list price (or the last price when the row has none), the stored discount, the last qty;
+ *  - a different currency: the price is NOT converted here; the row gets price 0 (rowOverlayFromCustomItem) and NO discount, so no wrong
+ *    numbers appear. The source price kept for the user to convert is the NET price that was actually charged.
+ * qty is the last quoted quantity (1 when missing or not a positive number).
+ */
+export function historyCustomLine(item: HistoryCustomLineInput, quoteCurrency: string | null | undefined): {
+  sellingPrice: number;
+  sameCurrency: boolean;
+  discountType: "percent" | "amount";
+  discountValue: number;
+  qty: number;
+} {
+  const sameCurrency = normalizeCurrency(item.currency) === normalizeCurrency(quoteCurrency);
+  const qty = item.qty !== null && Number.isFinite(item.qty) && item.qty > 0 ? item.qty : 1;
+  const line = readLineDiscount(item.listUnitPrice, item.discountType, item.discountValue);
+  if (!sameCurrency) return { sellingPrice: item.price, sameCurrency, discountType: "amount", discountValue: 0, qty };
+  return {
+    sellingPrice: line.listUnitPrice ?? item.price,
+    sameCurrency,
+    discountType: line.discountType ?? "amount",
+    discountValue: line.discountValue ?? 0,
+    qty,
+  };
 }
