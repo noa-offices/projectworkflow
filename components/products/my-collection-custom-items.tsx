@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { BrandCombobox, BrandFilterList } from "@/components/products/brand-combobox";
+import { useEscapeLayer } from "@/components/products/escape-layer";
 import { createCustomItem, deleteCustomItem, updateCustomItem } from "@/lib/products/saved-setups/saved-custom-items-actions";
 import { renameCustomBrand } from "@/lib/products/saved-setups/saved-custom-brands-actions";
 import { copyQuoteImageToCollection, removeCustomItemImage, signCustomItemImageUrls, uploadCustomItemImage } from "@/lib/products/saved-setups/saved-custom-images-actions";
@@ -332,6 +333,8 @@ export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null
     if (image.kind === "uploaded") void removeCustomItemImage(image.path);
     onDone();
   }
+  // Inside the My Collection popup, Escape closes this form (like Cancel) instead of the whole popup.
+  useEscapeLayer(true, cancel);
 
   return (
     <form
@@ -375,18 +378,43 @@ export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null
   );
 }
 
-function CustomItemCard({ item, brands, onMessage }: { item: CustomItemWithImage; brands: BrandCount[]; onMessage: (message: string) => void }) {
+// Edit / Delete (two-step) buttons under a custom item card. Shared by the My Collection page and the popup. Separate
+// buttons that stop the click, so they can never trigger the card's own "add to quote" click. onEdit decides where the
+// form opens (inline on the page, in the side panel of the popup).
+export function CustomItemActionRow({ item, onEdit, onDeleted, onMessage }: { item: { id: string; itemName: string }; onEdit: () => void; onDeleted?: (id: string) => void; onMessage: (message: string) => void }) {
   const [pending, startTransition] = useTransition();
-  const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  useEscapeLayer(confirmingDelete, () => setConfirmingDelete(false));
+  const stop = (run: () => void) => (event: { stopPropagation: () => void }) => { event.stopPropagation(); run(); };
 
   function submitDelete() {
     startTransition(async () => {
       const result = await deleteCustomItem(item.id);
       if (!result.ok) onMessage(result.error);
+      else onDeleted?.(item.id);
       setConfirmingDelete(false);
     });
   }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3">
+      {confirmingDelete ? (
+        <>
+          <button type="button" disabled={pending} onClick={stop(submitDelete)} className="h-8 rounded-md bg-red-700 px-3 text-xs font-semibold text-white transition hover:bg-red-800 disabled:bg-zinc-300">Confirm delete</button>
+          <button type="button" disabled={pending} onClick={stop(() => setConfirmingDelete(false))} className={secondaryButton}>Keep</button>
+        </>
+      ) : (
+        <>
+          <button type="button" disabled={pending} onClick={stop(onEdit)} aria-label={`Edit ${item.itemName}`} className={secondaryButton}>Edit</button>
+          <button type="button" disabled={pending} onClick={stop(() => setConfirmingDelete(true))} aria-label={`Delete ${item.itemName}`} className={dangerButton}>Delete</button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CustomItemCard({ item, brands, onMessage }: { item: CustomItemWithImage; brands: BrandCount[]; onMessage: (message: string) => void }) {
+  const [editing, setEditing] = useState(false);
 
   if (editing) return <li className="sm:col-span-2 xl:col-span-3"><CustomItemForm item={item} brands={brands} onDone={() => setEditing(false)} /></li>;
 
@@ -402,27 +430,16 @@ function CustomItemCard({ item, brands, onMessage }: { item: CustomItemWithImage
           {item.specification ? <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{item.specification}</p> : null}
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3">
-        {confirmingDelete ? (
-          <>
-            <button type="button" disabled={pending} onClick={submitDelete} className="h-8 rounded-md bg-red-700 px-3 text-xs font-semibold text-white transition hover:bg-red-800 disabled:bg-zinc-300">Confirm delete</button>
-            <button type="button" disabled={pending} onClick={() => setConfirmingDelete(false)} className={secondaryButton}>Keep</button>
-          </>
-        ) : (
-          <>
-            <button type="button" disabled={pending} onClick={() => setEditing(true)} aria-label={`Edit ${item.itemName}`} className={secondaryButton}>Edit</button>
-            <button type="button" disabled={pending} onClick={() => setConfirmingDelete(true)} aria-label={`Delete ${item.itemName}`} className={dangerButton}>Delete</button>
-          </>
-        )}
-      </div>
+      <CustomItemActionRow item={item} onEdit={() => setEditing(true)} onMessage={onMessage} />
     </li>
   );
 }
 
-function RenameBrand({ brand, onDone, onMessage }: { brand: string; onDone: (newName: string, count: number) => void; onMessage: (message: string) => void }) {
+export function RenameBrand({ brand, onDone, onMessage }: { brand: string; onDone: (newName: string, count: number) => void; onMessage: (message: string) => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(brand);
   const [pending, startTransition] = useTransition();
+  useEscapeLayer(open, () => setOpen(false));
 
   function submit() {
     startTransition(async () => {
@@ -447,7 +464,7 @@ function RenameBrand({ brand, onDone, onMessage }: { brand: string; onDone: (new
         onChange={(event) => setName(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") submit();
-          if (event.key === "Escape") setOpen(false);
+          if (event.key === "Escape") { event.stopPropagation(); setOpen(false); }
         }}
         aria-label="New brand name"
         className="h-8 rounded-md border border-zinc-300 px-2 text-xs outline-none focus:border-emerald-800"
