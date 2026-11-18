@@ -189,7 +189,7 @@ test("incoming share: custom item keeps price and fields; a setup's recipe and o
 
 test("sent share: no payload, no price; only names, status, dates and whether a picture is attached", () => {
   const sent = toSentShare({ id: SHARE, kind: "custom_item", recipient_id: B, item_name: "Desk", note: null, picture_path: `${B}/incoming/${SHARE}/picture.webp`, picture_note: null, status: "unsent", created_at: "2026-11-19T10:00:00Z", responded_at: "2026-11-19T11:00:00Z", result_item_id: null, payload: { selling_price: 5 } } as any)!;
-  assert.deepEqual(Object.keys(sent).sort(), ["createdAt", "hasPicture", "id", "itemName", "kind", "note", "pictureNote", "recipientId", "respondedAt", "status"]);
+  assert.deepEqual(Object.keys(sent).sort(), ["createdAt", "hasPicture", "id", "itemName", "kind", "note", "pictureNote", "recipientId", "recipientName", "respondedAt", "status"]);
   assert.equal(sent.hasPicture, true);
   assert.ok(!JSON.stringify(sent).includes("selling_price"));
 });

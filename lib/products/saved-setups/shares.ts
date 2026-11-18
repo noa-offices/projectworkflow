@@ -5,7 +5,7 @@
  * one of these messages (mapShareError) and the technical detail stays in the server log (without payloads or prices).
  */
 import { resolveBrandInput, type BrandCount } from "./custom-brands";
-import { firstCustomItemError, validateCustomItem, type CleanCustomItem, type CustomItemFieldErrors, type CustomItemInput } from "./custom-item";
+import { firstCustomItemError, formatCustomItemPrice, validateCustomItem, type CleanCustomItem, type CustomItemFieldErrors, type CustomItemInput } from "./custom-item";
 import { SAVED_SETUP_NAME_MAX, isUuid } from "./recipe";
 
 export const SHARE_NOTE_MAX = 200;
@@ -178,7 +178,7 @@ export function buildAcceptedPicturePath(recipientId: string, shareId: string, n
 
 // ── Rows and the shapes sent to the browser ──────────────────────────────────────────────────────────────────────
 export const SHARE_SELECT_INCOMING = "id,kind,sender_id,recipient_id,sender_name,item_name,note,payload,picture_path,picture_note,status,created_at,responded_at,result_item_id";
-export const SHARE_SELECT_SENT = "id,kind,recipient_id,item_name,note,picture_path,picture_note,status,created_at,responded_at,result_item_id";
+export const SHARE_SELECT_SENT = "id,kind,recipient_id,recipient_name,item_name,note,picture_path,picture_note,status,created_at,responded_at,result_item_id";
 
 export type ShareRow = {
   id: string;
@@ -186,6 +186,7 @@ export type ShareRow = {
   sender_id?: string;
   recipient_id: string;
   sender_name?: string;
+  recipient_name?: string | null;
   item_name: string;
   note: string | null;
   payload?: unknown;
@@ -229,6 +230,8 @@ export type SentShare = {
   id: string;
   kind: ShareKind;
   recipientId: string;
+  /** The recipient's display name saved on the share. Older shares have none: shown as "Colleague" (recipientDisplayName). */
+  recipientName: string | null;
   itemName: string;
   note: string | null;
   status: ShareStatus;
@@ -296,6 +299,7 @@ export function toSentShare(row: ShareRow | null | undefined): SentShare | null 
     id: row.id,
     kind,
     recipientId: row.recipient_id,
+    recipientName: optStr(row.recipient_name),
     itemName: row.item_name,
     note: row.note,
     status,
@@ -304,4 +308,48 @@ export function toSentShare(row: ShareRow | null | undefined): SentShare | null 
     hasPicture: Boolean(row.picture_path),
     pictureNote: row.picture_note,
   };
+}
+
+/**
+ * What the browser gets for a received share: the same as IncomingShare, but the storage path is replaced by hasPicture and a
+ * short-lived signed link (pictureUrl, at most 10 minutes). The path itself never leaves the server.
+ */
+export type IncomingShareView = Omit<IncomingShare, "picturePath"> & { hasPicture: boolean; pictureUrl: string | null };
+export const SHARE_PICTURE_URL_SECONDS = 600;
+
+// ── Small display helpers for the My Collection page (pure, so they are tested without a browser) ────────────────
+export type CollectionTab = "configured" | "custom" | "shared" | "sent";
+export const COLLECTION_TABS: readonly CollectionTab[] = ["configured", "custom", "shared", "sent"];
+
+/** ?tab= from the address: one of the four tabs, anything else (or missing, or repeated) is "configured". */
+export function parseCollectionTab(value: unknown): CollectionTab {
+  const text = Array.isArray(value) ? value[0] : value;
+  return COLLECTION_TABS.includes(text as CollectionTab) ? (text as CollectionTab) : "configured";
+}
+
+/** "Shared with you (3)"; the tab is hidden when nothing is waiting. */
+export function sharedTabLabel(pending: number): string {
+  return pending > 0 ? `Shared with you (${pending})` : "Shared with you";
+}
+
+export const RECIPIENT_FALLBACK_NAME = "Colleague";
+export function recipientDisplayName(name: string | null | undefined): string {
+  return typeof name === "string" && name.trim() ? name.trim() : RECIPIENT_FALLBACK_NAME;
+}
+
+/** Status chip text of the Sent list. */
+export function sentStatusLabel(status: ShareStatus): string {
+  return status === "pending" ? "Waiting" : status === "accepted" ? "Added" : status === "dismissed" ? "Dismissed" : "Withdrawn";
+}
+
+/** Only a share that is still waiting can be taken back. */
+export function canUnsend(status: ShareStatus): boolean {
+  return status === "pending";
+}
+
+/** The line shown in the send panel. Custom items share their price and picture; setups never carry a price. */
+export function sharePriceNotice(kind: ShareKind, item?: { currency: string; sellingPrice: number } | null): string {
+  if (kind === "setup") return "Prices are not shared \u2014 they will see current prices.";
+  const price = item ? ` (${formatCustomItemPrice(item.currency, item.sellingPrice)})` : "";
+  return `This will share the price${price} and the picture with them.`;
 }

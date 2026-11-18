@@ -4,15 +4,19 @@ import { revalidatePath } from "next/cache";
 import { requireActiveUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { distinctBrands } from "./custom-brands";
+import { CUSTOM_IMAGE_BUCKET } from "./custom-item-image";
 import type { CustomItemFieldErrors } from "./custom-item";
 import { listCustomItemsForUser, loadCustomItemForUser, uploadCustomItemImageForUser } from "./saved-custom-items-service";
 import {
+  SHARE_PICTURE_URL_SECONDS,
+  isIncomingPicturePath,
   parsePictureMode,
   shareMessage,
   validateAcceptCustomItem,
   validateAcceptSetup,
   validateSendInput,
   type IncomingShare,
+  type IncomingShareView,
   type SentShare,
   type ShareMessageKind,
   type ShareTarget,
@@ -266,13 +270,31 @@ async function purgeQuietly(supabase: Awaited<ReturnType<typeof createClient>>) 
   }
 }
 
-export async function listIncomingSharesAction(): Promise<{ ok: true; shares: IncomingShare[] } | ShareActionFailure> {
+/**
+ * The browser never gets a storage path: a pending share's picture becomes a short-lived signed link (10 minutes), made with
+ * the recipient's OWN client (they own the incoming folder). A signing problem only means "no picture shown".
+ */
+async function toIncomingViews(supabase: Awaited<ReturnType<typeof createClient>>, userId: string, shares: IncomingShare[]): Promise<IncomingShareView[]> {
+  const wanted = shares.flatMap((share) => (share.status === "pending" && share.picturePath && isIncomingPicturePath(share.picturePath, userId, share.id) ? [share.picturePath] : []));
+  const urls = new Map<string, string>();
+  if (wanted.length > 0) {
+    try {
+      const { data } = await supabase.storage.from(CUSTOM_IMAGE_BUCKET).createSignedUrls(wanted, SHARE_PICTURE_URL_SECONDS);
+      for (const entry of data ?? []) if (entry.path && entry.signedUrl && wanted.includes(entry.path)) urls.set(entry.path, entry.signedUrl);
+    } catch {
+      // the share is still listed, just without its picture
+    }
+  }
+  return shares.map(({ picturePath, ...rest }) => ({ ...rest, hasPicture: Boolean(picturePath), pictureUrl: picturePath ? urls.get(picturePath) ?? null : null }));
+}
+
+export async function listIncomingSharesAction(): Promise<{ ok: true; shares: IncomingShareView[] } | ShareActionFailure> {
   try {
     const { user } = await requireActiveUser();
     const supabase = await createClient();
     await purgeQuietly(supabase);
     const result = await listIncomingShares(supabase, user.id);
-    return result.ok ? { ok: true, shares: result.shares } : failure(result.kind);
+    return result.ok ? { ok: true, shares: await toIncomingViews(supabase, user.id, result.shares) } : failure(result.kind);
   } catch (problem) {
     return failure("unknown", problem);
   }

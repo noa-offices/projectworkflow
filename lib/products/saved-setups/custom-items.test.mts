@@ -325,7 +325,7 @@ test("page: two tabs, form fields, two-step delete, empty state; the Configured 
   assert.match(custom, /grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3/);
   assert.doesNotMatch(custom, /image_path/, "the form never touches the raw image_path column");
   const page = read("../../../app/products/my-collection/page.tsx");
-  assert.match(page, /<MyCollectionTabs items=\{items\} customItems=\{customItems\} \/>/);
+  assert.match(page, /<MyCollectionTabs items=\{items\} customItems=\{customItems\} initialTab=\{initialTab\} pendingShares=\{pending\.ok \? pending\.count : 0\} \/>/);
   assert.match(page, /listCustomItemsForUser\(supabase, user\.id\)/);
   assert.match(page, /Your saved product setups\. Prices are always recalculated from the current price lists when you use one\./);
   // no picker tab and no quote-builder change in this PR

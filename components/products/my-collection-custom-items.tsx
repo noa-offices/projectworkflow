@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { BrandCombobox, BrandFilterList } from "@/components/products/brand-combobox";
+import { ShareControl } from "@/components/products/my-collection-share-send";
 import { useEscapeLayer } from "@/components/products/escape-layer";
 import { createCustomItem, deleteCustomItem, updateCustomItem } from "@/lib/products/saved-setups/saved-custom-items-actions";
 import { renameCustomBrand } from "@/lib/products/saved-setups/saved-custom-brands-actions";
@@ -381,7 +382,8 @@ export function CustomItemForm({ item, defaults, brands = [], rowImageRef = null
 // Edit / Delete (two-step) buttons under a custom item card. Shared by the My Collection page and the popup. Separate
 // buttons that stop the click, so they can never trigger the card's own "add to quote" click. onEdit decides where the
 // form opens (inline on the page, in the side panel of the popup).
-export function CustomItemActionRow({ item, onEdit, onDeleted, onMessage }: { item: { id: string; itemName: string }; onEdit: () => void; onDeleted?: (id: string) => void; onMessage: (message: string) => void }) {
+// extra: optional buttons shown after Edit / Delete (the page adds Share; the popup passes nothing).
+export function CustomItemActionRow({ item, onEdit, onDeleted, onMessage, extra }: { item: { id: string; itemName: string }; onEdit: () => void; onDeleted?: (id: string) => void; onMessage: (message: string) => void; extra?: React.ReactNode }) {
   const [pending, startTransition] = useTransition();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   useEscapeLayer(confirmingDelete, () => setConfirmingDelete(false));
@@ -407,6 +409,7 @@ export function CustomItemActionRow({ item, onEdit, onDeleted, onMessage }: { it
         <>
           <button type="button" disabled={pending} onClick={stop(onEdit)} aria-label={`Edit ${item.itemName}`} className={secondaryButton}>Edit</button>
           <button type="button" disabled={pending} onClick={stop(() => setConfirmingDelete(true))} aria-label={`Delete ${item.itemName}`} className={dangerButton}>Delete</button>
+          {extra}
         </>
       )}
     </div>
@@ -430,7 +433,7 @@ function CustomItemCard({ item, brands, onMessage }: { item: CustomItemWithImage
           {item.specification ? <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{item.specification}</p> : null}
         </div>
       </div>
-      <CustomItemActionRow item={item} onEdit={() => setEditing(true)} onMessage={onMessage} />
+      <CustomItemActionRow item={item} onEdit={() => setEditing(true)} onMessage={onMessage} extra={<ShareControl kind="custom_item" itemId={item.id} itemName={item.itemName} priceItem={{ currency: item.currency, sellingPrice: item.sellingPrice }} />} />
     </li>
   );
 }
