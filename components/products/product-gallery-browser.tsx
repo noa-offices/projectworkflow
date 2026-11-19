@@ -292,7 +292,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
             <button type="button" className={`${toolbarSecondaryButton} @xl:hidden`} aria-expanded={filtersOpen} aria-controls="gallery-filter-panel" onClick={() => setFiltersOpen((open) => !open)}>
               Filters{filterCount ? ` (${filterCount})` : ""}
             </button>
-            {canEdit ? <button type="button" className={toolbarSecondaryButton} onClick={() => void checkUpdates()} disabled={checkingUpdates}>{checkingUpdates ? "Checking?" : "Check for updates"}</button> : null}
+            {canEdit ? <button type="button" className={toolbarSecondaryButton} onClick={() => void checkUpdates()} disabled={checkingUpdates}>{checkingUpdates ? "Checking..." : "Check for updates"}</button> : null}
             {canEdit ? (
               <button type="button" className={state.updateAvailable ? toolbarPrimaryButton : toolbarSecondaryButton} aria-pressed={state.updateAvailable} onClick={() => change({ updateAvailable: !state.updateAvailable })}>
                 {UPDATE_AVAILABLE_TEXT}
