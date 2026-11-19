@@ -273,6 +273,13 @@ export function ErpSidebar({
         role === "sales_designer" ||
         role === "sales_coordinator" ||
         role === "designer";
+      // The gallery's own viewers (the database function product_gallery_can_view lists the same roles); the page checks again on the server.
+      const canViewGallery =
+        role === "system_owner" ||
+        role === "admin_manager" ||
+        role === "sales_designer" ||
+        role === "sales_coordinator" ||
+        role === "designer";
       const canManageMaterials =
         role === "system_owner" ||
         role === "admin_manager" ||
@@ -349,8 +356,8 @@ export function ErpSidebar({
         items: [
           // Private, owner-only saved setups: visible to every signed-in user of this sidebar (not gated by canManageProducts).
           { label: "My Collection", href: "/products/my-collection", icon: Bookmark, active: isMyCollectionActive(pathname), badge: pendingShares },
-          // Configured products the company has quoted. Same visibility rule as the Product Library entry; the page itself checks access again.
-          { label: "Product Gallery", href: "/products/gallery", icon: GalleryThumbnails, active: pathname === "/products/gallery" || pathname.startsWith("/products/gallery/"), hidden: !canManageProducts },
+          // Configured products the company has quoted: shown to every role that can view the gallery (not tied to canManageProducts).
+          { label: "Product Gallery", href: "/products/gallery", icon: GalleryThumbnails, active: pathname === "/products/gallery" || pathname.startsWith("/products/gallery/"), hidden: !canViewGallery },
           { label: "Product Library", href: "/products", icon: Package, active: isProductLibraryActive(pathname, priceStatus, manage), hidden: !canManageProducts },
           { label: "Product Management", href: "/products/manage", icon: SlidersHorizontal, active: isProductManagementActive(pathname, manage), hidden: !canManageProducts },
           { label: "Brands", href: "/products/brands", icon: Tag, active: pathname === "/products/brands", hidden: !canManageProducts },

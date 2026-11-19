@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SetupThumbnail } from "@/components/products/my-collection-list";
-import { ConfirmHiddenDialog, EditGalleryItemDialog, MergeGalleryItemDialog, galleryButton } from "@/components/products/product-gallery-dialogs";
+import { ConfirmHiddenDialog, EditGalleryItemDialog, MergeGalleryItemDialog } from "@/components/products/product-gallery-dialogs";
+import { toolbarContainer, toolbarControl, toolbarPrimaryButton, toolbarSecondaryButton } from "@/components/products/product-toolbar-styles";
 import { listGalleryFiltersAction, listGalleryItemsAction, setGalleryItemHiddenAction } from "@/lib/products/gallery/gallery-actions";
 import { GALLERY_SORT_MODES, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "@/lib/products/gallery/gallery";
 import {
@@ -11,73 +13,76 @@ import {
   GALLERY_SORT_LABELS,
   activeGalleryFilterCount,
   buildGalleryQuery,
-  categoryLine,
   clearedGalleryFilters,
   filterOptionLabel,
   hasActiveGalleryFilters,
-  lastQuotedText,
   productLibraryHref,
   quotedText,
   showingText,
-  subCategoriesFor,
-  withGalleryCategory,
+  subCategoryLabel,
   type GalleryUrlState,
 } from "@/lib/products/gallery/gallery-view";
 
-// The Product Gallery page: configured products the company has quoted. Read-only for staff; curators (canCurate) can also edit,
-// hide and merge. The filters live in the URL query string (the server passes the parsed state in; this component keeps the URL in
-// step with history.replaceState). The list is 30 per page with a Load more button. This page shows no money values and never
-// asks for a recipe: adding to a quotation happens in the quote builder.
+// The Product Gallery page: configured products the company has quoted. Cards are clean by default. Users who may edit (canEdit)
+// get one "Edit" toggle; only while it is on do the cards show Edit and Hide, and Merge only for curators (canCurate). Edit mode is
+// React state only (it resets on refresh). The filters live in the URL (the server passes the parsed state in; this component keeps
+// the URL in step with history.replaceState). 30 per page with a Load more button. No money values on this page and no recipe: adding
+// to a quotation happens in the quote builder. The server and the database decide who may change anything; these flags only mirror that.
 type Filters = { brands: GalleryFilterEntry[]; categories: GalleryFilterEntry[]; tags: GalleryTagEntry[]; subCategories: GallerySubCategoryEntry[]; currencies: GalleryCurrencyEntry[] };
 const NO_FILTERS: Filters = { brands: [], categories: [], tags: [], subCategories: [], currencies: [] };
 type Dialog = { kind: "edit" | "hide" | "merge"; item: GalleryListItem } | null;
 
-const selectClass = "h-9 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800 disabled:bg-zinc-100 disabled:text-zinc-400";
-const chip = "rounded-full border px-2.5 py-0.5 text-xs font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800";
+const control = `${toolbarControl} w-full`;
+const smallButton =
+  "inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800";
+const openButton =
+  "inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800";
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Select({ label, value, onChange, children }: { label: string; value: string; onChange: (value: string) => void; children: React.ReactNode }) {
   return (
-    <label className="flex min-w-0 flex-col gap-1 text-xs font-semibold text-zinc-600">
-      {label}
+    <select className={control} value={value} onChange={(event) => onChange(event.target.value)} aria-label={label} title={label}>
       {children}
-    </label>
+    </select>
   );
 }
 
-function GalleryCard({ item, canCurate, onDialog, onToggleHidden }: { item: GalleryListItem; canCurate: boolean; onDialog: (dialog: Dialog) => void; onToggleHidden: (item: GalleryListItem) => void }) {
-  const meta = [item.brandName, categoryLine(item)].filter(Boolean).join(" · ");
-  const lastQuoted = lastQuotedText(item.lastQuotedAt);
+function GalleryCard({ item, editMode, canCurate, onDialog, onUnhide }: { item: GalleryListItem; editMode: boolean; canCurate: boolean; onDialog: (dialog: Dialog) => void; onUnhide: (item: GalleryListItem) => void }) {
   return (
-    <li className="flex min-w-0 flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm" data-testid="gallery-card">
-      <div className="flex min-w-0 items-start gap-3">
-        <SetupThumbnail path={item.picture?.kind === "template" ? item.picture.path : null} alt={item.displayName} size={88} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="min-w-0 break-words text-sm font-semibold text-zinc-900">{item.displayName}</h3>
-            {item.currency ? <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600" title="Currency">{item.currency}</span> : null}
-          </div>
-          {item.itemCode ? <p className="text-xs text-zinc-600">{item.itemCode}</p> : null}
-          {meta ? <p className="text-xs text-zinc-600">{meta}</p> : null}
-          <p className="mt-1 text-xs font-medium text-zinc-800">{quotedText(item.quotedCount)}</p>
-          {lastQuoted ? <p className="text-xs text-zinc-500">{lastQuoted}</p> : null}
+    <li className={`flex h-full min-w-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-sm ${item.isHidden ? "opacity-60" : ""}`} data-testid="gallery-card">
+      <div className="p-2 pb-0">
+        <div className="relative flex h-24 items-center justify-center overflow-hidden rounded-md border border-zinc-100 bg-zinc-50">
+          <SetupThumbnail path={item.picture?.kind === "template" ? item.picture.path : null} alt={item.displayName} size={88} />
+          <span className="pointer-events-none absolute left-1.5 top-1.5 z-10 flex flex-col items-start gap-1">
+            {item.isHidden ? <span className="rounded-full border border-zinc-300 bg-white/90 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-700">Hidden</span> : null}
+            {!item.available ? <span className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-900">No longer available</span> : null}
+          </span>
+          {item.currency ? <span className="pointer-events-none absolute right-1.5 top-1.5 z-10 rounded-full border border-zinc-200 bg-white/90 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-600" title="Currency">{item.currency}</span> : null}
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {item.isHidden ? <span className="rounded bg-zinc-200 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-700">Hidden</span> : null}
-        {!item.available ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-900">No longer available</span> : null}
-        {item.tags.map((tag) => (
-          <span key={tag} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-900">{tag}</span>
-        ))}
-      </div>
-      <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
-        <Link href={productLibraryHref(item.templateId)} className={`${galleryButton} inline-flex items-center`} aria-label={`View product ${item.displayName}`}>View product</Link>
-        {canCurate ? (
-          <>
-            <button type="button" className={galleryButton} onClick={() => onDialog({ kind: "edit", item })} aria-label={`Edit ${item.displayName}`}>Edit</button>
-            <button type="button" className={galleryButton} onClick={() => (item.isHidden ? onToggleHidden(item) : onDialog({ kind: "hide", item }))} aria-label={`${item.isHidden ? "Unhide" : "Hide"} ${item.displayName}`}>{item.isHidden ? "Unhide" : "Hide"}</button>
-            <button type="button" className={galleryButton} onClick={() => onDialog({ kind: "merge", item })} aria-label={`Merge ${item.displayName} into another item`}>Merge into...</button>
-          </>
+      <div className="flex flex-1 flex-col gap-1 p-2.5">
+        <h3 className="min-w-0 truncate text-sm font-semibold text-zinc-950" title={item.displayName}>{item.displayName}</h3>
+        {item.brandName ? <p className="truncate text-xs text-zinc-500" title={item.brandName}>{item.brandName}</p> : null}
+        {item.itemCode ? <p className="truncate text-xs text-zinc-500" title={item.itemCode}>{item.itemCode}</p> : null}
+        <div className="flex flex-wrap gap-1">
+          {item.categoryName ? <span className="max-w-full truncate rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[11px] text-zinc-600" title="Category">{item.categoryName}</span> : null}
+          {item.subCategoryName ? <span className="max-w-full truncate rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[11px] text-zinc-600" title="Sub-category">{item.subCategoryName}</span> : null}
+        </div>
+        {item.tags.length ? (
+          <div className="flex flex-wrap gap-1">
+            {item.tags.map((tag) => <span key={tag} className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-900">{tag}</span>)}
+          </div>
         ) : null}
+        <p className="text-xs font-medium text-zinc-700">{quotedText(item.quotedCount)}</p>
+        <div className="mt-auto grid grid-cols-2 gap-2 pt-2">
+          <Link href={productLibraryHref(item.templateId)} className={`${openButton} col-span-2`} aria-label={`View product ${item.displayName}`}>View product</Link>
+          {editMode ? (
+            <>
+              <button type="button" className={smallButton} onClick={() => onDialog({ kind: "edit", item })} aria-label={`Edit ${item.displayName}`}>Edit</button>
+              <button type="button" className={smallButton} onClick={() => (item.isHidden ? onUnhide(item) : onDialog({ kind: "hide", item }))} aria-label={`${item.isHidden ? "Unhide" : "Hide"} ${item.displayName}`}>{item.isHidden ? "Unhide" : "Hide"}</button>
+              {canCurate ? <button type="button" className={`${smallButton} col-span-2`} onClick={() => onDialog({ kind: "merge", item })} aria-label={`Merge ${item.displayName} into another item`}>Merge into...</button> : null}
+            </>
+          ) : null}
+        </div>
       </div>
     </li>
   );
@@ -85,17 +90,18 @@ function GalleryCard({ item, canCurate, onDialog, onToggleHidden }: { item: Gall
 
 function Skeleton() {
   return (
-    <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-hidden="true" data-testid="gallery-skeleton">
-      {Array.from({ length: 6 }, (_, index) => (
-        <li key={index} className="h-36 animate-pulse rounded-lg border border-zinc-200 bg-zinc-100" />
+    <ul className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5" aria-hidden="true" data-testid="gallery-skeleton">
+      {Array.from({ length: 10 }, (_, index) => (
+        <li key={index} className="h-56 animate-pulse rounded-lg border border-zinc-200 bg-zinc-100" />
       ))}
     </ul>
   );
 }
 
-export function ProductGalleryBrowser({ canCurate, initialState }: { canCurate: boolean; initialState: GalleryUrlState }) {
+export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { canEdit: boolean; canCurate: boolean; initialState: GalleryUrlState }) {
   const [state, setState] = useState<GalleryUrlState>(initialState);
   const [searchText, setSearchText] = useState(initialState.query);
+  const [editMode, setEditMode] = useState(false);
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [items, setItems] = useState<GalleryListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -110,6 +116,8 @@ export function ProductGalleryBrowser({ canCurate, initialState }: { canCurate: 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const requestId = useRef(0);
 
+  // Edit mode only means something for users who may edit; hidden items are listed only while it is on.
+  const editing = canEdit && editMode;
   const stateKey = buildGalleryQuery(state);
 
   // Keep the URL in step with the filters (shareable and refresh-safe) without a page reload.
@@ -140,10 +148,10 @@ export function ProductGalleryBrowser({ canCurate, initialState }: { canCurate: 
         currency: current.currency || null,
         tag: current.tag || null,
         sort: current.sort,
-        includeHidden: canCurate && current.showHidden,
+        includeHidden: editing,
         page: pageNumber,
       }),
-    [canCurate],
+    [editing],
   );
 
   const reload = useCallback(
@@ -178,7 +186,7 @@ export function ProductGalleryBrowser({ canCurate, initialState }: { canCurate: 
   }, [loadFilters]);
 
   useEffect(() => {
-    // reload on every filter change (state is the whole filter set); a newer request makes an older answer ignored
+    // reload on every filter change and when edit mode turns on or off; a newer request makes an older answer ignored
     window.queueMicrotask(() => void reload(state));
   }, [state, reload]);
 
@@ -214,6 +222,13 @@ export function ProductGalleryBrowser({ canCurate, initialState }: { canCurate: 
     setState((current) => clearedGalleryFilters(current));
   }
 
+  function toggleEditMode() {
+    setEditMode((on) => !on);
+    setDialog(null);
+    setNotice("");
+    setActionProblem("");
+  }
+
   async function afterChange(message: string) {
     setDialog(null);
     setActionProblem("");
@@ -233,125 +248,102 @@ export function ProductGalleryBrowser({ canCurate, initialState }: { canCurate: 
     if (message) setActionProblem(message);
   }
 
-  const subOptions = subCategoriesFor(filters.subCategories, state.categoryId);
   const filtered = hasActiveGalleryFilters(state);
   const filterCount = activeGalleryFilterCount(state);
 
-  const filterPanel = (
-    <div className={`${filtersOpen ? "grid" : "hidden"} grid-cols-1 gap-3 sm:grid-cols-2 md:grid lg:grid-cols-3 xl:grid-cols-6`} id="gallery-filter-panel">
-      <Field label="Brand">
-        <select className={selectClass} value={state.brandId} onChange={(event) => change({ brandId: event.target.value })} aria-label="Brand">
-          <option value="">All brands</option>
-          {filters.brands.map((entry) => <option key={entry.id} value={entry.id}>{filterOptionLabel(entry.name, entry.count)}</option>)}
-        </select>
-      </Field>
-      <Field label="Category">
-        <select className={selectClass} value={state.categoryId} onChange={(event) => setState((current) => withGalleryCategory(current, event.target.value))} aria-label="Category">
-          <option value="">All categories</option>
-          {filters.categories.map((entry) => <option key={entry.id} value={entry.id}>{filterOptionLabel(entry.name, entry.count)}</option>)}
-        </select>
-      </Field>
-      <Field label="Sub-category">
-        <select className={selectClass} value={state.subCategoryId} disabled={!state.categoryId} onChange={(event) => change({ subCategoryId: event.target.value })} aria-label="Sub-category">
-          <option value="">{state.categoryId ? "All sub-categories" : "Choose a category first"}</option>
-          {subOptions.map((entry) => <option key={entry.id} value={entry.id}>{filterOptionLabel(entry.name, entry.count)}</option>)}
-        </select>
-      </Field>
-      <Field label="Currency">
-        <select className={selectClass} value={state.currency} onChange={(event) => change({ currency: event.target.value })} aria-label="Currency">
-          <option value="">All currencies</option>
-          {filters.currencies.map((entry) => <option key={entry.currency} value={entry.currency}>{filterOptionLabel(entry.currency, entry.count)}</option>)}
-        </select>
-      </Field>
-      <Field label="Sort by">
-        <select className={selectClass} value={state.sort} onChange={(event) => change({ sort: event.target.value as GallerySortMode })} aria-label="Sort by">
-          {GALLERY_SORT_MODES.map((mode) => <option key={mode} value={mode}>{GALLERY_SORT_LABELS[mode]}</option>)}
-        </select>
-      </Field>
-      {canCurate ? (
-        <label className="flex items-end gap-2 pb-2 text-sm font-medium text-zinc-800">
-          <input type="checkbox" checked={state.showHidden} onChange={(event) => change({ showHidden: event.target.checked })} className="h-4 w-4 accent-emerald-800" />
-          Show hidden
-        </label>
-      ) : null}
-    </div>
-  );
-
   return (
-    <div className="flex min-w-0 flex-col gap-4">
-      <section aria-label="Filters" className="flex min-w-0 flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-3">
-        <div className="flex min-w-0 flex-wrap items-end gap-2">
-          <label className="flex min-w-0 flex-1 basis-56 flex-col gap-1 text-xs font-semibold text-zinc-600">
-            Search
-            <input type="search" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Name, code or tag" aria-label="Search the gallery" className="h-9 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800" />
-          </label>
-          <button type="button" className={`${galleryButton} h-9 md:hidden`} aria-expanded={filtersOpen} aria-controls="gallery-filter-panel" onClick={() => setFiltersOpen((open) => !open)}>
-            Filters{filterCount ? ` (${filterCount})` : ""}
-          </button>
-          {filtered ? <button type="button" className={`${galleryButton} h-9`} onClick={clearFilters}>Clear filters</button> : null}
-        </div>
-        {filterPanel}
-        {filters.tags.length ? (
-          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Tags">
-            {filters.tags.map((entry) => {
-              const active = state.tag === entry.tag;
-              return (
-                <button
-                  key={entry.tag}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => change({ tag: active ? "" : entry.tag })}
-                  className={`${chip} ${active ? "border-emerald-800 bg-emerald-800 text-white" : "border-zinc-300 bg-white text-zinc-700 hover:border-emerald-800"}`}
-                >
-                  {entry.tag} ({entry.count})
-                </button>
-              );
-            })}
+    <div className="px-5 py-6 sm:px-8">
+      <div className="flex min-w-0 flex-col gap-4">
+        {canEdit ? (
+          <div className="flex justify-end">
+            <button type="button" className={editing ? toolbarPrimaryButton : toolbarSecondaryButton} aria-pressed={editing} onClick={toggleEditMode}>
+              {editing ? "Done" : "Edit"}
+            </button>
           </div>
         ) : null}
-      </section>
 
-      {notice ? <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{notice}</p> : null}
-      {actionProblem ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{actionProblem}</p> : null}
-
-      {phase === "loading" ? <Skeleton /> : null}
-
-      {phase === "failed" ? (
-        <div role="alert" className="flex flex-col items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          <p>{failure}</p>
-          <button type="button" className={galleryButton} onClick={() => void reload(state)}>Retry</button>
-        </div>
-      ) : null}
-
-      {phase === "ready" && items.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-zinc-300 bg-white p-6 text-center text-sm text-zinc-600">
-          {filtered ? (
-            <>No products match. <button type="button" className="font-semibold text-emerald-900 underline" onClick={clearFilters}>Clear filters</button>.</>
-          ) : (
-            "The gallery is empty. Products appear here when a quotation that uses them is sent or confirmed."
-          )}
-        </p>
-      ) : null}
-
-      {phase === "ready" && items.length > 0 ? (
-        <>
-          <p className="text-sm text-zinc-600" aria-live="polite">{showingText(items.length, total)}</p>
-          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {items.map((item) => (
-              <GalleryCard key={item.id} item={item} canCurate={canCurate} onDialog={setDialog} onToggleHidden={(target) => void unhideNow(target)} />
-            ))}
-          </ul>
-          {hasMore ? (
-            <div className="flex justify-center">
-              <button type="button" className={`${galleryButton} h-9 px-6`} onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? "Loading…" : "Load more"}</button>
+        <section aria-label="Find products" className={`${toolbarContainer} flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-full min-w-0 @xl:w-auto @xl:min-w-[14rem] @xl:flex-1">
+              <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+              <input type="search" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search name, code or tag" aria-label="Search the gallery" className={`${control} pl-9 pr-3`} />
             </div>
-          ) : null}
-        </>
-      ) : null}
+            <button type="button" className={`${toolbarSecondaryButton} @xl:hidden`} aria-expanded={filtersOpen} aria-controls="gallery-filter-panel" onClick={() => setFiltersOpen((open) => !open)}>
+              Filters{filterCount ? ` (${filterCount})` : ""}
+            </button>
+            {filtered ? <button type="button" className={toolbarSecondaryButton} onClick={clearFilters}>Clear filters</button> : null}
+          </div>
+          <div id="gallery-filter-panel" className={`${filtersOpen ? "grid" : "hidden"} grid-cols-1 gap-2 min-[480px]:grid-cols-2 @xl:grid @xl:grid-cols-3 @4xl:grid-cols-6`}>
+            <Select label="Brand" value={state.brandId} onChange={(value) => change({ brandId: value })}>
+              <option value="">All brands</option>
+              {filters.brands.map((entry) => <option key={entry.id} value={entry.id}>{filterOptionLabel(entry.name, entry.count)}</option>)}
+            </Select>
+            <Select label="Category" value={state.categoryId} onChange={(value) => change({ categoryId: value })}>
+              <option value="">All categories</option>
+              {filters.categories.map((entry) => <option key={entry.id} value={entry.id}>{filterOptionLabel(entry.name, entry.count)}</option>)}
+            </Select>
+            <Select label="Sub-category" value={state.subCategoryId} onChange={(value) => change({ subCategoryId: value })}>
+              <option value="">All sub-categories</option>
+              {filters.subCategories.map((entry) => <option key={entry.id} value={entry.id}>{subCategoryLabel(entry, filters.subCategories)}</option>)}
+            </Select>
+            <Select label="Tag" value={state.tag} onChange={(value) => change({ tag: value })}>
+              <option value="">All tags</option>
+              {state.tag && !filters.tags.some((entry) => entry.tag === state.tag) ? <option value={state.tag}>{state.tag}</option> : null}
+              {filters.tags.map((entry) => <option key={entry.tag} value={entry.tag}>{filterOptionLabel(entry.tag, entry.count)}</option>)}
+            </Select>
+            <Select label="Currency" value={state.currency} onChange={(value) => change({ currency: value })}>
+              <option value="">All currencies</option>
+              {filters.currencies.map((entry) => <option key={entry.currency} value={entry.currency}>{filterOptionLabel(entry.currency, entry.count)}</option>)}
+            </Select>
+            <Select label="Sort by" value={state.sort} onChange={(value) => change({ sort: value as GallerySortMode })}>
+              {GALLERY_SORT_MODES.map((mode) => <option key={mode} value={mode}>{GALLERY_SORT_LABELS[mode]}</option>)}
+            </Select>
+          </div>
+        </section>
 
-      {canCurate && dialog?.kind === "edit" ? <EditGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onSaved={() => void afterChange("Saved.")} /> : null}
-      {canCurate && dialog?.kind === "hide" ? <ConfirmHiddenDialog item={dialog.item} hide onClose={() => setDialog(null)} onConfirm={() => setHidden(dialog.item, true)} /> : null}
-      {canCurate && dialog?.kind === "merge" ? <MergeGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onMerged={() => void afterChange("Items merged.")} /> : null}
+        {editing ? <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Edit mode is on. Hidden items are shown dimmed. Choose Done when you are finished.</p> : null}
+        {notice ? <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{notice}</p> : null}
+        {actionProblem ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{actionProblem}</p> : null}
+
+        {phase === "loading" ? <Skeleton /> : null}
+
+        {phase === "failed" ? (
+          <div role="alert" className="flex flex-col items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <p>{failure}</p>
+            <button type="button" className={smallButton} onClick={() => void reload(state)}>Retry</button>
+          </div>
+        ) : null}
+
+        {phase === "ready" && items.length === 0 ? (
+          <section className="rounded-xl border border-dashed border-zinc-200 bg-white p-10 text-center text-sm text-zinc-600 shadow-sm">
+            {filtered ? (
+              <>No products match. <button type="button" className="font-semibold text-emerald-900 underline" onClick={clearFilters}>Clear filters</button>.</>
+            ) : (
+              "The gallery is empty. Products appear here when a quotation that uses them is sent or confirmed."
+            )}
+          </section>
+        ) : null}
+
+        {phase === "ready" && items.length > 0 ? (
+          <>
+            <p className="text-sm text-zinc-600" aria-live="polite">{showingText(items.length, total)}</p>
+            <ul className="grid auto-rows-fr grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+              {items.map((item) => (
+                <GalleryCard key={item.id} item={item} editMode={editing} canCurate={canCurate} onDialog={setDialog} onUnhide={(target) => void unhideNow(target)} />
+              ))}
+            </ul>
+            {hasMore ? (
+              <div className="flex justify-center">
+                <button type="button" className={toolbarSecondaryButton} onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? "Loading…" : "Load more"}</button>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </div>
+
+      {editing && dialog?.kind === "edit" ? <EditGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onSaved={() => void afterChange("Saved.")} /> : null}
+      {editing && dialog?.kind === "hide" ? <ConfirmHiddenDialog item={dialog.item} hide onClose={() => setDialog(null)} onConfirm={() => setHidden(dialog.item, true)} /> : null}
+      {editing && canCurate && dialog?.kind === "merge" ? <MergeGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onMerged={() => void afterChange("Items merged.")} /> : null}
     </div>
   );
 }

@@ -83,7 +83,7 @@ function firstTemplatePicture(template: Record<string, unknown>): GalleryPicture
   return null;
 }
 
-async function rpcBoolean(supabase: SupabaseClient, name: "product_gallery_can_view" | "product_gallery_is_curator"): Promise<boolean> {
+async function rpcBoolean(supabase: SupabaseClient, name: "product_gallery_can_view" | "product_gallery_is_curator" | "product_gallery_is_editor"): Promise<boolean> {
   try {
     const { data, error } = await supabase.rpc(name);
     return !error && data === true;
@@ -105,12 +105,16 @@ async function namesFor(supabase: SupabaseClient, table: "brands" | "product_cat
   return names;
 }
 
-export type GalleryCapabilities = { canView: boolean; canCurate: boolean };
+export type GalleryCapabilities = { canView: boolean; canEdit: boolean; canCurate: boolean };
 
-/** What the UI may show. canView false => the UI shows nothing. */
+/** What the UI may show. canView false => nothing. canEdit: rename, tag, hide. canCurate: also merge. The database decides again on every change. */
 export async function getGalleryCapabilities(supabase: SupabaseClient): Promise<GalleryCapabilities> {
-  const [canView, canCurate] = await Promise.all([rpcBoolean(supabase, "product_gallery_can_view"), rpcBoolean(supabase, "product_gallery_is_curator")]);
-  return { canView, canCurate: canView && canCurate };
+  const [canView, canEdit, canCurate] = await Promise.all([
+    rpcBoolean(supabase, "product_gallery_can_view"),
+    rpcBoolean(supabase, "product_gallery_is_editor"),
+    rpcBoolean(supabase, "product_gallery_is_curator"),
+  ]);
+  return { canView, canEdit: canView && canEdit, canCurate: canView && canCurate };
 }
 
 export type ListGalleryInput = {
@@ -145,12 +149,12 @@ export async function listGalleryItems(supabase: SupabaseClient, input: ListGall
   const page = clampGalleryPage(input?.page);
   const from = (page - 1) * GALLERY_PAGE_SIZE;
   try {
-    // Hidden items: only a curator asking for them. (The database also hides them from everyone else; this is not the only guard.)
-    const showHidden = input?.includeHidden === true && (await rpcBoolean(supabase, "product_gallery_is_curator"));
+    // Hidden items: only an editor asking for them. (The database also hides them from everyone else; this is not the only guard.)
+    const showHidden = input?.includeHidden === true && (await rpcBoolean(supabase, "product_gallery_is_editor"));
     let query = supabase.from("product_gallery_items").select(LIST_COLUMNS, { count: "exact" });
     if (!showHidden) query = query.eq("is_hidden", false);
     if (isGalleryId(brandId)) query = query.eq("brand_id", brandId);
-    if (isGalleryId(categoryId)) query = query.or(`main_category_id.eq.${categoryId},sub_category_id.eq.${categoryId}`);
+    if (isGalleryId(categoryId)) query = query.eq("main_category_id", categoryId);
     if (isGalleryId(subCategoryId)) query = query.eq("sub_category_id", subCategoryId);
     if (currency) query = query.eq("currency", currency);
     if (tag) query = query.contains("tags", [tag]);
@@ -238,8 +242,8 @@ export async function listGalleryFilters(supabase: SupabaseClient): Promise<Gall
     if (error || !data) return { ok: false, kind: "load_failed" };
     const rows = data as unknown as Array<{ brand_id: string | null; main_category_id: string | null; sub_category_id: string | null; currency: string | null; tags: string[] | null }>;
     const brandCounts = countBy(rows.map((row) => row.brand_id));
-    // A category counts once per item even when the main and the sub category are the same id.
-    const categoryCounts = countBy(rows.flatMap((row) => Array.from(new Set([row.main_category_id, row.sub_category_id].filter((id): id is string => Boolean(id))))));
+    // The Category filter is MAIN categories only; sub-categories have their own list below.
+    const categoryCounts = countBy(rows.map((row) => row.main_category_id));
     const tagCounts = countBy(rows.flatMap((row) => (Array.isArray(row.tags) ? Array.from(new Set(row.tags)) : [])));
 
     // Sub-categories with a visible item; the parent is the item's main category (the most common one if it ever differs).
@@ -259,7 +263,7 @@ export async function listGalleryFilters(supabase: SupabaseClient): Promise<Gall
     const subTop = Array.from(subCounts.entries()).sort((a, b) => b[1].count - a[1].count).slice(0, GALLERY_FILTER_LIST_MAX);
     const [brandNames, categoryNames] = await Promise.all([
       namesFor(supabase, "brands", brandTop.map(([id]) => id)),
-      namesFor(supabase, "product_categories", [...categoryTop.map(([id]) => id), ...subTop.map(([id]) => id)]),
+      namesFor(supabase, "product_categories", [...categoryTop.map(([id]) => id), ...subTop.map(([id]) => id), ...subTop.flatMap(([, entry]) => Array.from(entry.parents.keys()))]),
     ]);
     const entries = (top: Array<[string, number]>, names: Map<string, string>): GalleryFilterEntry[] =>
       top.flatMap(([id, count]) => (names.has(id) ? [{ id, name: names.get(id) as string, count }] : [])).sort((a, b) => a.name.localeCompare(b.name));
@@ -272,7 +276,7 @@ export async function listGalleryFilters(supabase: SupabaseClient): Promise<Gall
         const name = categoryNames.get(id);
         if (!name) return [];
         const parent = Array.from(entry.parents.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-        return [{ id, name, parentCategoryId: parent, count: entry.count }];
+        return [{ id, name, parentCategoryId: parent, parentCategoryName: parent ? categoryNames.get(parent) ?? "" : "", count: entry.count }];
       })
       .sort((a, b) => a.name.localeCompare(b.name));
     const currencies: GalleryCurrencyEntry[] = Array.from(currencyCounts.entries())
@@ -334,6 +338,7 @@ async function callCuration(supabase: SupabaseClient, name: string, args: Record
 
 export async function setGalleryItemHidden(supabase: SupabaseClient, input: { id: unknown; hidden: unknown }): Promise<GalleryChangeResult> {
   if (!isGalleryId(input?.id) || typeof input?.hidden !== "boolean") return { ok: false, kind: "invalid_request" };
+  if (!(await rpcBoolean(supabase, "product_gallery_is_editor"))) return { ok: false, kind: "not_allowed" };
   return callCuration(supabase, "product_gallery_set_hidden", { p_id: input.id, p_hidden: input.hidden });
 }
 
@@ -341,10 +346,12 @@ export async function updateGalleryItemDetails(supabase: SupabaseClient, input: 
   const name = validateGalleryDisplayName(input?.displayName);
   const tags = validateGalleryTags(input?.tags);
   if (!isGalleryId(input?.id) || !name.ok || !tags.ok) return { ok: false, kind: "invalid_request" };
+  if (!(await rpcBoolean(supabase, "product_gallery_is_editor"))) return { ok: false, kind: "not_allowed" };
   return callCuration(supabase, "product_gallery_update_details", { p_id: input.id, p_display_name: name.value, p_tags: tags.value });
 }
 
 export async function mergeGalleryItems(supabase: SupabaseClient, input: { fromId: unknown; toId: unknown }): Promise<GalleryChangeResult> {
   if (!isGalleryId(input?.fromId) || !isGalleryId(input?.toId) || input.fromId === input.toId) return { ok: false, kind: "invalid_request" };
+  if (!(await rpcBoolean(supabase, "product_gallery_is_curator"))) return { ok: false, kind: "not_allowed" };
   return callCuration(supabase, "product_gallery_merge", { p_from: input.fromId, p_to: input.toId });
 }

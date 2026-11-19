@@ -96,6 +96,8 @@ function seed() {
   world.tables.product_templates = [templateRow()];
   world.tables.brands = [{ id: BRAND, name: "Acme" }];
   world.tables.product_categories = [{ id: MAIN, name: "Chairs" }, { id: SUB, name: "Task chairs" }];
+  world.rpc.product_gallery_is_editor = () => ({ data: true, error: null });
+  world.rpc.product_gallery_is_curator = () => ({ data: true, error: null });
 }
 
 // ── list ───────────────────────────────────────────────────────────────────
@@ -183,7 +185,9 @@ test("list: brand, category and tag filters; an invalid id or tag is refused", a
   reset(); seed();
   await actions.listGalleryItemsAction({ brandId: BRAND, categoryId: MAIN, tag: " Chair " });
   assert.ok(world.eqs.some(([column, value]) => column === "brand_id" && value === BRAND));
-  assert.ok(world.ors.includes(`main_category_id.eq.${MAIN},sub_category_id.eq.${MAIN}`), "main OR sub category");
+  assert.ok(world.eqs.some(([column, value]) => column === "main_category_id" && value === MAIN), "category = MAIN category, exactly");
+  assert.ok(!world.ors.some((filter) => /sub_category_id/.test(filter)), "no more main-OR-sub");
+  assert.ok(!world.eqs.some(([column]) => column === "sub_category_id"), "the sub-category is its own filter");
   assert.deepEqual(world.contains, [["tags", ["chair"]]]);
   assert.deepEqual(await actions.listGalleryItemsAction({ brandId: "nope" }), { ok: false, message: GALLERY_MESSAGES.invalid_request });
   assert.deepEqual(await actions.listGalleryItemsAction({ categoryId: "x,y" }), { ok: false, message: GALLERY_MESSAGES.invalid_request });
@@ -206,20 +210,19 @@ test("list: sort modes (popular is the default; newest; name)", async () => {
   assert.equal(world.orders[0][0], "quoted_count", "an unknown sort is popular");
 });
 
-test("list: hidden items are included only when a curator asks (the browser flag alone does nothing)", async () => {
+test("list: hidden items are included only when an EDITOR asks (the browser flag alone does nothing)", async () => {
   reset(); seed();
-  world.rpc.product_gallery_is_curator = () => ({ data: false, error: null });
+  world.rpc.product_gallery_is_editor = () => ({ data: false, error: null });
   await actions.listGalleryItemsAction({ includeHidden: true });
-  assert.ok(world.eqs.some(([column, value]) => column === "is_hidden" && value === false), "a non-curator still gets visible items only");
+  assert.ok(world.eqs.some(([column, value]) => column === "is_hidden" && value === false), "a non-editor still gets visible items only");
   reset(); seed();
-  world.rpc.product_gallery_is_curator = () => ({ data: true, error: null });
+  world.rpc.product_gallery_is_editor = () => ({ data: true, error: null });
   await actions.listGalleryItemsAction({ includeHidden: true });
-  assert.ok(!world.eqs.some(([column]) => column === "is_hidden"), "a curator asking for hidden items");
+  assert.ok(!world.eqs.some(([column]) => column === "is_hidden"), "an editor asking for hidden items (edit mode)");
   reset(); seed();
-  world.rpc.product_gallery_is_curator = () => ({ data: true, error: null });
   await actions.listGalleryItemsAction({});
-  assert.ok(world.eqs.some(([column, value]) => column === "is_hidden" && value === false), "default: visible only, even for a curator");
-  assert.ok(!world.calls.includes("rpc:product_gallery_is_curator"), "no role check when hidden items were not asked for");
+  assert.ok(world.eqs.some(([column, value]) => column === "is_hidden" && value === false), "default: visible only, even for an editor");
+  assert.ok(!world.calls.includes("rpc:product_gallery_is_editor"), "no role check when hidden items were not asked for");
 });
 
 test("list: a database failure is a friendly message", async () => {
@@ -237,7 +240,7 @@ test("list: a database failure is a friendly message", async () => {
 });
 
 // ── filters ────────────────────────────────────────────────────────────────
-test("filters: brands, categories and tags that have a visible item, with counts; capped", async () => {
+test("filters: brands, MAIN categories only and tags that have a visible item, with counts", async () => {
   reset(); seed();
   world.tables.product_gallery_items = [
     galleryRow({ id: G1, tags: ["chair", "office"] }),
@@ -246,20 +249,23 @@ test("filters: brands, categories and tags that have a visible item, with counts
   const result: any = await actions.listGalleryFiltersAction();
   assert.equal(result.ok, true);
   assert.deepEqual(result.brands, [{ id: BRAND, name: "Acme", count: 2 }]);
-  assert.deepEqual(result.categories.map((entry: any) => [entry.name, entry.count]), [["Chairs", 2], ["Task chairs", 1]], "a category counts once per item");
+  assert.deepEqual(result.categories.map((entry: any) => [entry.name, entry.count]), [["Chairs", 2]], "main categories only; a sub-category is not in this list");
   assert.deepEqual(result.tags, [{ tag: "chair", count: 2 }, { tag: "office", count: 1 }]);
   assert.ok(world.eqs.some(([column, value]) => column === "is_hidden" && value === false), "hidden items are not counted");
   assert.deepEqual(world.limits, [2000]);
 });
 
-// ── item for add ───────────────────────────────────────────────────────────
 test("list: NEW sub-category and currency filters are exact matches; the existing filters are untouched", async () => {
   reset(); seed();
   await actions.listGalleryItemsAction({ brandId: BRAND, categoryId: MAIN, subCategoryId: SUB, currency: " eur " });
   assert.ok(world.eqs.some(([column, value]) => column === "sub_category_id" && value === SUB), "exact sub-category");
   assert.ok(world.eqs.some(([column, value]) => column === "currency" && value === "EUR"), "currency is upper-cased and exact");
   assert.ok(world.eqs.some(([column, value]) => column === "brand_id" && value === BRAND), "brand filter as before");
-  assert.ok(world.ors.includes(`main_category_id.eq.${MAIN},sub_category_id.eq.${MAIN}`), "category filter as before (main OR sub)");
+  assert.ok(world.eqs.some(([column, value]) => column === "main_category_id" && value === MAIN), "main category AND sub-category are both applied");
+  reset(); seed();
+  await actions.listGalleryItemsAction({ subCategoryId: SUB });
+  assert.ok(world.eqs.some(([column, value]) => column === "sub_category_id" && value === SUB), "a sub-category works with no category");
+  assert.ok(!world.eqs.some(([column]) => column === "main_category_id"));
   reset(); seed();
   await actions.listGalleryItemsAction({ subCategoryId: "", currency: null });
   assert.ok(!world.eqs.some(([column]) => column === "sub_category_id" || column === "currency"), "empty means no filter");
@@ -282,7 +288,7 @@ test("filters: sub-categories (with parent) and currencies that have a visible i
   ];
   const result: any = await actions.listGalleryFiltersAction();
   assert.equal(result.ok, true);
-  assert.deepEqual(result.subCategories, [{ id: SUB, name: "Task chairs", parentCategoryId: MAIN, count: 2 }], "only sub-categories with a visible item");
+  assert.deepEqual(result.subCategories, [{ id: SUB, name: "Task chairs", parentCategoryId: MAIN, parentCategoryName: "Chairs", count: 2 }], "ALL sub-categories with a visible item, each with its parent");
   assert.deepEqual(result.currencies, [{ currency: "EUR", count: 2 }, { currency: "AED", count: 1 }]);
   assert.deepEqual(result.brands, [{ id: BRAND, name: "Acme", count: 3 }], "existing fields unchanged");
   assert.ok(world.selects.some((entry: any) => entry.table === "product_gallery_items" && /currency/.test(entry.columns) && !/recipe/.test(entry.columns)));
@@ -329,13 +335,31 @@ test("curation: validated arguments go to the right database function with the c
   assert.deepEqual(await actions.updateGalleryItemDetailsAction({ id: G1, displayName: "  Buddy Chair ", tags: [" Chair ", "chair", "OFFICE"] }), { ok: true });
   assert.deepEqual(await actions.updateGalleryItemDetailsAction({ id: G1, displayName: "", tags: [] }), { ok: true });
   assert.deepEqual(await actions.mergeGalleryItemsAction({ fromId: G1, toId: G2 }), { ok: true });
-  assert.deepEqual(world.rpcCalls, [
+  assert.deepEqual(world.rpcCalls.filter((call) => !/is_(editor|curator)/.test(call.name)), [
     { name: "product_gallery_set_hidden", args: { p_id: G1, p_hidden: true } },
     { name: "product_gallery_update_details", args: { p_id: G1, p_display_name: "Buddy Chair", p_tags: ["chair", "office"] } },
     { name: "product_gallery_update_details", args: { p_id: G1, p_display_name: null, p_tags: [] } },
     { name: "product_gallery_merge", args: { p_from: G1, p_to: G2 } },
   ]);
   assert.equal(world.adminCalls, 0);
+});
+
+test("curation: editors may rename, tag and hide; only curators merge; the server checks before the database", async () => {
+  reset(); seed();
+  world.rpc.product_gallery_set_hidden = () => ({ data: true, error: null });
+  world.rpc.product_gallery_update_details = () => ({ data: true, error: null });
+  world.rpc.product_gallery_merge = () => ({ data: true, error: null });
+  world.rpc.product_gallery_is_curator = () => ({ data: false, error: null });
+  assert.deepEqual(await actions.setGalleryItemHiddenAction({ id: G1, hidden: true }), { ok: true }, "an editor who is not a curator can hide");
+  assert.deepEqual(await actions.updateGalleryItemDetailsAction({ id: G1, displayName: "Buddy", tags: [] }), { ok: true }, "and edit");
+  assert.deepEqual(await actions.mergeGalleryItemsAction({ fromId: G1, toId: G2 }), { ok: false, message: GALLERY_MESSAGES.not_allowed }, "but not merge");
+  assert.ok(!world.rpcCalls.some((call) => call.name === "product_gallery_merge"), "the merge function was never called");
+  reset(); seed();
+  world.rpc.product_gallery_is_editor = () => ({ data: false, error: null });
+  world.rpc.product_gallery_is_curator = () => ({ data: true, error: null });
+  assert.deepEqual(await actions.setGalleryItemHiddenAction({ id: G1, hidden: true }), { ok: false, message: GALLERY_MESSAGES.not_allowed });
+  assert.deepEqual(await actions.updateGalleryItemDetailsAction({ id: G1, displayName: "x", tags: [] }), { ok: false, message: GALLERY_MESSAGES.not_allowed });
+  assert.ok(!world.rpcCalls.some((call) => /set_hidden|update_details/.test(call.name)), "a non-editor never reaches the database functions");
 });
 
 test("curation: bad input never reaches the database", async () => {
@@ -363,24 +387,29 @@ test("curation: 'Not allowed.' and 42501 are not_allowed; false is item_not_foun
   const failed: any = await actions.setGalleryItemHiddenAction({ id: G1, hidden: true });
   assert.equal(failed.message, GALLERY_MESSAGES.save_failed);
   assert.doesNotMatch(JSON.stringify(failed), /secret/);
-  world.throwOnRpc = true;
+  world.rpc.product_gallery_merge = () => { throw new Error("secret rpc detail"); };
   const thrown: any = await actions.mergeGalleryItemsAction({ fromId: G1, toId: G2 });
   assert.deepEqual(thrown, { ok: false, message: GALLERY_MESSAGES.save_failed });
 });
 
-test("capabilities: canView / canCurate through the two database functions; a failure means no", async () => {
+test("capabilities: canView / canEdit / canCurate through the three database functions; a failure means no", async () => {
   reset();
   world.rpc.product_gallery_can_view = () => ({ data: true, error: null });
+  world.rpc.product_gallery_is_editor = () => ({ data: true, error: null });
   world.rpc.product_gallery_is_curator = () => ({ data: true, error: null });
-  assert.deepEqual(await actions.getGalleryCapabilitiesAction(), { ok: true, canView: true, canCurate: true });
+  assert.deepEqual(await actions.getGalleryCapabilitiesAction(), { ok: true, canView: true, canEdit: true, canCurate: true });
   world.rpc.product_gallery_is_curator = () => ({ data: false, error: null });
-  assert.deepEqual(await actions.getGalleryCapabilitiesAction(), { ok: true, canView: true, canCurate: false });
+  assert.deepEqual(await actions.getGalleryCapabilitiesAction(), { ok: true, canView: true, canEdit: true, canCurate: false }, "a sales editor: edit and hide, no merge");
+  world.rpc.product_gallery_is_editor = () => ({ data: false, error: null });
+  assert.deepEqual(await actions.getGalleryCapabilitiesAction(), { ok: true, canView: true, canEdit: false, canCurate: false }, "a viewer");
   world.rpc.product_gallery_can_view = () => ({ data: false, error: null });
+  world.rpc.product_gallery_is_editor = () => ({ data: true, error: null });
   world.rpc.product_gallery_is_curator = () => ({ data: true, error: null });
-  assert.deepEqual(await actions.getGalleryCapabilitiesAction(), { ok: true, canView: false, canCurate: false }, "a curator who cannot view is not a curator here");
+  assert.deepEqual(await actions.getGalleryCapabilitiesAction(), { ok: true, canView: false, canEdit: false, canCurate: false }, "who cannot view can do nothing here");
   world.throwOnRpc = true;
-  assert.deepEqual(await actions.getGalleryCapabilitiesAction(), { ok: true, canView: false, canCurate: false });
+  assert.deepEqual(await actions.getGalleryCapabilitiesAction(), { ok: true, canView: false, canEdit: false, canCurate: false });
 });
+
 
 // ── actions: auth first, never throw ───────────────────────────────────────
 test("every action authenticates FIRST, before any client or database call", async () => {

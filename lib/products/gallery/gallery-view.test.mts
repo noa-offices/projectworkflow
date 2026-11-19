@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   EMPTY_GALLERY_STATE,
   buildGalleryQuery,
-  categoryLine,
   clearedGalleryFilters,
   editFormProblem,
   filterOptionLabel,
@@ -16,8 +15,7 @@ import {
   productLibraryHref,
   quotedText,
   showingText,
-  subCategoriesFor,
-  withGalleryCategory,
+  subCategoryLabel,
 } from "./gallery-view";
 
 const BRAND = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
@@ -35,46 +33,47 @@ test("quoted text: once, N times, and the Dubai date", () => {
   assert.equal(lastQuotedText("nope"), "");
   assert.equal(showingText(30, 112), "Showing 30 of 112");
   assert.equal(filterOptionLabel("LAS MOBILI", 12), "LAS MOBILI (12)");
-  assert.equal(categoryLine({ categoryName: "Chairs", subCategoryName: "Task" }), "Chairs / Task");
-  assert.equal(categoryLine({ categoryName: "Chairs", subCategoryName: "" }), "Chairs");
 });
 
 test("URL: build leaves defaults out; parse reads it back; a plain URL is the empty state", () => {
   assert.equal(buildGalleryQuery(EMPTY_GALLERY_STATE), "");
-  const state = { query: " buddy chair ", brandId: BRAND, categoryId: CAT, subCategoryId: SUB, currency: "AED", tag: "office", sort: "newest" as const, showHidden: true };
+  const state = { query: " buddy chair ", brandId: BRAND, categoryId: CAT, subCategoryId: SUB, currency: "AED", tag: "office", sort: "newest" as const };
   const text = buildGalleryQuery(state);
-  assert.equal(text, `q=buddy+chair&brand=${BRAND}&category=${CAT}&sub=${SUB}&currency=AED&tag=office&sort=newest&hidden=1`);
+  assert.equal(text, `q=buddy+chair&brand=${BRAND}&category=${CAT}&sub=${SUB}&currency=AED&tag=office&sort=newest`);
   const params = new URLSearchParams(text);
   assert.deepEqual(parseGalleryQuery((key) => params.get(key)), { ...state, query: " buddy chair ".trim() });
   assert.deepEqual(parseGalleryQuery(() => undefined), EMPTY_GALLERY_STATE);
 });
 
 test("URL: unusable values are dropped, never trusted", () => {
-  const parsed = parseGalleryQuery(read({ brand: "nope", category: "x,y", sub: SUB, currency: "e1", tag: "x".repeat(40), sort: "weird", hidden: "yes" }));
+  const parsed = parseGalleryQuery(read({ brand: "nope", category: "x,y", sub: "nope", currency: "e1", tag: "x".repeat(40), sort: "weird", hidden: "1" }));
   assert.deepEqual(parsed, EMPTY_GALLERY_STATE);
   assert.equal(parseGalleryQuery(read({ currency: "aed" })).currency, "AED", "currency is upper-cased");
-  assert.equal(parseGalleryQuery(read({ sub: SUB })).subCategoryId, "", "a sub-category needs its category");
-  assert.equal(buildGalleryQuery({ ...EMPTY_GALLERY_STATE, subCategoryId: SUB }), "", "and is not written without one");
+  assert.equal(parseGalleryQuery(read({ sub: SUB })).subCategoryId, SUB, "the sub-category works without a category");
+  assert.equal(buildGalleryQuery({ ...EMPTY_GALLERY_STATE, subCategoryId: SUB }), `sub=${SUB}`, "and is written without one");
+  assert.equal(buildGalleryQuery(EMPTY_GALLERY_STATE), "", "edit mode and the old hidden key are never in the URL");
   assert.equal(parseGalleryQuery(read({ q: "x".repeat(300) })).query.length, 100);
 });
 
-test("filters: active-filter rule, clearing keeps sort and Show hidden, changing the category forgets the sub-category", () => {
+test("filters: active-filter rule; clearing keeps the sort; category and sub-category are independent", () => {
   assert.equal(hasActiveGalleryFilters(EMPTY_GALLERY_STATE), false);
-  assert.equal(hasActiveGalleryFilters({ ...EMPTY_GALLERY_STATE, sort: "name", showHidden: true }), false, "views are not filters");
+  assert.equal(hasActiveGalleryFilters({ ...EMPTY_GALLERY_STATE, sort: "name" }), false, "sort is a view, not a filter");
   assert.equal(hasActiveGalleryFilters({ ...EMPTY_GALLERY_STATE, tag: "office" }), true);
+  assert.equal(hasActiveGalleryFilters({ ...EMPTY_GALLERY_STATE, subCategoryId: SUB }), true, "a sub-category alone is a filter");
   assert.equal(hasActiveGalleryFilters({ ...EMPTY_GALLERY_STATE, query: "  " }), false);
-  const cleared = clearedGalleryFilters({ ...EMPTY_GALLERY_STATE, brandId: BRAND, tag: "x", sort: "name", showHidden: true });
-  assert.deepEqual(cleared, { ...EMPTY_GALLERY_STATE, sort: "name", showHidden: true });
-  assert.deepEqual(withGalleryCategory({ ...EMPTY_GALLERY_STATE, categoryId: CAT, subCategoryId: SUB }, "other"), { ...EMPTY_GALLERY_STATE, categoryId: "other", subCategoryId: "" });
+  const cleared = clearedGalleryFilters({ ...EMPTY_GALLERY_STATE, brandId: BRAND, categoryId: CAT, subCategoryId: SUB, tag: "x", sort: "name" });
+  assert.deepEqual(cleared, { ...EMPTY_GALLERY_STATE, sort: "name" });
 });
 
-test("sub-categories: only those of the chosen category; none without a category", () => {
+test("sub-category label: the name and count; the parent only where two sub-categories share a name", () => {
   const subs = [
-    { id: SUB, name: "Task", parentCategoryId: CAT, count: 2 },
-    { id: "s2", name: "Sofa", parentCategoryId: "other", count: 1 },
+    { id: "s1", name: "Executive", parentCategoryId: "p1", parentCategoryName: "Desk", count: 2 },
+    { id: "s2", name: "Executive", parentCategoryId: "p2", parentCategoryName: "Chair", count: 1 },
+    { id: "s3", name: "Task", parentCategoryId: "p2", parentCategoryName: "Chair", count: 4 },
   ];
-  assert.deepEqual(subCategoriesFor(subs, CAT).map((entry) => entry.id), [SUB]);
-  assert.deepEqual(subCategoriesFor(subs, ""), []);
+  assert.equal(subCategoryLabel(subs[0], subs), "Desk / Executive (2)");
+  assert.equal(subCategoryLabel(subs[1], subs), "Chair / Executive (1)");
+  assert.equal(subCategoryLabel(subs[2], subs), "Task (4)");
 });
 
 test("merge candidates: other items of the SAME template only, each once", () => {
