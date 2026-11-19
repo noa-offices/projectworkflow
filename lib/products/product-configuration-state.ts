@@ -897,7 +897,7 @@ export function resolveProductConfigurationState(
   const modularTotal = roundSourceAmount(selectedModularItems.reduce((sum, item) => sum + item.total, 0));
   const base = resolvedWorkstationRow
     ? roundSourceAmount(numberValue(resolvedWorkstationRow.default_price, template.defaultUnitPrice))
-    : usesModularPricing
+    : usesModularPricing && selectedModularItems.length > 0
       ? modularTotal
       : resolvedCategoryRow
         ? roundSourceAmount(numberValue(resolvedFabricCategory ? resolvedCategoryRow.prices?.[resolvedFabricCategory] : 0))

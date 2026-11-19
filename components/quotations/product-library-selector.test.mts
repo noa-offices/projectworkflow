@@ -445,7 +445,7 @@ test("structural support is separated ahead of main selection and option-item co
   assert.ok(source.includes('item.role === "structural_support"'));
   assert.ok(source.includes('kind: "option_item" as const'));
   assert.ok(source.includes("Required With Selected Support"));
-  assert.ok(source.indexOf("<StructuralSupportFields") < source.indexOf("{usesVariantPricing && (showBaseModelChooser"));
+  assert.ok(source.indexOf("<StructuralSupportFields") < source.indexOf("{usesVariantPricing ?"));
   assert.ok(source.includes('item.role !== "structural_support" && item.role !== "companion"'));
 });
 

@@ -262,6 +262,57 @@ test("choosers: local reconfigure opens a modular line with a legacy Base / Mode
   assert.equal(evaluation.validation.status, "ok");
 });
 
+// ── one pricing mode per line: modular items OR a Base / Model row / Price Matrix choice (configuratorModes) ─────────────
+test("modes: a template with both modes and a BASE choice only: no 'modular required' banner", () => {
+  const evaluation = evaluateSetup(recipeOf({ variantRowId: "desk-100" }).recipe, undefined, oxi());
+  assert.deepEqual(evaluation.validation, { status: "ok", problems: [] });
+  assert.equal(evaluation.state?.variantRowId, "desk-100");
+});
+
+test("modes: a template with both modes and a MODULAR choice only: no 'Base / Model required' banner", () => {
+  const evaluation = evaluateSetup(recipeOf({ modularQuantities: { starter1: 1 } }).recipe, undefined, oxi());
+  assert.deepEqual(evaluation.validation, { status: "ok", problems: [] });
+});
+
+test("modes: both modes with nothing selected still reports what is needed (the modular step), and accessories alone do not satisfy either mode", () => {
+  const none = validateSetupAgainstTemplate(recipeOf({}).recipe, oxi());
+  assert.equal(none.status, "needs_review");
+  assert.match(requiredOf(none.problems)[0] ?? "", /Modules/);
+  const accessoriesOnly = validateSetupAgainstTemplate(recipeOf({ pricingAccessoryQuantities: { "panel-1": 1 } }).recipe, oxi());
+  assert.equal(accessoriesOnly.status, "needs_review");
+});
+
+test("modes: a Base / Model choice that no longer exists is still reported (stale), and the modular step is not demanded for it", () => {
+  const evaluation = evaluateSetup(recipeOf({ variantRowId: "desk-gone" }).recipe, undefined, oxi());
+  assert.equal(evaluation.validation.status, "needs_review");
+  assert.ok(evaluation.validation.problems.some((problem) => problem.kind === "model_removed"), "the stale row is reported");
+});
+
+test("modes: a Price Matrix choice on a template that also has modular items counts as the base mode", () => {
+  const template = oxi({ variant_pricing: undefined, category_pricing: [...directModular, ...oxiMatrix] });
+  const evaluation = evaluateSetup(recipeOf({ categoryGroupId: "cgrp-legacy", categoryRowId: "crow-two", fabricCategory: "Cat B" }).recipe, undefined, template);
+  assert.deepEqual(requiredOf(evaluation.validation.problems), [], "no modular banner");
+  assert.equal(evaluation.validation.status, "ok");
+});
+
+test("modes: a one-mode template is unchanged (modular-only needs a modular item; Base / Model-only needs a row)", () => {
+  const modularOnly = validateSetupAgainstTemplate(recipeOf({}).recipe, tpl({ category_pricing: directModular }));
+  assert.match(requiredOf(modularOnly.problems)[0] ?? "", /Modules/);
+  assert.deepEqual(validateSetupAgainstTemplate(recipeOf({ modularQuantities: { starter1: 1 } }).recipe, tpl({ category_pricing: directModular })), { status: "ok", problems: [] });
+  const baseOnly = validateSetupAgainstTemplate(recipeOf({}).recipe, tpl({ variant_pricing: oxiVariant }));
+  assert.deepEqual(requiredOf(baseOnly.problems), ["A required choice is not set: Base / Model."]);
+});
+
+test("modes: local reconfigure reopens a saved modular line (Base / Model disabled) and a saved Base / Model line (modular disabled) without a banner", () => {
+  const modularLine = recipeOf({ modularQuantities: { starter1: 1 }, variantRowId: "desk-80", pricingAccessoryQuantities: { "panel-1": 1 } });
+  const asModular = evaluateSetup(modularLine.recipe, modularLine.specOverrides, oxi());
+  assert.deepEqual(asModular.validation, { status: "ok", problems: [] }, "the legacy variant id on a modular line is ignored, the line still prices as modular");
+  const baseLine = recipeOf({ variantRowId: "desk-100" });
+  const asBase = evaluateSetup(baseLine.recipe, baseLine.specOverrides, oxi());
+  assert.deepEqual(asBase.validation, { status: "ok", problems: [] });
+  assert.equal(asBase.state?.variantRowId, "desk-100");
+});
+
 test("needs_review: a rule is newly incompatible (accessory no longer applies to the chosen model)", () => {
   // The exactly_one service units apply to row1 only; the saved setup now uses row2.
   const { recipe } = recipeOf({ variantRowId: "row2", pricingAccessoryQuantities: { "1af-090": 1 } });
