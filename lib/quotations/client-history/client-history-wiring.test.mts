@@ -172,11 +172,12 @@ test("the new action sits next to the existing ones and changes nothing else in 
     return;
   }
   const removed = before.split("\n").filter((line) => !quotationsSource.includes(line));
-  // H-D changed exactly these existing lines: the import and the overlay price (now the list price). The pricing call line also exists, unchanged, in addCustomItemToQuotation.
-  assert.deepEqual(removed.map((line) => line.trim()), [
+  // Lines changed by H-D (the import and the overlay price). They exist only on the PR H-D branch: once H-D is merged nothing is removed.
+  const hdLines = [
     'import { clientHistoryMessage } from "@/lib/quotations/client-history/client-history";',
     "{ brandName: item.brand, itemName: item.itemName, itemCode: item.itemCode, specification: item.specification, unitLabel: item.unitLabel, sellingPrice: item.price, currency: item.currency },",
-  ]);
+  ];
+  assert.deepEqual(removed.map((line) => line.trim()).filter((line) => !hdLines.includes(line)), [], "no existing line was removed or changed");
 });
 
 // ── migrations and diff guard ──────────────────────────────────────────────
