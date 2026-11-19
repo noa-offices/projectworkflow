@@ -253,6 +253,41 @@ test("filters: brands, categories and tags that have a visible item, with counts
 });
 
 // ── item for add ───────────────────────────────────────────────────────────
+test("list: NEW sub-category and currency filters are exact matches; the existing filters are untouched", async () => {
+  reset(); seed();
+  await actions.listGalleryItemsAction({ brandId: BRAND, categoryId: MAIN, subCategoryId: SUB, currency: " eur " });
+  assert.ok(world.eqs.some(([column, value]) => column === "sub_category_id" && value === SUB), "exact sub-category");
+  assert.ok(world.eqs.some(([column, value]) => column === "currency" && value === "EUR"), "currency is upper-cased and exact");
+  assert.ok(world.eqs.some(([column, value]) => column === "brand_id" && value === BRAND), "brand filter as before");
+  assert.ok(world.ors.includes(`main_category_id.eq.${MAIN},sub_category_id.eq.${MAIN}`), "category filter as before (main OR sub)");
+  reset(); seed();
+  await actions.listGalleryItemsAction({ subCategoryId: "", currency: null });
+  assert.ok(!world.eqs.some(([column]) => column === "sub_category_id" || column === "currency"), "empty means no filter");
+});
+
+test("list: an invalid sub-category id or currency is refused before any query", async () => {
+  for (const input of [{ subCategoryId: "nope" }, { subCategoryId: "x,y" }, { currency: "EU1" }, { currency: "A".repeat(9) }, { currency: "e r" }, { currency: 5 as any }]) {
+    reset(); seed();
+    assert.deepEqual(await actions.listGalleryItemsAction(input), { ok: false, message: GALLERY_MESSAGES.invalid_request }, JSON.stringify(input));
+    assert.ok(!world.calls.includes("select:product_gallery_items"));
+  }
+});
+
+test("filters: sub-categories (with parent) and currencies that have a visible item, with counts", async () => {
+  reset(); seed();
+  world.tables.product_gallery_items = [
+    galleryRow({ id: G1, currency: "EUR" }),
+    galleryRow({ id: G2, template_id: TEMPLATE2, currency: "AED" }),
+    galleryRow({ id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3", sub_category_id: null, currency: "EUR" }),
+  ];
+  const result: any = await actions.listGalleryFiltersAction();
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.subCategories, [{ id: SUB, name: "Task chairs", parentCategoryId: MAIN, count: 2 }], "only sub-categories with a visible item");
+  assert.deepEqual(result.currencies, [{ currency: "EUR", count: 2 }, { currency: "AED", count: 1 }]);
+  assert.deepEqual(result.brands, [{ id: BRAND, name: "Acme", count: 3 }], "existing fields unchanged");
+  assert.ok(world.selects.some((entry: any) => entry.table === "product_gallery_items" && /currency/.test(entry.columns) && !/recipe/.test(entry.columns)));
+});
+
 test("add data: a My Collection-shaped setup with neutral spec overrides; the recipe goes out only here", async () => {
   reset(); seed();
   const result: any = await actions.getGalleryItemForAddAction({ id: G1 });

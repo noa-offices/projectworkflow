@@ -2,7 +2,7 @@
 
 import { requireActiveUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { galleryMessage, type GalleryFilterEntry, type GalleryListItem, type GalleryMessageKind, type GallerySortMode, type GalleryTagEntry } from "./gallery";
+import { galleryMessage, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GalleryMessageKind, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "./gallery";
 import {
   getGalleryCapabilities,
   getGalleryItemForAdd,
@@ -37,6 +37,8 @@ export async function listGalleryItemsAction(input?: {
   query?: string;
   brandId?: string | null;
   categoryId?: string | null;
+  subCategoryId?: string | null;
+  currency?: string | null;
   tag?: string | null;
   sort?: string;
   includeHidden?: boolean;
@@ -51,6 +53,8 @@ export async function listGalleryItemsAction(input?: {
       query: input?.query,
       brandId: input?.brandId,
       categoryId: input?.categoryId,
+      subCategoryId: input?.subCategoryId,
+      currency: input?.currency,
       tag: input?.tag,
       sort: input?.sort,
       includeHidden: input?.includeHidden,
@@ -65,14 +69,14 @@ export async function listGalleryItemsAction(input?: {
 
 /** Brands, categories (id, name, count) and tags (tag, count) that have at least one visible item. */
 export async function listGalleryFiltersAction(): Promise<
-  { ok: true; brands: GalleryFilterEntry[]; categories: GalleryFilterEntry[]; tags: GalleryTagEntry[] } | GalleryActionFailure
+  { ok: true; brands: GalleryFilterEntry[]; categories: GalleryFilterEntry[]; tags: GalleryTagEntry[]; subCategories: GallerySubCategoryEntry[]; currencies: GalleryCurrencyEntry[] } | GalleryActionFailure
 > {
   try {
     await requireActiveUser();
     const supabase = await createClient();
     const result = await listGalleryFilters(supabase);
     if (!result.ok) return failure(result.kind);
-    return { ok: true, brands: result.brands, categories: result.categories, tags: result.tags };
+    return { ok: true, brands: result.brands, categories: result.categories, tags: result.tags, subCategories: result.subCategories, currencies: result.currencies };
   } catch (problem) {
     return failure("load_failed", problem);
   }

@@ -105,7 +105,7 @@ test("sidebar: My Collection is visible to a manager AND to a non-manager (no ro
   assert.match(line!, /active: isMyCollectionActive\(pathname\)/);
   // It is the FIRST item of the group.
   const labels = Array.from(productsSection.matchAll(/label: "([^"]+)"/g), (entry) => entry[1]);
-  assert.deepEqual(labels, ["My Collection", "Product Library", "Product Management", "Brands", "Material Library", "Price Updates"]);
+  assert.deepEqual(labels, ["My Collection", "Product Gallery", "Product Library", "Product Management", "Brands", "Material Library", "Price Updates"]);
   // Warehouse staff keep their own separate sidebar (returned before this group is built).
   assert.ok(sidebar.indexOf('if (role === "warehouse_staff") {') < sidebar.indexOf('title: "Products"'));
 });
