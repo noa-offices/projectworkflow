@@ -36,6 +36,7 @@ export const GALLERY_MESSAGES = {
   recipe_unreadable: "This configuration could not be opened. Please configure the product from the Product Library instead.",
   load_failed: "The gallery could not be loaded. Please try again.",
   save_failed: "The change could not be saved. Please try again.",
+  specification_too_long: "The specification can be at most 2000 characters.",
 } as const;
 
 export type GalleryMessageKind = keyof typeof GALLERY_MESSAGES;
@@ -94,6 +95,18 @@ export function validateGalleryDisplayName(value: unknown): GalleryNameInput {
   const text = value.trim();
   if (!text) return { ok: true, value: null };
   return text.length <= GALLERY_DISPLAY_NAME_MAX ? { ok: true, value: text } : { ok: false };
+}
+
+export const GALLERY_SPECIFICATION_MAX = 2000;
+export type GallerySpecificationInput = { ok: true; value: string | null } | { ok: false; kind: "invalid_request" | "specification_too_long" };
+
+/** Plain text, trimmed, line breaks kept. Empty (or missing) clears it. More than 2000 characters is refused (never cut silently). */
+export function validateGallerySpecification(value: unknown): GallerySpecificationInput {
+  if (value === undefined || value === null) return { ok: true, value: null };
+  if (typeof value !== "string") return { ok: false, kind: "invalid_request" };
+  const text = value.split(String.fromCharCode(13)).join("").trim();
+  if (!text) return { ok: true, value: null };
+  return text.length <= GALLERY_SPECIFICATION_MAX ? { ok: true, value: text } : { ok: false, kind: "specification_too_long" };
 }
 
 export type GalleryTagsInput = { ok: true; value: string[] } | { ok: false };

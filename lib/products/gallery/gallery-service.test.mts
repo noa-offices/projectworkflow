@@ -31,6 +31,7 @@ function makeWorld() {
     rpc: {} as Record<string, (args: any) => { data: any; error: any }>,
     adminCalls: 0,
     throwOnRpc: false,
+    noSpecColumn: false,
   };
 }
 let world = makeWorld();
@@ -43,7 +44,8 @@ function buildClient() {
     private from = 0;
     private to = Infinity;
     constructor(private table: keyof ReturnType<typeof makeWorld>["tables"]) {}
-    select(columns: string, options?: { count?: string }) { world.selects.push({ table: this.table, columns }); this.wantCount = Boolean(options?.count); return this; }
+    private missingColumn = false;
+    select(columns: string, options?: { count?: string }) { world.selects.push({ table: this.table, columns }); this.wantCount = Boolean(options?.count); this.missingColumn = world.noSpecColumn && columns.split(",").includes("specification"); return this; }
     eq(column: string, value: unknown) { world.eqs.push([column, value]); this.filters.push([column, value]); return this; }
     in(column: string, values: unknown[]) { this.inFilter = [column, values]; return this; }
     or(text: string) { world.ors.push(text); return this; }
@@ -52,7 +54,11 @@ function buildClient() {
     limit(count: number) { world.limits.push(count); return this; }
     range(from: number, to: number) { world.ranges.push([from, to]); this.from = from; this.to = to; return this; }
     private rows() { return world.tables[this.table].filter((row) => this.filters.every(([c, v]) => row[c] === v) && (!this.inFilter || this.inFilter[1].includes(row[this.inFilter[0]]))); }
-    maybeSingle() { world.calls.push(`select:${this.table}`); return Promise.resolve({ data: this.rows()[0] ?? null, error: null }); }
+    maybeSingle() {
+      world.calls.push(`select:${this.table}`);
+      if (this.missingColumn) return Promise.resolve({ data: null, error: { message: "column does not exist" } });
+      return Promise.resolve({ data: this.rows()[0] ?? null, error: null });
+    }
     then(resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) {
       world.calls.push(`select:${this.table}`);
       const all = this.rows();
@@ -435,7 +441,7 @@ function seedDetail() {
   world.tables.product_template_linked_families = [{ id: "f1", parent_template_id: TEMPLATE, label: "Matching table", sort_order: 0, is_active: true }];
   world.tables.product_template_material_groups = [{ id: LINK, product_template_id: TEMPLATE, material_group_id: MATERIAL_GROUP, selection_mode: "full_group", label_override: null, sort_order: 0, is_active: true }];
   world.tables.brand_material_groups = [{ id: MATERIAL_GROUP, group_name: "Fabrics", is_active: true }];
-  world.tables.brand_materials = [{ id: "m1", material_group_id: MATERIAL_GROUP, material_code: "F1", material_name: "Oak", sort_order: 0, is_active: true }];
+  world.tables.brand_materials = [{ id: "m1", material_group_id: MATERIAL_GROUP, material_code: "F1", material_name: "Oak", image_url: "materials/f1.webp", sort_order: 0, is_active: true }];
 }
 
 test("details: header, pictures, texts, readable configuration, materials and options; no price, no recipe, no id of a recipe", async () => {
@@ -454,10 +460,12 @@ test("details: header, pictures, texts, readable configuration, materials and op
   assert.equal(detail.quotedCount, 3);
   assert.deepEqual(detail.images, ["product-images/a.webp", "product-images/b.webp", "product-images/ref.webp"]);
   assert.equal(detail.description, "A task chair.");
-  assert.equal(detail.specification, "Mesh back.");
+  assert.equal(detail.specification, "Mesh back, Cable Tray.", "the recipe is complete: the generated text, not the plain template text");
   assert.ok(detail.configuration.some((line: any) => line.value === "Chrome"));
   assert.ok(detail.configuration.some((line: any) => line.value === "Cable Tray x 2"));
-  assert.deepEqual(detail.materials, [{ groupName: "Fabrics", items: ["F1 - Oak"], moreCount: 0 }]);
+  assert.deepEqual(detail.materials, [{ groupName: "Fabrics", swatches: [{ code: "F1", name: "Oak", imagePath: "product-images:materials/f1.webp" }], moreCount: 0 }]);
+  assert.equal(detail.specificationSource, "generated", "the recipe is complete, so its text is generated");
+  assert.match(detail.specification, /Cable Tray/);
   assert.deepEqual(detail.options.map((group: any) => [group.kind, group.groupName, group.items]), [["option", "Casters", ["Soft"]], ["accessory", "Add-ons", ["Cable Tray"]], ["linked", "Linked products", ["Matching table"]]]);
   const json = JSON.stringify(result);
   assert.doesNotMatch(json, /98765|98766|unit_price|variant_pricing|recipe|selections|variant_row_id/i, "no price and no recipe leave the server");
@@ -513,6 +521,65 @@ test("details: the selects name no price column and only the one item select rea
   assert.deepEqual(world.selects.filter((entry) => /\brecipe\b/.test(entry.columns)).map((entry) => entry.table), ["product_gallery_items"]);
 });
 
+
+test("details: the gallery's own specification is shown first; without the column in the database the popup still opens", async () => {
+  reset(); seedDetail();
+  world.tables.product_gallery_items = [galleryRow({ ...world.tables.product_gallery_items[0], specification: "  Saved text.  " })];
+  const saved: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.deepEqual([saved.detail.specification, saved.detail.specificationSource], ["Saved text.", "gallery"]);
+  assert.ok(world.selects.some((entry) => entry.table === "product_gallery_items" && /specification/.test(entry.columns)));
+  reset(); seedDetail();
+  world.noSpecColumn = true;
+  const before: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.equal(before.ok, true, "before the migration the item is read without that column");
+  assert.equal(before.detail.specificationSource, "generated");
+  assert.equal(world.selects.filter((entry) => entry.table === "product_gallery_items").length, 2, "one try with the column, one without");
+});
+
+const SPEC_RPC = "product_gallery_update_specification";
+test("specification save: the role is checked on the server BEFORE the database function; the function gets trimmed text", async () => {
+  reset(); seed();
+  world.rpc[SPEC_RPC] = () => ({ data: true, error: null });
+  assert.deepEqual(await actions.updateGalleryItemSpecificationAction({ id: G1, specification: "  Mesh back.\r\nFive star.  " }), { ok: true });
+  assert.deepEqual(world.rpcCalls.filter((call) => call.name === SPEC_RPC), [{ name: SPEC_RPC, args: { p_id: G1, p_specification: "Mesh back.\nFive star." } }]);
+  assert.ok(world.calls.indexOf("rpc:product_gallery_is_editor") < world.calls.indexOf(`rpc:${SPEC_RPC}`), "editor check first");
+  assert.equal(world.adminCalls, 0, "the caller's own client only");
+  reset(); seed();
+  world.rpc[SPEC_RPC] = () => ({ data: true, error: null });
+  world.rpc.product_gallery_is_editor = () => ({ data: false, error: null });
+  assert.deepEqual(await actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x" }), { ok: false, message: GALLERY_MESSAGES.not_allowed });
+  assert.ok(!world.rpcCalls.some((call) => call.name === SPEC_RPC), "a non-editor never reaches the database function");
+});
+
+test("specification save: empty clears it, 2000 characters are allowed, more is refused with a friendly message, bad input never reaches the database", async () => {
+  reset(); seed();
+  world.rpc[SPEC_RPC] = () => ({ data: true, error: null });
+  for (const empty of ["", "   ", null]) assert.deepEqual(await actions.updateGalleryItemSpecificationAction({ id: G1, specification: empty }), { ok: true });
+  assert.deepEqual(world.rpcCalls.filter((call) => call.name === SPEC_RPC).map((call) => call.args.p_specification), [null, null, null], "empty means clear");
+  assert.deepEqual(await actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x".repeat(2000) }), { ok: true });
+  const calls = world.rpcCalls.filter((call) => call.name === SPEC_RPC).length;
+  assert.deepEqual(await actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x".repeat(2001) }), { ok: false, message: GALLERY_MESSAGES.specification_too_long });
+  assert.deepEqual(await actions.updateGalleryItemSpecificationAction({ id: "nope", specification: "x" }), { ok: false, message: GALLERY_MESSAGES.invalid_request });
+  assert.deepEqual(await actions.updateGalleryItemSpecificationAction({ id: G1, specification: 5 as any }), { ok: false, message: GALLERY_MESSAGES.invalid_request });
+  assert.deepEqual(await actions.updateGalleryItemSpecificationAction(undefined as any), { ok: false, message: GALLERY_MESSAGES.invalid_request });
+  assert.equal(world.rpcCalls.filter((call) => call.name === SPEC_RPC).length, calls, "nothing invalid reached the database");
+  assert.match(GALLERY_MESSAGES.specification_too_long, /2000/);
+});
+
+test("specification save: database answers become friendly messages and nothing throws", async () => {
+  reset(); seed();
+  world.rpc[SPEC_RPC] = () => ({ data: null, error: { message: "Not allowed.", code: "P0001" } });
+  assert.deepEqual(await actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x" }), { ok: false, message: GALLERY_MESSAGES.not_allowed });
+  world.rpc[SPEC_RPC] = () => ({ data: false, error: null });
+  assert.deepEqual(await actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x" }), { ok: false, message: GALLERY_MESSAGES.item_not_found });
+  world.rpc[SPEC_RPC] = () => ({ data: null, error: { message: "boom secret detail", code: "XX000" } });
+  const failed: any = await actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x" });
+  assert.equal(failed.message, GALLERY_MESSAGES.save_failed);
+  assert.doesNotMatch(JSON.stringify(failed), /secret/);
+  world.rpc[SPEC_RPC] = () => { throw new Error("secret rpc detail"); };
+  assert.deepEqual(await actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x" }), { ok: false, message: GALLERY_MESSAGES.save_failed });
+});
+
 // ── actions: auth first, never throw ───────────────────────────────────────
 test("every action authenticates FIRST, before any client or database call", async () => {
   const calls: Array<[string, () => Promise<unknown>]> = [
@@ -524,6 +591,7 @@ test("every action authenticates FIRST, before any client or database call", asy
     ["merge", () => actions.mergeGalleryItemsAction({ fromId: G1, toId: G2 })],
     ["capabilities", () => actions.getGalleryCapabilitiesAction()],
     ["detail", () => actions.getGalleryItemDetailAction({ id: G1 })],
+    ["specification", () => actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x" })],
   ];
   for (const [name, run] of calls) {
     reset(); seed();
@@ -542,6 +610,7 @@ test("a signed-out user gets 'not allowed' and nothing is read; no action throws
     () => actions.updateGalleryItemDetailsAction({ id: G1, displayName: "x", tags: [] }),
     () => actions.mergeGalleryItemsAction({ fromId: G1, toId: G2 }),
     () => actions.getGalleryCapabilitiesAction(),
+    () => actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x" }),
   ];
   for (const run of calls) {
     reset(); seed();

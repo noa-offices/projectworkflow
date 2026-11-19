@@ -3,7 +3,8 @@
  * parse and build live here so they can be tested. Dates use the Asia/Dubai format of My Collection (formatSavedDate).
  */
 import { formatSavedDate } from "../saved-setups/collection-view";
-import { cleanGalleryTag, gallerySortMode, isGalleryId, validateGalleryDisplayName, validateGalleryTags, type GalleryListItem, type GallerySortMode, type GallerySubCategoryEntry } from "./gallery";
+import type { GallerySpecificationSource, GalleryDetailSwatch } from "./gallery-detail";
+import { GALLERY_SPECIFICATION_MAX, cleanGalleryTag, gallerySortMode, isGalleryId, validateGalleryDisplayName, validateGalleryTags, type GalleryListItem, type GallerySortMode, type GallerySubCategoryEntry } from "./gallery";
 
 export const GALLERY_SEARCH_DEBOUNCE_MS = 300;
 export const GALLERY_SORT_LABELS: Record<GallerySortMode, string> = { popular: "Most quoted", newest: "Newest", name: "Name" };
@@ -133,4 +134,24 @@ export function editFormProblem(displayName: string, tagText: string): string | 
   if (!validateGalleryDisplayName(displayName).ok) return "The name must be 1 to 120 characters, or empty to clear it.";
   if (!validateGalleryTags(parseTagInput(tagText)).ok) return "Use at most 20 tags, each 1 to 30 characters.";
   return null;
+}
+
+// ── Details popup: swatches and specification ──────────────────────────────
+export const SWATCHES_SHOWN_FIRST = 24;
+export const SPECIFICATION_HELP_TEXT = "Generic text only. Do not include client names, project names, prices or quote numbers.";
+export const SPECIFICATION_SOURCE_LABELS: Record<Exclude<GallerySpecificationSource, "none">, string> = {
+  gallery: "Saved specification",
+  generated: "Generated from the saved configuration",
+  template: "From product template",
+};
+
+/** "Jet Black (CSE14)": the full name with the short code. */
+export function swatchCaption(swatch: Pick<GalleryDetailSwatch, "code" | "name">): string {
+  if (!swatch.name || swatch.name === swatch.code) return swatch.code;
+  return `${swatch.name} (${swatch.code})`;
+}
+
+/** What the edit box starts with: the shown text (saved, generated or from the template), at most 2000 characters. */
+export function specificationDraft(shown: string | null | undefined): string {
+  return (shown ?? "").slice(0, GALLERY_SPECIFICATION_MAX);
 }

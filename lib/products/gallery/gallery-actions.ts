@@ -12,6 +12,7 @@ import {
   mergeGalleryItems,
   setGalleryItemHidden,
   updateGalleryItemDetails,
+  updateGalleryItemSpecification,
   type GalleryAddItem,
 } from "./gallery-service";
 import type { GalleryDetail } from "./gallery-detail";
@@ -136,6 +137,19 @@ export async function updateGalleryItemDetailsAction(input: { id: string; displa
     await requireActiveUser();
     const supabase = await createClient();
     const result = await updateGalleryItemDetails(supabase, { id: input?.id, displayName: input?.displayName, tags: input?.tags });
+    if (!result.ok) return failure(result.kind);
+    return { ok: true };
+  } catch (problem) {
+    return failure("save_failed", problem);
+  }
+}
+
+/** Editors only (checked here before the database function, which checks again). Empty clears the text; at most 2000 characters. */
+export async function updateGalleryItemSpecificationAction(input: { id: string; specification: string | null }): Promise<{ ok: true } | GalleryActionFailure> {
+  try {
+    await requireActiveUser();
+    const supabase = await createClient();
+    const result = await updateGalleryItemSpecification(supabase, { id: input?.id, specification: input?.specification });
     if (!result.ok) return failure(result.kind);
     return { ok: true };
   } catch (problem) {
