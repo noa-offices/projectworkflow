@@ -13,3 +13,4 @@ Read the existing [architecture](../ARCHITECTURE.md), [database](../DATABASE.md)
 Database field-by-field completeness, all policy interactions, storage permissions and cross-deployment state are **NOT VERIFIED** by this audit. Inspect relevant migrations and tests before modifying a contract.
 
 - Product Gallery update scans call `product_gallery_check_updates()` using the authenticated editor session; it creates specification and picture offers from saved quotations without adding gallery items or changing counts. Applying the migration is a separate deployment step.
+- Product Gallery AED estimates use company rates from `currency_default_rates`. Product Library price roles can read them and owners and admins write through session RPCs from Company Settings. Temporary gallery rates live in React state and the conversion is display-only.
