@@ -4,9 +4,9 @@ import { Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SetupThumbnail } from "@/components/products/my-collection-list";
 import { GalleryDetailDialog } from "@/components/products/product-gallery-detail-dialog";
-import { ConfirmHiddenDialog, EditGalleryItemDialog, MergeGalleryItemDialog } from "@/components/products/product-gallery-dialogs";
+import { ConfirmRemoveDialog, EditGalleryItemDialog, MergeGalleryItemDialog } from "@/components/products/product-gallery-dialogs";
 import { toolbarContainer, toolbarControl, toolbarPrimaryButton, toolbarSecondaryButton } from "@/components/products/product-toolbar-styles";
-import { listGalleryFiltersAction, listGalleryItemsAction, setGalleryItemHiddenAction } from "@/lib/products/gallery/gallery-actions";
+import { listGalleryFiltersAction, listGalleryItemsAction, removeGalleryItemAction } from "@/lib/products/gallery/gallery-actions";
 import { GALLERY_SORT_MODES, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "@/lib/products/gallery/gallery";
 import {
   GALLERY_SEARCH_DEBOUNCE_MS,
@@ -23,17 +23,19 @@ import {
 } from "@/lib/products/gallery/gallery-view";
 
 // The Product Gallery page: configured products the company has quoted. Cards are clean by default. Users who may edit (canEdit)
-// get one "Edit" toggle; only while it is on do the cards show Edit and Hide, and Merge only for curators (canCurate). Edit mode is
+// get one "Edit" toggle; only while it is on do the cards show Edit and Remove, and Merge only for curators (canCurate). Edit mode is
 // React state only (it resets on refresh). The filters live in the URL (the server passes the parsed state in; this component keeps
 // the URL in step with history.replaceState). 30 per page with a Load more button. No money values on this page and no recipe: adding
 // to a quotation happens in the quote builder. The server and the database decide who may change anything; these flags only mirror that.
 type Filters = { brands: GalleryFilterEntry[]; categories: GalleryFilterEntry[]; tags: GalleryTagEntry[]; subCategories: GallerySubCategoryEntry[]; currencies: GalleryCurrencyEntry[] };
 const NO_FILTERS: Filters = { brands: [], categories: [], tags: [], subCategories: [], currencies: [] };
-type Dialog = { kind: "edit" | "hide" | "merge" | "detail"; item: GalleryListItem } | null;
+type Dialog = { kind: "edit" | "remove" | "merge" | "detail"; item: GalleryListItem } | null;
 
 const control = `${toolbarControl} w-full`;
 const smallButton =
   "inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800";
+const removeButton =
+  "inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700";
 const openButton =
   "inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800";
 
@@ -45,16 +47,15 @@ function Select({ label, value, onChange, children }: { label: string; value: st
   );
 }
 
-function GalleryCard({ item, editMode, canCurate, onDialog, onUnhide }: { item: GalleryListItem; editMode: boolean; canCurate: boolean; onDialog: (dialog: Dialog) => void; onUnhide: (item: GalleryListItem) => void }) {
+function GalleryCard({ item, editMode, canCurate, onDialog }: { item: GalleryListItem; editMode: boolean; canCurate: boolean; onDialog: (dialog: Dialog) => void }) {
   return (
-    <li className={`flex h-full min-w-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-sm ${item.isHidden ? "opacity-60" : ""}`} data-testid="gallery-card">
+    <li className={`flex h-full min-w-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-sm`} data-testid="gallery-card">
       <div className="p-2 pb-0">
         <div className="relative flex h-24 items-center justify-center overflow-hidden rounded-md border border-zinc-100 bg-zinc-50">
           <button type="button" onClick={() => onDialog({ kind: "detail", item })} aria-label={`Open details of ${item.displayName}`} className="flex h-full w-full items-center justify-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">
             <SetupThumbnail path={item.picture?.kind === "template" ? item.picture.path : null} alt={item.displayName} size={88} />
           </button>
           <span className="pointer-events-none absolute left-1.5 top-1.5 z-10 flex flex-col items-start gap-1">
-            {item.isHidden ? <span className="rounded-full border border-zinc-300 bg-white/90 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-700">Hidden</span> : null}
             {!item.available ? <span className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-900">No longer available</span> : null}
           </span>
           {item.currency ? <span className="pointer-events-none absolute right-1.5 top-1.5 z-10 rounded-full border border-zinc-200 bg-white/90 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-600" title="Currency">{item.currency}</span> : null}
@@ -81,7 +82,7 @@ function GalleryCard({ item, editMode, canCurate, onDialog, onUnhide }: { item: 
           {editMode ? (
             <>
               <button type="button" className={smallButton} onClick={() => onDialog({ kind: "edit", item })} aria-label={`Edit ${item.displayName}`}>Edit</button>
-              <button type="button" className={smallButton} onClick={() => (item.isHidden ? onUnhide(item) : onDialog({ kind: "hide", item }))} aria-label={`${item.isHidden ? "Unhide" : "Hide"} ${item.displayName}`}>{item.isHidden ? "Unhide" : "Hide"}</button>
+              <button type="button" className={removeButton} onClick={() => onDialog({ kind: "remove", item })} aria-label={`Remove ${item.displayName} from the gallery`}>Remove</button>
               {canCurate ? <button type="button" className={`${smallButton} col-span-2`} onClick={() => onDialog({ kind: "merge", item })} aria-label={`Merge ${item.displayName} into another item`}>Merge into...</button> : null}
             </>
           ) : null}
@@ -119,7 +120,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
   const [filtersOpen, setFiltersOpen] = useState(false);
   const requestId = useRef(0);
 
-  // Edit mode only means something for users who may edit; hidden items are listed only while it is on.
+  // Edit mode only means something for users who may edit.
   const editing = canEdit && editMode;
   const stateKey = buildGalleryQuery(state);
 
@@ -151,10 +152,9 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
         currency: current.currency || null,
         tag: current.tag || null,
         sort: current.sort,
-        includeHidden: editing,
         page: pageNumber,
       }),
-    [editing],
+    [],
   );
 
   const reload = useCallback(
@@ -239,16 +239,11 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
     await Promise.all([reload(state), loadFilters()]);
   }
 
-  async function setHidden(item: GalleryListItem, hidden: boolean): Promise<string | null> {
-    const result = await setGalleryItemHiddenAction({ id: item.id, hidden });
+  async function removeItem(item: GalleryListItem): Promise<string | null> {
+    const result = await removeGalleryItemAction({ id: item.id });
     if (!result.ok) return result.message;
-    await afterChange(hidden ? "Item hidden." : "Item is visible again.");
+    await afterChange(result.alreadyRemoved ? "Already removed." : "Removed from the gallery.");
     return null;
-  }
-
-  async function unhideNow(item: GalleryListItem) {
-    const message = await setHidden(item, false);
-    if (message) setActionProblem(message);
   }
 
   const filtered = hasActiveGalleryFilters(state);
@@ -304,7 +299,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
           </div>
         </section>
 
-        {editing ? <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Edit mode is on. Hidden items are shown dimmed. Choose Done when you are finished.</p> : null}
+        {editing ? <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Edit mode is on. Choose Done when you are finished.</p> : null}
         {notice ? <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{notice}</p> : null}
         {actionProblem ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{actionProblem}</p> : null}
 
@@ -332,7 +327,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
             <p className="text-sm text-zinc-600" aria-live="polite">{showingText(items.length, total)}</p>
             <ul className="grid auto-rows-fr grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {items.map((item) => (
-                <GalleryCard key={item.id} item={item} editMode={editing} canCurate={canCurate} onDialog={setDialog} onUnhide={(target) => void unhideNow(target)} />
+                <GalleryCard key={item.id} item={item} editMode={editing} canCurate={canCurate} onDialog={setDialog} />
               ))}
             </ul>
             {hasMore ? (
@@ -346,7 +341,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
 
       {dialog?.kind === "detail" ? <GalleryDetailDialog itemId={dialog.item.id} title={dialog.item.displayName} canEdit={canEdit} onClose={() => setDialog(null)} /> : null}
       {editing && dialog?.kind === "edit" ? <EditGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onSaved={() => void afterChange("Saved.")} /> : null}
-      {editing && dialog?.kind === "hide" ? <ConfirmHiddenDialog item={dialog.item} hide onClose={() => setDialog(null)} onConfirm={() => setHidden(dialog.item, true)} /> : null}
+      {editing && dialog?.kind === "remove" ? <ConfirmRemoveDialog item={dialog.item} onClose={() => setDialog(null)} onConfirm={() => removeItem(dialog.item)} /> : null}
       {editing && canCurate && dialog?.kind === "merge" ? <MergeGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onMerged={() => void afterChange("Items merged.")} /> : null}
     </div>
   );

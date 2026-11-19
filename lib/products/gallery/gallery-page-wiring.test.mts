@@ -53,29 +53,47 @@ test("edit mode: one Edit/Done toggle for editors only; cards are clean until it
   const editBranch = card.indexOf("{editMode ? (");
   assert.ok(editBranch > 0, "an edit-mode branch exists on the card");
   assert.ok(card.indexOf(">Edit</button>") > editBranch, "Edit only inside the edit-mode branch");
-  assert.ok(card.indexOf('"Unhide" : "Hide"') > editBranch, "Hide / Unhide only inside the edit-mode branch");
+  assert.ok(card.indexOf(">Remove</button>") > editBranch, "Remove only inside the edit-mode branch");
+  assert.doesNotMatch(code(browser), /Unhide|>Hide<|onUnhide|isHidden|"Hidden"|>Hidden</, "no Hide, Unhide or Hidden badge in the UI any more");
   assert.ok(card.indexOf("{canCurate ? <button") > editBranch, "Merge is behind canCurate inside the edit-mode branch");
   assert.ok(card.indexOf("Merge into...") > card.indexOf("{canCurate ? <button"));
-  assert.match(browser, /includeHidden: editing/, "hidden items are listed only in edit mode");
-  assert.match(browser, /item\.isHidden \? "opacity-60" : ""/, "hidden items are dimmed");
+  assert.doesNotMatch(code(browser), /includeHidden/, "the page no longer asks for hidden items");
+  assert.doesNotMatch(code(browser), /opacity-60/, "no dimmed hidden state");
   assert.match(browser, /editing && dialog\?\.kind === "edit"/);
-  assert.match(browser, /editing && dialog\?\.kind === "hide"/);
+  assert.match(browser, /editing && dialog\?\.kind === "remove"/);
   assert.match(browser, /editing && canCurate && dialog\?\.kind === "merge"/);
   assert.doesNotMatch(code(browser), /Show hidden|showHidden/, "no separate hidden toggle any more");
 });
 
-test("hide asks first (Hidden items are not shown to staff) and merge explains the effect; edit uses the gallery action", () => {
-  assert.match(dialogs, /Hidden items are not shown to staff\./);
+test("remove asks first with the agreed text; merge explains the effect; edit uses the gallery action; nothing in the UI calls the hide action", () => {
+  assert.match(dialogs, /title="Remove from gallery\?"/);
+  assert.match(dialogs, /This removes \$\{item\.displayName\} from the gallery for good\. If the same configuration is quoted again it will NOT come back\. Quotations are not affected\./);
+  assert.match(dialogs, /onClick=\{onClose\} disabled=\{busy\}>Cancel</);
+  assert.match(dialogs, /disabled=\{busy\}>\{busy \? "Removing…" : "Remove"\}/, "both buttons are disabled while working");
   assert.match(dialogs, /Counts are added and this item is removed\./);
   assert.match(dialogs, /mergeGalleryItemsAction\(\{ fromId: item\.id, toId: target\.id \}\)/);
   assert.match(dialogs, /updateGalleryItemDetailsAction\(/);
-  assert.match(browser, /setGalleryItemHiddenAction\(\{ id: item\.id, hidden \}\)/);
+  assert.match(browser, /removeGalleryItemAction\(\{ id: item\.id \}\)/);
+  assert.match(browser, /result\.alreadyRemoved \? "Already removed\." : "Removed from the gallery\."/);
+  for (const [name, text] of Object.entries({ browser, dialogs, detailDialog })) assert.doesNotMatch(code(text), /setGalleryItemHidden|ConfirmHiddenDialog|Hidden items are not shown/, `${name}: the hide action is not used by the UI`);
+  // The server action stays (and its database function) but only the removal is wired to the UI.
+  assert.match(actionsSource, /export async function setGalleryItemHiddenAction/);
+});
+
+test("remove action: editors only, signed in first, the caller's client, role checked before the database function", () => {
+  const body = actionsSource.slice(actionsSource.indexOf("export async function removeGalleryItemAction"), actionsSource.indexOf("export async function updateGalleryItemSpecificationAction"));
+  assert.ok(body.indexOf("await requireActiveUser()") > 0 && body.indexOf("await requireActiveUser()") < body.indexOf("createClient()"));
+  assert.match(body, /catch \(problem\)/);
+  assert.match(service, /product_gallery_is_editor"\)\)\) return \{ ok: false, kind: "not_allowed" \};\s*try \{\s*const \{ data, error \} = await supabase\.rpc\("product_gallery_remove", \{ p_id: input\.id \}\)/);
+  assert.doesNotMatch(body, /createAdminClient|supabase\/admin/);
+  const sql = read("../../../supabase/migrations/20261119220000_product_gallery_remove.sql");
+  assert.match(sql, /create or replace function public\.product_gallery_remove\(p_id uuid\)/);
 });
 
 test("merge is limited to the SAME template: candidates are filtered by template id before they are shown", () => {
   assert.match(dialogs, /mergeCandidates\(found, item\)/);
   assert.match(view, /item\.templateId !== source\.templateId/);
-  assert.match(dialogs, /includeHidden: true/);
+  assert.doesNotMatch(dialogs, /includeHidden/, "no hidden items in the merge list either");
   assert.match(dialogs, /Only other items of the same product are listed\./);
   // The only items the merge buttons can send are the candidates list entries.
   assert.match(dialogs, /candidates\.map\(\(candidate\) =>[\s\S]*?setTarget\(candidate\)/);
@@ -126,7 +144,7 @@ test("cards show the agreed facts: Category and Sub-category as two separate lab
   assert.match(browser, /\{item\.subCategoryName \? <span[^\n]*title="Sub-category">\{item\.subCategoryName\}<\/span>/);
   assert.doesNotMatch(code(browser), /categoryLine/);
   assert.match(browser, /No longer available/);
-  assert.match(browser, />Hidden</);
+  assert.doesNotMatch(code(browser), />Hidden</, "no Hidden badge any more");
   assert.match(browser, />Details</);
   assert.doesNotMatch(browser, /View product|productLibraryHref|\/products\?template=|next\/link/, "the link that left the gallery is gone");
 });
@@ -137,7 +155,7 @@ test("dialogs are labelled modals that close on Escape", () => {
   assert.match(dialogs, /event\.key === "Escape"/);
 });
 
-test("the sidebar shows Product Gallery next to My Collection to every role that can view the gallery, not only product managers", () => {
+test("the sidebar shows Product Gallery next to My Collection to every role that can view the gallery, including procurement managers", () => {
   const lines = sidebar.split("\n");
   const mine = lines.findIndex((line) => line.includes('label: "My Collection"'));
   const gallery = lines.findIndex((line) => line.includes('label: "Product Gallery"'));
@@ -146,9 +164,26 @@ test("the sidebar shows Product Gallery next to My Collection to every role that
   assert.match(lines[gallery], /hidden: !canViewGallery/);
   assert.doesNotMatch(lines[gallery], /canManageProducts/);
   const roles = (sidebar.match(/const canViewGallery =([\s\S]*?);/)?.[1] ?? "").match(/"(\w+)"/g)?.map((role) => role.replace(/"/g, "")) ?? [];
-  assert.deepEqual(roles.sort(), ["admin_manager", "designer", "sales_coordinator", "sales_designer", "system_owner"], "the same roles as product_gallery_can_view");
-  assert.doesNotMatch(sidebar.match(/const canViewGallery =([\s\S]*?);/)?.[1] ?? "", /procurement_manager/);
+  assert.deepEqual(roles.sort(), ["admin_manager", "designer", "procurement_manager", "sales_coordinator", "sales_designer", "system_owner"], "the same roles as product_gallery_can_view after the procurement migration");
   assert.match(sidebar, /label: "Product Library".*hidden: !canManageProducts/, "the Product Library entry is unchanged");
+});
+
+test("sidebar visibility by role: procurement manager sees Product Gallery; viewer and warehouse staff do not", () => {
+  const body = sidebar.match(/const canViewGallery =([\s\S]*?);/)?.[1] ?? "";
+  const sees = (role: string) => new RegExp(`role === "${role}"`).test(body);
+  for (const role of ["system_owner", "admin_manager", "procurement_manager", "sales_designer", "sales_coordinator", "designer"]) assert.equal(sees(role), true, role);
+  for (const role of ["viewer", "warehouse_staff"]) assert.equal(sees(role), false, role);
+  // Warehouse staff get their own sidebar, which is returned before the Products group is built.
+  assert.ok(sidebar.indexOf('if (role === "warehouse_staff") {') < sidebar.indexOf("const canViewGallery"));
+  // The gallery code never hard-codes a role: the server capabilities decide (canView, canEdit, canCurate).
+  for (const [name, text] of Object.entries({ page, browser, dialogs, detailDialog, service, actionsSource })) assert.doesNotMatch(code(text), /role\s*===|role\s*!==|includes\(role\)|"system_owner"|"sales_designer"/, `${name}: no role checks in the gallery code`);
+});
+
+test("the procurement migration is attached unchanged: view and edit for procurement managers, merge stays with owner and admin", () => {
+  const sql = read("../../../supabase/migrations/20261119230000_product_gallery_procurement.sql");
+  assert.match(sql, /product_gallery_can_view\(\)[\s\S]*'system_owner','admin_manager','procurement_manager','sales_designer','sales_coordinator','designer'/);
+  assert.match(sql, /product_gallery_is_editor\(\)[\s\S]*'procurement_manager'/);
+  assert.doesNotMatch(sql, /product_gallery_is_curator|product_gallery_merge/, "merge is not touched");
 });
 
 test("the editors migration is attached unchanged and is the only new SQL here", () => {
@@ -265,7 +300,7 @@ test("finish swatches: sections per material group, each collection its own sub-
   assert.match(detailDialog, /data-testid="swatch-collection"/);
   assert.match(detailDialog, /\{group\.groupName\} <span[^\n]*\(\{group\.count\}\)/, "the group heading with its count");
   assert.match(detailDialog, /\{collection\.name\} \(\{collection\.swatches\.length\}\)/, "each collection heading with its count, for example Era (24)");
-  assert.match(detailDialog, /\{collection\.grade \? <span[^\n]*>\{gradeBadge\(collection\.grade\)\}<\/span> : null\}/, "the grade as a small badge");
+  assert.doesNotMatch(detailDialog, /gradeBadge|collection\.grade/, "the heading is the selector's own 'category · collection'; there is no separate grade badge");
   assert.match(detailDialog, /<SwatchGrid swatches=\{collection\.swatches\}/, "one grid per collection");
   assert.match(detailDialog, /swatches\.slice\(0, SWATCHES_SHOWN_FIRST\)/);
   assert.match(view, /SWATCHES_SHOWN_FIRST = 24/);
@@ -295,7 +330,11 @@ test("finish swatches: sections per material group, each collection its own sub-
 test("popup fixes: materials are read in group/subgroup/sort order with subgroup names; the picture column is read with a retry and validated against the template", () => {
   assert.match(service, /\.order\("material_group_id", \{ ascending: true \}\)\.order\("subgroup_id", \{ ascending: true \}\)\.order\("sort_order", \{ ascending: true \}\)/, "the read order, so a cap cuts the tail");
   assert.match(service, /from\("brand_material_subgroups"\)\.select\("id,name,grade,sort_order"\)/);
-  assert.match(service, /subgroup_id,material_collection/);
+  assert.match(service, /material_category,material_collection,subgroup_id/, "the selector's own section fields");
+  assert.match(service, /link\.selection_mode === "full_group"\)\.map\(\(link\) => link\.material_group_id\)/, "only full_group means the whole brand group");
+  assert.match(service, /link\.selection_mode !== "full_group"\)\.map\(\(link\) => link\.id\)/, "any other mode reads the item rows");
+  assert.match(service, /chunk\(Array\.from\(new Set\(linkItems/, "the connected materials are read in chunks");
+  assert.match(read("./gallery-detail.ts"), /import \{ groupMaterialsIntoSections \} from "\.\.\/\.\.\/quotations\/finish-material-groups"/, "the selector's own grouping helper is reused");
   assert.match(service, /"is_hidden", "selected_image",/, "the list reads the chosen picture");
   assert.match(service, /LIST_COLUMNS_NO_IMAGE/, "and still works before the migration");
   assert.match(service, /DETAIL_ITEM_COLUMNS_NO_IMAGE/);

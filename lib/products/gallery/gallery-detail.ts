@@ -4,6 +4,7 @@
  * copied wholesale), and removePriceLikeKeys() is a last guard. A recipe is read here only to turn ids into readable lines; ids and the
  * recipe itself never leave this file.
  */
+import { groupMaterialsIntoSections } from "../../quotations/finish-material-groups";
 import { resolveProductConfigurationState, type ProductConfigurationSelections, type ProductConfigurationStep } from "../product-configuration-state";
 import { restorePlainState } from "../saved-setups/recipe";
 import { completeGalleryRecipe, galleryDisplayName } from "./gallery";
@@ -18,8 +19,8 @@ export const GALLERY_DETAIL_TEXT_MAX = 4000;
 export type GalleryDetailLine = { label: string; value: string };
 /** One finish swatch: short code, full name, and the picture's storage path (the browser signs it with the existing image helper). */
 export type GalleryDetailSwatch = { code: string; name: string; imagePath: string | null };
-/** A collection (the material subgroup, else the material collection name, else "Other") with its swatches. */
-export type GalleryDetailCollection = { name: string; grade: string | null; swatches: GalleryDetailSwatch[] };
+/** One section of a material group, headed exactly as the quotation finish selector heads it: "category · collection" (for example "SG3 · CHILI"). */
+export type GalleryDetailCollection = { name: string; swatches: GalleryDetailSwatch[] };
 export type GalleryDetailMaterialGroup = { groupName: string; count: number; collections: GalleryDetailCollection[]; moreCount: number };
 export type GallerySpecificationSource = "gallery" | "generated" | "template" | "none";
 export type GalleryDetailOptionGroup = { groupName: string; kind: "option" | "accessory" | "linked"; items: string[] };
@@ -102,8 +103,9 @@ export type MaterialRow = {
   material_name: string | null;
   image_url: string | null;
   sort_order: number | null;
-  subgroup_id?: string | null;
+  material_category?: string | null;
   material_collection?: string | null;
+  subgroup_id?: string | null;
 };
 export type SubgroupRow = { id: string; name: string | null; grade: string | null; sort_order: number | null };
 
@@ -118,69 +120,61 @@ export function swatchImagePath(value: unknown): string | null {
   return `product-images:${path}`;
 }
 
-const OTHER_COLLECTION = "Other";
-const byCode = (a: GalleryDetailSwatch, b: GalleryDetailSwatch) => a.code.localeCompare(b.code, undefined, { numeric: true });
-
 /**
- * Template material groups -> sections, each with its collections, each with swatches. A collection is the material's subgroup name, else
- * its material_collection text, else "Other". full_group lists the whole brand group, selected_items only the chosen ones.
- * Order: groups by the template's order; collections by subgroup sort order then name, then the plain collection names, "Other" last;
- * swatches by their own sort order, then code. Only code, name, picture path and the subgroup's grade are read (no price, no supplier data).
+ * Template material groups -> sections, each with its sections of swatches. This reproduces what the quotation finish selector shows
+ * (components/quotations/finish-selections-editor.tsx, linkedGroupMaterials): an ACTIVE template group, its label_override, and
+ *   - selection_mode "full_group": every active material of the brand group;
+ *   - any other mode ("selected_categories" or "selected_items"): ONLY the materials that have an active item row for this template
+ *     group (a category selection is stored as item rows when it is saved, so both modes read the same rows).
+ * The sections are the selector's own (groupMaterialsIntoSections): "category · collection", categories A-Z with "Other" last, then
+ * collections; swatches by sort order, then code. A material with neither category nor collection but with a sub-group uses the
+ * sub-group's grade and name instead. Only code, name and picture path are read (no price, no supplier data).
  * At most 400 swatches per group and 1200 in all: the cap cuts the END of that order. moreCount says how many were left out.
  */
 export function mapMaterials(input: { links: TemplateMaterialGroupRow[]; groups: MaterialGroupRow[]; linkItems: MaterialGroupItemRow[]; materials: MaterialRow[]; subgroups?: SubgroupRow[] }): GalleryDetailMaterialGroup[] {
   const groupName = new Map(input.groups.map((group) => [group.id, group.group_name?.trim() ?? ""]));
-  const materialById = new Map(input.materials.map((material) => [material.id, material]));
   const subgroupById = new Map((input.subgroups ?? []).map((subgroup) => [subgroup.id, subgroup]));
   const result: GalleryDetailMaterialGroup[] = [];
   let remaining = GALLERY_DETAIL_SWATCHES_TOTAL_MAX;
   for (const link of [...input.links].sort(bySort)) {
     const name = link.label_override?.trim() || groupName.get(link.material_group_id) || "";
     if (!name) continue;
-    const rows = link.selection_mode === "selected_items"
-      ? input.linkItems.filter((item) => item.product_template_material_group_id === link.id).sort(bySort).flatMap((item) => materialById.get(item.brand_material_id) ?? [])
-      : input.materials.filter((material) => material.material_group_id === link.material_group_id);
+    const chosen = new Set(input.linkItems.filter((item) => item.product_template_material_group_id === link.id).map((item) => item.brand_material_id));
+    const rows = input.materials.filter((material) => material.material_group_id === link.material_group_id && (link.selection_mode === "full_group" || chosen.has(material.id)));
 
-    type Bucket = { key: string; rank: number; order: number; name: string; grade: string | null; swatches: Array<GalleryDetailSwatch & { order: number }> };
-    const buckets = new Map<string, Bucket>();
     const seen = new Set<string>();
+    const groupable: Array<{ id: string; material_group_id: string; material_category: string; material_collection: string; material_code: string; material_name: string; sort_order: number; imagePath: string | null }> = [];
     for (const row of rows) {
       if (seen.has(row.id)) continue;
       seen.add(row.id);
       const code = row.material_code?.trim() ?? "";
       const label = row.material_name?.trim() ?? "";
       if (!code && !label) continue;
-      const subgroup = row.subgroup_id ? subgroupById.get(row.subgroup_id) : undefined;
-      const subgroupName = subgroup?.name?.trim();
-      const collection = row.material_collection?.trim();
-      const bucket: Bucket = subgroup && subgroupName
-        ? { key: `s:${subgroup.id}`, rank: 0, order: Number(subgroup.sort_order ?? 0), name: subgroupName, grade: subgroup.grade?.trim() || null, swatches: [] }
-        : collection
-          ? { key: `c:${collection.toLowerCase()}`, rank: 1, order: 0, name: collection, grade: null, swatches: [] }
-          : { key: "other", rank: 2, order: 0, name: OTHER_COLLECTION, grade: null, swatches: [] };
-      const target = buckets.get(bucket.key) ?? bucket;
-      buckets.set(bucket.key, target);
-      target.swatches.push({ code: code || label, name: label || code, imagePath: swatchImagePath(row.image_url), order: Number(row.sort_order ?? 0) });
+      let category = row.material_category?.trim() ?? "";
+      let collection = row.material_collection?.trim() ?? "";
+      if (!category && !collection) {
+        const subgroup = row.subgroup_id ? subgroupById.get(row.subgroup_id) : undefined;
+        category = subgroup?.grade?.trim() ?? "";
+        collection = subgroup?.name?.trim() ?? "";
+      }
+      groupable.push({ id: row.id, material_group_id: row.material_group_id, material_category: category, material_collection: collection, material_code: code || label, material_name: label || code, sort_order: Number(row.sort_order ?? 0), imagePath: swatchImagePath(row.image_url) });
     }
+    if (!groupable.length) continue;
 
-    const ordered = Array.from(buckets.values()).sort((a, b) => a.rank - b.rank || a.order - b.order || a.name.localeCompare(b.name, undefined, { numeric: true }));
-    let total = 0;
-    for (const bucket of ordered) total += bucket.swatches.length;
-    if (!total) continue;
+    const sections = groupMaterialsIntoSections(groupable, new Set<string>());
     let allowed = Math.max(0, Math.min(GALLERY_DETAIL_SWATCHES_PER_GROUP_MAX, remaining));
     const collections: GalleryDetailCollection[] = [];
     let kept = 0;
-    for (const bucket of ordered) {
+    for (const section of sections) {
       if (allowed <= 0) break;
-      const sorted = bucket.swatches.sort((a, b) => a.order - b.order || byCode(a, b)).map(({ code, name: swatchName, imagePath }) => ({ code, name: swatchName, imagePath }));
-      const take = sorted.slice(0, allowed);
+      const take = section.materials.slice(0, allowed).map((material) => ({ code: material.material_code, name: material.material_name, imagePath: material.imagePath }));
       allowed -= take.length;
       kept += take.length;
-      if (take.length) collections.push({ name: bucket.name, grade: bucket.grade, swatches: take });
+      if (take.length) collections.push({ name: section.label, swatches: take });
     }
     remaining -= kept;
     if (!kept) continue;
-    result.push({ groupName: name, count: kept, collections, moreCount: total - kept });
+    result.push({ groupName: name, count: kept, collections, moreCount: groupable.length - kept });
   }
   return result;
 }

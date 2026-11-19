@@ -8,7 +8,7 @@ import { resolveQuotationImageUrl, markQuotationImagePathFailed } from "@/lib/qu
 import { getGalleryItemDetailAction, updateGalleryItemSpecificationAction } from "@/lib/products/gallery/gallery-actions";
 import { GALLERY_SPECIFICATION_MAX } from "@/lib/products/gallery/gallery";
 import type { GalleryDetail, GalleryDetailMaterialGroup, GalleryDetailSwatch, GallerySpecificationSource } from "@/lib/products/gallery/gallery-detail";
-import { COLLECTIONS_COLLAPSE_ABOVE, COLLECTIONS_SHOWN_FIRST, SWATCHES_SHOWN_FIRST, gradeBadge, SPECIFICATION_HELP_TEXT, SPECIFICATION_SOURCE_LABELS, fullDetailHref, quotedText, specificationDraft, swatchCaption } from "@/lib/products/gallery/gallery-view";
+import { COLLECTIONS_COLLAPSE_ABOVE, COLLECTIONS_SHOWN_FIRST, SWATCHES_SHOWN_FIRST, SPECIFICATION_HELP_TEXT, SPECIFICATION_SOURCE_LABELS, fullDetailHref, quotedText, specificationDraft, swatchCaption } from "@/lib/products/gallery/gallery-view";
 
 // The details popup of the Product Gallery. Read-only: names and text only, no money values, no recipe. The data comes from
 // getGalleryItemDetailAction (the server decides what is readable). It opens from a card (Details button, picture or title); Escape and
@@ -168,11 +168,8 @@ function SwatchGroup({ group }: { group: GalleryDetailMaterialGroup }) {
       <p className="mt-1 min-h-5 text-xs text-zinc-700" aria-live="polite">{selected ? swatchCaption(selected) : ""}</p>
       <div className="mt-1 flex flex-col gap-3">
         {visible.map((collection) => (
-          <div key={`${collection.name}-${collection.grade ?? ""}`} data-testid="swatch-collection">
-            <h5 className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-zinc-800">
-              {collection.name} ({collection.swatches.length})
-              {collection.grade ? <span className="rounded-full border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600">{gradeBadge(collection.grade)}</span> : null}
-            </h5>
+          <div key={collection.name} data-testid="swatch-collection">
+            <h5 className="text-xs font-semibold text-zinc-800">{collection.name} ({collection.swatches.length})</h5>
             <SwatchGrid swatches={collection.swatches} selected={selected} onSelect={setSelected} />
           </div>
         ))}

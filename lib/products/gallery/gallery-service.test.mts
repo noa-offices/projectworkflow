@@ -472,8 +472,8 @@ test("details: header, pictures, texts, readable configuration, materials and op
     groupName: "Fabrics",
     count: 2,
     collections: [
-      { name: "Era", grade: "A", swatches: [{ code: "F1", name: "Oak", imagePath: "product-images:materials/f1.webp" }] },
-      { name: "Veneers", grade: null, swatches: [{ code: "F2", name: "Ash", imagePath: null }] },
+      { name: "A · Era", swatches: [{ code: "F1", name: "Oak", imagePath: "product-images:materials/f1.webp" }] },
+      { name: "Other · Veneers", swatches: [{ code: "F2", name: "Ash", imagePath: null }] },
     ],
     moreCount: 0,
   }]);
@@ -636,6 +636,58 @@ test("list: a card uses the chosen picture when valid (the template's own, no ex
   assert.equal(world.selects.filter((entry) => entry.table === "product_gallery_items").length, 2);
 });
 
+
+test("details: finishes follow the template's selection mode: selected_categories shows only the connected materials (read in chunks), full_group shows the whole group", async () => {
+  reset(); seedDetail();
+  world.tables.product_template_material_groups = [{ id: LINK, product_template_id: TEMPLATE, material_group_id: MATERIAL_GROUP, selection_mode: "selected_categories", label_override: "Fabric Finishes", sort_order: 0, is_active: true }];
+  world.tables.brand_materials = Array.from({ length: 300 }, (_, index) => ({ id: `mat-${index}`, material_group_id: MATERIAL_GROUP, material_code: `F${index}`, material_name: `Fabric ${index}`, image_url: null, sort_order: index, material_category: "SG3", material_collection: "CHILI", subgroup_id: null, is_active: true }));
+  world.tables.product_template_material_group_items = Array.from({ length: 250 }, (_, index) => ({ product_template_material_group_id: LINK, brand_material_id: `mat-${index}`, sort_order: index, is_active: true }));
+  const result: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.equal(result.ok, true);
+  assert.equal(result.detail.materials[0].groupName, "Fabric Finishes", "the label override");
+  assert.equal(result.detail.materials[0].count, 250, "the connected materials only, not the 300 of the brand group");
+  assert.equal(result.detail.materials[0].collections[0].name, "SG3 · CHILI");
+  assert.equal(world.calls.filter((call) => call === "select:brand_materials").length, 3, "250 ids in chunks of 100");
+  reset(); seedDetail();
+  world.tables.product_template_material_groups = [{ id: LINK, product_template_id: TEMPLATE, material_group_id: MATERIAL_GROUP, selection_mode: "full_group", label_override: null, sort_order: 0, is_active: true }];
+  world.tables.brand_materials = Array.from({ length: 12 }, (_, index) => ({ id: `mat-${index}`, material_group_id: MATERIAL_GROUP, material_code: `F${index}`, material_name: `Fabric ${index}`, image_url: null, sort_order: index, material_category: null, material_collection: null, subgroup_id: null, is_active: true }));
+  const whole: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.equal(whole.detail.materials[0].count, 12, "full_group lists the whole brand group");
+});
+
+const REMOVE_RPC = "product_gallery_remove";
+test("remove: editors only, role checked on the server BEFORE the database function; right arguments; the caller's own client", async () => {
+  reset(); seed();
+  world.rpc[REMOVE_RPC] = () => ({ data: true, error: null });
+  assert.deepEqual(await actions.removeGalleryItemAction({ id: G1 }), { ok: true, alreadyRemoved: false });
+  assert.deepEqual(world.rpcCalls.filter((call) => call.name === REMOVE_RPC), [{ name: REMOVE_RPC, args: { p_id: G1 } }]);
+  assert.ok(world.calls.indexOf("rpc:product_gallery_is_editor") < world.calls.indexOf(`rpc:${REMOVE_RPC}`), "editor check first");
+  assert.equal(world.adminCalls, 0);
+  reset(); seed();
+  world.rpc[REMOVE_RPC] = () => ({ data: true, error: null });
+  world.rpc.product_gallery_is_editor = () => ({ data: false, error: null });
+  assert.deepEqual(await actions.removeGalleryItemAction({ id: G1 }), { ok: false, message: GALLERY_MESSAGES.not_allowed });
+  assert.ok(!world.rpcCalls.some((call) => call.name === REMOVE_RPC), "a non-editor never reaches the database function");
+});
+
+test("remove: an item that is already gone is a success; bad input never reaches the database; database failures are friendly and nothing throws", async () => {
+  reset(); seed();
+  world.rpc[REMOVE_RPC] = () => ({ data: false, error: null });
+  assert.deepEqual(await actions.removeGalleryItemAction({ id: G1 }), { ok: true, alreadyRemoved: true });
+  const calls = world.rpcCalls.filter((call) => call.name === REMOVE_RPC).length;
+  assert.deepEqual(await actions.removeGalleryItemAction({ id: "nope" }), { ok: false, message: GALLERY_MESSAGES.invalid_request });
+  assert.deepEqual(await actions.removeGalleryItemAction(undefined as any), { ok: false, message: GALLERY_MESSAGES.invalid_request });
+  assert.equal(world.rpcCalls.filter((call) => call.name === REMOVE_RPC).length, calls);
+  world.rpc[REMOVE_RPC] = () => ({ data: null, error: { message: "Not allowed.", code: "P0001" } });
+  assert.deepEqual(await actions.removeGalleryItemAction({ id: G1 }), { ok: false, message: GALLERY_MESSAGES.not_allowed });
+  world.rpc[REMOVE_RPC] = () => ({ data: null, error: { message: "boom secret detail", code: "XX000" } });
+  const failed: any = await actions.removeGalleryItemAction({ id: G1 });
+  assert.equal(failed.message, GALLERY_MESSAGES.save_failed);
+  assert.doesNotMatch(JSON.stringify(failed), /secret/);
+  world.rpc[REMOVE_RPC] = () => { throw new Error("secret rpc detail"); };
+  assert.deepEqual(await actions.removeGalleryItemAction({ id: G1 }), { ok: false, message: GALLERY_MESSAGES.save_failed });
+});
+
 // ── actions: auth first, never throw ───────────────────────────────────────
 test("every action authenticates FIRST, before any client or database call", async () => {
   const calls: Array<[string, () => Promise<unknown>]> = [
@@ -648,6 +700,7 @@ test("every action authenticates FIRST, before any client or database call", asy
     ["capabilities", () => actions.getGalleryCapabilitiesAction()],
     ["detail", () => actions.getGalleryItemDetailAction({ id: G1 })],
     ["specification", () => actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x" })],
+    ["remove", () => actions.removeGalleryItemAction({ id: G1 })],
   ];
   for (const [name, run] of calls) {
     reset(); seed();
@@ -667,6 +720,7 @@ test("a signed-out user gets 'not allowed' and nothing is read; no action throws
     () => actions.mergeGalleryItemsAction({ fromId: G1, toId: G2 }),
     () => actions.getGalleryCapabilitiesAction(),
     () => actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x" }),
+    () => actions.removeGalleryItemAction({ id: G1 }),
   ];
   for (const run of calls) {
     reset(); seed();
