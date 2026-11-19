@@ -10,6 +10,7 @@ import {
   listGalleryFilters,
   listGalleryItems,
   mergeGalleryItems,
+  removeGalleryItem,
   setGalleryItemHidden,
   updateGalleryItemDetails,
   updateGalleryItemSpecification,
@@ -35,7 +36,7 @@ function failure<Extra extends object = Record<never, never>>(kind: GalleryMessa
   return { ok: false, message: galleryMessage(redirected ? "not_allowed" : kind), ...(extra ?? ({} as Extra)) };
 }
 
-/** Items per page: 30. Display fields only (no recipe, no price). includeHidden only has an effect for editors. */
+/** Items per page: 30. Display fields only (no recipe, no price). includeHidden is no longer sent by the page (items are removed, not hidden). */
 export async function listGalleryItemsAction(input?: {
   query?: string;
   brandId?: string | null;
@@ -144,6 +145,19 @@ export async function updateGalleryItemDetailsAction(input: { id: string; displa
   }
 }
 
+/** Editors only. Removes the item from the gallery for good; the same configuration does not come back when it is quoted again. alreadyRemoved: it was gone. */
+export async function removeGalleryItemAction(input: { id: string }): Promise<{ ok: true; alreadyRemoved: boolean } | GalleryActionFailure> {
+  try {
+    await requireActiveUser();
+    const supabase = await createClient();
+    const result = await removeGalleryItem(supabase, { id: input?.id });
+    if (!result.ok) return failure(result.kind);
+    return { ok: true, alreadyRemoved: result.alreadyRemoved };
+  } catch (problem) {
+    return failure("save_failed", problem);
+  }
+}
+
 /** Editors only (checked here before the database function, which checks again). Empty clears the text; at most 2000 characters. */
 export async function updateGalleryItemSpecificationAction(input: { id: string; specification: string | null }): Promise<{ ok: true } | GalleryActionFailure> {
   try {
@@ -170,7 +184,7 @@ export async function mergeGalleryItemsAction(input: { fromId: string; toId: str
   }
 }
 
-/** canView false => the UI shows nothing. canEdit => the Edit toggle (rename, tag, hide). canCurate => merge as well. */
+/** canView false => the UI shows nothing. canEdit => the Edit toggle (rename, tag, specification, remove). canCurate => merge as well. The database decides both. */
 export async function getGalleryCapabilitiesAction(): Promise<{ ok: true; canView: boolean; canEdit: boolean; canCurate: boolean } | GalleryActionFailure> {
   try {
     await requireActiveUser();

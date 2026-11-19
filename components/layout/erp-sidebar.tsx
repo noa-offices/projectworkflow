@@ -277,6 +277,7 @@ export function ErpSidebar({
       const canViewGallery =
         role === "system_owner" ||
         role === "admin_manager" ||
+        role === "procurement_manager" ||
         role === "sales_designer" ||
         role === "sales_coordinator" ||
         role === "designer";

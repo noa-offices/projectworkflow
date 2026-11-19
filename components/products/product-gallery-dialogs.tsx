@@ -98,34 +98,34 @@ export function EditGalleryItemDialog({ item, onClose, onSaved }: { item: Galler
   );
 }
 
-/** Hide / Unhide confirmation. */
-export function ConfirmHiddenDialog({ item, hide, onClose, onConfirm }: { item: GalleryListItem; hide: boolean; onClose: () => void; onConfirm: () => Promise<string | null> }) {
+/** Remove from the gallery: a confirmation before anything is sent. */
+export function ConfirmRemoveDialog({ item, onClose, onConfirm }: { item: GalleryListItem; onClose: () => void; onConfirm: () => Promise<string | null> }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
   async function confirm() {
     setBusy(true);
+    setProblem("");
     const message = await onConfirm();
     setBusy(false);
     if (message) setProblem(message);
   }
   return (
     <DialogShell
-      title={hide ? `Hide ${item.displayName}?` : `Unhide ${item.displayName}?`}
-      description={hide ? "Hidden items are not shown to staff." : "This item will be shown to staff again."}
+      title="Remove from gallery?"
+      description={`This removes ${item.displayName} from the gallery for good. If the same configuration is quoted again it will NOT come back. Quotations are not affected.`}
       onClose={onClose}
     >
       <Problem text={problem} />
       <div className="flex justify-end gap-2">
         <button type="button" className={galleryButton} onClick={onClose} disabled={busy}>Cancel</button>
-        <button type="button" className={hide ? galleryDangerButton : primaryButton} onClick={() => void confirm()} disabled={busy}>{busy ? "Working…" : hide ? "Hide" : "Unhide"}</button>
+        <button type="button" className={galleryDangerButton} onClick={() => void confirm()} disabled={busy}>{busy ? "Removing…" : "Remove"}</button>
       </div>
     </DialogShell>
   );
 }
 
 /**
- * Merge this item INTO another item of the SAME product. Candidates come from the list action (same brand, hidden items included
- * for curators) and are then limited to the same template here; an item of a different product is never offered. A confirm
+ * Merge this item INTO another item of the SAME product. Candidates come from the list action (same brand) and are then limited to the same template here; an item of a different product is never offered. A confirm
  * explains the effect before anything is sent.
  */
 export function MergeGalleryItemDialog({ item, onClose, onMerged }: { item: GalleryListItem; onClose: () => void; onMerged: () => void }) {
@@ -140,7 +140,7 @@ export function MergeGalleryItemDialog({ item, onClose, onMerged }: { item: Gall
     (async () => {
       const found: GalleryListItem[] = [];
       for (let page = 1; page <= GALLERY_MERGE_MAX_PAGES; page += 1) {
-        const result = await listGalleryItemsAction({ brandId: item.brandId, includeHidden: true, sort: "name", page });
+        const result = await listGalleryItemsAction({ brandId: item.brandId, sort: "name", page });
         if (cancelled) return;
         if (!result.ok) {
           setLoadProblem(result.message);
@@ -194,7 +194,7 @@ export function MergeGalleryItemDialog({ item, onClose, onMerged }: { item: Gall
           {candidates.map((candidate) => (
             <li key={candidate.id}>
               <button type="button" onClick={() => setTarget(candidate)} className="flex w-full items-center justify-between gap-3 rounded-md border border-zinc-200 px-3 py-2 text-left text-sm hover:border-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">
-                <span className="min-w-0 truncate font-medium text-zinc-900">{candidate.displayName}{candidate.isHidden ? " (hidden)" : ""}</span>
+                <span className="min-w-0 truncate font-medium text-zinc-900">{candidate.displayName}</span>
                 <span className="shrink-0 text-xs text-zinc-600">{quotedText(candidate.quotedCount)}</span>
               </button>
             </li>

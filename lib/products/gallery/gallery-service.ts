@@ -1,6 +1,6 @@
 /**
  * Product Gallery service. No "use server", no auth import: the server actions authenticate with requireActiveUser and pass the
- * CALLER's own Supabase client (so RLS stays on: sales roles see visible items, curators also see hidden ones). Never pass an
+ * CALLER's own Supabase client (so RLS stays on; the database functions decide who may view, edit and merge). Never pass an
  * elevated client here. Gallery rows are written ONLY by a database trigger; this file reads them and calls the curation functions.
  * There is NO price anywhere: not stored, not selected, not returned. A recipe is never logged.
  */
@@ -356,6 +356,12 @@ const DETAIL_TEMPLATE_SELECT = [
 
 export type GalleryDetailResult = { ok: true; detail: GalleryDetail } | { ok: false; kind: GalleryMessageKind };
 
+function chunk<T>(list: T[], size: number): T[][] {
+  const parts: T[][] = [];
+  for (let index = 0; index < list.length; index += size) parts.push(list.slice(index, index + size));
+  return parts;
+}
+
 async function rows<T>(query: PromiseLike<{ data: unknown; error: unknown }>, where: string): Promise<T[]> {
   try {
     const { data, error } = await query;
@@ -394,21 +400,23 @@ export async function getGalleryItemDetail(supabase: SupabaseClient, id: unknown
 
     let materials: GalleryDetailMaterialGroup[] = [];
     if (links.length) {
-      const wholeGroupIds = links.filter((link) => link.selection_mode !== "selected_items").map((link) => link.material_group_id);
-      const selectedLinkIds = links.filter((link) => link.selection_mode === "selected_items").map((link) => link.id);
+      // Same rule as the quotation selector: only "full_group" means every material of the brand group; any other mode uses the item rows.
+      const wholeGroupIds = links.filter((link) => link.selection_mode === "full_group").map((link) => link.material_group_id);
+      const selectedLinkIds = links.filter((link) => link.selection_mode !== "full_group").map((link) => link.id);
       const [groups, linkItems] = await Promise.all([
         rows<MaterialGroupRow>(supabase.from("brand_material_groups").select("id,group_name").in("id", links.map((link) => link.material_group_id)).eq("is_active", true), "material groups"),
         selectedLinkIds.length
-          ? rows<MaterialGroupItemRow>(supabase.from("product_template_material_group_items").select("product_template_material_group_id,brand_material_id,sort_order").in("product_template_material_group_id", selectedLinkIds).eq("is_active", true).limit(600), "material link items")
+          ? rows<MaterialGroupItemRow>(supabase.from("product_template_material_group_items").select("product_template_material_group_id,brand_material_id,sort_order").in("product_template_material_group_id", selectedLinkIds).eq("is_active", true).limit(3000), "material link items")
           : Promise.resolve([] as MaterialGroupItemRow[]),
       ]);
       const [wholeGroupMaterials, chosenMaterials] = await Promise.all([
         wholeGroupIds.length
-          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,image_url,sort_order,subgroup_id,material_collection").in("material_group_id", wholeGroupIds).eq("is_active", true).order("material_group_id", { ascending: true }).order("subgroup_id", { ascending: true }).order("sort_order", { ascending: true }).order("material_code", { ascending: true }).limit(3000), "group materials")
+          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,image_url,sort_order,material_category,material_collection,subgroup_id").in("material_group_id", wholeGroupIds).eq("is_active", true).order("material_group_id", { ascending: true }).order("subgroup_id", { ascending: true }).order("sort_order", { ascending: true }).order("material_code", { ascending: true }).limit(3000), "group materials")
           : Promise.resolve([] as MaterialRow[]),
-        linkItems.length
-          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,image_url,sort_order,subgroup_id,material_collection").in("id", linkItems.map((entry) => entry.brand_material_id)).eq("is_active", true).limit(3000), "chosen materials")
-          : Promise.resolve([] as MaterialRow[]),
+        // The connected materials, read in chunks of 100 ids so the request address stays short for a template with many of them.
+        Promise.all(chunk(Array.from(new Set(linkItems.map((entry) => entry.brand_material_id))), 100).map((ids) =>
+          rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,image_url,sort_order,material_category,material_collection,subgroup_id").in("id", ids).eq("is_active", true).limit(200), "chosen materials"),
+        )).then((parts) => parts.flat()),
       ]);
       const allMaterials = [...wholeGroupMaterials, ...chosenMaterials];
       const subgroupIds = Array.from(new Set(allMaterials.flatMap((material) => (material.subgroup_id ? [material.subgroup_id] : []))));
@@ -474,6 +482,29 @@ export async function updateGalleryItemSpecification(supabase: SupabaseClient, i
   if (!isGalleryId(input?.id) || !text.ok) return { ok: false, kind: text.ok ? "invalid_request" : text.kind };
   if (!(await rpcBoolean(supabase, "product_gallery_is_editor"))) return { ok: false, kind: "not_allowed" };
   return callCuration(supabase, "product_gallery_update_specification", { p_id: input.id, p_specification: text.value });
+}
+
+export type GalleryRemoveResult = { ok: true; alreadyRemoved: boolean } | { ok: false; kind: GalleryMessageKind };
+
+/**
+ * Editors only: remove an item from the gallery for good (the database function also remembers the configuration so it does not grow
+ * back). The role is checked here BEFORE the database function, which checks it again. A false answer means the item was already gone.
+ */
+export async function removeGalleryItem(supabase: SupabaseClient, input: { id: unknown }): Promise<GalleryRemoveResult> {
+  if (!isGalleryId(input?.id)) return { ok: false, kind: "invalid_request" };
+  if (!(await rpcBoolean(supabase, "product_gallery_is_editor"))) return { ok: false, kind: "not_allowed" };
+  try {
+    const { data, error } = await supabase.rpc("product_gallery_remove", { p_id: input.id });
+    if (error) {
+      const code = (error as { code?: string }).code;
+      const text = typeof (error as { message?: unknown }).message === "string" ? (error as { message: string }).message : "";
+      return { ok: false, kind: code === "42501" || /not allowed/i.test(text) ? "not_allowed" : "save_failed" };
+    }
+    return { ok: true, alreadyRemoved: data !== true };
+  } catch (problem) {
+    logProblem("product_gallery_remove", problem);
+    return { ok: false, kind: "save_failed" };
+  }
 }
 
 export async function mergeGalleryItems(supabase: SupabaseClient, input: { fromId: unknown; toId: unknown }): Promise<GalleryChangeResult> {
