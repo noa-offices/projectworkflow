@@ -15,8 +15,9 @@ type Row = Record<string, any>;
 function makeWorld() {
   return {
     authMode: "ok" as "ok" | "redirect",
+    role: "sales_designer",
     tables: {
-      product_gallery_items: [] as Row[], product_templates: [] as Row[], brands: [] as Row[], product_categories: [] as Row[],
+      product_gallery_items: [] as Row[], product_templates: [] as Row[], brands: [] as Row[], product_categories: [] as Row[], brand_price_list_updates: [] as Row[],
       product_components: [] as Row[], product_template_linked_families: [] as Row[], product_template_material_groups: [] as Row[],
       brand_material_groups: [] as Row[], product_template_material_group_items: [] as Row[], brand_materials: [] as Row[], brand_material_subgroups: [] as Row[], product_gallery_updates: [] as Row[],
     },
@@ -80,10 +81,11 @@ function buildClient() {
 }
 
 mock.module("@/lib/auth", { namedExports: {
+  canManageProductLibrary: (role: string) => role === "sales_designer",
   requireActiveUser: async () => {
     world.calls.push("auth");
     if (world.authMode === "redirect") throw Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;replace;/login;307;" });
-    return { user: { id: "u1" }, profile: { role: "sales_designer" }, displayName: "Fixture" };
+    return { user: { id: "u1" }, profile: { role: world.role }, displayName: "Fixture" };
   },
 } });
 mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => { world.calls.push("client"); return buildClient(); } } });
@@ -92,6 +94,44 @@ mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => {
 
 const actions = await import("./gallery-actions");
 const { GALLERY_MESSAGES } = await import("./gallery");
+
+test("price action denies the role before opening a database client, and bounds UUID batches", async () => {
+  reset();
+  world.role = "warehouse_staff";
+  assert.deepEqual(await actions.getGalleryPricesAction([G1]), { ok: true, prices: {} });
+  assert.deepEqual(world.calls, ["auth"]);
+  world.role = "sales_designer";
+  for (const ids of [["bad"], Array<string>(61).fill(G1)]) {
+    assert.deepEqual(await actions.getGalleryPricesAction(ids), { ok: false, message: GALLERY_MESSAGES.invalid_request });
+  }
+  world.authMode = "redirect";
+  assert.deepEqual(await actions.getGalleryPricesAction([G1]), { ok: true, prices: {} });
+  assert.deepEqual(world.calls, ["auth", "auth", "auth", "auth"]);
+});
+
+test("price action batches 20 visible items by template and exposes only the authorized price payload", async () => {
+  reset();
+  const ids = Array.from({ length: 20 }, (_, index) => `aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, "0")}`);
+  world.tables.product_gallery_items = ids.map((id) => galleryRow({ id, recipe: { recipe_version: 1, template_id: TEMPLATE, selections: {} } }));
+  world.tables.product_templates = [templateRow({ template_name: "Desk", currency: "EUR", default_unit_price: 882, brand_id: BRAND, last_price_checked_at: "2026-11-01", price_check_interval_days: 90 })];
+  const result = await actions.getGalleryPricesAction(ids);
+  assert.ok(result.ok);
+  assert.equal(Object.keys(result.prices).length, 20);
+  const priced = result.prices[ids[0]];
+  assert.ok(priced.status === "priced");
+  assert.deepEqual(priced.sourceTotals, [{ currency: "EUR", amount: 882 }]);
+  assert.equal(priced.priceCheck.checkedAt, "2026-11-01");
+  assert.deepEqual(world.selects.map(({ table }) => table).sort(),
+    ["brand_price_list_updates", "brands", "product_components", "product_gallery_items", "product_template_linked_families", "product_templates"]);
+  assert.equal(world.adminCalls, 0);
+});
+
+test("price action catches a failed dependency read without returning any price data", async () => {
+  reset();
+  world.tables.product_gallery_items = [galleryRow()];
+  world.missingColumns = ["default_unit_price"];
+  assert.deepEqual(await actions.getGalleryPricesAction([G1]), { ok: false, message: GALLERY_MESSAGES.load_failed });
+});
 
 const storedRecipe = {
   recipe_version: 1,

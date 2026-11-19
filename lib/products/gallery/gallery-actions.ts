@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireActiveUser } from "@/lib/auth";
+import { canManageProductLibrary, requireActiveUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { galleryMessage, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GalleryMessageKind, type GalleryRemovedItem, type GalleryRestoreOutcome, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "./gallery";
+import { galleryMessage, isGalleryId, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GalleryMessageKind, type GalleryRemovedItem, type GalleryRestoreOutcome, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "./gallery";
 import {
   getGalleryCapabilities,
   getGalleryItemDetail,
@@ -22,12 +22,32 @@ import {
   type GalleryAddItem,
 } from "./gallery-service";
 import type { GalleryDetail } from "./gallery-detail";
+import { loadGalleryPrices } from "./gallery-price-service";
 
 // Server Actions are public POST endpoints: every action authenticates FIRST with requireActiveUser, takes the user from the SESSION,
 // uses the CALLER's Supabase client (RLS stays on) and never an admin client. An action never throws to the browser: it returns
 // { ok: true, ... } or { ok: false, message } with a message from GALLERY_MESSAGES. Recipes and rows are never logged. Extra input
-// fields are ignored. The gallery has NO price: no action here returns or accepts one.
+// fields are ignored. Pricing uses a separate explicitly authorized action and never enters existing gallery payloads.
 export type GalleryActionFailure = { ok: false; message: string };
+
+/** Prices are returned only to callers who can open Product Library Management. */
+export async function getGalleryPricesAction(ids: string[]): Promise<
+  { ok: true; prices: Awaited<ReturnType<typeof loadGalleryPrices>> } | GalleryActionFailure
+> {
+  try {
+    const { profile } = await requireActiveUser();
+    if (!canManageProductLibrary(profile?.role)) return { ok: true, prices: {} };
+    if (!Array.isArray(ids) || ids.length > 60 || !Array.from(ids).every(isGalleryId)) return failure("invalid_request");
+    if (!ids.length) return { ok: true, prices: {} };
+    const supabase = await createClient();
+    return { ok: true, prices: await loadGalleryPrices(supabase, [...new Set(ids.map((id) => id.toLowerCase()))]) };
+  } catch (problem) {
+    // requireActiveUser also redirects accounts that cannot access this part of the app.
+    const digest = (problem as { digest?: unknown } | null)?.digest;
+    if (typeof digest === "string" && digest.startsWith("NEXT_REDIRECT")) return { ok: true, prices: {} };
+    return failure("load_failed", problem);
+  }
+}
 
 function failure<Extra extends object = Record<never, never>>(kind: GalleryMessageKind, problem?: unknown, extra?: Extra): GalleryActionFailure & Extra {
   // A sign-in redirect thrown by requireActiveUser becomes the "not allowed" message instead of an exception.
