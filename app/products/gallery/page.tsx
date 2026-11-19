@@ -12,6 +12,7 @@ export default async function ProductGalleryPage({ searchParams }: { searchParam
   const { user, profile, displayName } = await requireActiveUser();
   const capabilities = await getGalleryCapabilitiesAction();
   const canView = capabilities.ok && capabilities.canView;
+  const canEdit = capabilities.ok && capabilities.canView && capabilities.canEdit;
   const canCurate = capabilities.ok && capabilities.canView && capabilities.canCurate;
   const params = await searchParams;
   const initialState = parseGalleryQuery((key) => params[key]);
@@ -27,7 +28,7 @@ export default async function ProductGalleryPage({ searchParams }: { searchParam
       userRole={profile?.role ?? null}
     >
       {canView ? (
-        <ProductGalleryBrowser canCurate={canCurate} initialState={initialState} />
+        <ProductGalleryBrowser canEdit={canEdit} canCurate={canCurate} initialState={initialState} />
       ) : (
         <p role="alert" className="rounded-lg border border-zinc-200 bg-white p-6 text-sm text-zinc-700">
           {capabilities.ok ? "You do not have access to the gallery." : capabilities.message}

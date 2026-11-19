@@ -13,7 +13,7 @@ export const GALLERY_TAGS_MAX = 20;
 export const GALLERY_TAG_MAX = 30;
 export const GALLERY_FILTER_SCAN_MAX = 2000;
 export const GALLERY_FILTER_LIST_MAX = 100;
-export const GALLERY_FILTER_TAGS_MAX = 50;
+export const GALLERY_FILTER_TAGS_MAX = 200;
 
 export const GALLERY_SORT_MODES = ["popular", "newest", "name"] as const;
 export type GallerySortMode = (typeof GALLERY_SORT_MODES)[number];
@@ -148,7 +148,7 @@ export type GalleryListItem = {
 
 export type GalleryFilterEntry = { id: string; name: string; count: number };
 export type GalleryTagEntry = { tag: string; count: number };
-export type GallerySubCategoryEntry = { id: string; name: string; parentCategoryId: string | null; count: number };
+export type GallerySubCategoryEntry = { id: string; name: string; parentCategoryId: string | null; parentCategoryName: string; count: number };
 export type GalleryCurrencyEntry = { currency: string; count: number };
 
 /** A currency filter: trimmed and upper-cased, then 1-8 capital letters only. Anything else is null (invalid). */

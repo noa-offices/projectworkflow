@@ -18,10 +18,9 @@ export type GalleryUrlState = {
   currency: string;
   tag: string;
   sort: GallerySortMode;
-  showHidden: boolean;
 };
 
-export const EMPTY_GALLERY_STATE: GalleryUrlState = { query: "", brandId: "", categoryId: "", subCategoryId: "", currency: "", tag: "", sort: "popular", showHidden: false };
+export const EMPTY_GALLERY_STATE: GalleryUrlState = { query: "", brandId: "", categoryId: "", subCategoryId: "", currency: "", tag: "", sort: "popular" };
 
 type ParamValue = string | string[] | null | undefined;
 const first = (value: ParamValue): string => (Array.isArray(value) ? value[0] ?? "" : value ?? "");
@@ -36,11 +35,10 @@ export function parseGalleryQuery(read: (key: string) => ParamValue): GalleryUrl
     query: first(read("q")).slice(0, 100),
     brandId: id("brand"),
     categoryId,
-    subCategoryId: categoryId ? id("sub") : "",
+    subCategoryId: id("sub"),
     currency: /^[A-Z]{1,8}$/.test(currency) ? currency : "",
     tag: tag ?? "",
     sort: gallerySortMode(first(read("sort"))),
-    showHidden: first(read("hidden")) === "1",
   };
 }
 
@@ -50,15 +48,14 @@ export function buildGalleryQuery(state: GalleryUrlState): string {
   if (state.query.trim()) params.set("q", state.query.trim());
   if (state.brandId) params.set("brand", state.brandId);
   if (state.categoryId) params.set("category", state.categoryId);
-  if (state.categoryId && state.subCategoryId) params.set("sub", state.subCategoryId);
+  if (state.subCategoryId) params.set("sub", state.subCategoryId);
   if (state.currency) params.set("currency", state.currency);
   if (state.tag) params.set("tag", state.tag);
   if (state.sort !== "popular") params.set("sort", state.sort);
-  if (state.showHidden) params.set("hidden", "1");
   return params.toString();
 }
 
-/** "Clear filters" shows when any FILTER is set (sort and Show hidden are views, not filters). */
+/** "Clear filters" shows when any FILTER is set (sort is a view, not a filter). Edit mode is not in the URL at all. */
 export function hasActiveGalleryFilters(state: GalleryUrlState): boolean {
   return activeGalleryFilterCount(state) > 0;
 }
@@ -67,18 +64,18 @@ export function activeGalleryFilterCount(state: GalleryUrlState): number {
   return [state.query.trim(), state.brandId, state.categoryId, state.subCategoryId, state.currency, state.tag].filter(Boolean).length;
 }
 
-/** Choosing a different category forgets the sub-category (it belonged to the old one). */
-export function withGalleryCategory(state: GalleryUrlState, categoryId: string): GalleryUrlState {
-  return { ...state, categoryId, subCategoryId: "" };
-}
-
 export function clearedGalleryFilters(state: GalleryUrlState): GalleryUrlState {
-  return { ...EMPTY_GALLERY_STATE, sort: state.sort, showHidden: state.showHidden };
+  return { ...EMPTY_GALLERY_STATE, sort: state.sort };
 }
 
-/** Only the sub-categories of the chosen category. No category chosen: none (the select is disabled). */
-export function subCategoriesFor(subCategories: GallerySubCategoryEntry[], categoryId: string): GallerySubCategoryEntry[] {
-  return categoryId ? subCategories.filter((entry) => entry.parentCategoryId === categoryId) : [];
+/**
+ * Sub-category select label. The Sub-category filter is independent of the Category filter and lists them all; the parent main
+ * category is added only where two sub-categories share a name, so they can be told apart ("Desk / Executive").
+ */
+export function subCategoryLabel(entry: GallerySubCategoryEntry, all: GallerySubCategoryEntry[]): string {
+  const duplicated = all.filter((other) => other.name.toLowerCase() === entry.name.toLowerCase()).length > 1;
+  const name = duplicated && entry.parentCategoryName ? `${entry.parentCategoryName} / ${entry.name}` : entry.name;
+  return filterOptionLabel(name, entry.count);
 }
 
 /** "LAS MOBILI (12)" */
@@ -100,11 +97,6 @@ export function lastQuotedText(value: string | null | undefined): string {
 
 export function showingText(shown: number, total: number): string {
   return `Showing ${shown} of ${total}`;
-}
-
-/** "Chairs / Task chairs" without empty parts. */
-export function categoryLine(item: Pick<GalleryListItem, "categoryName" | "subCategoryName">): string {
-  return [item.categoryName, item.subCategoryName].filter(Boolean).join(" / ");
 }
 
 /** The product's library page (the library opens the product from ?template=). */

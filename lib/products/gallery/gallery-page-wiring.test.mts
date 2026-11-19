@@ -35,16 +35,28 @@ test("the page never uses a recipe, an admin client or the add-for-quote action"
   }
 });
 
-test("curator buttons exist only behind canCurate; staff get no edit, hide or merge", () => {
-  assert.match(browser, /\{canCurate \? \(\s*<>\s*<button[\s\S]*?>Edit<\/button>/);
-  assert.match(browser, /Merge into\.\.\./);
-  assert.match(browser, /\{canCurate \? \(\s*<label[^>]*>\s*<input type="checkbox"[\s\S]*?Show hidden/);
-  assert.match(browser, /includeHidden: canCurate && current\.showHidden/);
-  for (const kind of ["edit", "hide", "merge"]) assert.match(browser, new RegExp(`canCurate && dialog\\?\\.kind === "${kind}"`));
+test("edit mode: one Edit/Done toggle for editors only; cards are clean until it is on; merge only for curators", () => {
+  assert.match(page, /canEdit = capabilities\.ok && capabilities\.canView && capabilities\.canEdit/);
   assert.match(page, /canCurate = capabilities\.ok && capabilities\.canView && capabilities\.canCurate/);
-  const editLine = browser.split("\n").find((line) => /^\s*<button .*>Edit<\/button>/.test(line)) ?? "";
-  assert.ok(editLine, "the Edit button exists");
-  assert.ok(browser.indexOf("canCurate ? (") < browser.indexOf(editLine), "and sits inside the canCurate branch");
+  assert.match(page, /<ProductGalleryBrowser canEdit=\{canEdit\} canCurate=\{canCurate\}/);
+  assert.match(browser, /const \[editMode, setEditMode\] = useState\(false\)/, "off by default, React state only");
+  assert.doesNotMatch(code(browser), /localStorage|sessionStorage|document\.cookie/, "never saved");
+  assert.match(browser, /const editing = canEdit && editMode/);
+  assert.match(browser, /\{canEdit \? \(\s*<div className="flex justify-end">\s*<button[\s\S]*?\{editing \? "Done" : "Edit"\}/, "the toggle is only for editors and says Done while on");
+  // The card buttons sit inside the editMode branch; Merge is inside a canCurate branch inside it.
+  const card = browser.slice(browser.indexOf("function GalleryCard"), browser.indexOf("function Skeleton"));
+  const editBranch = card.indexOf("{editMode ? (");
+  assert.ok(editBranch > 0, "an edit-mode branch exists on the card");
+  assert.ok(card.indexOf(">Edit</button>") > editBranch, "Edit only inside the edit-mode branch");
+  assert.ok(card.indexOf('"Unhide" : "Hide"') > editBranch, "Hide / Unhide only inside the edit-mode branch");
+  assert.ok(card.indexOf("{canCurate ? <button") > editBranch, "Merge is behind canCurate inside the edit-mode branch");
+  assert.ok(card.indexOf("Merge into...") > card.indexOf("{canCurate ? <button"));
+  assert.match(browser, /includeHidden: editing/, "hidden items are listed only in edit mode");
+  assert.match(browser, /item\.isHidden \? "opacity-60" : ""/, "hidden items are dimmed");
+  assert.match(browser, /editing && dialog\?\.kind === "edit"/);
+  assert.match(browser, /editing && dialog\?\.kind === "hide"/);
+  assert.match(browser, /editing && canCurate && dialog\?\.kind === "merge"/);
+  assert.doesNotMatch(code(browser), /Show hidden|showHidden/, "no separate hidden toggle any more");
 });
 
 test("hide asks first (Hidden items are not shown to staff) and merge explains the effect; edit uses the gallery action", () => {
@@ -71,19 +83,28 @@ test("the filters are kept in the URL query string and the server passes the par
   assert.match(browser, /initialState/);
 });
 
-test("the filter bar has every control, accessible labels, counts in the select labels, and a Filters button for small screens", () => {
-  for (const label of ["Brand", "Category", "Sub-category", "Currency", "Sort by"]) assert.match(browser, new RegExp(`aria-label="${label}"`));
+test("the filters are separate: Category, Sub-category (never disabled, all of them) and Tag are their own selects", () => {
+  for (const label of ["Brand", "Category", "Sub-category", "Tag", "Currency", "Sort by"]) assert.match(browser, new RegExp(`aria-label=\\{?"?${label}|label="${label}"`));
+  assert.match(browser, /aria-label=\{label\}/, "the select helper labels every select");
+  assert.match(browser, /<Select label="Sub-category" value=\{state\.subCategoryId\} onChange=\{\(value\) => change\(\{ subCategoryId: value \}\)\}>/, "choosing a sub-category changes only the sub-category");
+  assert.match(browser, /<Select label="Category" value=\{state\.categoryId\} onChange=\{\(value\) => change\(\{ categoryId: value \}\)\}>/, "choosing a category does not reset the sub-category");
+  assert.match(browser, /<Select label="Tag" /);
+  assert.match(browser, /filters\.subCategories\.map\(\(entry\) => <option[^\n]*subCategoryLabel\(entry, filters\.subCategories\)/, "ALL sub-categories");
+  assert.doesNotMatch(code(browser), /disabled=\{!state\.categoryId\}|subCategoriesFor|withGalleryCategory/, "no longer tied to the category");
+  assert.doesNotMatch(code(browser), /aria-pressed=\{active\}/, "no tag chip bar in the toolbar any more");
+});
+
+test("the toolbar reuses the Product Library styles; search, Clear filters, count, Load more, phone Filters button", () => {
+  assert.match(browser, /from "@\/components\/products\/product-toolbar-styles"/);
   assert.match(browser, /aria-label="Search the gallery"/);
-  assert.match(browser, /disabled=\{!state\.categoryId\}/, "sub-category is disabled until a category is chosen");
-  assert.match(browser, /subCategoriesFor\(filters\.subCategories, state\.categoryId\)/);
   assert.match(browser, /filterOptionLabel\(/);
-  assert.match(browser, /aria-pressed=\{active\}/, "tag chips toggle");
   assert.match(browser, /Clear filters/);
   assert.match(browser, /showingText\(items\.length, total\)/);
-  assert.match(browser, /md:hidden/, "the Filters button shows only on small screens");
+  assert.match(browser, /@xl:hidden/, "the Filters button shows only on narrow content");
   assert.match(browser, /aria-expanded=\{filtersOpen\}/);
   assert.match(browser, /Load more/);
   assert.doesNotMatch(code(browser), /IntersectionObserver|onScroll/, "a button, not infinite scroll");
+  assert.match(browser, /min-\[480px\]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5/, "denser grid: 1-2, 3, 4 and 5 columns");
 });
 
 test("every state is there: loading skeleton, empty, empty after a filter, and a failure with Retry", () => {
@@ -93,10 +114,12 @@ test("every state is there: loading skeleton, empty, empty after a filter, and a
   assert.match(browser, />Retry</);
 });
 
-test("cards show the agreed facts and a View product link, and nothing else is linked", () => {
+test("cards show the agreed facts: Category and Sub-category as two separate labels, no joined string", () => {
   assert.match(browser, /SetupThumbnail path=\{item\.picture\?\.kind === "template" \? item\.picture\.path : null\}/);
   assert.match(browser, /quotedText\(item\.quotedCount\)/);
-  assert.match(browser, /lastQuotedText\(item\.lastQuotedAt\)/);
+  assert.match(browser, /\{item\.categoryName \? <span[^\n]*title="Category">\{item\.categoryName\}<\/span>/);
+  assert.match(browser, /\{item\.subCategoryName \? <span[^\n]*title="Sub-category">\{item\.subCategoryName\}<\/span>/);
+  assert.doesNotMatch(code(browser), /categoryLine/);
   assert.match(browser, /No longer available/);
   assert.match(browser, />Hidden</);
   assert.match(browser, /View product/);
@@ -109,14 +132,26 @@ test("dialogs are labelled modals that close on Escape", () => {
   assert.match(dialogs, /event\.key === "Escape"/);
 });
 
-test("the sidebar has Product Gallery next to My Collection with the Product Library visibility rule", () => {
+test("the sidebar shows Product Gallery next to My Collection to every role that can view the gallery, not only product managers", () => {
   const lines = sidebar.split("\n");
   const mine = lines.findIndex((line) => line.includes('label: "My Collection"'));
   const gallery = lines.findIndex((line) => line.includes('label: "Product Gallery"'));
   assert.ok(mine >= 0 && gallery > mine && gallery - mine <= 3, "right after My Collection");
   assert.match(lines[gallery], /href: "\/products\/gallery"/);
-  assert.match(lines[gallery], /hidden: !canManageProducts/);
-  assert.match(sidebar, /label: "Product Library".*hidden: !canManageProducts/);
+  assert.match(lines[gallery], /hidden: !canViewGallery/);
+  assert.doesNotMatch(lines[gallery], /canManageProducts/);
+  const roles = (sidebar.match(/const canViewGallery =([\s\S]*?);/)?.[1] ?? "").match(/"(\w+)"/g)?.map((role) => role.replace(/"/g, "")) ?? [];
+  assert.deepEqual(roles.sort(), ["admin_manager", "designer", "sales_coordinator", "sales_designer", "system_owner"], "the same roles as product_gallery_can_view");
+  assert.doesNotMatch(sidebar.match(/const canViewGallery =([\s\S]*?);/)?.[1] ?? "", /procurement_manager/);
+  assert.match(sidebar, /label: "Product Library".*hidden: !canManageProducts/, "the Product Library entry is unchanged");
+});
+
+test("the editors migration is attached unchanged and is the only new SQL here", () => {
+  const sql = read("../../../supabase/migrations/20261119180000_product_gallery_editors.sql");
+  assert.match(sql, /create or replace function public\.product_gallery_is_editor\(\)/);
+  assert.match(sql, /'system_owner','admin_manager','sales_designer','sales_coordinator','designer'/);
+  assert.match(sql, /product_gallery_set_hidden[\s\S]*product_gallery_is_editor\(\)/);
+  assert.doesNotMatch(sql, /product_gallery_merge/, "merge stays curator-only and is not touched");
 });
 
 test("PR G-C diff guard: at most 12 files, no SQL, no package change, and none of the protected areas", () => {

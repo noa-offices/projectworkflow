@@ -32,7 +32,7 @@ function failure(kind: GalleryMessageKind, problem?: unknown): GalleryActionFail
   return { ok: false, message: galleryMessage(redirected ? "not_allowed" : kind) };
 }
 
-/** Items per page: 30. Display fields only (no recipe, no price). includeHidden only has an effect for curators. */
+/** Items per page: 30. Display fields only (no recipe, no price). includeHidden only has an effect for editors. */
 export async function listGalleryItemsAction(input?: {
   query?: string;
   brandId?: string | null;
@@ -98,7 +98,7 @@ export async function getGalleryItemForAddAction(input: { id: string }): Promise
   }
 }
 
-/** Curators only (the database decides). */
+/** Editors only (checked here and by the database). */
 export async function setGalleryItemHiddenAction(input: { id: string; hidden: boolean }): Promise<{ ok: true } | GalleryActionFailure> {
   try {
     await requireActiveUser();
@@ -111,7 +111,7 @@ export async function setGalleryItemHiddenAction(input: { id: string; hidden: bo
   }
 }
 
-/** Curators only. displayName empty clears the name; tags are lower-cased and de-duplicated (max 20, each 1-30 characters). */
+/** Editors only. displayName empty clears the name; tags are lower-cased and de-duplicated (max 20, each 1-30 characters). */
 export async function updateGalleryItemDetailsAction(input: { id: string; displayName: string | null; tags: string[] }): Promise<{ ok: true } | GalleryActionFailure> {
   try {
     await requireActiveUser();
@@ -124,7 +124,7 @@ export async function updateGalleryItemDetailsAction(input: { id: string; displa
   }
 }
 
-/** Curators only. Merges a duplicate (fromId) into another item (toId). */
+/** Curators only (owner/admin). Merges a duplicate (fromId) into another item (toId). */
 export async function mergeGalleryItemsAction(input: { fromId: string; toId: string }): Promise<{ ok: true } | GalleryActionFailure> {
   try {
     await requireActiveUser();
@@ -137,13 +137,13 @@ export async function mergeGalleryItemsAction(input: { fromId: string; toId: str
   }
 }
 
-/** canView false => the UI shows nothing. canCurate => show hide / rename / tag / merge. */
-export async function getGalleryCapabilitiesAction(): Promise<{ ok: true; canView: boolean; canCurate: boolean } | GalleryActionFailure> {
+/** canView false => the UI shows nothing. canEdit => the Edit toggle (rename, tag, hide). canCurate => merge as well. */
+export async function getGalleryCapabilitiesAction(): Promise<{ ok: true; canView: boolean; canEdit: boolean; canCurate: boolean } | GalleryActionFailure> {
   try {
     await requireActiveUser();
     const supabase = await createClient();
     const capabilities = await getGalleryCapabilities(supabase);
-    return { ok: true, canView: capabilities.canView, canCurate: capabilities.canCurate };
+    return { ok: true, canView: capabilities.canView, canEdit: capabilities.canEdit, canCurate: capabilities.canCurate };
   } catch (problem) {
     return failure("load_failed", problem);
   }
