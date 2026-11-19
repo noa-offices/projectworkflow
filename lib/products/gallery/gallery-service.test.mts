@@ -17,7 +17,7 @@ function makeWorld() {
     authMode: "ok" as "ok" | "redirect",
     role: "sales_designer",
     tables: {
-      product_gallery_items: [] as Row[], product_templates: [] as Row[], brands: [] as Row[], product_categories: [] as Row[], brand_price_list_updates: [] as Row[],
+      product_gallery_items: [] as Row[], product_templates: [] as Row[], brands: [] as Row[], product_categories: [] as Row[], brand_price_list_updates: [] as Row[], profiles: [] as Row[],
       product_components: [] as Row[], product_template_linked_families: [] as Row[], product_template_material_groups: [] as Row[],
       brand_material_groups: [] as Row[], product_template_material_group_items: [] as Row[], brand_materials: [] as Row[], brand_material_subgroups: [] as Row[], product_gallery_updates: [] as Row[],
     },
@@ -131,6 +131,23 @@ test("price action catches a failed dependency read without returning any price 
   world.tables.product_gallery_items = [galleryRow()];
   world.missingColumns = ["default_unit_price"];
   assert.deepEqual(await actions.getGalleryPricesAction([G1]), { ok: false, message: GALLERY_MESSAGES.load_failed });
+});
+
+test("price action uses readable checker names and preserves prices when profile access fails", async () => {
+  reset();
+  const checkerId = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1";
+  world.tables.product_gallery_items = [galleryRow({ recipe: { recipe_version: 1, template_id: TEMPLATE, selections: {} } })];
+  world.tables.product_templates = [templateRow({ template_name: "Desk", currency: "EUR", default_unit_price: 882, last_price_checked_by: checkerId, last_price_checked_at: "2026-11-01" })];
+  world.tables.profiles = [{ id: checkerId, full_name: "Sara Khan" }];
+  for (const accessible of [true, false]) {
+    world.missingColumns = accessible ? [] : ["full_name"];
+    const result = await actions.getGalleryPricesAction([G1]);
+    assert.ok(result.ok);
+    const price = result.prices[G1];
+    assert.ok(price.status === "priced");
+    assert.deepEqual(price.sourceTotals, [{ currency: "EUR", amount: 882 }]);
+    assert.equal(price.priceCheck.checkedByName, accessible ? "Sara Khan" : undefined);
+  }
 });
 
 const storedRecipe = {

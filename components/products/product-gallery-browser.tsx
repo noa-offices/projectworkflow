@@ -4,9 +4,11 @@ import { Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SetupThumbnail } from "@/components/products/my-collection-list";
 import { GalleryDetailDialog } from "@/components/products/product-gallery-detail-dialog";
+import { ProductGalleryPrice } from "@/components/products/product-gallery-price";
 import { ConfirmRemoveDialog, EditGalleryItemDialog, MergeGalleryItemDialog, RemovedItemsDialog } from "@/components/products/product-gallery-dialogs";
 import { toolbarContainer, toolbarControl, toolbarPrimaryButton, toolbarSecondaryButton } from "@/components/products/product-toolbar-styles";
-import { checkGalleryUpdatesAction, listGalleryFiltersAction, listGalleryItemsAction, removeGalleryItemAction } from "@/lib/products/gallery/gallery-actions";
+import { checkGalleryUpdatesAction, getGalleryPricesAction, listGalleryFiltersAction, listGalleryItemsAction, removeGalleryItemAction } from "@/lib/products/gallery/gallery-actions";
+import { fetchGalleryPriceBatches, type GalleryPriceState } from "@/lib/products/gallery/gallery-price-view";
 import { GALLERY_SORT_MODES, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "@/lib/products/gallery/gallery";
 import {
   GALLERY_SEARCH_DEBOUNCE_MS,
@@ -27,7 +29,7 @@ import {
 // The Product Gallery page: configured products the company has quoted. Cards are clean by default. Users who may edit (canEdit)
 // get one "Edit" toggle; only while it is on do the cards show Edit and Remove, and Merge only for curators (canCurate). Edit mode is
 // React state only (it resets on refresh). The filters live in the URL (the server passes the parsed state in; this component keeps
-// the URL in step with history.replaceState). 30 per page with a Load more button. No money values on this page and no recipe: adding
+// the URL in step with history.replaceState). 30 per page with a Load more button. List prices load separately when authorized; adding
 // to a quotation happens in the quote builder. The server and the database decide who may change anything; these flags only mirror that.
 type Filters = { brands: GalleryFilterEntry[]; categories: GalleryFilterEntry[]; tags: GalleryTagEntry[]; subCategories: GallerySubCategoryEntry[]; currencies: GalleryCurrencyEntry[] };
 const NO_FILTERS: Filters = { brands: [], categories: [], tags: [], subCategories: [], currencies: [] };
@@ -49,7 +51,9 @@ function Select({ label, value, onChange, children }: { label: string; value: st
   );
 }
 
-function GalleryCard({ item, editMode, canCurate, onDialog }: { item: GalleryListItem; editMode: boolean; canCurate: boolean; onDialog: (dialog: Dialog) => void }) {
+function GalleryCard({ item, editMode, canCurate, canSeePrices, price, onDialog }: {
+  item: GalleryListItem; editMode: boolean; canCurate: boolean; canSeePrices: boolean; price: GalleryPriceState; onDialog: (dialog: Dialog) => void;
+}) {
   return (
     <li className={`flex h-full min-w-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-sm`} data-testid="gallery-card">
       <div className="p-2 pb-0">
@@ -80,6 +84,7 @@ function GalleryCard({ item, editMode, canCurate, onDialog }: { item: GalleryLis
           </div>
         ) : null}
         <p className="text-xs font-medium text-zinc-700">{quotedText(item.quotedCount)}</p>
+        {canSeePrices ? <div className="h-14 min-w-0"><ProductGalleryPrice templateId={item.templateId} price={price} /></div> : null}
         <div className="mt-auto grid grid-cols-2 gap-2 pt-2">
           <button type="button" className={`${openButton} col-span-2`} onClick={() => onDialog({ kind: "detail", item })} aria-label={`Details of ${item.displayName}`}>Details</button>
           {editMode ? (
@@ -105,12 +110,15 @@ function Skeleton() {
   );
 }
 
-export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { canEdit: boolean; canCurate: boolean; initialState: GalleryUrlState }) {
+export function ProductGalleryBrowser({ canEdit, canCurate, canSeePrices, initialState }: {
+  canEdit: boolean; canCurate: boolean; canSeePrices: boolean; initialState: GalleryUrlState;
+}) {
   const [state, setState] = useState<GalleryUrlState>(initialState);
   const [searchText, setSearchText] = useState(initialState.query);
   const [editMode, setEditMode] = useState(false);
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [items, setItems] = useState<GalleryListItem[]>([]);
+  const [prices, setPrices] = useState<Record<string, GalleryPriceState>>({});
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
@@ -163,10 +171,20 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
     [canEdit],
   );
 
+  const loadPrices = useCallback(async (items: GalleryListItem[], request: number) => {
+    if (!canSeePrices || !items.length) return;
+    const ids = items.map((item) => item.id);
+    setPrices((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, "loading" as const])) }));
+    const results = await fetchGalleryPriceBatches(ids, getGalleryPricesAction);
+    if (request !== requestId.current) return;
+    setPrices((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, results[id]])) }));
+  }, [canSeePrices]);
+
   const reload = useCallback(
     async (current: GalleryUrlState) => {
       const id = ++requestId.current;
       setPhase("loading");
+      setPrices({});
       try {
         const result = await fetchPage(current, 1);
         if (id !== requestId.current) return;
@@ -175,6 +193,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
           setTotal(result.total);
           setPage(result.page);
           setHasMore(result.hasMore);
+          void loadPrices(result.items, id);
           setPhase("ready");
         } else {
           setFailure(result.message);
@@ -186,7 +205,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
         setPhase("failed");
       }
     },
-    [fetchPage],
+    [fetchPage, loadPrices],
   );
 
   // Data loading is started from a microtask (the same pattern as SetupThumbnail), not synchronously inside the effect.
@@ -198,6 +217,16 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
     // reload on every filter change and when edit mode turns on or off; a newer request makes an older answer ignored
     window.queueMicrotask(() => void reload(state));
   }, [state, reload]);
+
+  useEffect(() => {
+    const onRefresh = () => {
+      if (!navigator.onLine) return;
+      void reload(state);
+      void loadFilters().catch(() => {});
+    };
+    window.addEventListener("pw-read-refresh", onRefresh);
+    return () => window.removeEventListener("pw-read-refresh", onRefresh);
+  }, [state, reload, loadFilters]);
 
   async function loadMore() {
     setLoadingMore(true);
@@ -214,6 +243,8 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
         setTotal(result.total);
         setPage(result.page);
         setHasMore(result.hasMore);
+        const visibleIds = new Set(items.map((item) => item.id));
+        void loadPrices(result.items.filter((item) => !visibleIds.has(item.id)), id);
       } else setActionProblem(result.message);
     } catch {
       setActionProblem("Could not load more. Please try again.");
@@ -356,7 +387,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
             <p className="text-sm text-zinc-600" aria-live="polite">{showingText(items.length, total)}</p>
             <ul className="grid auto-rows-fr grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {items.map((item) => (
-                <GalleryCard key={item.id} item={item} editMode={editing} canCurate={canCurate} onDialog={setDialog} />
+                <GalleryCard key={item.id} item={item} editMode={editing} canCurate={canCurate} canSeePrices={canSeePrices} price={prices[item.id]} onDialog={setDialog} />
               ))}
             </ul>
             {hasMore ? (
@@ -368,7 +399,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
         ) : null}
       </div>
 
-      {dialog?.kind === "detail" ? <GalleryDetailDialog itemId={dialog.item.id} title={dialog.item.displayName} canEdit={canEdit} onChanged={() => void Promise.all([reload(state), loadFilters()])} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === "detail" ? <GalleryDetailDialog itemId={dialog.item.id} title={dialog.item.displayName} canEdit={canEdit} price={canSeePrices ? prices[dialog.item.id] : undefined} onChanged={() => void Promise.all([reload(state), loadFilters()])} onClose={() => setDialog(null)} /> : null}
       {editing && removedOpen ? <RemovedItemsDialog onClose={() => setRemovedOpen(false)} onChanged={(message) => { setNotice(message); void Promise.all([reload(state), loadFilters()]); }} /> : null}
       {editing && dialog?.kind === "edit" ? <EditGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onSaved={() => void afterChange("Saved.")} /> : null}
       {editing && dialog?.kind === "remove" ? <ConfirmRemoveDialog item={dialog.item} onClose={() => setDialog(null)} onConfirm={() => removeItem(dialog.item)} /> : null}
