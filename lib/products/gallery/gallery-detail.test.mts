@@ -9,6 +9,8 @@ import {
   swatchImagePath,
   validSelectedImage,
   requiredComponentsFromEngine,
+  buildUpdates,
+  staleFingerprint,
   supplierCodeIndex,
   accessoryGroups,
   buildGalleryDetail,
@@ -324,7 +326,7 @@ test("PRIVACY: the mapped detail of a template that holds price data has no pric
   assert.deepEqual(keys.filter(isPriceLikeKey), [], "no price, prices, unit_price, cost, discount, amount or rate key");
   assert.ok(!json.includes(String(PRICE_MARK)) && !json.includes(String(PRICE_MARK + 1)), "no price number anywhere");
   assert.doesNotMatch(json, /default_unit_price|variant_pricing|category_pricing|accessory_pricing|desking_size_pricing|recipe_version|selections/, "no raw template JSON, no recipe");
-  assert.deepEqual(Object.keys(detail).sort(), ["brandName", "categoryName", "configuration", "description", "displayName", "id", "images", "itemCode", "itemName", "materials", "options", "quotedCount", "requiredComponents", "specification", "specificationSource", "subCategoryName", "tags", "templateCode", "templateId"]);
+  assert.deepEqual(Object.keys(detail).sort(), ["brandName", "categoryName", "configuration", "description", "displayName", "id", "images", "itemCode", "itemName", "materials", "options", "quotedCount", "requiredComponents", "specification", "specificationSource", "staleNotice", "subCategoryName", "tags", "templateCode", "templateId", "updates"]);
 });
 
 test("the last guard removes any price-like key and nothing else", () => {
@@ -540,4 +542,48 @@ test("required components: a modular product that also carries a legacy Base / M
   assert.deepEqual(report.requiredComponents.map((component) => [component.name, component.quantity]), [["Top-Access with Soft-Close", 4]]);
   const plainBaseModel = describeRecipe({ recipe: oxiRecipe({}), template: { ...oxiTemplate(requiredGroup(), { variant_pricing: legacy }), category_pricing: [] }, components: [], linkedFamilies: [] });
   assert.deepEqual(plainBaseModel.requiredComponents, [], "a Base / Model product with no row chosen is still incomplete: no block");
+});
+
+// ── update offers (the compare data) and the stale fingerprint ─────────────
+const pictureTemplate = { default_image_url: "a.webp", proposed_image_url_1: "a.webp", proposed_image_url_2: "b.webp", reference_image_url: "ref.webp" };
+const offerRow = (kind: string, value: string | null, status = "open") => ({ kind, proposed_value: value, status });
+
+test("compare data: only OPEN offers, only values that differ, picture only if it is one of the template's own", () => {
+  const both = buildUpdates({ offers: [offerRow("specification", " New text. "), offerRow("picture", "product-images:b.webp")], currentSpecification: "Old text.", template: pictureTemplate, selectedImage: "a.webp" });
+  assert.deepEqual(both, { specification: { current: "Old text.", proposed: "New text." }, picture: { currentPath: "a.webp", proposedPath: "b.webp" } });
+  const ignored = buildUpdates({ offers: [offerRow("specification", "New", "ignored"), offerRow("picture", "b.webp", "ignored")], currentSpecification: "Old", template: pictureTemplate, selectedImage: null });
+  assert.deepEqual(ignored, { specification: null, picture: null }, "an ignored offer is not shown");
+  const same = buildUpdates({ offers: [offerRow("specification", "Old"), offerRow("picture", "b.webp")], currentSpecification: "Old", template: pictureTemplate, selectedImage: "b.webp" });
+  assert.deepEqual(same, { specification: null, picture: null }, "nothing to compare when the value is already the current one");
+  const unknownPicture = buildUpdates({ offers: [offerRow("picture", "https://evil.example/x.png")], currentSpecification: null, template: pictureTemplate, selectedImage: null });
+  assert.equal(unknownPicture.picture, null, "a stored picture that is not the template's own is never sent");
+  const noCurrent = buildUpdates({ offers: [offerRow("specification", "First text.")], currentSpecification: null, template: pictureTemplate, selectedImage: null });
+  assert.deepEqual(noCurrent.specification, { current: null, proposed: "First text." });
+  assert.deepEqual(buildUpdates({ offers: [], currentSpecification: "x", template: pictureTemplate, selectedImage: null }), { specification: null, picture: null });
+  assert.equal(buildUpdates({ offers: [offerRow("specification", "AED 1,200 each")], currentSpecification: null, template: pictureTemplate, selectedImage: null }).specification, null, "text that looks like money is not offered");
+});
+
+test("compare data: the current picture falls back to the template's first picture; offers carry no price field", () => {
+  const result = buildUpdates({ offers: [offerRow("picture", "b.webp")], currentSpecification: null, template: pictureTemplate, selectedImage: "gone.webp" });
+  assert.equal(result.picture?.currentPath, "a.webp");
+  assert.doesNotMatch(JSON.stringify(result), /price|cost|amount/i);
+});
+
+test("stale fingerprint: short, stable, order-independent, letters digits and dashes; null when nothing is stale", () => {
+  assert.equal(staleFingerprint([]), null);
+  const one = staleFingerprint([{ key: "variantRowId", id: "gone" }]);
+  assert.match(one ?? "", /^stale1-[0-9a-f]+$/);
+  assert.equal(staleFingerprint([{ key: "a", id: "1" }, { key: "b", id: "2" }]), staleFingerprint([{ key: "b", id: "2" }, { key: "a", id: "1" }]));
+  assert.notEqual(staleFingerprint([{ key: "a", id: "1" }]), staleFingerprint([{ key: "a", id: "2" }]), "a different stale set gives a different fingerprint");
+  assert.ok((staleFingerprint(Array.from({ length: 80 }, (_, index) => ({ key: "k", id: `id-${index}` }))) ?? "").length <= 200);
+});
+
+test("the editors-only fields are null for everyone else", () => {
+  const { detail } = buildGalleryDetail({
+    item: { id: ITEM, template_id: TEMPLATE, item_name: "x", display_name: null, item_code: null, tags: [], quoted_count: 1, recipe: stored({}) },
+    template: priceyTemplate,
+    brandName: "", categoryName: "", subCategoryName: "", materials: [], components: [], linkedFamilies: [],
+  });
+  assert.equal(detail.updates, null);
+  assert.equal(detail.staleNotice, null);
 });

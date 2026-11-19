@@ -8,6 +8,7 @@ const TEMPLATE = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1";
 const TEMPLATE2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2";
 const BRAND = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1";
 const MAIN = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1";
+const KEY = "g:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1:" + "a".repeat(64);
 const SUB = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2";
 
 type Row = Record<string, any>;
@@ -17,7 +18,7 @@ function makeWorld() {
     tables: {
       product_gallery_items: [] as Row[], product_templates: [] as Row[], brands: [] as Row[], product_categories: [] as Row[],
       product_components: [] as Row[], product_template_linked_families: [] as Row[], product_template_material_groups: [] as Row[],
-      brand_material_groups: [] as Row[], product_template_material_group_items: [] as Row[], brand_materials: [] as Row[], brand_material_subgroups: [] as Row[],
+      brand_material_groups: [] as Row[], product_template_material_group_items: [] as Row[], brand_materials: [] as Row[], brand_material_subgroups: [] as Row[], product_gallery_updates: [] as Row[],
     },
     calls: [] as string[],
     selects: [] as Array<{ table: string; columns: string }>,
@@ -32,6 +33,7 @@ function makeWorld() {
     adminCalls: 0,
     throwOnRpc: false,
     missingColumns: [] as string[],
+    revalidated: [] as string[],
   };
 }
 let world = makeWorld();
@@ -85,6 +87,7 @@ mock.module("@/lib/auth", { namedExports: {
   },
 } });
 mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => { world.calls.push("client"); return buildClient(); } } });
+mock.module("next/cache", { namedExports: { revalidatePath: (path: string) => { world.revalidated.push(path); } } });
 mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => { world.adminCalls += 1; return { error: "no admin", client: null }; } } });
 
 const actions = await import("./gallery-actions");
@@ -120,7 +123,7 @@ test("list: display fields only, available flag and picture from the template, n
   assert.equal(result.total, 1);
   assert.deepEqual(world.ranges[0], [0, 29]);
   const item = result.items[0];
-  assert.deepEqual(Object.keys(item).sort(), ["available", "brandId", "brandName", "categoryId", "categoryName", "currency", "displayName", "id", "isHidden", "itemCode", "itemName", "lastQuotedAt", "picture", "quotedCount", "subCategoryName", "tags", "templateId"]);
+  assert.deepEqual(Object.keys(item).sort(), ["available", "brandId", "brandName", "categoryId", "categoryName", "currency", "displayName", "id", "isHidden", "itemCode", "itemName", "lastQuotedAt", "picture", "quotedCount", "subCategoryName", "tags", "templateId", "updateAvailable"]);
   assert.equal(item.displayName, "BD-1");
   assert.equal(item.brandName, "Acme");
   assert.equal(item.categoryName, "Chairs");
@@ -233,7 +236,7 @@ test("list: hidden items are included only when an EDITOR asks (the browser flag
   reset(); seed();
   await actions.listGalleryItemsAction({});
   assert.ok(world.eqs.some(([column, value]) => column === "is_hidden" && value === false), "default: visible only, even for an editor");
-  assert.ok(!world.calls.includes("rpc:product_gallery_is_editor"), "no role check when hidden items were not asked for");
+  assert.equal(world.calls.filter((call) => call === "rpc:product_gallery_is_editor").length, 1, "one role check, only to decide whether update offers may be read");
 });
 
 test("list: a database failure is a friendly message", async () => {
@@ -688,6 +691,161 @@ test("remove: an item that is already gone is a success; bad input never reaches
   assert.deepEqual(await actions.removeGalleryItemAction({ id: G1 }), { ok: false, message: GALLERY_MESSAGES.save_failed });
 });
 
+
+// ── removed items, restore, update offers ───────────────────────────────────
+const offer = (kind: string, value: string | null, status = "open", itemId = G1) => ({ item_id: itemId, kind, proposed_value: value, status });
+
+test("offers in the list: editors see the 'Update available' flag for OPEN offers only; an ignored offer shows nothing", async () => {
+  reset(); seed();
+  world.tables.product_gallery_updates = [offer("specification", "New text"), offer("picture", "product-images/b.webp", "ignored")];
+  const editor: any = await actions.listGalleryItemsAction({});
+  assert.equal(editor.items[0].updateAvailable, true);
+  world.tables.product_gallery_updates = [offer("specification", "New text", "ignored"), offer("picture", "x.webp", "ignored"), offer("configuration", "stale1-abc", "ignored")];
+  const ignored: any = await actions.listGalleryItemsAction({});
+  assert.equal(ignored.items[0].updateAvailable, false, "ignored offers (and the configuration notice) never show the tag");
+  assert.ok(world.selects.some((entry) => entry.table === "product_gallery_updates"));
+});
+
+test("offers in the list: a non-editor gets false everywhere and the offers table is never read", async () => {
+  reset(); seed();
+  world.rpc.product_gallery_is_editor = () => ({ data: false, error: null });
+  world.tables.product_gallery_updates = [offer("specification", "New text")];
+  const result: any = await actions.listGalleryItemsAction({ updateAvailable: true });
+  assert.equal(result.items[0].updateAvailable, false);
+  assert.ok(!world.selects.some((entry) => entry.table === "product_gallery_updates"), "no offer query for a non-editor");
+  assert.equal(result.items.length, 1, "the filter is ignored for a non-editor (it shows the normal list, not the offers)");
+});
+
+test("update filter: only items with an open offer; nothing when there are none", async () => {
+  reset(); seed();
+  world.tables.product_gallery_items = [galleryRow({ id: G1 }), galleryRow({ id: G2, template_id: TEMPLATE2 })];
+  world.tables.product_gallery_updates = [offer("picture", "product-images/b.webp", "open", G2)];
+  const filtered: any = await actions.listGalleryItemsAction({ updateAvailable: true });
+  assert.deepEqual(filtered.items.map((item: any) => item.id), [G2]);
+  world.tables.product_gallery_updates = [offer("picture", "x", "ignored", G2)];
+  const none: any = await actions.listGalleryItemsAction({ updateAvailable: true });
+  assert.deepEqual([none.ok, none.items, none.total], [true, [], 0]);
+});
+
+test("detail: editors get the compare data and the stale notice; everyone else gets null and the offers table is not read", async () => {
+  reset(); seedDetail();
+  world.tables.product_gallery_items = [galleryRow({ ...world.tables.product_gallery_items[0], specification: "Saved text.", recipe: { ...storedRecipe, selections: { ...storedRecipe.selections, variant_row_id: "gone-row" } } })];
+  world.tables.product_gallery_updates = [offer("specification", "A newer text."), offer("picture", "product-images/b.webp")];
+  const editor: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.deepEqual(editor.detail.updates.specification, { current: "Saved text.", proposed: "A newer text." });
+  assert.deepEqual(editor.detail.updates.picture, { currentPath: "product-images/a.webp", proposedPath: "product-images/b.webp" });
+  assert.match(editor.detail.staleNotice.fingerprint, /^stale\d+-[0-9a-f]+$/);
+  assert.doesNotMatch(JSON.stringify(editor), /98765|price/i);
+  reset(); seedDetail();
+  world.rpc.product_gallery_is_editor = () => ({ data: false, error: null });
+  world.tables.product_gallery_updates = [offer("specification", "A newer text.")];
+  const viewer: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.equal(viewer.detail.updates, null);
+  assert.equal(viewer.detail.staleNotice, null);
+  assert.ok(!world.selects.some((entry) => entry.table === "product_gallery_updates"), "no offer data for a non-editor");
+  assert.doesNotMatch(JSON.stringify(viewer), /A newer text/);
+});
+
+test("detail: an ignored stale notice stays hidden until the set of stale choices changes", async () => {
+  reset(); seedDetail();
+  world.tables.product_gallery_items = [galleryRow({ ...world.tables.product_gallery_items[0], recipe: { ...storedRecipe, selections: { ...storedRecipe.selections, variant_row_id: "gone-row" } } })];
+  const first: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  const fingerprint = first.detail.staleNotice.fingerprint;
+  world.tables.product_gallery_updates = [offer("configuration", fingerprint, "ignored")];
+  const hidden: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.equal(hidden.detail.staleNotice, null);
+  world.tables.product_gallery_updates = [offer("configuration", "stale1-different", "ignored")];
+  const again: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.equal(again.detail.staleNotice?.fingerprint, fingerprint, "a different fingerprint shows it again");
+});
+
+test("removed list: editors only; names from the snapshot, else the product; unreadable rows dropped; no admin client", async () => {
+  reset(); seed();
+  world.tables.product_templates = [templateRow({ id: TEMPLATE2, template_name: "Old Product" })];
+  world.rpc.product_gallery_removed_list = () => ({ error: null, data: [
+    { identity_key: KEY, removed_at: "2026-11-01T10:00:00Z", template_id: TEMPLATE, item_name: "BD-1", display_name: "Buddy", quoted_count: 3, has_snapshot: true },
+    { identity_key: "g:" + TEMPLATE2 + ":" + "b".repeat(64), removed_at: "2026-10-01T10:00:00Z", template_id: TEMPLATE2, item_name: null, display_name: null, quoted_count: null, has_snapshot: false },
+    { identity_key: "not-a-key", removed_at: "x", template_id: null },
+  ] });
+  const result: any = await actions.listRemovedGalleryItemsAction();
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.items.map((item: any) => [item.name, item.quotedCount, item.hasSnapshot]), [["Buddy", 3, true], ["Old Product", null, false]]);
+  assert.equal(world.adminCalls, 0);
+  assert.doesNotMatch(JSON.stringify(result), /recipe|price/i);
+  reset(); seed();
+  world.rpc.product_gallery_is_editor = () => ({ data: false, error: null });
+  world.rpc.product_gallery_removed_list = () => ({ error: null, data: [] });
+  assert.deepEqual(await actions.listRemovedGalleryItemsAction(), { ok: false, message: GALLERY_MESSAGES.not_allowed });
+  assert.ok(!world.rpcCalls.some((call) => call.name === "product_gallery_removed_list"), "the database function is never reached by a non-editor");
+  reset(); seed();
+  world.rpc.product_gallery_removed_list = () => ({ error: { message: "boom secret" }, data: null });
+  const failed: any = await actions.listRemovedGalleryItemsAction();
+  assert.deepEqual(failed, { ok: false, message: GALLERY_MESSAGES.load_failed });
+});
+
+test("restore: the three database answers, key validation, the editor guard and the page is refreshed", async () => {
+  for (const outcome of ["restored", "allowed_again", "not_found"] as const) {
+    reset(); seed();
+    world.rpc.product_gallery_restore = () => ({ data: outcome, error: null });
+    assert.deepEqual(await actions.restoreGalleryItemAction({ key: KEY }), { ok: true, outcome });
+    assert.deepEqual(world.rpcCalls.filter((call) => call.name === "product_gallery_restore"), [{ name: "product_gallery_restore", args: { p_key: KEY } }]);
+    assert.deepEqual(world.revalidated, ["/products/gallery"]);
+  }
+  reset(); seed();
+  world.rpc.product_gallery_restore = () => ({ data: "restored", error: null });
+  for (const key of ["", "nope", "g:x:y", KEY + "z", 5 as any, undefined as any]) assert.deepEqual(await actions.restoreGalleryItemAction({ key }), { ok: false, message: GALLERY_MESSAGES.invalid_request }, String(key));
+  assert.ok(!world.rpcCalls.some((call) => call.name === "product_gallery_restore"), "a bad key never reaches the database");
+  world.rpc.product_gallery_is_editor = () => ({ data: false, error: null });
+  assert.deepEqual(await actions.restoreGalleryItemAction({ key: KEY }), { ok: false, message: GALLERY_MESSAGES.not_allowed });
+  world.rpc.product_gallery_is_editor = () => ({ data: true, error: null });
+  world.rpc.product_gallery_restore = () => ({ data: "something else", error: null });
+  assert.deepEqual(await actions.restoreGalleryItemAction({ key: KEY }), { ok: false, message: GALLERY_MESSAGES.save_failed });
+  world.rpc.product_gallery_restore = () => ({ data: null, error: { message: "Not allowed.", code: "P0001" } });
+  assert.deepEqual(await actions.restoreGalleryItemAction({ key: KEY }), { ok: false, message: GALLERY_MESSAGES.not_allowed });
+  world.rpc.product_gallery_restore = () => { throw new Error("secret rpc detail"); };
+  assert.deepEqual(await actions.restoreGalleryItemAction({ key: KEY }), { ok: false, message: GALLERY_MESSAGES.save_failed });
+});
+
+test("apply and ignore: kind whitelist, fingerprint rules, editor guard before the database, right arguments, friendly results", async () => {
+  reset(); seed();
+  world.rpc.product_gallery_update_apply = () => ({ data: true, error: null });
+  world.rpc.product_gallery_update_ignore = () => ({ data: true, error: null });
+  assert.deepEqual(await actions.applyGalleryUpdateAction({ id: G1, kind: "specification" }), { ok: true });
+  assert.deepEqual(await actions.applyGalleryUpdateAction({ id: G1, kind: "picture" }), { ok: true });
+  assert.deepEqual(await actions.ignoreGalleryUpdateAction({ id: G1, kind: "picture" }), { ok: true });
+  assert.deepEqual(await actions.ignoreGalleryUpdateAction({ id: G1, kind: "configuration", value: "stale2-1a2b" }), { ok: true });
+  assert.deepEqual(world.rpcCalls.filter((call) => /update_(apply|ignore)/.test(call.name)), [
+    { name: "product_gallery_update_apply", args: { p_item: G1, p_kind: "specification" } },
+    { name: "product_gallery_update_apply", args: { p_item: G1, p_kind: "picture" } },
+    { name: "product_gallery_update_ignore", args: { p_item: G1, p_kind: "picture", p_value: null } },
+    { name: "product_gallery_update_ignore", args: { p_item: G1, p_kind: "configuration", p_value: "stale2-1a2b" } },
+  ]);
+  assert.equal(world.revalidated.length, 4);
+  const writes = () => world.rpcCalls.filter((call) => /update_(apply|ignore)/.test(call.name)).length;
+  const before = writes();
+  const invalid = { ok: false, message: GALLERY_MESSAGES.invalid_request };
+  assert.deepEqual(await actions.applyGalleryUpdateAction({ id: G1, kind: "configuration" as any }), invalid, "a configuration notice cannot be applied");
+  assert.deepEqual(await actions.applyGalleryUpdateAction({ id: G1, kind: "whatever" as any }), invalid);
+  assert.deepEqual(await actions.applyGalleryUpdateAction({ id: "nope", kind: "picture" }), invalid);
+  assert.deepEqual(await actions.ignoreGalleryUpdateAction({ id: G1, kind: "other" as any }), invalid);
+  assert.deepEqual(await actions.ignoreGalleryUpdateAction({ id: G1, kind: "configuration" }), invalid, "the notice needs its fingerprint");
+  assert.deepEqual(await actions.ignoreGalleryUpdateAction({ id: G1, kind: "configuration", value: "x".repeat(201) }), invalid);
+  assert.deepEqual(await actions.ignoreGalleryUpdateAction({ id: G1, kind: "configuration", value: "has spaces; drop table" }), invalid);
+  assert.equal(writes(), before, "nothing invalid reached the database");
+  world.rpc.product_gallery_is_editor = () => ({ data: false, error: null });
+  assert.deepEqual(await actions.applyGalleryUpdateAction({ id: G1, kind: "picture" }), { ok: false, message: GALLERY_MESSAGES.not_allowed });
+  assert.deepEqual(await actions.ignoreGalleryUpdateAction({ id: G1, kind: "picture" }), { ok: false, message: GALLERY_MESSAGES.not_allowed });
+  assert.equal(writes(), before, "a non-editor never reaches the database functions");
+  world.rpc.product_gallery_is_editor = () => ({ data: true, error: null });
+  world.rpc.product_gallery_update_apply = () => ({ data: false, error: null });
+  assert.deepEqual(await actions.applyGalleryUpdateAction({ id: G1, kind: "picture" }), { ok: false, message: GALLERY_MESSAGES.update_not_found });
+  world.rpc.product_gallery_update_ignore = () => ({ data: null, error: { message: "boom secret", code: "XX000" } });
+  assert.deepEqual(await actions.ignoreGalleryUpdateAction({ id: G1, kind: "picture" }), { ok: false, message: GALLERY_MESSAGES.save_failed });
+  world.rpc.product_gallery_update_ignore = () => { throw new Error("secret rpc detail"); };
+  assert.deepEqual(await actions.ignoreGalleryUpdateAction({ id: G1, kind: "picture" }), { ok: false, message: GALLERY_MESSAGES.save_failed });
+  assert.equal(world.adminCalls, 0);
+});
+
 // ── actions: auth first, never throw ───────────────────────────────────────
 test("every action authenticates FIRST, before any client or database call", async () => {
   const calls: Array<[string, () => Promise<unknown>]> = [
@@ -701,6 +859,10 @@ test("every action authenticates FIRST, before any client or database call", asy
     ["detail", () => actions.getGalleryItemDetailAction({ id: G1 })],
     ["specification", () => actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x" })],
     ["remove", () => actions.removeGalleryItemAction({ id: G1 })],
+    ["removed list", () => actions.listRemovedGalleryItemsAction()],
+    ["restore", () => actions.restoreGalleryItemAction({ key: KEY })],
+    ["apply update", () => actions.applyGalleryUpdateAction({ id: G1, kind: "specification" })],
+    ["ignore update", () => actions.ignoreGalleryUpdateAction({ id: G1, kind: "picture" })],
   ];
   for (const [name, run] of calls) {
     reset(); seed();
@@ -721,6 +883,10 @@ test("a signed-out user gets 'not allowed' and nothing is read; no action throws
     () => actions.getGalleryCapabilitiesAction(),
     () => actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x" }),
     () => actions.removeGalleryItemAction({ id: G1 }),
+    () => actions.listRemovedGalleryItemsAction(),
+    () => actions.restoreGalleryItemAction({ key: KEY }),
+    () => actions.applyGalleryUpdateAction({ id: G1, kind: "specification" }),
+    () => actions.ignoreGalleryUpdateAction({ id: G1, kind: "picture" }),
   ];
   for (const run of calls) {
     reset(); seed();

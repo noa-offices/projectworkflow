@@ -1,12 +1,17 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { requireActiveUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { galleryMessage, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GalleryMessageKind, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "./gallery";
+import { galleryMessage, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GalleryMessageKind, type GalleryRemovedItem, type GalleryRestoreOutcome, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "./gallery";
 import {
   getGalleryCapabilities,
   getGalleryItemDetail,
+  applyGalleryUpdate,
   getGalleryItemForAdd,
+  ignoreGalleryUpdate,
+  listRemovedGalleryItems,
+  restoreGalleryItem,
   listGalleryFilters,
   listGalleryItems,
   mergeGalleryItems,
@@ -46,6 +51,7 @@ export async function listGalleryItemsAction(input?: {
   tag?: string | null;
   sort?: string;
   includeHidden?: boolean;
+  updateAvailable?: boolean;
   page?: number;
 }): Promise<
   { ok: true; items: GalleryListItem[]; total: number; page: number; pageSize: number; hasMore: boolean; sort: GallerySortMode } | GalleryActionFailure
@@ -62,6 +68,7 @@ export async function listGalleryItemsAction(input?: {
       tag: input?.tag,
       sort: input?.sort,
       includeHidden: input?.includeHidden,
+      updateAvailable: input?.updateAvailable,
       page: input?.page,
     });
     if (!result.ok) return failure(result.kind);
@@ -193,5 +200,69 @@ export async function getGalleryCapabilitiesAction(): Promise<{ ok: true; canVie
     return { ok: true, canView: capabilities.canView, canEdit: capabilities.canEdit, canCurate: capabilities.canCurate };
   } catch (problem) {
     return failure("load_failed", problem);
+  }
+}
+
+// ── Removed items and update offers (editors only; the server checks canEdit before the database function, which checks again) ──
+function refreshGallery() {
+  try {
+    revalidatePath("/products/gallery");
+  } catch {
+    // outside a request (or a cache problem) the change is still saved
+  }
+}
+
+/** Editors only: removed configurations, newest first. */
+export async function listRemovedGalleryItemsAction(): Promise<{ ok: true; items: GalleryRemovedItem[] } | GalleryActionFailure> {
+  try {
+    await requireActiveUser();
+    const supabase = await createClient();
+    const result = await listRemovedGalleryItems(supabase);
+    if (!result.ok) return failure(result.kind);
+    return { ok: true, items: result.items };
+  } catch (problem) {
+    return failure("load_failed", problem);
+  }
+}
+
+/** Editors only: restored (the item is back), allowed_again (an older removal: it returns when quoted next), or not_found. */
+export async function restoreGalleryItemAction(input: { key: string }): Promise<{ ok: true; outcome: GalleryRestoreOutcome } | GalleryActionFailure> {
+  try {
+    await requireActiveUser();
+    const supabase = await createClient();
+    const result = await restoreGalleryItem(supabase, { key: input?.key });
+    if (!result.ok) return failure(result.kind);
+    refreshGallery();
+    return { ok: true, outcome: result.outcome };
+  } catch (problem) {
+    return failure("save_failed", problem);
+  }
+}
+
+/** Editors only: apply an open "specification" or "picture" offer. */
+export async function applyGalleryUpdateAction(input: { id: string; kind: "specification" | "picture" }): Promise<{ ok: true } | GalleryActionFailure> {
+  try {
+    await requireActiveUser();
+    const supabase = await createClient();
+    const result = await applyGalleryUpdate(supabase, { id: input?.id, kind: input?.kind });
+    if (!result.ok) return failure(result.kind);
+    refreshGallery();
+    return { ok: true };
+  } catch (problem) {
+    return failure("save_failed", problem);
+  }
+}
+
+/** Editors only: ignore an offer ("specification" / "picture") or the "saved choices changed" notice ("configuration", with its short fingerprint). */
+export async function ignoreGalleryUpdateAction(input: { id: string; kind: "specification" | "picture" | "configuration"; value?: string | null }): Promise<{ ok: true } | GalleryActionFailure> {
+  try {
+    await requireActiveUser();
+    const supabase = await createClient();
+    const result = await ignoreGalleryUpdate(supabase, { id: input?.id, kind: input?.kind, value: input?.value });
+    if (!result.ok) return failure(result.kind);
+    refreshGallery();
+    return { ok: true };
+  } catch (problem) {
+    return failure("save_failed", problem);
   }
 }

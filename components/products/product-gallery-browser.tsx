@@ -4,7 +4,7 @@ import { Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SetupThumbnail } from "@/components/products/my-collection-list";
 import { GalleryDetailDialog } from "@/components/products/product-gallery-detail-dialog";
-import { ConfirmRemoveDialog, EditGalleryItemDialog, MergeGalleryItemDialog } from "@/components/products/product-gallery-dialogs";
+import { ConfirmRemoveDialog, EditGalleryItemDialog, MergeGalleryItemDialog, RemovedItemsDialog } from "@/components/products/product-gallery-dialogs";
 import { toolbarContainer, toolbarControl, toolbarPrimaryButton, toolbarSecondaryButton } from "@/components/products/product-toolbar-styles";
 import { listGalleryFiltersAction, listGalleryItemsAction, removeGalleryItemAction } from "@/lib/products/gallery/gallery-actions";
 import { GALLERY_SORT_MODES, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "@/lib/products/gallery/gallery";
@@ -18,6 +18,8 @@ import {
   hasActiveGalleryFilters,
   quotedText,
   showingText,
+  updateTagText,
+  UPDATE_AVAILABLE_TEXT,
   subCategoryLabel,
   type GalleryUrlState,
 } from "@/lib/products/gallery/gallery-view";
@@ -56,6 +58,7 @@ function GalleryCard({ item, editMode, canCurate, onDialog }: { item: GalleryLis
             <SetupThumbnail path={item.picture?.kind === "template" ? item.picture.path : null} alt={item.displayName} size={88} />
           </button>
           <span className="pointer-events-none absolute left-1.5 top-1.5 z-10 flex flex-col items-start gap-1">
+            {updateTagText(item) ? <span className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-900">{updateTagText(item)}</span> : null}
             {!item.available ? <span className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-900">No longer available</span> : null}
           </span>
           {item.currency ? <span className="pointer-events-none absolute right-1.5 top-1.5 z-10 rounded-full border border-zinc-200 bg-white/90 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-600" title="Currency">{item.currency}</span> : null}
@@ -117,6 +120,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
   const [notice, setNotice] = useState("");
   const [actionProblem, setActionProblem] = useState("");
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [removedOpen, setRemovedOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const requestId = useRef(0);
 
@@ -152,9 +156,10 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
         currency: current.currency || null,
         tag: current.tag || null,
         sort: current.sort,
+        updateAvailable: canEdit && current.updateAvailable,
         page: pageNumber,
       }),
-    [],
+    [canEdit],
   );
 
   const reload = useCallback(
@@ -228,6 +233,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
   function toggleEditMode() {
     setEditMode((on) => !on);
     setDialog(null);
+    setRemovedOpen(false);
     setNotice("");
     setActionProblem("");
   }
@@ -253,7 +259,8 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
     <div className="px-5 py-6 sm:px-8">
       <div className="flex min-w-0 flex-col gap-4">
         {canEdit ? (
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            {editing ? <button type="button" className={toolbarSecondaryButton} onClick={() => setRemovedOpen(true)}>Removed items</button> : null}
             <button type="button" className={editing ? toolbarPrimaryButton : toolbarSecondaryButton} aria-pressed={editing} onClick={toggleEditMode}>
               {editing ? "Done" : "Edit"}
             </button>
@@ -269,6 +276,11 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
             <button type="button" className={`${toolbarSecondaryButton} @xl:hidden`} aria-expanded={filtersOpen} aria-controls="gallery-filter-panel" onClick={() => setFiltersOpen((open) => !open)}>
               Filters{filterCount ? ` (${filterCount})` : ""}
             </button>
+            {canEdit ? (
+              <button type="button" className={state.updateAvailable ? toolbarPrimaryButton : toolbarSecondaryButton} aria-pressed={state.updateAvailable} onClick={() => change({ updateAvailable: !state.updateAvailable })}>
+                {UPDATE_AVAILABLE_TEXT}
+              </button>
+            ) : null}
             {filtered ? <button type="button" className={toolbarSecondaryButton} onClick={clearFilters}>Clear filters</button> : null}
           </div>
           <div id="gallery-filter-panel" className={`${filtersOpen ? "grid" : "hidden"} grid-cols-1 gap-2 min-[480px]:grid-cols-2 @xl:grid @xl:grid-cols-3 @4xl:grid-cols-6`}>
@@ -339,7 +351,8 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
         ) : null}
       </div>
 
-      {dialog?.kind === "detail" ? <GalleryDetailDialog itemId={dialog.item.id} title={dialog.item.displayName} canEdit={canEdit} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === "detail" ? <GalleryDetailDialog itemId={dialog.item.id} title={dialog.item.displayName} canEdit={canEdit} onChanged={() => void Promise.all([reload(state), loadFilters()])} onClose={() => setDialog(null)} /> : null}
+      {editing && removedOpen ? <RemovedItemsDialog onClose={() => setRemovedOpen(false)} onChanged={(message) => { setNotice(message); void Promise.all([reload(state), loadFilters()]); }} /> : null}
       {editing && dialog?.kind === "edit" ? <EditGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onSaved={() => void afterChange("Saved.")} /> : null}
       {editing && dialog?.kind === "remove" ? <ConfirmRemoveDialog item={dialog.item} onClose={() => setDialog(null)} onConfirm={() => removeItem(dialog.item)} /> : null}
       {editing && canCurate && dialog?.kind === "merge" ? <MergeGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onMerged={() => void afterChange("Items merged.")} /> : null}

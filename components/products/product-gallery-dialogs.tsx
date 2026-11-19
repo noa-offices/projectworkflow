@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { listGalleryItemsAction, mergeGalleryItemsAction, updateGalleryItemDetailsAction } from "@/lib/products/gallery/gallery-actions";
-import type { GalleryListItem } from "@/lib/products/gallery/gallery";
-import { GALLERY_MERGE_MAX_PAGES, editFormProblem, formatTagInput, mergeCandidates, parseTagInput, quotedText } from "@/lib/products/gallery/gallery-view";
+import { listGalleryItemsAction, listRemovedGalleryItemsAction, mergeGalleryItemsAction, restoreGalleryItemAction, updateGalleryItemDetailsAction } from "@/lib/products/gallery/gallery-actions";
+import type { GalleryListItem, GalleryRemovedItem } from "@/lib/products/gallery/gallery";
+import { GALLERY_MERGE_MAX_PAGES, OLD_REMOVAL_NOTE, editFormProblem, formatTagInput, mergeCandidates, parseTagInput, quotedText, removedDateText, restoreButtonLabel, restoreMessage } from "@/lib/products/gallery/gallery-view";
 
 // Curator dialogs for the Product Gallery page. Each dialog is a labelled modal: Escape closes it, focus starts inside it and
 // returns to the button that opened it. Every change goes through a gallery action (the database decides who may curate); the
@@ -203,6 +203,88 @@ export function MergeGalleryItemDialog({ item, onClose, onMerged }: { item: Gall
       ) : null}
       <div className="flex justify-end">
         <button type="button" className={galleryButton} onClick={onClose}>Cancel</button>
+      </div>
+    </DialogShell>
+  );
+}
+
+/**
+ * Removed items (editors only, opened from Edit mode): newest first, each with Restore. An item removed before snapshots existed can only be
+ * "allowed again" (it returns when its configuration is quoted next time); those rows say so and the button reads "Allow again".
+ */
+export function RemovedItemsDialog({ onClose, onChanged }: { onClose: () => void; onChanged: (message: string) => void }) {
+  const [items, setItems] = useState<GalleryRemovedItem[] | null>(null);
+  const [problem, setProblem] = useState("");
+  const [message, setMessage] = useState("");
+  const [busyKey, setBusyKey] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    window.queueMicrotask(() => {
+      void listRemovedGalleryItemsAction()
+        .then((result) => {
+          if (cancelled) return;
+          if (result.ok) setItems(result.items);
+          else {
+            setProblem(result.message);
+            setItems([]);
+          }
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setProblem("Could not load the removed items. Please try again.");
+          setItems([]);
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function restore(item: GalleryRemovedItem) {
+    setBusyKey(item.identityKey);
+    setProblem("");
+    setMessage("");
+    try {
+      const result = await restoreGalleryItemAction({ key: item.identityKey });
+      if (!result.ok) setProblem(result.message);
+      else {
+        const text = restoreMessage(result.outcome);
+        setMessage(text);
+        setItems((current) => (current ?? []).filter((entry) => entry.identityKey !== item.identityKey));
+        onChanged(text);
+      }
+    } catch {
+      setProblem("The change could not be saved. Please try again.");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  return (
+    <DialogShell title="Removed items" description="Items an editor removed from the gallery. Restore puts one back." onClose={onClose}>
+      {items === null ? <p role="status" className="text-sm text-zinc-600">Loading…</p> : null}
+      <Problem text={problem} />
+      {message ? <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{message}</p> : null}
+      {items && items.length === 0 && !problem ? <p className="text-sm text-zinc-600">No removed items.</p> : null}
+      {items && items.length > 0 ? (
+        <ul className="flex max-h-80 flex-col gap-2 overflow-y-auto">
+          {items.map((item) => (
+            <li key={item.identityKey} className="flex items-center justify-between gap-3 rounded-md border border-zinc-200 px-3 py-2 text-sm">
+              <div className="min-w-0">
+                <p className="truncate font-medium text-zinc-900" title={item.name}>{item.name}</p>
+                <p className="text-xs text-zinc-500">{[removedDateText(item.removedAt), item.quotedCount !== null ? quotedText(item.quotedCount) : ""].filter(Boolean).join(" · ")}</p>
+                {!item.hasSnapshot ? <p className="text-xs text-amber-800">{OLD_REMOVAL_NOTE}</p> : null}
+              </div>
+              <button type="button" className={galleryButton} onClick={() => void restore(item)} disabled={busyKey !== ""} aria-label={`${restoreButtonLabel(item)} ${item.name}`}>
+                {busyKey === item.identityKey ? "Working…" : restoreButtonLabel(item)}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="flex justify-end">
+        <button type="button" className={galleryButton} onClick={onClose}>Close</button>
       </div>
     </DialogShell>
   );

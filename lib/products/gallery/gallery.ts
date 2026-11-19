@@ -37,6 +37,7 @@ export const GALLERY_MESSAGES = {
   load_failed: "The gallery could not be loaded. Please try again.",
   save_failed: "The change could not be saved. Please try again.",
   specification_too_long: "The specification can be at most 2000 characters.",
+  update_not_found: "That update is no longer available.",
 } as const;
 
 export type GalleryMessageKind = keyof typeof GALLERY_MESSAGES;
@@ -156,8 +157,42 @@ export type GalleryListItem = {
   isHidden: boolean;
   /** The product still exists and is active (the same rule as isSetupUsable). */
   available: boolean;
+  /** Editors only (always false for everyone else): an open "specification" or "picture" update offer exists for this item. */
+  updateAvailable: boolean;
   picture: GalleryPicture;
 };
+
+export const GALLERY_UPDATE_KINDS = ["specification", "picture", "configuration"] as const;
+export type GalleryUpdateKind = (typeof GALLERY_UPDATE_KINDS)[number];
+export function isGalleryUpdateKind(value: unknown): value is GalleryUpdateKind {
+  return typeof value === "string" && (GALLERY_UPDATE_KINDS as readonly string[]).includes(value);
+}
+/** The two kinds an editor can Update or Ignore as an offer (a "configuration" notice can only be ignored). */
+export function isGalleryOfferKind(value: unknown): value is "specification" | "picture" {
+  return value === "specification" || value === "picture";
+}
+/** The key of a removed configuration: g:<template uuid>:<64 hex characters>. */
+export function isGalleryIdentityKey(value: unknown): value is string {
+  return typeof value === "string" && /^g:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{64}$/i.test(value);
+}
+export const GALLERY_FINGERPRINT_MAX = 200;
+/** A short note (max 200 characters) the app writes when an editor ignores the "saved choices changed" notice. */
+export function cleanGalleryFingerprint(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return text && text.length <= GALLERY_FINGERPRINT_MAX && /^[a-z0-9:_.-]+$/i.test(text) ? text : null;
+}
+
+/** One removed configuration (editors only). hasSnapshot false = an older removal: Restore only allows it again. */
+export type GalleryRemovedItem = {
+  identityKey: string;
+  removedAt: string;
+  templateId: string | null;
+  name: string;
+  quotedCount: number | null;
+  hasSnapshot: boolean;
+};
+export type GalleryRestoreOutcome = "restored" | "allowed_again" | "not_found";
 
 export type GalleryFilterEntry = { id: string; name: string; count: number };
 export type GalleryTagEntry = { tag: string; count: number };
