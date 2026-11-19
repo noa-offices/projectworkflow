@@ -280,8 +280,9 @@ test("targets: the shared priority order is workstation, modular, base model, pr
   assert.deepEqual(resolveMainAccessoryTargets({ workstation: [], usesModularPricing: false, modular: [], baseModel: [baseModelTarget], priceMatrix }), [baseModelTarget]);
   assert.deepEqual(resolveMainAccessoryTargets({ workstation: [], usesModularPricing: false, modular: [], baseModel: [], priceMatrix }), priceMatrix);
   assert.deepEqual(resolveMainAccessoryTargets({ workstation: [], usesModularPricing: false, modular: [], baseModel: [], priceMatrix: [] }), []);
-  // A modular template with nothing selected yet has no targets and does not fall through to the base size.
-  assert.deepEqual(resolveMainAccessoryTargets({ workstation: [], usesModularPricing: true, modular: [], baseModel: [baseModelTarget], priceMatrix: [] }), []);
+  // A modular template with nothing selected has no targets. One pricing mode per line: with a base size chosen (and no modular item) the base size applies.
+  assert.deepEqual(resolveMainAccessoryTargets({ workstation: [], usesModularPricing: true, modular: [], baseModel: [], priceMatrix: [] }), []);
+  assert.deepEqual(resolveMainAccessoryTargets({ workstation: [], usesModularPricing: true, modular: [], baseModel: [baseModelTarget], priceMatrix: [] }), [baseModelTarget]);
 });
 
 test("targets: required Top-Access quantity is 6 for starter 1 + intermediate 2, even with a base size also selected", () => {
@@ -309,7 +310,7 @@ test("targets: client and server both call the shared helper with the same candi
   const server = readFileSync("app/quotations/actions.ts", "utf8");
   for (const source of [client, server]) {
     assert.ok(source.includes("resolveMainAccessoryTargets({"));
-    assert.ok(source.includes("usesModularPricing,"));
+    assert.ok(source.includes("usesModularPricing,") || source.includes("usesModularPricing: modularInUse,"));
     assert.ok(/workstation:/.test(source) && /modular:/.test(source) && /baseModel:/.test(source) && /priceMatrix:/.test(source));
   }
   assert.ok(!server.includes(": selectedModularItems.map((item) => ({ kind: \"modular\" as const, group_id: item.group_id, row_id: item.id }));"), "the old server chain (base model before modular) must be gone");
@@ -327,23 +328,24 @@ test("selector wiring: starter hint, max 1 input, replace handler, and disabled 
   assert.ok(client.includes('role === "starter" && isSingleStarterModularGroup(group) ? <p className="mb-1 text-[11px] text-zinc-600">{SINGLE_STARTER_HINT}</p>'));
   assert.ok(client.includes('max={role === "starter" && isSingleStarterModularGroup(group) ? 1 : undefined}'));
   assert.ok(client.includes("applyModularRowQuantity(group, current[template.id] ?? {}, rowId, nextQty)"));
-  assert.ok(client.includes("const baseSectionDisabled = excludesBaseModels && selectedModularItems.length > 0;"));
-  assert.ok(client.includes("const modularSectionDisabled = excludesBaseModels && Boolean(selectedVariantRow);"));
+  assert.ok(client.includes("const baseSectionDisabled = (excludesBaseModels && selectedModularItems.length > 0) || pricingModes.baseModelDisabled;"));
+  assert.ok(client.includes("const modularSectionDisabled = (excludesBaseModels && Boolean(selectedVariantRow)) || pricingModes.modularDisabled;"));
   assert.ok(client.includes("<fieldset disabled={baseSectionDisabled}"));
   assert.ok(client.includes("<fieldset disabled={modularSectionDisabled}"));
-  assert.ok(client.includes("{BASE_MODEL_DISABLED_NOTE}") && client.includes("{MODULAR_DISABLED_NOTE}"));
+  assert.ok(client.includes("excludesBaseModels ? BASE_MODEL_DISABLED_NOTE : pricingModes.reason") && client.includes("excludesBaseModels ? MODULAR_DISABLED_NOTE : pricingModes.reason"));
   assert.ok(client.includes("onClick={clearModularSelection}") && client.includes("onClick={clearBaseModelSelection}"));
-  assert.equal(client.split("Clear selection</button>").length - 1, 2);
+  assert.equal(client.split("Clear selection</button>").length - 1, 3, "Base / Model, modular items and the Price Matrix note each have one");
   assert.ok(client.includes("modular_excludes_base_models: sourceGroup.modular_excludes_base_models === true"));
-  // Nothing is cleared silently: the only writers are the two explicit buttons.
-  assert.equal(client.split("clearModularSelection()").length - 1, 0);
+  // One pricing mode per line: choosing a base size / matrix row clears the modular items (three guarded call sites, only for a template that offers both modes).
+  assert.equal(client.split("clearModularSelection()").length - 1, 3);
+  assert.equal(client.split("pricingModes.exclusive && nextRowId) clearModularSelection()").length - 1 + client.split("pricingModes.exclusive && nextRow?.id) clearModularSelection()").length - 1 + client.split("if (pricingModes.exclusive) clearModularSelection();").length - 1, 3, "every call is guarded by the mode check");
   assert.equal(client.split("clearBaseModelSelection()").length - 1, 0);
 });
 
 test("clear actions only touch their own side", () => {
   const client = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
   assert.ok(client.includes("const clearModularSelection = () => setSelectedModularQuantities((current) => { const next = { ...current }; delete next[template.id]; return next; });"));
-  assert.ok(client.includes("const clearBaseModelSelection = () => setSelectedVariantRows((current) => { const next = { ...current }; delete next[template.id]; return next; });"));
+  assert.ok(client.includes("const clearBaseModelSelection = () => {") && client.includes("setSelectedCategoryRows((current) => { const next = { ...current }; delete next[template.id]; return next; });"), "it also clears the Price Matrix choice");
 });
 
 test("server wiring: the exclusivity check runs for modular templates and rejects with the shared message", () => {

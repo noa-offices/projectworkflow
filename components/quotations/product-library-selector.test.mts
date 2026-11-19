@@ -243,7 +243,7 @@ test("the deterministic Direct Modular specification receives brand/origin at th
     "const groupSelectionSummaryForAi = usesDirectModularPricing",
     "usesDirectModularPricing && groupSelectionSummaryForAi",
     "`Selected Direct Modular group: ${groupSelectionSummaryForAi}`",
-    "usesModularPricing ? modularDefaults.defaultSpecification : null,",
+    "modularInUse ? modularDefaults.defaultSpecification : null,",
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected AI Improve context enrichment: ${expected}`));
   // Brand and origin are no longer sent to the AI as facts (the saved brand_name_snapshot / origin_snapshot are unchanged).
   ["`Brand: ${brandNameById.get(template.brand_id)}`", "originSnapshot ? `Origin: ${originSnapshot}` : null,"].forEach((removed) => assert.ok(!source.includes(removed), `Must not send to the AI: ${removed}`));
@@ -323,7 +323,7 @@ test("14: Product Library composition blocking (modularCompositionIssue) is wire
     // The shared validator runs over every modular group regardless of pricing mode.
     "const modularCompositionIssue = validateModularCompositionGroups(",
     // Blocking Add to Local Workspace / Add uses usesModularPricing (both pricing modes), not usesDirectModularPricing only.
-    "const missingRequiredModularSelection = usesModularPricing && (selectedModularItems.length === 0 || Boolean(modularCompositionIssue));",
+    "const missingRequiredModularSelection = usesModularPricing && (selectedModularItems.length > 0 ? Boolean(modularCompositionIssue) : !baseModeChosen);",
     "disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice}",
     // Matrix Modular keeps its Fabric/Category selector, gated only by !usesDirectModularPricing (unaffected by role/composition support).
     "{!usesDirectModularPricing ? <div className=\"grid gap-3 md:grid-cols-2\">",
@@ -421,9 +421,9 @@ test("15: Direct Modular / X3 price resolution, selectionFamily guard, and compa
 test("17: configured dimension and generated Final Specification wiring for Modular pricing are unaffected by the Matrix Modular UI/category changes", () => {
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
   [
-    "const configuredSpecification = usesWorkstationFlow || usesModularPricing",
+    "const configuredSpecification = usesWorkstationFlow || modularInUse",
     "modularDefaultSpecification: configuredSpecification || modularDefaults.defaultSpecification,",
-    "(usesWorkstationFlow || usesModularPricing ? configuredSpecification : null) ??",
+    "(usesWorkstationFlow || modularInUse ? configuredSpecification : null) ??",
     'name="final_specification_override"',
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected unchanged configured-dimension/final-specification wiring: ${expected}`));
 });
