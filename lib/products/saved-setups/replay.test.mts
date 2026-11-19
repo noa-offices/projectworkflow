@@ -145,6 +145,81 @@ test("needs_review: a required step is unresolved (no saved model for a template
   assert.ok(result.problems.some((problem) => problem.kind === "required_step"));
 });
 
+// ── PR R-1: a MODULAR product that also carries a legacy Base / Model group (live example: Oxi_Q) ──────────────────
+// The real add flow prices through the modular rows and never asks for a Base / Model there (see nextRequiredForReplay in replay.ts).
+const oxiVariant = [{
+  id: "legacy-base-model-main", pricing_type: "base_model_group", group_name: "Legacy Base / Model", is_active: true, sort_order: 0,
+  items: [
+    { id: "desk-80", display_name: "Desk 80", price: 500, is_active: true, sort_order: 0 },
+    { id: "desk-100", display_name: "Desk 100", price: 600, is_active: true, sort_order: 1 },
+  ],
+}];
+const oxiPanels = [{
+  id: "oxi-panels", group_name: "Panels", group_is_required: false, is_active: true, sort_order: 0,
+  items: [
+    { id: "panel-1", item_name: "Panel", price: 10, currency: "EUR", is_active: true, sort_order: 0, role: "normal" },
+    { id: "tray-1", item_name: "Tray", price: 20, currency: "EUR", is_active: true, sort_order: 1, role: "normal" },
+  ],
+}];
+const oxi = (overrides: Partial<SetupTemplateInput> = {}) => tpl({ variant_pricing: oxiVariant, category_pricing: directModular, accessory_pricing: oxiPanels, ...overrides });
+
+test("R-1 (a) modular product with a legacy Base / Model group: modular rows + accessories saved, no variant ids -> NO required-step problem", () => {
+  const { recipe } = recipeOf({ categoryGroupId: "mgrp1", modularQuantities: { starter1: 1 }, pricingAccessoryQuantities: { "panel-1": 1, "tray-1": 1 } });
+  const evaluation = evaluateSetup(recipe, undefined, oxi());
+  assert.deepEqual(evaluation.validation.problems.filter((problem) => problem.kind === "required_step"), []);
+  assert.deepEqual(evaluation.validation, { status: "ok", problems: [] });
+  assert.deepEqual(evaluation.state?.modularQuantities, { starter1: 1 }, "the modular selection is restored");
+  assert.deepEqual(evaluation.state?.pricingAccessoryQuantities, { "panel-1": 1, "tray-1": 1 });
+});
+
+test("R-1 (b) a Base / Model product with no variant row chosen is STILL flagged", () => {
+  const { recipe } = recipeOf({});
+  const result = validateSetupAgainstTemplate(recipe, tpl({ variant_pricing: oxiVariant, accessory_pricing: oxiPanels }));
+  assert.equal(result.status, "needs_review");
+  assert.deepEqual(result.problems.filter((problem) => problem.kind === "required_step").map((problem) => problem.label), ["A required choice is not set: Base / Model."]);
+  // and a modular template where the saved modular row is gone AND the template has Base / Model rows is not silently accepted either
+});
+
+test("R-1 (c) a modular product with NOTHING selected is still flagged, and the warning names the modular step", () => {
+  const { recipe } = recipeOf({});
+  const result = validateSetupAgainstTemplate(recipe, oxi());
+  assert.equal(result.status, "needs_review");
+  const required = result.problems.filter((problem) => problem.kind === "required_step");
+  assert.equal(required.length, 1);
+  assert.match(required[0].label, /Modules/, "the modular step, not Base / Model");
+  // A modular template whose modular step is not required still reports the missing modular selection.
+  const optional = [{ ...directModular[0], modular_composition: undefined }];
+  const lenient = validateSetupAgainstTemplate(recipeOf({}).recipe, oxi({ category_pricing: optional }));
+  assert.equal(lenient.status, "needs_review");
+  assert.match(lenient.problems.find((problem) => problem.kind === "required_step")?.label ?? "", /Modules/);
+});
+
+test("R-1 (d) a modular row that no longer exists still shows the stale-selection problem (and the missing modular choice)", () => {
+  const { recipe } = recipeOf({ modularQuantities: { "starter-gone": 1 }, pricingAccessoryQuantities: { "panel-1": 1 } });
+  const evaluation = evaluateSetup(recipe, undefined, oxi());
+  assert.equal(evaluation.validation.status, "needs_review");
+  assert.ok(evaluation.validation.problems.some((problem) => problem.kind === "model_removed"), "the stale modular row is reported");
+  assert.ok(!("starter-gone" in (evaluation.state?.modularQuantities ?? {})), "and dropped from the restored state");
+  assert.ok(evaluation.validation.problems.some((problem) => problem.kind === "required_step" && /Modules/.test(problem.label)), "nothing valid is left selected");
+  assert.ok(!evaluation.validation.problems.some((problem) => /Base \/ Model/.test(problem.label)), "but never a Base / Model complaint");
+});
+
+test("R-1 (e) a Buddy-like category product and the other product types replay with no problems", () => {
+  const buddy = recipeOf({ categoryGroupId: "cgrp1", categoryRowId: "crow1", fabricCategory: "Cat B" });
+  assert.deepEqual(evaluateSetup(buddy.recipe, undefined, tpl({ category_pricing: categoryGroup })).validation, { status: "ok", problems: [] });
+  const base = recipeOf({ variantRowId: "row2" });
+  assert.deepEqual(validateSetupAgainstTemplate(base.recipe, tpl({ variant_pricing: variantTwoRows })), { status: "ok", problems: [] });
+  const workstation = recipeOf({ workstationSizeId: "size2" });
+  assert.deepEqual(validateSetupAgainstTemplate(workstation.recipe, tpl({ desking_size_pricing: deskingTwo })), { status: "ok", problems: [] });
+});
+
+test("R-1: a modular product that unexpectedly also saved a Base / Model row keeps that row (nothing is dropped or invented)", () => {
+  const { recipe } = recipeOf({ variantRowId: "desk-80", modularQuantities: { starter1: 1 } });
+  const evaluation = evaluateSetup(recipe, undefined, oxi());
+  assert.deepEqual(evaluation.validation, { status: "ok", problems: [] });
+  assert.equal(evaluation.state?.variantRowId, "desk-80");
+});
+
 test("needs_review: a rule is newly incompatible (accessory no longer applies to the chosen model)", () => {
   // The exactly_one service units apply to row1 only; the saved setup now uses row2.
   const { recipe } = recipeOf({ variantRowId: "row2", pricingAccessoryQuantities: { "1af-090": 1 } });

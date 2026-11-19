@@ -124,6 +124,31 @@ const KIND_BY_STALE_KEY: Record<string, SetupProblemKind> = {
   accessoryQuantities: "accessory_removed",
 };
 
+// The engine lists Base / Model as required whenever the template has Base / Model rows. The real add flow does not ask for one when the
+// product is priced through MODULAR rows: addProductTemplateToQuotation (app/quotations/actions.ts) prices in the order workstation,
+// modular, Base / Model, Price Matrix, and takes the base price from the modular rows (usesModularPricing) whatever Base / Model rows
+// the template also carries; the selector (usesModularPricing / missingRequiredModularSelection) only asks for a modular selection.
+// So for a template that uses modular pricing the Base / Model steps are not required here either; a modular product with NO modular
+// selection is still reported (as its modular step). Every other template keeps the engine's own answer unchanged.
+const BASE_MODEL_STEP_KINDS = new Set(["variant_group", "variant_subgroup", "variant_row"]);
+const REPLAY_STEP_ORDER = ["system_base", "workstation_size", "category_group", "category_row", "fabric_category", "modular", "accessory"];
+
+function nextRequiredForReplay(
+  steps: ReadonlyArray<{ kind: string; label: string; required: boolean; resolved: boolean; options: ReadonlyArray<{ id: string }> }>,
+  engineNext: { kind: string; label: string } | null,
+  modularQuantities: Record<string, number>,
+): { label: string } | null {
+  const modularSteps = steps.filter((step) => step.kind === "modular");
+  if (modularSteps.length === 0) return engineNext;
+  const unresolved = steps.filter((step) => step.required && !step.resolved && !BASE_MODEL_STEP_KINDS.has(step.kind));
+  for (const kind of REPLAY_STEP_ORDER) {
+    const found = unresolved.find((step) => step.kind === kind);
+    if (found) return found;
+  }
+  const modularSelected = modularSteps.some((step) => step.options.some((option) => Number(modularQuantities[option.id] ?? 0) > 0));
+  return modularSelected ? null : modularSteps[0];
+}
+
 export function evaluateSetup(
   recipe: SavedSetupRecipeV1,
   specOverrides: SavedSetupSpecOverrides | null | undefined,
@@ -175,8 +200,9 @@ export function evaluateSetup(
       dropped.set(stale.key, ids);
     }
     for (const issue of result.issues) problems.push({ kind: "rule_changed", label: issue.message });
-    if (result.nextRequiredStep) {
-      problems.push({ kind: "required_step", label: `A required choice is not set: ${result.nextRequiredStep.label}.` });
+    const nextRequired = nextRequiredForReplay(result.steps, result.nextRequiredStep, plain.modularQuantities ?? {});
+    if (nextRequired) {
+      problems.push({ kind: "required_step", label: `A required choice is not set: ${nextRequired.label}.` });
     }
     // Restore only what still resolves.
     const drop = (key: string) => dropped.get(key) ?? new Set<string>();
