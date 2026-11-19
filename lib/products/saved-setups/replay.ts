@@ -157,7 +157,10 @@ function nextRequiredForReplay(
 
   // Base mode on a template that also offers modular items: the modular step is not required; the base steps are.
   if (modularSteps.length > 0 && hasBaseSteps && !modularSelected && baseChosen) {
-    const unresolvedBase = steps.filter((step) => step.required && !step.resolved && step.kind !== "modular");
+    // A Base / Model row wins over the Price Matrix (price order), so its steps do not ask for the other one, and the other way round.
+    const variantChosen = steps.some((step) => step.kind === "variant_row" && Boolean(baseChoice.variantRowId) && step.options.some((option) => option.id === baseChoice.variantRowId));
+    const skipped = (kind: string) => kind === "modular" || (variantChosen ? PRICE_MATRIX_STEP_KINDS.has(kind) || kind === "fabric_category" : BASE_MODEL_STEP_KINDS.has(kind));
+    const unresolvedBase = steps.filter((step) => step.required && !step.resolved && !skipped(step.kind));
     for (const kind of BASE_MODE_STEP_ORDER) {
       const found = unresolvedBase.find((step) => step.kind === kind);
       if (found) return found;
@@ -165,7 +168,9 @@ function nextRequiredForReplay(
     return null;
   }
 
-  const hidden = (kind: string) => BASE_MODEL_STEP_KINDS.has(kind) || PRICE_MATRIX_STEP_KINDS.has(kind) || (usesWorkstation && modularSteps.length === 0 && kind === "fabric_category");
+  // The finish category that belongs to a standalone Price Matrix row is not required while the line uses modular items.
+  const hasCategoryRowStep = steps.some((step) => step.kind === "category_row");
+  const hidden = (kind: string) => BASE_MODEL_STEP_KINDS.has(kind) || PRICE_MATRIX_STEP_KINDS.has(kind) || (usesWorkstation && modularSteps.length === 0 && kind === "fabric_category") || (modularSteps.length > 0 && hasCategoryRowStep && kind === "fabric_category");
   const unresolved = steps.filter((step) => step.required && !step.resolved && !hidden(step.kind));
   for (const kind of REPLAY_STEP_ORDER) {
     const found = unresolved.find((step) => step.kind === kind);

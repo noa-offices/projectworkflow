@@ -52,6 +52,54 @@ test("OXI_P: 2 x EUR 300 plus 4 x EUR 25 required Top-Access, ignoring historica
     saved({ variantRowId: "legacy-model", modularQuantities: { bench: 2 } })), expected);
 });
 
+// ── one pricing mode per line (mirrors modularInUse in addProductTemplateToQuotation) ─────────────────────────────
+const matrixGroup = { id: "cgrp1", group_name: "Fabric", is_active: true, sort_order: 1, price_categories: ["Cat A", "Cat B"],
+  items: [{ id: "shell", variant_name: "Chair Shell", prices: { "Cat A": 400, "Cat B": 450 }, is_active: true, sort_order: 0 }] };
+const dual = (basePrice: number) => ({ ...modularTemplate, variant_pricing: model(basePrice), category_pricing: [...modularTemplate.category_pricing, matrixGroup] });
+const eur = (amount: number) => ({ status: "priced", sourceTotals: [{ currency: "EUR", amount }] });
+
+test("modes: modular quantity above 0 plus a saved Base / Model or Price Matrix choice keeps the modular price (2 x 300 + 4 x 25 = 700)", () => {
+  assert.deepEqual(priceRecipe(dual(177), saved({ modularQuantities: { bench: 2 } })), eur(700));
+  assert.deepEqual(priceRecipe(dual(177), saved({ modularQuantities: { bench: 2 }, variantRowId: "model" })), eur(700), "the legacy variant id is ignored");
+  assert.deepEqual(priceRecipe(dual(177), saved({ modularQuantities: { bench: 2 }, categoryGroupId: "cgrp1", categoryRowId: "shell", fabricCategory: "Cat B" })), eur(700), "so is a matrix choice");
+  assert.deepEqual(priceRecipe(dual(0), saved({ modularQuantities: { bench: 2 }, variantRowId: "model" })), eur(700));
+});
+
+test("modes: no modular quantity and a Base / Model row (EUR 177) prices from the row: 177", () => {
+  assert.deepEqual(priceRecipe(dual(177), saved({ variantRowId: "model" })), eur(177));
+  assert.deepEqual(priceRecipe(dual(177), saved({ variantRowId: "model", modularQuantities: { bench: 0 } })), eur(177), "a modular row with quantity 0 is not a modular selection");
+});
+
+test("modes: an explicit EUR 0 Base / Model row prices as 0, not as the template default and not as a modular total", () => {
+  assert.deepEqual(priceRecipe(dual(0), saved({ variantRowId: "model" })), eur(0));
+});
+
+test("modes: no modular quantity and a Price Matrix choice prices from that cell: Cat B = 450", () => {
+  assert.deepEqual(priceRecipe(dual(177), saved({ categoryGroupId: "cgrp1", categoryRowId: "shell", fabricCategory: "Cat B" })), eur(450));
+  const matrixOnly = { ...modularTemplate, category_pricing: [...modularTemplate.category_pricing, matrixGroup] };
+  assert.deepEqual(priceRecipe(matrixOnly, saved({ categoryGroupId: "cgrp1", categoryRowId: "shell", fabricCategory: "Cat A" })), eur(400));
+});
+
+test("modes: nothing selected on a modular template needs configuring (no automatic first matrix row, no default price)", () => {
+  assert.equal(priceRecipe(dual(177), saved()).status, "needs_configure");
+  assert.equal(priceRecipe(modularTemplate, saved()).status, "needs_configure");
+  const matrixOnly = { ...modularTemplate, category_pricing: [...modularTemplate.category_pricing, matrixGroup] };
+  assert.equal(priceRecipe(matrixOnly, saved()).status, "needs_configure");
+});
+
+test("modes: templates with only one mode price as before", () => {
+  assert.deepEqual(priceRecipe(modularTemplate, saved({ modularQuantities: { bench: 2 } })), eur(700));
+  assert.deepEqual(priceRecipe({ ...template, variant_pricing: model(177) }, saved({ variantRowId: "model" })), eur(177));
+  assert.equal(priceRecipe({ ...template, variant_pricing: model(177) }, saved()).status, "needs_configure");
+});
+
+test("modes: workstation behaviour is unchanged (size + extensions, a saved Price Matrix choice is ignored, a workstation variant is additive)", () => {
+  assert.deepEqual(priceRecipe(workstation, saved({ workstationSizeId: "size", additionalClusterQuantity: 2 })), eur(1100));
+  const withMatrix = { ...workstation, category_pricing: [matrixGroup] };
+  assert.deepEqual(priceRecipe(withMatrix, saved({ workstationSizeId: "size", additionalClusterQuantity: 2, categoryGroupId: "cgrp1", categoryRowId: "shell", fabricCategory: "Cat B" })), eur(1100));
+  assert.deepEqual(priceRecipe({ ...workstation, variant_pricing: model(177) }, saved({ workstationSizeId: "size", additionalClusterQuantity: 2, variantRowId: "model" })), eur(1277), "700 + 2 x 200 + the EUR 177 workstation variant");
+});
+
 test("stale, retired and ambiguous configurations all fail closed", () => {
   assert.deepEqual(priceRecipe({ ...workstation, ...modularTemplate, desking_size_pricing: workstation.desking_size_pricing }, saved({ modularQuantities: { bench: 2 }, workstationSizeId: "size" })),
     { status: "needs_configure", reason: "ambiguous_precedence" });

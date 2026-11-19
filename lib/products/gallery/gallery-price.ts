@@ -98,15 +98,18 @@ export function priceRecipe(template: GalleryPriceTemplate, rawRecipe: unknown, 
       .flatMap((group) => group.items.flatMap((row, index) => active(row) ? [{ group, row: { ...row, id: row.id ?? `${group.id}-size-${index}` } }] : []));
     const usesModular = modularGroups.some((group) => group.items.some(isModularPriceRow));
     if (usesModular && workstationRows.length) return needs("ambiguous_precedence");
-    // Hidden Base / Model and Price Matrix selections are historical noise for modular rows.
     const selections = { ...recipe.selections };
     if ([selections.modular_quantities, selections.pricing_accessory_quantities, selections.component_accessory_quantities]
       .some((quantities) => Object.values(quantities).some((quantity) => !Number.isSafeInteger(quantity) || quantity < 0))) return needs("invalid_recipe");
-    if (usesModular || workstationRows.length) {
+    // One pricing mode per line, exactly like addProductTemplateToQuotation (modularInUse): modular pricing applies only when a modular item has a
+    // quantity above 0, and then a saved Base / Model or Price Matrix choice is ignored. With no modular quantity the saved choice prices the line.
+    const modularInUse = usesModular && modularGroups.some((group) => group.items.some((row) =>
+      (selections.modular_quantities[row.id ?? row.variant_name ?? row.display_name ?? ""] ?? 0) > 0));
+    if (workstationRows.length || modularInUse) {
       delete selections.category_group_id;
       delete selections.category_row_id;
     }
-    if (usesModular) {
+    if (modularInUse) {
       delete selections.variant_group_id;
       delete selections.subgroup_id;
       delete selections.variant_row_id;
@@ -142,18 +145,19 @@ export function priceRecipe(template: GalleryPriceTemplate, rawRecipe: unknown, 
       (system && variant && system.group.id !== variantGroup?.id) ||
       (system && (!variant || workstationRows.length) && system.group.items.some((row) => !isSystemBaseRow(row))) ||
       (!system && !workstationRows.length && variantGroup?.items.some(isSystemBaseRow))) return needs("unresolved_choices");
-    let matrix = !variant && !usesModular && !workstationRows.length
+    // A template that also has modular rows only prices from the Price Matrix when a row was chosen (the selector never picks one automatically there).
+    let matrix = !variant && !modularInUse && !workstationRows.length && !(usesModular && !selected.categoryRowId)
       ? matrixGroups(template.category_pricing).flatMap((group) => group.items.filter(isMatrixPriceRow).map((row) => ({ group, row }))).sort((a,b) => sortRows(a.row,b.row))
       : [];
     if (selected.categoryRowId) matrix = matrix.filter(({ row }) => row.id === selected.categoryRowId);
     const category = matrix[0];
     if (selected.categoryRowId && !category) return needs("unresolved_choices");
-    if (!variant && !category && !usesModular && !workstationRows.length && baseRows.some((row) => !isSystemBaseRow(row))) return needs("unresolved_choices");
+    if (!variant && !category && !modularInUse && !workstationRows.length && baseRows.some((row) => !isSystemBaseRow(row))) return needs("unresolved_choices");
     const workstation = selected.workstationSizeId
       ? findWorkstationPricingRow<WorkstationRow>(template.desking_size_pricing, { rowId: selected.workstationSizeId })
       : workstationRows.length === 1 ? workstationRows[0] : null;
     if (workstationRows.length && !workstation) return needs("unresolved_choices");
-    const matrixModular = usesModular && modularGroups.some((group) => !isDirectModularPricingGroup(group));
+    const matrixModular = modularInUse && modularGroups.some((group) => !isDirectModularPricingGroup(group));
     const categoryLabel = matrixModular
       ? resolvedMatrixModularPricingCategory(modularGroups, selected.fabricCategory ?? null)
       : selected.fabricCategory || categories(template)[0] || "Cat A";
@@ -163,7 +167,7 @@ export function priceRecipe(template: GalleryPriceTemplate, rawRecipe: unknown, 
       const qty = selected.modularQuantities?.[id] ?? 0;
       return qty > 0 ? [{ group, row, id, qty }] : [];
     }));
-    if (usesModular && !modular.length) return needs("unresolved_choices");
+    if (usesModular && !modular.length && !(variant || category)) return needs("unresolved_choices");
     if (modular.some(({ group, row }) => !isDirectModularPricingGroup(group) &&
       (row.prices?.[categoryLabel] == null || row.unavailable_categories?.includes(categoryLabel))) ||
       (category && (category.row.prices?.[categoryLabel] == null || category.row.unavailable_categories?.includes(categoryLabel)))) return needs("unavailable_price");
@@ -188,7 +192,7 @@ export function priceRecipe(template: GalleryPriceTemplate, rawRecipe: unknown, 
     if (!baseCurrency) return needs("unknown_currency");
     const baseOptions = workstation
       ? options.filter((option) => (option.option_type === "linked_addon" || option.calculation_data?.desking_role === "accessory") && (componentQty[option.id] ?? 0) > 0)
-      : !usesModular && !category && !variant ? options : [];
+      : !modularInUse && !category && !variant ? options : [];
     // The action adds these to a single base bucket. With differing currencies there is no safe split.
     if (baseOptions.some((option) => option.unit_price > 0 && option.currency && parseSupportedCurrency(option.currency) !== baseCurrency) ||
       modular.some(({ row }) => parseSupportedCurrency(row.currency ?? template.currency) !== baseCurrency)) return needs("mixed_base_currencies");
@@ -199,7 +203,7 @@ export function priceRecipe(template: GalleryPriceTemplate, rawRecipe: unknown, 
     const workstationBase = workstation ? amount(workstation.row.default_price, defaultPrice) : 0;
     const base = workstation
       ? roundSourceAmount(workstationBase + roundSourceAmount(amount(workstation.row.additional_price, workstationBase) * Math.max(0, Math.trunc(selected.additionalClusterQuantity ?? 0))) + optionTotal) || roundSourceAmount(defaultPrice)
-      : usesModular ? roundSourceAmount(modular.reduce((sum, { group, row, qty }) =>
+      : modularInUse ? roundSourceAmount(modular.reduce((sum, { group, row, qty }) =>
           sum + roundSourceAmount(roundSourceAmount(amount(isDirectModularPricingGroup(group) ? row.price : row.prices?.[categoryLabel])) * qty), 0))
       : category ? roundSourceAmount(amount(category.row.prices?.[categoryLabel]))
       : variant ? roundSourceAmount(baseModelPriceOrDefault(variant.price, defaultPrice))
@@ -207,7 +211,7 @@ export function priceRecipe(template: GalleryPriceTemplate, rawRecipe: unknown, 
 
     const targets = resolveMainAccessoryTargets({
       workstation: workstation ? [{ kind: "workstation", group_id: workstation.group.id, row_id: String(workstation.row.id) }] : [],
-      usesModularPricing: usesModular,
+      usesModularPricing: modularInUse,
       modular: modular.map(({ group, id }) => ({ kind: "modular", group_id: group.id ?? "", row_id: id })),
       baseModel: variant && variantGroup && !workstation ? nativeBaseModelTargets({
         mainGroupId: variantGroup.id, mainRowId: variant.id, systemGroupId: system?.group.id, systemRowId: system?.row.id,
