@@ -12,7 +12,7 @@ import {
   mergeCandidates,
   parseGalleryQuery,
   parseTagInput,
-  productLibraryHref,
+  fullDetailHref,
   quotedText,
   showingText,
   subCategoryLabel,
@@ -94,6 +94,6 @@ test("tag input: comma separated, trimmed, lower-cased, unique; the dialog expla
   assert.match(editFormProblem("ok", "x".repeat(31)) ?? "", /30/);
 });
 
-test("the product link opens the library page of the product", () => {
-  assert.equal(productLibraryHref("t 1"), "/products?template=t%201");
+test("Open full detail uses the canonical Product Management URL", () => {
+  assert.equal(fullDetailHref("t 1"), "/products/manage?template=t%201");
 });

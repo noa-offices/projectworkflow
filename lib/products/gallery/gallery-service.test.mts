@@ -14,7 +14,11 @@ type Row = Record<string, any>;
 function makeWorld() {
   return {
     authMode: "ok" as "ok" | "redirect",
-    tables: { product_gallery_items: [] as Row[], product_templates: [] as Row[], brands: [] as Row[], product_categories: [] as Row[] },
+    tables: {
+      product_gallery_items: [] as Row[], product_templates: [] as Row[], brands: [] as Row[], product_categories: [] as Row[],
+      product_components: [] as Row[], product_template_linked_families: [] as Row[], product_template_material_groups: [] as Row[],
+      brand_material_groups: [] as Row[], product_template_material_group_items: [] as Row[], brand_materials: [] as Row[],
+    },
     calls: [] as string[],
     selects: [] as Array<{ table: string; columns: string }>,
     eqs: [] as Array<[string, unknown]>,
@@ -411,6 +415,104 @@ test("capabilities: canView / canEdit / canCurate through the three database fun
 });
 
 
+
+// ── details popup ──────────────────────────────────────────────────────────
+const MATERIAL_GROUP = "99999999-9999-4999-8999-999999999991";
+const LINK = "88888888-8888-4888-8888-888888888881";
+function seedDetail() {
+  seed();
+  world.rpc.product_gallery_can_view = () => ({ data: true, error: null });
+  world.tables.product_templates = [templateRow({
+    template_name: "Buddy Chair", template_code: "T-BD1", item_code: "BD1", description: "A task chair.", default_specification: "Mesh back.",
+    default_unit_price: 98765, unit_price: 98765,
+    reference_image_url: "product-images/ref.webp", proposed_image_url_1: "product-images/a.webp",
+    variant_pricing: [{ id: "vg1", pricing_type: "base_model_group", group_name: "Bases", is_active: true, sort_order: 0, items: [{ id: "vr1", display_name: "Chrome", price: 98765, is_active: true, sort_order: 0 }, { id: "vr2", display_name: "Black", price: 98766, is_active: true, sort_order: 1 }] }],
+    accessory_pricing: [{ id: "ag1", group_name: "Add-ons", is_active: true, sort_order: 0, items: [{ id: "ac1", item_name: "Cable Tray", price: 98765, is_active: true, sort_order: 0 }] }],
+    category_pricing: [], desking_size_pricing: [],
+  })];
+  world.tables.product_gallery_items = [galleryRow({ recipe: { ...storedRecipe, selections: { ...storedRecipe.selections, variant_row_id: "vr1", pricing_accessory_quantities: { ac1: 2 } } }, display_name: "Buddy" })];
+  world.tables.product_components = [{ id: "c1", template_id: TEMPLATE, component_group: "Casters", component_name: "Soft", option_type: "component_option", sort_order: 0, is_active: true }];
+  world.tables.product_template_linked_families = [{ id: "f1", parent_template_id: TEMPLATE, label: "Matching table", sort_order: 0, is_active: true }];
+  world.tables.product_template_material_groups = [{ id: LINK, product_template_id: TEMPLATE, material_group_id: MATERIAL_GROUP, selection_mode: "full_group", label_override: null, sort_order: 0, is_active: true }];
+  world.tables.brand_material_groups = [{ id: MATERIAL_GROUP, group_name: "Fabrics", is_active: true }];
+  world.tables.brand_materials = [{ id: "m1", material_group_id: MATERIAL_GROUP, material_code: "F1", material_name: "Oak", sort_order: 0, is_active: true }];
+}
+
+test("details: header, pictures, texts, readable configuration, materials and options; no price, no recipe, no id of a recipe", async () => {
+  reset(); seedDetail();
+  const result: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.equal(result.ok, true);
+  const detail = result.detail;
+  assert.equal(detail.displayName, "Buddy");
+  assert.equal(detail.itemName, "BD-1");
+  assert.equal(detail.brandName, "Acme");
+  assert.equal(detail.categoryName, "Chairs");
+  assert.equal(detail.subCategoryName, "Task chairs", "category and sub-category are separate");
+  assert.equal(detail.itemCode, "BD1");
+  assert.equal(detail.templateCode, "T-BD1");
+  assert.deepEqual(detail.tags, ["chair"]);
+  assert.equal(detail.quotedCount, 3);
+  assert.deepEqual(detail.images, ["product-images/a.webp", "product-images/b.webp", "product-images/ref.webp"]);
+  assert.equal(detail.description, "A task chair.");
+  assert.equal(detail.specification, "Mesh back.");
+  assert.ok(detail.configuration.some((line: any) => line.value === "Chrome"));
+  assert.ok(detail.configuration.some((line: any) => line.value === "Cable Tray x 2"));
+  assert.deepEqual(detail.materials, [{ groupName: "Fabrics", items: ["F1 - Oak"], moreCount: 0 }]);
+  assert.deepEqual(detail.options.map((group: any) => [group.kind, group.groupName, group.items]), [["option", "Casters", ["Soft"]], ["accessory", "Add-ons", ["Cable Tray"]], ["linked", "Linked products", ["Matching table"]]]);
+  const json = JSON.stringify(result);
+  assert.doesNotMatch(json, /98765|98766|unit_price|variant_pricing|recipe|selections|variant_row_id/i, "no price and no recipe leave the server");
+  assert.equal(world.adminCalls, 0, "the caller's own client only");
+});
+
+test("details: canView is checked FIRST; without it nothing about the item is read", async () => {
+  reset(); seedDetail();
+  world.rpc.product_gallery_can_view = () => ({ data: false, error: null });
+  assert.deepEqual(await actions.getGalleryItemDetailAction({ id: G1 }), { ok: false, message: GALLERY_MESSAGES.not_allowed, unavailable: false });
+  assert.ok(!world.calls.includes("select:product_gallery_items") && !world.calls.includes("select:product_templates"), "no item, no template read");
+  assert.equal(world.calls.indexOf("rpc:product_gallery_can_view") > world.calls.indexOf("client"), true);
+});
+
+test("details: a bad id, a missing item, an inactive/archived/deleted product are friendly results, never a throw", async () => {
+  reset(); seedDetail();
+  assert.deepEqual(await actions.getGalleryItemDetailAction({ id: "nope" }), { ok: false, message: GALLERY_MESSAGES.invalid_request, unavailable: false });
+  assert.deepEqual(await actions.getGalleryItemDetailAction(undefined as any), { ok: false, message: GALLERY_MESSAGES.invalid_request, unavailable: false });
+  assert.ok(!world.calls.includes("select:product_gallery_items"), "an invalid id reads nothing");
+  assert.deepEqual(await actions.getGalleryItemDetailAction({ id: G2 }), { ok: false, message: GALLERY_MESSAGES.item_not_found, unavailable: true });
+  for (const change of [{ is_active: false }, { lifecycle_status: "archived" }, { lifecycle_status: "discontinued" }]) {
+    reset(); seedDetail();
+    world.tables.product_templates = [templateRow(change)];
+    assert.deepEqual(await actions.getGalleryItemDetailAction({ id: G1 }), { ok: false, message: GALLERY_MESSAGES.product_unavailable, unavailable: true }, JSON.stringify(change));
+  }
+  reset(); seedDetail();
+  world.tables.product_templates = [];
+  assert.deepEqual(await actions.getGalleryItemDetailAction({ id: G1 }), { ok: false, message: GALLERY_MESSAGES.product_unavailable, unavailable: true }, "a deleted template");
+  reset(); seedDetail();
+  Object.defineProperty(world.tables, "product_gallery_items", { get() { throw new Error("secret table detail"); } });
+  const broken: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.deepEqual(broken, { ok: false, message: GALLERY_MESSAGES.load_failed, unavailable: false });
+  assert.doesNotMatch(JSON.stringify(broken), /secret/);
+});
+
+test("details: a missing optional table (options, materials, linked) just gives an empty section", async () => {
+  reset(); seedDetail();
+  world.tables.product_components = [];
+  world.tables.product_template_linked_families = [];
+  world.tables.product_template_material_groups = [];
+  const result: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.detail.materials, []);
+  assert.deepEqual(result.detail.options.map((group: any) => group.kind), ["accessory"]);
+});
+
+test("details: the selects name no price column and only the one item select reads the recipe", async () => {
+  reset(); seedDetail();
+  await actions.getGalleryItemDetailAction({ id: G1 });
+  const detailSelects = world.selects.map((entry) => entry.columns);
+  assert.ok(detailSelects.length >= 6);
+  for (const columns of detailSelects) assert.doesNotMatch(columns, /price|discount|cost|total|unit_price/i, columns);
+  assert.deepEqual(world.selects.filter((entry) => /\brecipe\b/.test(entry.columns)).map((entry) => entry.table), ["product_gallery_items"]);
+});
+
 // ── actions: auth first, never throw ───────────────────────────────────────
 test("every action authenticates FIRST, before any client or database call", async () => {
   const calls: Array<[string, () => Promise<unknown>]> = [
@@ -421,6 +523,7 @@ test("every action authenticates FIRST, before any client or database call", asy
     ["details", () => actions.updateGalleryItemDetailsAction({ id: G1, displayName: "x", tags: [] })],
     ["merge", () => actions.mergeGalleryItemsAction({ fromId: G1, toId: G2 })],
     ["capabilities", () => actions.getGalleryCapabilitiesAction()],
+    ["detail", () => actions.getGalleryItemDetailAction({ id: G1 })],
   ];
   for (const [name, run] of calls) {
     reset(); seed();
@@ -446,6 +549,10 @@ test("a signed-out user gets 'not allowed' and nothing is read; no action throws
     assert.deepEqual(await run(), { ok: false, message: GALLERY_MESSAGES.not_allowed });
     assert.deepEqual(world.calls, ["auth"], "nothing else ran");
   }
+  reset(); seed();
+  world.authMode = "redirect";
+  assert.deepEqual(await actions.getGalleryItemDetailAction({ id: G1 }), { ok: false, message: GALLERY_MESSAGES.not_allowed, unavailable: false });
+  assert.deepEqual(world.calls, ["auth"], "the detail action reads nothing when signed out");
   // hostile input never throws
   reset(); seed();
   for (const run of [() => (actions as any).listGalleryItemsAction(null), () => (actions as any).getGalleryItemForAddAction(undefined), () => (actions as any).mergeGalleryItemsAction(null), () => (actions as any).updateGalleryItemDetailsAction(null)]) {

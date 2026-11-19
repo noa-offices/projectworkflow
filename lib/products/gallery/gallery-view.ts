@@ -99,9 +99,9 @@ export function showingText(shown: number, total: number): string {
   return `Showing ${shown} of ${total}`;
 }
 
-/** The product's library page (the library opens the product from ?template=). */
-export function productLibraryHref(templateId: string): string {
-  return `/products?template=${encodeURIComponent(templateId)}`;
+/** "Open full detail" in the details popup: the canonical Product Management URL of the product. */
+export function fullDetailHref(templateId: string): string {
+  return `/products/manage?template=${encodeURIComponent(templateId)}`;
 }
 
 /** Merge candidates: the OTHER items of the SAME product (template), each once. Never an item of a different product. */

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { galleryMessage, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GalleryMessageKind, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "./gallery";
 import {
   getGalleryCapabilities,
+  getGalleryItemDetail,
   getGalleryItemForAdd,
   listGalleryFilters,
   listGalleryItems,
@@ -13,6 +14,7 @@ import {
   updateGalleryItemDetails,
   type GalleryAddItem,
 } from "./gallery-service";
+import type { GalleryDetail } from "./gallery-detail";
 
 // Server Actions are public POST endpoints: every action authenticates FIRST with requireActiveUser, takes the user from the SESSION,
 // uses the CALLER's Supabase client (RLS stays on) and never an admin client. An action never throws to the browser: it returns
@@ -20,7 +22,7 @@ import {
 // fields are ignored. The gallery has NO price: no action here returns or accepts one.
 export type GalleryActionFailure = { ok: false; message: string };
 
-function failure(kind: GalleryMessageKind, problem?: unknown): GalleryActionFailure {
+function failure<Extra extends object = Record<never, never>>(kind: GalleryMessageKind, problem?: unknown, extra?: Extra): GalleryActionFailure & Extra {
   // A sign-in redirect thrown by requireActiveUser becomes the "not allowed" message instead of an exception.
   const digest = (problem as { digest?: unknown } | null)?.digest;
   const redirected = typeof digest === "string" && digest.startsWith("NEXT_REDIRECT");
@@ -29,7 +31,7 @@ function failure(kind: GalleryMessageKind, problem?: unknown): GalleryActionFail
   } catch {
     // logging must never fail an action
   }
-  return { ok: false, message: galleryMessage(redirected ? "not_allowed" : kind) };
+  return { ok: false, message: galleryMessage(redirected ? "not_allowed" : kind), ...(extra ?? ({} as Extra)) };
 }
 
 /** Items per page: 30. Display fields only (no recipe, no price). includeHidden only has an effect for editors. */
@@ -95,6 +97,23 @@ export async function getGalleryItemForAddAction(input: { id: string }): Promise
     return { ok: true, item: result.item };
   } catch (problem) {
     return failure("load_failed", problem);
+  }
+}
+
+/**
+ * Everything the details popup shows for one item: names and text only (header, pictures, template description and specification,
+ * readable saved configuration, available materials, options and accessories). NO price of any kind. `unavailable` is true when the
+ * product or the item is gone (show "This product is no longer available." without a Retry).
+ */
+export async function getGalleryItemDetailAction(input: { id: string }): Promise<{ ok: true; detail: GalleryDetail } | (GalleryActionFailure & { unavailable: boolean })> {
+  try {
+    await requireActiveUser();
+    const supabase = await createClient();
+    const result = await getGalleryItemDetail(supabase, input?.id);
+    if (!result.ok) return failure(result.kind, undefined, { unavailable: result.kind === "product_unavailable" || result.kind === "item_not_found" });
+    return { ok: true, detail: result.detail };
+  } catch (problem) {
+    return failure("load_failed", problem, { unavailable: false });
   }
 }
 
