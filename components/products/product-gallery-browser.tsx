@@ -4,10 +4,13 @@ import { Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SetupThumbnail } from "@/components/products/my-collection-list";
 import { GalleryDetailDialog } from "@/components/products/product-gallery-detail-dialog";
-import { ProductGalleryPrice } from "@/components/products/product-gallery-price";
+import { GalleryRatesContext, ProductGalleryPrice } from "@/components/products/product-gallery-price";
+import { ProductGalleryRatePopover } from "@/components/products/product-gallery-rate-popover";
 import { ConfirmRemoveDialog, EditGalleryItemDialog, MergeGalleryItemDialog, RemovedItemsDialog } from "@/components/products/product-gallery-dialogs";
 import { toolbarContainer, toolbarControl, toolbarPrimaryButton, toolbarSecondaryButton } from "@/components/products/product-toolbar-styles";
 import { checkGalleryUpdatesAction, getGalleryPricesAction, listGalleryFiltersAction, listGalleryItemsAction, removeGalleryItemAction } from "@/lib/products/gallery/gallery-actions";
+import { listCurrencyDefaultRatesAction } from "@/lib/products/gallery/currency-default-rates-actions";
+import { EMPTY_RATES, type CurrencyRates } from "@/lib/products/gallery/gallery-aed";
 import { fetchGalleryPriceBatches, type GalleryPriceState } from "@/lib/products/gallery/gallery-price-view";
 import { GALLERY_SORT_MODES, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "@/lib/products/gallery/gallery";
 import {
@@ -84,7 +87,7 @@ function GalleryCard({ item, editMode, canCurate, canSeePrices, price, onDialog 
           </div>
         ) : null}
         <p className="text-xs font-medium text-zinc-700">{quotedText(item.quotedCount)}</p>
-        {canSeePrices ? <div className="h-14 min-w-0"><ProductGalleryPrice templateId={item.templateId} price={price} /></div> : null}
+        {canSeePrices ? <div className="min-h-20 min-w-0"><ProductGalleryPrice templateId={item.templateId} price={price} /></div> : null}
         <div className="mt-auto grid grid-cols-2 gap-2 pt-2">
           <button type="button" className={`${openButton} col-span-2`} onClick={() => onDialog({ kind: "detail", item })} aria-label={`Details of ${item.displayName}`}>Details</button>
           {editMode ? (
@@ -119,6 +122,8 @@ export function ProductGalleryBrowser({ canEdit, canCurate, canSeePrices, initia
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [items, setItems] = useState<GalleryListItem[]>([]);
   const [prices, setPrices] = useState<Record<string, GalleryPriceState>>({});
+  const [defaultRates, setDefaultRates] = useState<CurrencyRates | null>(null);
+  const [temporaryRates, setTemporaryRates] = useState<CurrencyRates>(EMPTY_RATES);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
@@ -214,6 +219,28 @@ export function ProductGalleryBrowser({ canEdit, canCurate, canSeePrices, initia
   }, [loadFilters]);
 
   useEffect(() => {
+    if (!canSeePrices) return;
+    let latest = 0;
+    const loadRates = async () => {
+      const request = ++latest;
+      const rows = await listCurrencyDefaultRatesAction().catch(() => []);
+      if (request === latest) setDefaultRates(Object.fromEntries(rows.map(({ currency, rate }) => [currency, rate])));
+    };
+    const onRefresh = () => {
+      setTemporaryRates(EMPTY_RATES);
+      if (navigator.onLine) void loadRates();
+    };
+    window.queueMicrotask(() => {
+      if (latest === 0) void loadRates();
+    });
+    window.addEventListener("pw-read-refresh", onRefresh);
+    return () => {
+      latest++;
+      window.removeEventListener("pw-read-refresh", onRefresh);
+    };
+  }, [canSeePrices]);
+
+  useEffect(() => {
     // reload on every filter change and when edit mode turns on or off; a newer request makes an older answer ignored
     window.queueMicrotask(() => void reload(state));
   }, [state, reload]);
@@ -301,8 +328,15 @@ export function ProductGalleryBrowser({ canEdit, canCurate, canSeePrices, initia
 
   const filtered = hasActiveGalleryFilters(state);
   const filterCount = activeGalleryFilterCount(state);
+  const visibleCurrencies = [...new Set(items.flatMap(({ id }) => {
+    const price = prices[id];
+    return price && price !== "loading" && price.status === "priced"
+      ? price.sourceTotals.map(({ currency }) => currency).filter((currency) => currency !== "AED")
+      : [];
+  }))].sort();
 
   return (
+    <GalleryRatesContext value={{ defaults: defaultRates, temporary: temporaryRates }}>
     <div className="px-5 py-6 sm:px-8">
       <div className="flex min-w-0 flex-col gap-4">
         {canEdit ? (
@@ -330,6 +364,11 @@ export function ProductGalleryBrowser({ canEdit, canCurate, canSeePrices, initia
               </button>
             ) : null}
             {filtered ? <button type="button" className={toolbarSecondaryButton} onClick={clearFilters}>Clear filters</button> : null}
+            {canSeePrices ? (
+              <ProductGalleryRatePopover currencies={visibleCurrencies} defaults={defaultRates ?? EMPTY_RATES} temporary={temporaryRates}
+                onRate={(currency, rate) => setTemporaryRates((current) => ({ ...current, [currency]: rate }))}
+                onReset={() => setTemporaryRates(EMPTY_RATES)} />
+            ) : null}
           </div>
           <div id="gallery-filter-panel" className={`${filtersOpen ? "grid" : "hidden"} grid-cols-1 gap-2 min-[480px]:grid-cols-2 @xl:grid @xl:grid-cols-3 @4xl:grid-cols-6`}>
             <Select label="Brand" value={state.brandId} onChange={(value) => change({ brandId: value })}>
@@ -405,5 +444,6 @@ export function ProductGalleryBrowser({ canEdit, canCurate, canSeePrices, initia
       {editing && dialog?.kind === "remove" ? <ConfirmRemoveDialog item={dialog.item} onClose={() => setDialog(null)} onConfirm={() => removeItem(dialog.item)} /> : null}
       {editing && canCurate && dialog?.kind === "merge" ? <MergeGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onMerged={() => void afterChange("Items merged.")} /> : null}
     </div>
+    </GalleryRatesContext>
   );
 }
