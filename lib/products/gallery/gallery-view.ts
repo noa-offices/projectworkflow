@@ -138,6 +138,15 @@ export function editFormProblem(displayName: string, tagText: string): string | 
 
 // ── Details popup: swatches and specification ──────────────────────────────
 export const SWATCHES_SHOWN_FIRST = 24;
+/** A material group with more than 12 collections starts with its first 6 and a "Show all collections" button. */
+export const COLLECTIONS_COLLAPSE_ABOVE = 12;
+export const COLLECTIONS_SHOWN_FIRST = 6;
+
+/** "Grade A": the subgroup's grade as a small badge text (not doubled when the stored value already says grade). */
+export function gradeBadge(grade: string): string {
+  const text = grade.trim();
+  return /grade/i.test(text) ? text : `Grade ${text}`;
+}
 export const SPECIFICATION_HELP_TEXT = "Generic text only. Do not include client names, project names, prices or quote numbers.";
 export const SPECIFICATION_SOURCE_LABELS: Record<Exclude<GallerySpecificationSource, "none">, string> = {
   gallery: "Saved specification",

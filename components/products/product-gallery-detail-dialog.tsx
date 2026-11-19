@@ -8,7 +8,7 @@ import { resolveQuotationImageUrl, markQuotationImagePathFailed } from "@/lib/qu
 import { getGalleryItemDetailAction, updateGalleryItemSpecificationAction } from "@/lib/products/gallery/gallery-actions";
 import { GALLERY_SPECIFICATION_MAX } from "@/lib/products/gallery/gallery";
 import type { GalleryDetail, GalleryDetailMaterialGroup, GalleryDetailSwatch, GallerySpecificationSource } from "@/lib/products/gallery/gallery-detail";
-import { SWATCHES_SHOWN_FIRST, SPECIFICATION_HELP_TEXT, SPECIFICATION_SOURCE_LABELS, fullDetailHref, quotedText, specificationDraft, swatchCaption } from "@/lib/products/gallery/gallery-view";
+import { COLLECTIONS_COLLAPSE_ABOVE, COLLECTIONS_SHOWN_FIRST, SWATCHES_SHOWN_FIRST, gradeBadge, SPECIFICATION_HELP_TEXT, SPECIFICATION_SOURCE_LABELS, fullDetailHref, quotedText, specificationDraft, swatchCaption } from "@/lib/products/gallery/gallery-view";
 
 // The details popup of the Product Gallery. Read-only: names and text only, no money values, no recipe. The data comes from
 // getGalleryItemDetailAction (the server decides what is readable). It opens from a card (Details button, picture or title); Escape and
@@ -123,22 +123,19 @@ function SwatchImage({ swatch, size }: { swatch: GalleryDetailSwatch; size: numb
   );
 }
 
-/** One material group as a grid of small square swatches: the first 24, then "Show all (N)". A click shows the code and full name above the grid. */
-function SwatchGroup({ group }: { group: GalleryDetailMaterialGroup }) {
+/** A grid of small square swatches: the first 24, then "Show all (N)" / "Show less" for this collection. */
+function SwatchGrid({ swatches, selected, onSelect }: { swatches: GalleryDetailSwatch[]; selected: GalleryDetailSwatch | null; onSelect: (swatch: GalleryDetailSwatch) => void }) {
   const [showAll, setShowAll] = useState(false);
-  const [selected, setSelected] = useState<GalleryDetailSwatch | null>(null);
-  const total = group.swatches.length;
-  const shown = showAll ? group.swatches : group.swatches.slice(0, SWATCHES_SHOWN_FIRST);
+  const total = swatches.length;
+  const shown = showAll ? swatches : swatches.slice(0, SWATCHES_SHOWN_FIRST);
   return (
-    <div data-testid="swatch-group">
-      <p className="font-medium text-zinc-900">{group.groupName} <span className="font-normal text-zinc-500">({total})</span></p>
-      <p className="mt-1 min-h-5 text-xs text-zinc-700" aria-live="polite">{selected ? swatchCaption(selected) : ""}</p>
+    <>
       <ul className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(48px,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,minmax(56px,1fr))]">
         {shown.map((swatch, index) => (
           <li key={`${swatch.code}-${index}`} className="flex min-w-0 flex-col items-center gap-0.5">
             <button
               type="button"
-              onClick={() => setSelected(swatch)}
+              onClick={() => onSelect(swatch)}
               title={swatchCaption(swatch)}
               aria-label={swatchCaption(swatch)}
               aria-pressed={selected === swatch}
@@ -155,8 +152,38 @@ function SwatchGroup({ group }: { group: GalleryDetailMaterialGroup }) {
           {showAll ? "Show less" : `Show all (${total})`}
         </button>
       ) : null}
+    </>
+  );
+}
+
+/** One material group: a heading with the total, then each collection (Era, Manhattan, ...) as its own labelled sub-section. */
+function SwatchGroup({ group }: { group: GalleryDetailMaterialGroup }) {
+  const [selected, setSelected] = useState<GalleryDetailSwatch | null>(null);
+  const [allCollections, setAllCollections] = useState(false);
+  const collapsible = group.collections.length > COLLECTIONS_COLLAPSE_ABOVE;
+  const visible = collapsible && !allCollections ? group.collections.slice(0, COLLECTIONS_SHOWN_FIRST) : group.collections;
+  return (
+    <section data-testid="swatch-group" aria-label={group.groupName}>
+      <h4 className="font-medium text-zinc-900">{group.groupName} <span className="font-normal text-zinc-500">({group.count})</span></h4>
+      <p className="mt-1 min-h-5 text-xs text-zinc-700" aria-live="polite">{selected ? swatchCaption(selected) : ""}</p>
+      <div className="mt-1 flex flex-col gap-3">
+        {visible.map((collection) => (
+          <div key={`${collection.name}-${collection.grade ?? ""}`} data-testid="swatch-collection">
+            <h5 className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-zinc-800">
+              {collection.name} ({collection.swatches.length})
+              {collection.grade ? <span className="rounded-full border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600">{gradeBadge(collection.grade)}</span> : null}
+            </h5>
+            <SwatchGrid swatches={collection.swatches} selected={selected} onSelect={setSelected} />
+          </div>
+        ))}
+      </div>
+      {collapsible ? (
+        <button type="button" className={`${galleryButton} mt-3`} onClick={() => setAllCollections((open) => !open)} aria-expanded={allCollections}>
+          {allCollections ? "Show fewer collections" : `Show all collections (${group.collections.length})`}
+        </button>
+      ) : null}
       {group.moreCount ? <p className="mt-1 text-xs text-zinc-500">and {group.moreCount} more</p> : null}
-    </div>
+    </section>
   );
 }
 
@@ -239,7 +266,7 @@ function Skeleton() {
   );
 }
 
-function Body({ detail, canEditSpecification, onSpecificationSaved }: { detail: GalleryDetail; canEditSpecification: boolean; onSpecificationSaved: () => Promise<void> }) {
+function Body({ detail, canEdit, onSpecificationSaved }: { detail: GalleryDetail; canEdit: boolean; onSpecificationSaved: () => Promise<void> }) {
   return (
     <div className="grid grid-cols-1 gap-5 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       <Pictures detail={detail} />
@@ -270,7 +297,7 @@ function Body({ detail, canEditSpecification, onSpecificationSaved }: { detail: 
         </Section>
 
         <Section title="Specification" defaultOpen>
-          <SpecificationBlock detail={detail} canEdit={canEditSpecification} onSaved={onSpecificationSaved} />
+          <SpecificationBlock detail={detail} canEdit={canEdit} onSaved={onSpecificationSaved} />
         </Section>
 
         <Section title="Available materials">
@@ -302,7 +329,7 @@ function Body({ detail, canEditSpecification, onSpecificationSaved }: { detail: 
   );
 }
 
-export function GalleryDetailDialog({ itemId, title, canEditSpecification = false, onClose }: { itemId: string; title: string; canEditSpecification?: boolean; onClose: () => void }) {
+export function GalleryDetailDialog({ itemId, title, canEdit = false, onClose }: { itemId: string; title: string; canEdit?: boolean; onClose: () => void }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -345,7 +372,7 @@ export function GalleryDetailDialog({ itemId, title, canEditSpecification = fals
           <button type="button" className={galleryButton} onClick={() => setAttempt((count) => count + 1)}>Retry</button>
         </div>
       ) : null}
-      {phase.kind === "ready" ? <Body detail={phase.detail} canEditSpecification={canEditSpecification} onSpecificationSaved={refresh} /> : null}
+      {phase.kind === "ready" ? <Body detail={phase.detail} canEdit={canEdit} onSpecificationSaved={refresh} /> : null}
       <div className="sticky bottom-0 -mx-4 -mb-4 mt-1 flex flex-wrap justify-end gap-2 border-t border-zinc-100 bg-white px-4 py-3">
         <button type="button" className={`${galleryButton} h-9`} onClick={onClose}>Close</button>
         {phase.kind === "ready" ? <Link href={fullDetailHref(phase.detail.templateId)} className={openLink}>Open full detail</Link> : null}

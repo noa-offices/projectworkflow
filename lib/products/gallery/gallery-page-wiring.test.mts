@@ -189,7 +189,8 @@ test("details popup: a Details button, the picture and the title open it with th
   assert.match(card, /<button .*>Details<\/button>/);
   assert.match(browser, /dialog\?\.kind === "detail" \? <GalleryDetailDialog itemId=\{dialog\.item\.id\}/, "the popup gets the item id");
   assert.doesNotMatch(browser, /\{editing && dialog\?\.kind === "detail"/, "the popup is not an edit-mode feature: every viewer gets it");
-  assert.match(browser, /canEditSpecification=\{editing\}/, "only edit mode (which only editors can turn on) enables the specification edit button");
+  assert.match(browser, /<GalleryDetailDialog [^\n]*canEdit=\{canEdit\}/, "the popup gets the server capability, not the page toggle");
+  assert.doesNotMatch(browser, /<GalleryDetailDialog [^\n]*editing/, "the Edit toggle of the page does not decide the popup's edit button");
   assert.doesNotMatch(code(browser), /\/products\?template=/);
   assert.doesNotMatch(read("./gallery-view.ts"), /productLibraryHref/);
 });
@@ -236,9 +237,10 @@ test("details service: signed in, canView first, the caller's client, a short li
   assert.doesNotMatch(detailType, /recipe/i, "the detail type has no recipe field");
 });
 
-test("specification editing: the button needs canEdit AND edit mode; textarea, counter, helper text, Save/Cancel, saving disabled, in-place update", () => {
+test("specification editing: the button needs canEdit only (not the page toggle); textarea, counter, helper text, Save/Cancel, saving disabled, in-place update", () => {
   assert.match(detailDialog, /\{canEdit \? <div><button[^\n]*onClick=\{startEditing\}>Edit specification<\/button><\/div> : null\}/, "the button only when the dialog was told the user may edit");
-  assert.match(detailDialog, /canEditSpecification = false/, "off by default");
+  assert.match(detailDialog, /canEdit = false/, "off by default: a user who cannot edit sees no button");
+  assert.doesNotMatch(code(detailDialog), /canEditSpecification|editMode|editing &&/, "no coupling to the page's Edit mode in the popup");
   assert.match(detailDialog, /onClick=\{\(\) => setEditing\(false\)\}/);
   assert.match(detailDialog, /<textarea[\s\S]*?maxLength=\{GALLERY_SPECIFICATION_MAX\}/);
   assert.match(detailDialog, /\{draft\.length\} \/ \{GALLERY_SPECIFICATION_MAX\}/, "character counter");
@@ -256,13 +258,25 @@ test("specification editing: the button needs canEdit AND edit mode; textarea, c
   assert.match(service, /product_gallery_is_editor"\)\)\) return \{ ok: false, kind: "not_allowed" \};\s*return callCuration\(supabase, "product_gallery_update_specification"/);
 });
 
-test("finish swatches: a grid per material group, 24 first with Show all / Show less, code under each swatch, lazy fixed-size pictures, the old text line is gone", () => {
+test("finish swatches: sections per material group, each collection its own sub-section with its own Show all, 24 first, lazy fixed-size pictures, no text line", () => {
   assert.match(detailDialog, /function SwatchGroup/);
+  assert.match(detailDialog, /function SwatchGrid/);
   assert.match(detailDialog, /data-testid="swatch-group"/);
-  assert.match(detailDialog, /group\.swatches\.slice\(0, SWATCHES_SHOWN_FIRST\)/);
+  assert.match(detailDialog, /data-testid="swatch-collection"/);
+  assert.match(detailDialog, /\{group\.groupName\} <span[^\n]*\(\{group\.count\}\)/, "the group heading with its count");
+  assert.match(detailDialog, /\{collection\.name\} \(\{collection\.swatches\.length\}\)/, "each collection heading with its count, for example Era (24)");
+  assert.match(detailDialog, /\{collection\.grade \? <span[^\n]*>\{gradeBadge\(collection\.grade\)\}<\/span> : null\}/, "the grade as a small badge");
+  assert.match(detailDialog, /<SwatchGrid swatches=\{collection\.swatches\}/, "one grid per collection");
+  assert.match(detailDialog, /swatches\.slice\(0, SWATCHES_SHOWN_FIRST\)/);
   assert.match(view, /SWATCHES_SHOWN_FIRST = 24/);
-  assert.match(detailDialog, /`Show all \(\$\{total\}\)`/);
+  assert.match(detailDialog, /`Show all \(\$\{total\}\)`/, "per-collection Show all (N)");
   assert.match(detailDialog, /"Show less"/);
+  assert.match(view, /COLLECTIONS_COLLAPSE_ABOVE = 12/);
+  assert.match(view, /COLLECTIONS_SHOWN_FIRST = 6/);
+  assert.match(detailDialog, /collapsible = group\.collections\.length > COLLECTIONS_COLLAPSE_ABOVE/);
+  assert.match(detailDialog, /group\.collections\.slice\(0, COLLECTIONS_SHOWN_FIRST\)/);
+  assert.match(detailDialog, /Show all collections \(\$\{group\.collections\.length\}\)/, "the group-level button");
+  assert.match(detailDialog, /"Show fewer collections"/);
   assert.match(detailDialog, /loading="lazy"/);
   assert.match(detailDialog, /width=\{size\}\s*height=\{size\}/);
   assert.match(detailDialog, /h-12 w-12[^"]*sm:h-14 sm:w-14/, "48px on a phone, 56px on a desktop");
@@ -276,4 +290,19 @@ test("finish swatches: a grid per material group, 24 first with Show all / Show 
   assert.ok(materialsSection.includes("SwatchGroup"), "the materials section is the swatch grid");
   assert.doesNotMatch(materialsSection, /\.items|join\(/, "no joined text line of finish names in the materials section");
   assert.doesNotMatch(detailDialog.slice(detailDialog.indexOf("function SwatchGroup"), detailDialog.indexOf("function SpecificationBlock")), /join\(/, "and none in the swatch group");
+});
+
+test("popup fixes: materials are read in group/subgroup/sort order with subgroup names; the picture column is read with a retry and validated against the template", () => {
+  assert.match(service, /\.order\("material_group_id", \{ ascending: true \}\)\.order\("subgroup_id", \{ ascending: true \}\)\.order\("sort_order", \{ ascending: true \}\)/, "the read order, so a cap cuts the tail");
+  assert.match(service, /from\("brand_material_subgroups"\)\.select\("id,name,grade,sort_order"\)/);
+  assert.match(service, /subgroup_id,material_collection/);
+  assert.match(service, /"is_hidden", "selected_image",/, "the list reads the chosen picture");
+  assert.match(service, /LIST_COLUMNS_NO_IMAGE/, "and still works before the migration");
+  assert.match(service, /DETAIL_ITEM_COLUMNS_NO_IMAGE/);
+  assert.match(service, /validSelectedImage\(template, row\.selected_image\)/, "a card only uses a picture that is still the template's own");
+  assert.match(service, /"default_image_url", "reference_image_url", \.\.\.PROPOSED_IMAGE_FIELDS/, "the one extra column the list reads for this");
+  assert.doesNotMatch(service.slice(service.indexOf("const LIST_COLUMNS"), service.indexOf("const LIST_COLUMNS_NO_IMAGE")), /recipe/);
+  const sql = read("../../../supabase/migrations/20261119210000_product_gallery_selected_image.sql");
+  assert.match(sql, /add column if not exists selected_image text/);
+  assert.match(sql, /product_gallery_clean_image/);
 });

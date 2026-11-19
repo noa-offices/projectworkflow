@@ -7,6 +7,7 @@ import {
   GALLERY_DETAIL_SWATCHES_TOTAL_MAX,
   chooseSpecification,
   swatchImagePath,
+  validSelectedImage,
   accessoryGroups,
   buildGalleryDetail,
   describeRecipe,
@@ -95,58 +96,112 @@ test("plain text: trimmed, empty is null, bounded", () => {
   assert.equal(plainText("x".repeat(9000))?.length, 4000);
 });
 
-const material = (id: string, group: string, code: string | null, name: string | null, imageUrl: string | null = null, sort = 0) => ({ id, material_group_id: group, material_code: code, material_name: name, image_url: imageUrl, sort_order: sort });
+const material = (id: string, group: string, code: string | null, name: string | null, imageUrl: string | null = null, sort = 0, extra: Record<string, unknown> = {}) => ({
+  id, material_group_id: group, material_code: code, material_name: name, image_url: imageUrl, sort_order: sort, subgroup_id: null as string | null, material_collection: null as string | null, ...extra,
+});
+const fullLink = (id: string, group: string, order = 0, label: string | null = null) => ({ id, material_group_id: group, selection_mode: "full_group", label_override: label, sort_order: order });
 
-test("swatches: grouped by the template group, label override wins, full_group vs selected_items, picture paths for the existing image helper", () => {
+test("swatches: each group has collections named by subgroup, else material_collection, else Other; counts, grade, ordering and fallbacks", () => {
   const result = mapMaterials({
-    links: [
-      { id: "l1", material_group_id: "g1", selection_mode: "full_group", label_override: null, sort_order: 0 },
-      { id: "l2", material_group_id: "g2", selection_mode: "selected_items", label_override: "Seat finish", sort_order: 1 },
-      { id: "l3", material_group_id: "g3", selection_mode: "full_group", label_override: null, sort_order: 2 },
+    links: [fullLink("l1", "g1")],
+    groups: [{ id: "g1", group_name: "Fabric Finishes" }],
+    linkItems: [],
+    subgroups: [
+      { id: "sgEra", name: "Era", grade: "A", sort_order: 1 },
+      { id: "sgFame", name: "Fame", grade: null, sort_order: 0 },
     ],
-    groups: [{ id: "g1", group_name: "Fabric Finishes" }, { id: "g2", group_name: "Leathers" }, { id: "g3", group_name: "Empty group" }],
-    linkItems: [{ product_template_material_group_id: "l2", brand_material_id: "x1", sort_order: 1 }, { product_template_material_group_id: "l2", brand_material_id: "x2", sort_order: 0 }],
     materials: [
-      material("m1", "g1", "ER01", "Jet Black", "materials/er01.webp", 0),
-      material("m2", "g1", "ER02", "Sand", null, 1),
-      material("m2", "g1", "ER02", "Sand", null, 1),
-      material("x1", "g2", null, "Nappa", "product-images:materials/nappa.webp"),
-      material("x2", "g2", "L9", "Aniline", "https://cdn.example/a.webp"),
-      material("x3", "g2", null, "Not chosen"),
+      material("m1", "g1", "ER02", "Sand", null, 2, { subgroup_id: "sgEra" }),
+      material("m2", "g1", "ER01", "Jet Black", "materials/er01.webp", 1, { subgroup_id: "sgEra" }),
+      material("m3", "g1", "FA01", "Fame One", "product-images:materials/fa01.webp", 0, { subgroup_id: "sgFame" }),
+      material("m4", "g1", "CH01", "Chili Red", null, 0, { material_collection: "Chili" }),
+      material("m5", "g1", "XX01", "Loose", null, 0),
+      material("m5", "g1", "XX01", "Loose", null, 0),
+      material("m6", "g1", "GH01", "Ghost", null, 0, { subgroup_id: "missing-subgroup", material_collection: "Jet" }),
+      material("m7", "g1", "  ", "  "),
     ],
   });
-  assert.deepEqual(result.map((group) => group.groupName), ["Fabric Finishes", "Seat finish"], "a group with no materials is left out");
-  assert.deepEqual(result[0].swatches, [
-    { code: "ER01", name: "Jet Black", imagePath: "product-images:materials/er01.webp" },
-    { code: "ER02", name: "Sand", imagePath: null },
-  ], "a duplicate row appears once; a missing picture is null (the UI shows the colour-less box with the code)");
-  assert.deepEqual(result[1].swatches, [
-    { code: "L9", name: "Aniline", imagePath: "https://cdn.example/a.webp" },
-    { code: "Nappa", name: "Nappa", imagePath: "product-images:materials/nappa.webp" },
-  ], "only the chosen materials, in their order; a missing code falls back to the name");
+  assert.equal(result.length, 1);
+  const group = result[0];
+  assert.equal(group.groupName, "Fabric Finishes");
+  assert.equal(group.count, 6, "an empty row and a duplicate are not counted");
+  assert.deepEqual(group.collections.map((collection) => [collection.name, collection.grade, collection.swatches.length]), [
+    ["Fame", null, 1],
+    ["Era", "A", 2],
+    ["Chili", null, 1],
+    ["Jet", null, 1],
+    ["Other", null, 1],
+  ], "subgroups by their sort order, then plain collection names, Other last; a missing subgroup falls back to material_collection");
+  assert.deepEqual(group.collections[1].swatches.map((swatch) => swatch.code), ["ER01", "ER02"], "swatches by their own sort order");
+  assert.deepEqual(group.collections[0].swatches[0], { code: "FA01", name: "Fame One", imagePath: "product-images:materials/fa01.webp" });
+  assert.deepEqual(group.collections[1].swatches[1], { code: "ER02", name: "Sand", imagePath: null }, "a missing picture is null: the box shows the code");
+  assert.equal(group.moreCount, 0);
+});
+
+test("swatches: same sort order falls back to the code (natural order); a subgroup with the same name but another grade is its own collection", () => {
+  const result = mapMaterials({
+    links: [fullLink("l1", "g1")],
+    groups: [{ id: "g1", group_name: "Leathers" }],
+    linkItems: [],
+    subgroups: [{ id: "s1", name: "Amalfi", grade: "A", sort_order: 0 }, { id: "s2", name: "Amalfi", grade: "B", sort_order: 0 }],
+    materials: [
+      material("a", "g1", "L10", "Ten", null, 0, { subgroup_id: "s1" }),
+      material("b", "g1", "L2", "Two", null, 0, { subgroup_id: "s1" }),
+      material("c", "g1", "L1", "One", null, 0, { subgroup_id: "s2" }),
+    ],
+  });
+  assert.deepEqual(result[0].collections.map((collection) => [collection.name, collection.grade]), [["Amalfi", "A"], ["Amalfi", "B"]]);
+  assert.deepEqual(result[0].collections[0].swatches.map((swatch) => swatch.code), ["L2", "L10"]);
+});
+
+test("swatches: selected_items lists only the chosen materials in the chosen order, label override wins, an empty group is left out", () => {
+  const result = mapMaterials({
+    links: [
+      fullLink("l0", "g1", 0),
+      { id: "l2", material_group_id: "g2", selection_mode: "selected_items", label_override: "Seat finish", sort_order: 1 },
+    ],
+    groups: [{ id: "g1", group_name: "Empty" }, { id: "g2", group_name: "Leathers" }],
+    linkItems: [{ product_template_material_group_id: "l2", brand_material_id: "x1", sort_order: 1 }, { product_template_material_group_id: "l2", brand_material_id: "x2", sort_order: 0 }],
+    subgroups: [{ id: "s1", name: "Semi-Aniline", grade: null, sort_order: 0 }],
+    materials: [material("x1", "g2", null, "Nappa", "https://cdn.example/n.webp", 0, { subgroup_id: "s1" }), material("x2", "g2", "L9", "Aniline", "a.webp", 0, { subgroup_id: "s1" }), material("x3", "g2", null, "Not chosen", null, 0, { subgroup_id: "s1" })],
+  });
+  assert.deepEqual(result.map((group) => group.groupName), ["Seat finish"]);
+  assert.deepEqual(result[0].collections[0].swatches.map((swatch) => swatch.name), ["Aniline", "Nappa"]);
+  assert.equal(result[0].collections[0].swatches[1].imagePath, "https://cdn.example/n.webp");
+  assert.equal(result[0].collections[0].swatches[1].code, "Nappa", "no code: the name is the code");
   assert.equal(swatchImagePath("  "), null);
   assert.equal(swatchImagePath(5), null);
   assert.equal(swatchImagePath("a/b.webp"), "product-images:a/b.webp");
 });
 
-test("swatches: at most 400 per group and 1200 in all; the rest is counted, not sent", () => {
-  const many = (group: string, count: number) => Array.from({ length: count }, (_, index) => material(`${group}-${index}`, group, `C${index}`, `Finish ${index}`, `m/${group}-${index}.webp`, index));
-  const link = (id: string, group: string, order: number) => ({ id, material_group_id: group, selection_mode: "full_group", label_override: null, sort_order: order });
-  const one = mapMaterials({ links: [link("l1", "g1", 0)], groups: [{ id: "g1", group_name: "Big" }], linkItems: [], materials: many("g1", 450) });
-  assert.equal(one[0].swatches.length, GALLERY_DETAIL_SWATCHES_PER_GROUP_MAX);
+test("swatches: at most 400 per group and 1200 in all; the cap cuts the END of the order, the rest is only counted", () => {
+  const many = (group: string, count: number, sub: string) => Array.from({ length: count }, (_, index) => material(`${group}-${sub}-${index}`, group, `C${String(index).padStart(3, "0")}`, `Finish ${index}`, `m/${group}-${sub}-${index}.webp`, index, { subgroup_id: sub }));
+  const subs = ["s1", "s2", "s3", "s4"].map((id, index) => ({ id, name: `Collection ${index + 1}`, grade: null, sort_order: index }));
+  const one = mapMaterials({ links: [fullLink("l1", "g1")], groups: [{ id: "g1", group_name: "Big" }], linkItems: [], subgroups: subs, materials: [...many("g1", 300, "s1"), ...many("g1", 150, "s2")] });
+  assert.equal(one[0].count, GALLERY_DETAIL_SWATCHES_PER_GROUP_MAX);
   assert.equal(one[0].moreCount, 50);
-  const three = mapMaterials({ links: [link("l1", "g1", 0), link("l2", "g2", 1), link("l3", "g3", 2), link("l4", "g4", 3)], groups: ["g1", "g2", "g3", "g4"].map((id) => ({ id, group_name: id })), linkItems: [], materials: [...many("g1", 400), ...many("g2", 400), ...many("g3", 400), ...many("g4", 10)] });
-  assert.equal(three.reduce((sum, group) => sum + group.swatches.length, 0), GALLERY_DETAIL_SWATCHES_TOTAL_MAX, "the whole popup is capped");
+  assert.deepEqual(one[0].collections.map((collection) => collection.swatches.length), [300, 100], "the first collection is whole; the cut is in the last one, at its tail");
+  assert.equal(one[0].collections[1].swatches.at(-1)?.code, "C099", "the first swatches of that collection are kept");
+  const three = mapMaterials({
+    links: [fullLink("l1", "g1", 0), fullLink("l2", "g2", 1), fullLink("l3", "g3", 2), fullLink("l4", "g4", 3)],
+    groups: ["g1", "g2", "g3", "g4"].map((id) => ({ id, group_name: id })),
+    linkItems: [],
+    subgroups: subs,
+    materials: [...many("g1", 400, "s1"), ...many("g2", 400, "s2"), ...many("g3", 400, "s3"), ...many("g4", 10, "s4")],
+  });
+  assert.equal(three.reduce((sum, group) => sum + group.count, 0), GALLERY_DETAIL_SWATCHES_TOTAL_MAX, "the whole popup is capped");
   assert.deepEqual(three.map((group) => group.groupName), ["g1", "g2", "g3"], "a group that gets no room is not listed");
-  const small = mapMaterials({ links: [link("l1", "g1", 0)], groups: [{ id: "g1", group_name: "Small" }], linkItems: [], materials: many("g1", 5) });
+  const small = mapMaterials({ links: [fullLink("l1", "g1")], groups: [{ id: "g1", group_name: "Small" }], linkItems: [], subgroups: subs, materials: many("g1", 5, "s1") });
   assert.equal(small[0].moreCount, 0, "no note when no cap was hit");
 });
 
 test("swatches: no price, cost or supplier field in the payload", () => {
-  const rows = [{ ...material("m1", "g1", "ER01", "Jet Black", "a.webp"), price: 98765, supplier_price: 98765, cost: 98765 }];
-  const result = mapMaterials({ links: [{ id: "l1", material_group_id: "g1", selection_mode: "full_group", label_override: null, sort_order: 0 }], groups: [{ id: "g1", group_name: "Fabrics" }], linkItems: [], materials: rows });
+  const rows = [{ ...material("m1", "g1", "ER01", "Jet Black", "a.webp", 0, { subgroup_id: "s1" }), price: 98765, supplier_price: 98765, cost: 98765 }];
+  const result = mapMaterials({ links: [fullLink("l1", "g1")], groups: [{ id: "g1", group_name: "Fabrics" }], linkItems: [], subgroups: [{ id: "s1", name: "Era", grade: "A", sort_order: 0, price: 98765 } as never], materials: rows });
   assert.doesNotMatch(JSON.stringify(result), /98765|price|cost|supplier/i);
-  assert.deepEqual(Object.keys(result[0].swatches[0]).sort(), ["code", "imagePath", "name"]);
+  assert.deepEqual(Object.keys(result[0]).sort(), ["collections", "count", "groupName", "moreCount"]);
+  assert.deepEqual(Object.keys(result[0].collections[0]).sort(), ["grade", "name", "swatches"]);
+  assert.deepEqual(Object.keys(result[0].collections[0].swatches[0]).sort(), ["code", "imagePath", "name"]);
 });
 
 test("options and accessories: names only, grouped, inactive left out, no item without a name", () => {
@@ -313,4 +368,28 @@ test("detail specification: a template full of prices gives text without money, 
     linkedFamilies: [],
   }).generatedSpecification;
   assert.equal(spec, null, "text that looks like a price is dropped, so the next source is used");
+});
+
+// ── the picture chosen in the quotation builder ────────────────────────────
+test("selected picture: valid only if it is one of the template's own pictures; the template's own spelling is returned", () => {
+  const template = { default_image_url: "product-images:a.webp", proposed_image_url_1: "a.webp", proposed_image_url_2: "b.webp", proposed_image_url_3: "c.webp", reference_image_url: "ref.webp" };
+  assert.equal(validSelectedImage(template, "b.webp"), "b.webp");
+  assert.equal(validSelectedImage(template, "product-images:b.webp"), "b.webp", "with or without the usual prefix");
+  assert.equal(validSelectedImage(template, "ref.webp"), "ref.webp", "the reference picture counts");
+  assert.equal(validSelectedImage(template, "a.webp"), "product-images:a.webp", "the template's own spelling, never the stored text");
+  for (const unknown of ["other.webp", "https://evil.example/x.png", "data:image/png;base64,AAAA", "../b.webp", "", "   ", null, undefined, 5]) assert.equal(validSelectedImage(template, unknown), null, String(unknown));
+  assert.equal(validSelectedImage({}, "a.webp"), null, "a template with no pictures");
+});
+
+test("detail pictures: the chosen one first, the rest in the default order without duplicates; an invalid choice is ignored", () => {
+  const template = { default_image_url: "a.webp", proposed_image_url_1: "a.webp", proposed_image_url_2: "b.webp", proposed_image_url_3: "c.webp", reference_image_url: "ref.webp" };
+  assert.deepEqual(galleryDetailImages(template), ["a.webp", "b.webp", "c.webp", "ref.webp"], "default order");
+  assert.deepEqual(galleryDetailImages(template, "c.webp"), ["c.webp", "a.webp", "b.webp", "ref.webp"]);
+  assert.deepEqual(galleryDetailImages(template, "product-images:a.webp"), ["a.webp", "b.webp", "c.webp", "ref.webp"]);
+  assert.deepEqual(galleryDetailImages(template, "removed.webp"), ["a.webp", "b.webp", "c.webp", "ref.webp"], "a picture that is no longer the template's is ignored");
+  const many: Record<string, unknown> = { default_image_url: "d.webp", reference_image_url: "ref.webp" };
+  for (let index = 1; index <= 20; index += 1) many[`proposed_image_url_${index}`] = `p${index}.webp`;
+  const chosen = galleryDetailImages(many, "ref.webp");
+  assert.equal(chosen.length, 12);
+  assert.equal(chosen[0], "ref.webp", "the chosen picture is first even when it would have been cut");
 });

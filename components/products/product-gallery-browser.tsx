@@ -344,7 +344,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
         ) : null}
       </div>
 
-      {dialog?.kind === "detail" ? <GalleryDetailDialog itemId={dialog.item.id} title={dialog.item.displayName} canEditSpecification={editing} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === "detail" ? <GalleryDetailDialog itemId={dialog.item.id} title={dialog.item.displayName} canEdit={canEdit} onClose={() => setDialog(null)} /> : null}
       {editing && dialog?.kind === "edit" ? <EditGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onSaved={() => void afterChange("Saved.")} /> : null}
       {editing && dialog?.kind === "hide" ? <ConfirmHiddenDialog item={dialog.item} hide onClose={() => setDialog(null)} onConfirm={() => setHidden(dialog.item, true)} /> : null}
       {editing && canCurate && dialog?.kind === "merge" ? <MergeGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onMerged={() => void afterChange("Items merged.")} /> : null}
