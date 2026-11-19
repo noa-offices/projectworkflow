@@ -4,6 +4,7 @@
  * copied wholesale), and removePriceLikeKeys() is a last guard. A recipe is read here only to turn ids into readable lines; ids and the
  * recipe itself never leave this file.
  */
+import { parseAccessoryConfigurationGroups } from "../accessory-conditional-configuration";
 import { groupMaterialsIntoSections } from "../../quotations/finish-material-groups";
 import { resolveProductConfigurationState, type ProductConfigurationSelections, type ProductConfigurationStep } from "../product-configuration-state";
 import { restorePlainState } from "../saved-setups/recipe";
@@ -16,14 +17,18 @@ export const GALLERY_DETAIL_SPECIFICATION_MAX = 2000;
 export const GALLERY_DETAIL_ITEMS_PER_GROUP_MAX = 60;
 export const GALLERY_DETAIL_TEXT_MAX = 4000;
 
-export type GalleryDetailLine = { label: string; value: string };
+/** One readable line of the saved configuration; supplierCode (text such as "111 058") is added when the template row has one. */
+export type GalleryDetailLine = { label: string; value: string; supplierCode?: string };
+/** A required component the template rules add for the saved choices (for example "Top-Access with Soft-Close x 4"). Names, quantity, code and size only. */
+export type GalleryDetailRequiredComponent = { name: string; quantity: number; supplierCode?: string; size?: string };
+export type GalleryDetailOptionItem = { name: string; supplierCode?: string };
 /** One finish swatch: short code, full name, and the picture's storage path (the browser signs it with the existing image helper). */
 export type GalleryDetailSwatch = { code: string; name: string; imagePath: string | null };
 /** One section of a material group, headed exactly as the quotation finish selector heads it: "category · collection" (for example "SG3 · CHILI"). */
 export type GalleryDetailCollection = { name: string; swatches: GalleryDetailSwatch[] };
 export type GalleryDetailMaterialGroup = { groupName: string; count: number; collections: GalleryDetailCollection[]; moreCount: number };
 export type GallerySpecificationSource = "gallery" | "generated" | "template" | "none";
-export type GalleryDetailOptionGroup = { groupName: string; kind: "option" | "accessory" | "linked"; items: string[] };
+export type GalleryDetailOptionGroup = { groupName: string; kind: "option" | "accessory" | "linked"; items: GalleryDetailOptionItem[] };
 
 export type GalleryDetail = {
   id: string;
@@ -44,6 +49,8 @@ export type GalleryDetail = {
   specification: string | null;
   specificationSource: GallerySpecificationSource;
   configuration: GalleryDetailLine[];
+  /** Required components the rules add for this configuration (empty when the engine cannot compute them). */
+  requiredComponents: GalleryDetailRequiredComponent[];
   materials: GalleryDetailMaterialGroup[];
   options: GalleryDetailOptionGroup[];
 };
@@ -183,16 +190,23 @@ export function mapMaterials(input: { links: TemplateMaterialGroupRow[]; groups:
 export type ComponentRow = { id: string; component_group: string | null; component_name: string | null; option_type: string | null; sort_order: number | null };
 export type LinkedFamilyRow = { id: string; label: string | null; sort_order: number | null };
 
-function group(map: Map<string, string[]>, name: string, item: string) {
+function group(map: Map<string, GalleryDetailOptionItem[]>, name: string, item: GalleryDetailOptionItem) {
   const list = map.get(name) ?? [];
-  if (!list.includes(item) && list.length < GALLERY_DETAIL_ITEMS_PER_GROUP_MAX) list.push(item);
+  if (!list.some((known) => known.name === item.name && known.supplierCode === item.supplierCode) && list.length < GALLERY_DETAIL_ITEMS_PER_GROUP_MAX) list.push(item);
   map.set(name, list);
 }
 
-/** Accessory groups straight from the template JSON, active only; ONLY the group name and the item names are read. */
+const cleanText = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
+/** The supplier price list code of a template row (the field the quotation selector shows as "Supplier Code"), or undefined. */
+function supplierCodeOf(row: Record<string, unknown> | null | undefined): string | undefined {
+  return cleanText(row?.supplier_price_list_code) || cleanText(row?.base_supplier_price_list_code) || undefined;
+}
+const withCode = (item: { name: string }, code: string | undefined): GalleryDetailOptionItem => (code ? { name: item.name, supplierCode: code } : { name: item.name });
+
+/** Accessory groups straight from the template JSON, active only; ONLY the group name, the item names and their supplier codes are read. */
 export function accessoryGroups(accessoryPricing: unknown): GalleryDetailOptionGroup[] {
   const rows = Array.isArray(accessoryPricing) ? (accessoryPricing as Array<Record<string, unknown>>) : [];
-  const grouped = new Map<string, string[]>();
+  const grouped = new Map<string, GalleryDetailOptionItem[]>();
   for (const row of rows) {
     if (!row || typeof row !== "object") continue;
     if (Array.isArray(row.items)) {
@@ -200,32 +214,78 @@ export function accessoryGroups(accessoryPricing: unknown): GalleryDetailOptionG
       const name = typeof row.group_name === "string" && row.group_name.trim() ? row.group_name.trim() : "Accessories";
       for (const item of row.items as Array<Record<string, unknown>>) {
         if (item?.is_active === false || typeof item?.item_name !== "string" || !item.item_name.trim()) continue;
-        group(grouped, name, item.item_name.trim());
+        group(grouped, name, withCode({ name: item.item_name.trim() }, supplierCodeOf(item)));
       }
     } else if (row.is_active !== false && typeof row.item_name === "string" && row.item_name.trim()) {
-      group(grouped, "Accessories", row.item_name.trim());
+      group(grouped, "Accessories", withCode({ name: row.item_name.trim() }, supplierCodeOf(row)));
     }
   }
   return Array.from(grouped.entries()).map(([groupName, items]) => ({ groupName, kind: "accessory" as const, items }));
 }
 
 export function mapOptions(input: { components: ComponentRow[]; accessoryPricing: unknown; linkedFamilies: LinkedFamilyRow[] }): GalleryDetailOptionGroup[] {
-  const optionGroups = new Map<string, string[]>();
+  // Option components (product_components) have no supplier price list code: names only.
+  const optionGroups = new Map<string, GalleryDetailOptionItem[]>();
   for (const component of [...input.components].sort(bySort)) {
     const name = component.component_name?.trim();
     if (!name) continue;
-    group(optionGroups, component.component_group?.trim() || "Options", name);
+    group(optionGroups, component.component_group?.trim() || "Options", { name });
   }
-  const linked = new Map<string, string[]>();
+  const linked = new Map<string, GalleryDetailOptionItem[]>();
   for (const family of [...input.linkedFamilies].sort(bySort)) {
     const label = family.label?.trim();
-    if (label) group(linked, "Linked products", label);
+    if (label) group(linked, "Linked products", { name: label });
   }
   return [
     ...Array.from(optionGroups.entries()).map(([groupName, items]) => ({ groupName, kind: "option" as const, items })),
     ...accessoryGroups(input.accessoryPricing),
     ...Array.from(linked.entries()).map(([groupName, items]) => ({ groupName, kind: "linked" as const, items })),
   ];
+}
+
+/** id -> supplier code for every template row that has one (Base / Model rows, modular and matrix rows, accessories). Only these two fields are read. */
+export function supplierCodeIndex(template: { variant_pricing?: unknown; category_pricing?: unknown; accessory_pricing?: unknown; desking_size_pricing?: unknown }): Map<string, string> {
+  const index = new Map<string, string>();
+  const walk = (value: unknown, depth: number) => {
+    if (depth > 4 || !value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      for (const entry of value) walk(entry, depth + 1);
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    const id = cleanText(record.id);
+    const code = supplierCodeOf(record);
+    if (id && code && !index.has(id)) index.set(id, code);
+    if (Array.isArray(record.items)) walk(record.items, depth + 1);
+  };
+  for (const column of [template.variant_pricing, template.category_pricing, template.accessory_pricing, template.desking_size_pricing]) walk(column, 0);
+  return index;
+}
+
+/**
+ * The required components the template rules add. The configuration engine reports each one in `autoApplied` ("Required companion applied
+ * automatically (quantity N)." or "... overridden to N ..."); this reads those entries (the quantity is the engine's own, nothing is
+ * recalculated) and names the item from the template's accessory rows: name, supplier code and size (dimension). Items that cannot be
+ * named are skipped. No price is read.
+ */
+export function requiredComponentsFromEngine(autoApplied: ReadonlyArray<{ stepKey: string; optionId: string; reason: string }>, accessoryPricing: unknown): GalleryDetailRequiredComponent[] {
+  const items = new Map<string, Record<string, unknown>>();
+  for (const parsedGroup of parseAccessoryConfigurationGroups(accessoryPricing ?? []).groups) {
+    for (const item of parsedGroup.items ?? []) if (typeof item.id === "string" && item.id) items.set(item.id, item as Record<string, unknown>);
+  }
+  const out: GalleryDetailRequiredComponent[] = [];
+  for (const entry of autoApplied) {
+    if (!entry.stepKey.startsWith("accessory:") || !/^Required companion/.test(entry.reason)) continue;
+    const quantity = Number(/\(quantity (\d+)\)/.exec(entry.reason)?.[1] ?? /overridden to (\d+)/.exec(entry.reason)?.[1]);
+    const item = items.get(entry.optionId);
+    if (!item || !Number.isFinite(quantity) || quantity <= 0) continue;
+    const code = supplierCodeOf(item);
+    const name = cleanText(item.item_name) || code || "";
+    if (!name || UUID_LIKE.test(name) || out.some((known) => known.name === name && known.supplierCode === code)) continue;
+    const size = cleanText(item.dimension);
+    out.push({ name, quantity, ...(code ? { supplierCode: code } : {}), ...(size ? { size } : {}) });
+  }
+  return out;
 }
 
 // ── Saved configuration as readable lines ──────────────────────────────────
@@ -252,10 +312,21 @@ export type ConfigurationReport = {
   skippedKinds: string[];
   /** The text the configuration engine writes for the saved choices; null when the recipe is stale or incomplete or the text looks like money. */
   generatedSpecification: string | null;
+  /** Required components from the engine (empty when the recipe is stale or incomplete, or the engine cannot compute them). */
+  requiredComponents: GalleryDetailRequiredComponent[];
 };
 
 const UUID_LIKE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const readable = (text: string | null | undefined): text is string => typeof text === "string" && text.trim() !== "" && !UUID_LIKE.test(text);
+
+/**
+ * True when a required step is still unresolved. A template priced through modular rows does not need a Base / Model choice (the quotation
+ * add flow prices through the modular rows; see nextRequiredForReplay in saved-setups/replay.ts), so those steps are not counted there.
+ */
+function hasBlockingRequiredStep(steps: ReadonlyArray<{ kind: string; required: boolean; resolved: boolean }>): boolean {
+  const usesModular = steps.some((step) => step.kind === "modular");
+  return steps.some((step) => step.required && !step.resolved && !(usesModular && (step.kind === "variant_group" || step.kind === "variant_subgroup" || step.kind === "variant_row")));
+}
 
 export function describeRecipe(input: {
   recipe: unknown;
@@ -263,15 +334,17 @@ export function describeRecipe(input: {
   components: ComponentRow[];
   linkedFamilies: LinkedFamilyRow[];
 }): ConfigurationReport {
-  const report: ConfigurationReport = { lines: [], resolvedKinds: [], skippedKinds: [], generatedSpecification: null };
+  const report: ConfigurationReport = { lines: [], resolvedKinds: [], skippedKinds: [], generatedSpecification: null, requiredComponents: [] };
   const full = completeGalleryRecipe(input.recipe, input.template.id);
   if (!full) return report;
   const plain = restorePlainState(full, null);
   const resolved = new Set<string>();
   const skipped = new Set<string>();
-  const addLine = (kind: string, label: string, value: string | null | undefined) => {
+  const supplierCodes = supplierCodeIndex(input.template);
+  const addLine = (kind: string, label: string, value: string | null | undefined, rowId?: string) => {
     if (readable(label) && readable(value)) {
-      report.lines.push({ label: label.trim(), value: value.trim() });
+      const code = rowId ? supplierCodes.get(rowId) : undefined;
+      report.lines.push({ label: label.trim(), value: value.trim(), ...(code ? { supplierCode: code } : {}) });
       resolved.add(kind);
     } else skipped.add(kind);
   };
@@ -315,8 +388,11 @@ export function describeRecipe(input: {
     );
     steps = engineState.steps;
     // Only a complete, current recipe gives a text worth showing (a stale id or an unresolved required step falls through to the template text).
-    const text = engineState.staleSelections.length === 0 && engineState.nextRequiredStep === null ? plainText(engineState.specification) : null;
+    const complete = engineState.staleSelections.length === 0 && !hasBlockingRequiredStep(engineState.steps);
+    const text = complete ? plainText(engineState.specification) : null;
     report.generatedSpecification = text && !looksLikeMoneyText(text) ? text.slice(0, GALLERY_DETAIL_SPECIFICATION_MAX) : null;
+    // Required components: only for a complete, current recipe (same condition as the generated text); otherwise the block is skipped.
+    if (complete) report.requiredComponents = requiredComponentsFromEngine(engineState.autoApplied, input.template.accessory_pricing);
   } catch {
     steps = [];
   }
@@ -337,17 +413,17 @@ export function describeRecipe(input: {
       const wanted = selectedId[kind];
       if (!wanted) continue; // nothing was saved for this step
       const option = step.options.find((candidate) => candidate.id === wanted);
-      addLine(kind, step.label, option?.label);
+      addLine(kind, step.label, option?.label, wanted);
     } else if (kind === "modular") {
       for (const option of step.options) {
         const qty = Math.trunc(Number((plain.modularQuantities ?? {})[option.id] ?? 0));
-        if (qty > 0) addLine(kind, step.label, qty > 1 ? `${option.label} x ${qty}` : option.label);
+        if (qty > 0) addLine(kind, step.label, qty > 1 ? `${option.label} x ${qty}` : option.label, option.id);
       }
     } else if (kind === "accessory") {
       for (const optionId of step.selectedOptionIds ?? []) {
         const option = step.options.find((candidate) => candidate.id === optionId);
         const qty = Math.trunc(Number((plain.pricingAccessoryQuantities ?? {})[optionId] ?? 0));
-        addLine(kind, step.label, option?.label ? (qty > 1 ? `${option.label} x ${qty}` : option.label) : null);
+        addLine(kind, step.label, option?.label ? (qty > 1 ? `${option.label} x ${qty}` : option.label) : null, optionId);
       }
     }
   }
@@ -422,6 +498,7 @@ export function buildGalleryDetail(input: {
     specification: spec.text,
     specificationSource: spec.source,
     configuration: report.lines,
+    requiredComponents: report.requiredComponents,
     materials: input.materials,
     options: mapOptions({ components: input.components, accessoryPricing: input.template.accessory_pricing, linkedFamilies: input.linkedFamilies }),
   };

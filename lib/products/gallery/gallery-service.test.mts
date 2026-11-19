@@ -479,7 +479,7 @@ test("details: header, pictures, texts, readable configuration, materials and op
   }]);
   assert.equal(detail.specificationSource, "generated", "the recipe is complete, so its text is generated");
   assert.match(detail.specification, /Cable Tray/);
-  assert.deepEqual(detail.options.map((group: any) => [group.kind, group.groupName, group.items]), [["option", "Casters", ["Soft"]], ["accessory", "Add-ons", ["Cable Tray"]], ["linked", "Linked products", ["Matching table"]]]);
+  assert.deepEqual(detail.options.map((group: any) => [group.kind, group.groupName, group.items]), [["option", "Casters", [{ name: "Soft" }]], ["accessory", "Add-ons", [{ name: "Cable Tray" }]], ["linked", "Linked products", [{ name: "Matching table" }]]]);
   const json = JSON.stringify(result);
   assert.doesNotMatch(json, /98765|98766|unit_price|variant_pricing|recipe|selections|variant_row_id/i, "no price and no recipe leave the server");
   assert.equal(world.adminCalls, 0, "the caller's own client only");

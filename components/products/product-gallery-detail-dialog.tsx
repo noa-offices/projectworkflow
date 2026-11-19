@@ -285,12 +285,29 @@ function Body({ detail, canEdit, onSpecificationSaved }: { detail: GalleryDetail
           {detail.configuration.length ? (
             <ul className="flex flex-col gap-1">
               {detail.configuration.map((line, index) => (
-                <li key={`${line.label}-${index}`}><span className="font-medium text-zinc-900">{line.label}:</span> {line.value}</li>
+                <li key={`${line.label}-${index}`}>
+                  <span className="font-medium text-zinc-900">{line.label}:</span> {line.value}
+                  {line.supplierCode ? <span className="ml-1 text-xs text-zinc-500">Supplier code: {line.supplierCode}</span> : null}
+                </li>
               ))}
             </ul>
-          ) : (
+          ) : detail.requiredComponents.length ? null : (
             <p className="text-zinc-500">No saved choices to show for this product.</p>
           )}
+          {detail.requiredComponents.length ? (
+            <div className={detail.configuration.length ? "mt-3" : ""} data-testid="required-components">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Required components</h4>
+              <ul className="mt-1 flex flex-col gap-1">
+                {detail.requiredComponents.map((component) => (
+                  <li key={`${component.name}-${component.supplierCode ?? ""}`}>
+                    <span className="font-medium text-zinc-900">{component.name}</span> x {component.quantity}
+                    {component.size ? <span className="ml-1 text-xs text-zinc-500">Size: {component.size}</span> : null}
+                    {component.supplierCode ? <span className="ml-1 text-xs text-zinc-500">Supplier code: {component.supplierCode}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </Section>
 
         <Section title="Specification" defaultOpen>
@@ -313,7 +330,14 @@ function Body({ detail, canEdit, onSpecificationSaved }: { detail: GalleryDetail
               {detail.options.map((group) => (
                 <div key={`${group.kind}-${group.groupName}`}>
                   <p className="font-medium text-zinc-900">{group.groupName}</p>
-                  <p className="text-zinc-600">{group.items.join(", ")}</p>
+                  <ul className="mt-0.5 flex flex-col gap-0.5 text-zinc-600">
+                    {group.items.map((item) => (
+                      <li key={`${item.name}-${item.supplierCode ?? ""}`}>
+                        {item.name}
+                        {item.supplierCode ? <span className="ml-1 text-xs text-zinc-500">Supplier code: {item.supplierCode}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ))}
             </div>
