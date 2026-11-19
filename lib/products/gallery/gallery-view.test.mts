@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   EMPTY_GALLERY_STATE,
+  OLD_REMOVAL_NOTE,
+  UPDATE_AVAILABLE_TEXT,
+  removedDateText,
+  restoreButtonLabel,
+  restoreMessage,
+  updateTagText,
   buildGalleryQuery,
   clearedGalleryFilters,
   editFormProblem,
@@ -37,9 +43,9 @@ test("quoted text: once, N times, and the Dubai date", () => {
 
 test("URL: build leaves defaults out; parse reads it back; a plain URL is the empty state", () => {
   assert.equal(buildGalleryQuery(EMPTY_GALLERY_STATE), "");
-  const state = { query: " buddy chair ", brandId: BRAND, categoryId: CAT, subCategoryId: SUB, currency: "AED", tag: "office", sort: "newest" as const };
+  const state = { query: " buddy chair ", brandId: BRAND, categoryId: CAT, subCategoryId: SUB, currency: "AED", tag: "office", sort: "newest" as const, updateAvailable: true };
   const text = buildGalleryQuery(state);
-  assert.equal(text, `q=buddy+chair&brand=${BRAND}&category=${CAT}&sub=${SUB}&currency=AED&tag=office&sort=newest`);
+  assert.equal(text, `q=buddy+chair&brand=${BRAND}&category=${CAT}&sub=${SUB}&currency=AED&tag=office&sort=newest&update=1`);
   const params = new URLSearchParams(text);
   assert.deepEqual(parseGalleryQuery((key) => params.get(key)), { ...state, query: " buddy chair ".trim() });
   assert.deepEqual(parseGalleryQuery(() => undefined), EMPTY_GALLERY_STATE);
@@ -96,4 +102,33 @@ test("tag input: comma separated, trimmed, lower-cased, unique; the dialog expla
 
 test("Open full detail uses the canonical Product Management URL", () => {
   assert.equal(fullDetailHref("t 1"), "/products/manage?template=t%201");
+});
+
+test('"Update available" tag: exactly that text for an open offer, nothing otherwise (an ignored offer is not flagged by the server)', () => {
+  assert.equal(UPDATE_AVAILABLE_TEXT, "Update available");
+  assert.equal(updateTagText({ updateAvailable: true }), "Update available");
+  assert.equal(updateTagText({ updateAvailable: false }), null);
+  assert.equal(updateTagText({}), null);
+  assert.doesNotMatch(UPDATE_AVAILABLE_TEXT, /review/i);
+});
+
+test("the Update available filter is in the URL (update=1), counts as a filter and is cleared by Clear filters", () => {
+  const params = new URLSearchParams("update=1");
+  const state = parseGalleryQuery((key) => params.get(key));
+  assert.equal(state.updateAvailable, true);
+  assert.equal(buildGalleryQuery(state), "update=1");
+  assert.equal(hasActiveGalleryFilters(state), true);
+  assert.equal(clearedGalleryFilters(state).updateAvailable, false);
+  assert.equal(parseGalleryQuery((key) => (key === "update" ? "yes" : undefined)).updateAvailable, false);
+});
+
+test("restore messages and button labels", () => {
+  assert.equal(restoreMessage("restored"), "Item restored.");
+  assert.equal(restoreMessage("allowed_again"), "Allowed again. It will return when this configuration is quoted next time.");
+  assert.match(restoreMessage("not_found"), /not found/);
+  assert.equal(restoreButtonLabel({ hasSnapshot: true }), "Restore");
+  assert.equal(restoreButtonLabel({ hasSnapshot: false }), "Allow again");
+  assert.equal(OLD_REMOVAL_NOTE, "Old removal: Restore will only allow it again");
+  assert.equal(removedDateText("2026-10-12T10:00:00Z"), "Removed 12 Oct 2026");
+  assert.equal(removedDateText(""), "");
 });

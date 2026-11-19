@@ -21,6 +21,11 @@ export const GALLERY_DETAIL_TEXT_MAX = 4000;
 export type GalleryDetailLine = { label: string; value: string; supplierCode?: string };
 /** A required component the template rules add for the saved choices (for example "Top-Access with Soft-Close x 4"). Names, quantity, code and size only. */
 export type GalleryDetailRequiredComponent = { name: string; quantity: number; supplierCode?: string; size?: string };
+/** An open "same configuration, new specification / picture" offer (editors only). current: what the item has now; proposed: what a later quotation had. */
+export type GalleryDetailUpdates = {
+  specification: { current: string | null; proposed: string } | null;
+  picture: { currentPath: string | null; proposedPath: string } | null;
+};
 export type GalleryDetailOptionItem = { name: string; supplierCode?: string };
 /** One finish swatch: short code, full name, and the picture's storage path (the browser signs it with the existing image helper). */
 export type GalleryDetailSwatch = { code: string; name: string; imagePath: string | null };
@@ -51,6 +56,10 @@ export type GalleryDetail = {
   configuration: GalleryDetailLine[];
   /** Required components the rules add for this configuration (empty when the engine cannot compute them). */
   requiredComponents: GalleryDetailRequiredComponent[];
+  /** Editors only (null for everyone else): open update offers to compare. */
+  updates: GalleryDetailUpdates | null;
+  /** Editors only: some saved choices are no longer valid in the product (and the notice was not ignored for this exact set). Read-only. */
+  staleNotice: { fingerprint: string } | null;
   materials: GalleryDetailMaterialGroup[];
   options: GalleryDetailOptionGroup[];
 };
@@ -314,10 +323,34 @@ export type ConfigurationReport = {
   generatedSpecification: string | null;
   /** Required components from the engine (empty when the recipe is stale or incomplete, or the engine cannot compute them). */
   requiredComponents: GalleryDetailRequiredComponent[];
+  /** A short fingerprint of the saved choices that no longer resolve, or null when all of them do. */
+  staleFingerprint: string | null;
 };
 
 const UUID_LIKE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const readable = (text: string | null | undefined): text is string => typeof text === "string" && text.trim() !== "" && !UUID_LIKE.test(text);
+
+/** A short, stable fingerprint (letters, digits, "-") of the saved choices that no longer resolve; null when there are none. */
+export function staleFingerprint(stale: ReadonlyArray<{ key: string; id: string }>): string | null {
+  if (!stale.length) return null;
+  const text = stale.map((entry) => `${entry.key}:${entry.id}`).sort().join("|");
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193) >>> 0;
+  return `stale${stale.length}-${hash.toString(16)}`;
+}
+
+/** What an editor is offered: only values that differ from the current ones, and a picture only if it is one of the template's own pictures. */
+export function buildUpdates(input: { offers: ReadonlyArray<{ kind: string; proposed_value: string | null; status: string }>; currentSpecification: unknown; template: Record<string, unknown>; selectedImage: unknown }): GalleryDetailUpdates {
+  const open = (kind: string) => input.offers.find((offer) => offer.kind === kind && offer.status === "open") ?? null;
+  const currentSpec = plainText(input.currentSpecification);
+  const proposedSpec = plainText(open("specification")?.proposed_value);
+  const currentPicture = validSelectedImage(input.template, input.selectedImage) ?? templatePictures(input.template)[0] ?? null;
+  const proposedPicture = validSelectedImage(input.template, open("picture")?.proposed_value);
+  return {
+    specification: proposedSpec && proposedSpec !== currentSpec && !looksLikeMoneyText(proposedSpec) ? { current: currentSpec, proposed: proposedSpec.slice(0, GALLERY_DETAIL_SPECIFICATION_MAX) } : null,
+    picture: proposedPicture && proposedPicture !== currentPicture ? { currentPath: currentPicture, proposedPath: proposedPicture } : null,
+  };
+}
 
 /**
  * True when a required step is still unresolved. A template priced through modular rows does not need a Base / Model choice (the quotation
@@ -334,7 +367,7 @@ export function describeRecipe(input: {
   components: ComponentRow[];
   linkedFamilies: LinkedFamilyRow[];
 }): ConfigurationReport {
-  const report: ConfigurationReport = { lines: [], resolvedKinds: [], skippedKinds: [], generatedSpecification: null, requiredComponents: [] };
+  const report: ConfigurationReport = { lines: [], resolvedKinds: [], skippedKinds: [], generatedSpecification: null, requiredComponents: [], staleFingerprint: null };
   const full = completeGalleryRecipe(input.recipe, input.template.id);
   if (!full) return report;
   const plain = restorePlainState(full, null);
@@ -388,6 +421,7 @@ export function describeRecipe(input: {
     );
     steps = engineState.steps;
     // Only a complete, current recipe gives a text worth showing (a stale id or an unresolved required step falls through to the template text).
+    report.staleFingerprint = staleFingerprint(engineState.staleSelections);
     const complete = engineState.staleSelections.length === 0 && !hasBlockingRequiredStep(engineState.steps);
     const text = complete ? plainText(engineState.specification) : null;
     report.generatedSpecification = text && !looksLikeMoneyText(text) ? text.slice(0, GALLERY_DETAIL_SPECIFICATION_MAX) : null;
@@ -463,7 +497,7 @@ export function chooseSpecification(input: { gallery?: unknown; generated?: stri
 
 // ── Whole payload ──────────────────────────────────────────────────────────
 export function buildGalleryDetail(input: {
-  item: { id: string; template_id: string; item_name: string; display_name: string | null; item_code: string | null; tags: string[] | null; quoted_count: number | string; recipe: unknown; specification?: string | null; selected_image?: string | null };
+  item: { id: string; template_id: string; item_name: string; display_name: string | null; item_code: string | null; tags: string[] | null; quoted_count: number | string; recipe: unknown; specification?: string | null; selected_image?: string | null; offers?: ReadonlyArray<{ kind: string; proposed_value: string | null; status: string }> | null };
   template: ConfigurationTemplateInput & Record<string, unknown>;
   brandName: string;
   categoryName: string;
@@ -499,6 +533,8 @@ export function buildGalleryDetail(input: {
     specificationSource: spec.source,
     configuration: report.lines,
     requiredComponents: report.requiredComponents,
+    updates: input.item.offers ? buildUpdates({ offers: input.item.offers, currentSpecification: input.item.specification, template: input.template, selectedImage: input.item.selected_image }) : null,
+    staleNotice: input.item.offers && report.staleFingerprint && !input.item.offers.some((offer) => offer.kind === "configuration" && offer.status === "ignored" && offer.proposed_value === report.staleFingerprint) ? { fingerprint: report.staleFingerprint } : null,
     materials: input.materials,
     options: mapOptions({ components: input.components, accessoryPricing: input.template.accessory_pricing, linkedFamilies: input.linkedFamilies }),
   };

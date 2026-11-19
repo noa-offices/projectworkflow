@@ -47,7 +47,7 @@ test("edit mode: one Edit/Done toggle for editors only; cards are clean until it
   assert.match(browser, /const \[editMode, setEditMode\] = useState\(false\)/, "off by default, React state only");
   assert.doesNotMatch(code(browser), /localStorage|sessionStorage|document\.cookie/, "never saved");
   assert.match(browser, /const editing = canEdit && editMode/);
-  assert.match(browser, /\{canEdit \? \(\s*<div className="flex justify-end">\s*<button[\s\S]*?\{editing \? "Done" : "Edit"\}/, "the toggle is only for editors and says Done while on");
+  assert.match(browser, /\{canEdit \? \(\s*<div className="flex justify-end gap-2">[\s\S]*?<button[\s\S]*?\{editing \? "Done" : "Edit"\}/, "the toggle is only for editors and says Done while on");
   // The card buttons sit inside the editMode branch; Merge is inside a canCurate branch inside it.
   const card = browser.slice(browser.indexOf("function GalleryCard"), browser.indexOf("function Skeleton"));
   const editBranch = card.indexOf("{editMode ? (");
@@ -360,4 +360,48 @@ test("popup: a Required components block inside Saved configuration, supplier co
   assert.doesNotMatch(code(detailDialog), /price|cost|currency|amount/i);
   assert.match(read("./gallery-detail.ts"), /supplier_price_list_code/, "the field the quotation selector shows as Supplier Code");
   assert.match(read("./gallery-detail.ts"), /requiredComponentsFromEngine\(engineState\.autoApplied/, "the engine's own required-companion output");
+});
+
+test("restore and updates: editors only in the UI, the four actions are imported, no admin client, no price words, no hidden-item calls", () => {
+  assert.match(browser, /\{editing \? <button[^>]*onClick=\{\(\) => setRemovedOpen\(true\)\}>Removed items<\/button> : null\}/, "Removed items only in Edit mode");
+  assert.match(browser, /\{editing && removedOpen \? <RemovedItemsDialog/);
+  assert.match(dialogs, /listRemovedGalleryItemsAction/);
+  assert.match(dialogs, /restoreGalleryItemAction\(\{ key: item\.identityKey \}\)/);
+  assert.match(dialogs, /restoreButtonLabel\(item\)/, "Restore / Allow again");
+  assert.match(dialogs, /OLD_REMOVAL_NOTE/);
+  assert.match(browser, /\{updateTagText\(item\) \?/, "the card tag");
+  assert.match(browser, /\{canEdit \? \(\s*<button[^>]*aria-pressed=\{state\.updateAvailable\}/, "the filter chip is for editors");
+  assert.match(browser, /updateAvailable: canEdit && current\.updateAvailable/, "the filter is only sent for editors");
+  assert.match(detailDialog, /applyGalleryUpdateAction/);
+  assert.match(detailDialog, /ignoreGalleryUpdateAction/);
+  assert.match(detailDialog, /<Section title=\{UPDATE_AVAILABLE_TEXT\} defaultOpen>/);
+  assert.match(detailDialog, />\{which === "update" \? "Working…" : "Update"\}|"Update"\}/);
+  assert.match(detailDialog, /kind: "configuration", value: fingerprint/);
+  assert.match(detailDialog, /STALE_CHOICES_TEXT/);
+  assert.match(detailDialog, /STALE_CHOICES_HELP/);
+  assert.match(read("./gallery-view.ts"), /Some saved choices changed in the product/);
+  assert.match(read("./gallery-view.ts"), /To fix, quote the corrected configuration and remove this old item\./);
+  assert.match(detailDialog, /<ProductLibraryPreviewImage alt="New picture" path=\{updates\.picture\.proposedPath\}/, "the same picture helper as the rest of the popup");
+  for (const action of ["listRemovedGalleryItemsAction", "restoreGalleryItemAction", "applyGalleryUpdateAction", "ignoreGalleryUpdateAction"]) {
+    const body = actionsSource.slice(actionsSource.indexOf(`export async function ${action}`));
+    const head = body.slice(0, body.indexOf("\n}\n"));
+    assert.ok(head.indexOf("await requireActiveUser()") > 0 && head.indexOf("await requireActiveUser()") < head.indexOf("createClient()"), `${action}: signed in first`);
+    assert.match(head, /catch \(problem\)/, `${action}: never throws`);
+  }
+  assert.match(actionsSource, /revalidatePath\("\/products\/gallery"\)/);
+  for (const [name, text] of Object.entries({ browser, dialogs, detailDialog, service, actionsSource })) {
+    assert.doesNotMatch(code(text), /createAdminClient|supabase\/admin|service_role|SUPABASE_SERVICE/i, `${name}: no admin client`);
+  }
+  // the new service functions check the editor role before the database function
+  for (const rpc of ["product_gallery_restore", "product_gallery_update_apply", "product_gallery_update_ignore", "product_gallery_removed_list"]) {
+    const at = service.indexOf(rpc);
+    assert.ok(at > 0, rpc);
+  }
+  assert.match(service, /product_gallery_is_editor"\)\)\) return \{ ok: false, kind: "not_allowed" \};\s*try \{\s*const \{ data, error \} = await supabase\.rpc\("product_gallery_restore"/);
+  assert.match(service, /product_gallery_is_editor"\)\)\) return \{ ok: false, kind: "not_allowed" \};\s*return callCuration\(supabase, "product_gallery_update_apply"/);
+  assert.match(service, /product_gallery_is_editor"\)\)\) return \{ ok: false, kind: "not_allowed" \};\s*return callCuration\(supabase, "product_gallery_update_ignore"/);
+  assert.match(service, /from\("product_gallery_updates"\)\.select\("kind,proposed_value,status"\)/);
+  const sql = read("../../../supabase/migrations/20261119240000_product_gallery_restore_updates.sql");
+  assert.match(sql, /create table if not exists public\.product_gallery_updates/);
+  assert.match(sql, /create or replace function public\.product_gallery_restore\(p_key text\)/);
 });

@@ -19,9 +19,11 @@ export type GalleryUrlState = {
   currency: string;
   tag: string;
   sort: GallerySortMode;
+  /** The "Update available" filter (editors only; the server ignores it for everyone else). */
+  updateAvailable: boolean;
 };
 
-export const EMPTY_GALLERY_STATE: GalleryUrlState = { query: "", brandId: "", categoryId: "", subCategoryId: "", currency: "", tag: "", sort: "popular" };
+export const EMPTY_GALLERY_STATE: GalleryUrlState = { query: "", brandId: "", categoryId: "", subCategoryId: "", currency: "", tag: "", sort: "popular", updateAvailable: false };
 
 type ParamValue = string | string[] | null | undefined;
 const first = (value: ParamValue): string => (Array.isArray(value) ? value[0] ?? "" : value ?? "");
@@ -40,6 +42,7 @@ export function parseGalleryQuery(read: (key: string) => ParamValue): GalleryUrl
     currency: /^[A-Z]{1,8}$/.test(currency) ? currency : "",
     tag: tag ?? "",
     sort: gallerySortMode(first(read("sort"))),
+    updateAvailable: first(read("update")) === "1",
   };
 }
 
@@ -53,6 +56,7 @@ export function buildGalleryQuery(state: GalleryUrlState): string {
   if (state.currency) params.set("currency", state.currency);
   if (state.tag) params.set("tag", state.tag);
   if (state.sort !== "popular") params.set("sort", state.sort);
+  if (state.updateAvailable) params.set("update", "1");
   return params.toString();
 }
 
@@ -62,7 +66,7 @@ export function hasActiveGalleryFilters(state: GalleryUrlState): boolean {
 }
 
 export function activeGalleryFilterCount(state: GalleryUrlState): number {
-  return [state.query.trim(), state.brandId, state.categoryId, state.subCategoryId, state.currency, state.tag].filter(Boolean).length;
+  return [state.query.trim(), state.brandId, state.categoryId, state.subCategoryId, state.currency, state.tag, state.updateAvailable ? "update" : ""].filter(Boolean).length;
 }
 
 export function clearedGalleryFilters(state: GalleryUrlState): GalleryUrlState {
@@ -158,4 +162,33 @@ export function swatchCaption(swatch: Pick<GalleryDetailSwatch, "code" | "name">
 /** What the edit box starts with: the shown text (saved, generated or from the template), at most 2000 characters. */
 export function specificationDraft(shown: string | null | undefined): string {
   return (shown ?? "").slice(0, GALLERY_SPECIFICATION_MAX);
+}
+
+// ── Removed items and update offers ────────────────────────────────────────
+export const UPDATE_AVAILABLE_TEXT = "Update available";
+export const OLD_REMOVAL_NOTE = "Old removal: Restore will only allow it again";
+export const STALE_CHOICES_TEXT = "Some saved choices changed in the product";
+export const STALE_CHOICES_HELP = "To fix, quote the corrected configuration and remove this old item.";
+
+/** The card tag: exactly "Update available" while the item has an OPEN offer (an ignored offer shows nothing); otherwise null. */
+export function updateTagText(item: { updateAvailable?: boolean }): string | null {
+  return item.updateAvailable === true ? UPDATE_AVAILABLE_TEXT : null;
+}
+
+/** "Restore" for an item with a snapshot; "Allow again" for an older removal (key only). */
+export function restoreButtonLabel(item: { hasSnapshot: boolean }): string {
+  return item.hasSnapshot ? "Restore" : "Allow again";
+}
+
+/** The message shown after Restore / Allow again. */
+export function restoreMessage(outcome: "restored" | "allowed_again" | "not_found"): string {
+  if (outcome === "restored") return "Item restored.";
+  if (outcome === "allowed_again") return "Allowed again. It will return when this configuration is quoted next time.";
+  return "That removed item was not found. It may already have been restored.";
+}
+
+/** "Removed 12 Oct 2026" (Asia/Dubai); empty when the date is missing. */
+export function removedDateText(value: string | null | undefined): string {
+  const date = formatSavedDate(value);
+  return date ? `Removed ${date}` : "";
 }

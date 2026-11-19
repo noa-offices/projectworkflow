@@ -14,6 +14,10 @@ import {
   GALLERY_PAGE_SIZE,
   clampGalleryPage,
   cleanGalleryCurrency,
+  cleanGalleryFingerprint,
+  isGalleryIdentityKey,
+  isGalleryOfferKind,
+  isGalleryUpdateKind,
   cleanGalleryTag,
   completeGalleryRecipe,
   galleryDisplayName,
@@ -29,6 +33,8 @@ import {
   type GalleryFilterEntry,
   type GalleryListItem,
   type GalleryMessageKind,
+  type GalleryRemovedItem,
+  type GalleryRestoreOutcome,
   type GalleryPicture,
   type GallerySortMode,
   type GallerySubCategoryEntry,
@@ -146,11 +152,19 @@ export type ListGalleryInput = {
   tag?: unknown;
   sort?: unknown;
   includeHidden?: unknown;
+  /** Editors only: only items with an open specification or picture update offer. */
+  updateAvailable?: unknown;
   page?: unknown;
 };
 export type ListGalleryResult =
   | { ok: true; items: GalleryListItem[]; total: number; page: number; pageSize: number; hasMore: boolean; sort: GallerySortMode }
   | { ok: false; kind: GalleryMessageKind };
+
+/** Item ids that have an OPEN specification or picture offer (read under the editor-only policy; empty on any problem). */
+async function openOfferItemIds(supabase: SupabaseClient): Promise<string[]> {
+  const found = await rows<{ item_id: string }>(supabase.from("product_gallery_updates").select("item_id").eq("status", "open").in("kind", ["specification", "picture"]).limit(2000), "update offers");
+  return Array.from(new Set(found.map((row) => row.item_id)));
+}
 
 /** The gallery, 30 per page. Display fields only: no recipe and no price ever leave the server in a list. */
 export async function listGalleryItems(supabase: SupabaseClient, input: ListGalleryInput): Promise<ListGalleryResult> {
@@ -171,6 +185,11 @@ export async function listGalleryItems(supabase: SupabaseClient, input: ListGall
   try {
     // Hidden items: only an editor asking for them. (The database also hides them from everyone else; this is not the only guard.)
     const showHidden = input?.includeHidden === true && (await rpcBoolean(supabase, "product_gallery_is_editor"));
+    // Update offers are for editors only: one role check; non-editors never trigger an offer query and never get the flag or the filter.
+    const isEditor = await rpcBoolean(supabase, "product_gallery_is_editor");
+    let offerIds: string[] = [];
+    if (isEditor) offerIds = await openOfferItemIds(supabase);
+    if (input?.updateAvailable === true && isEditor && offerIds.length === 0) return { ok: true, items: [], total: 0, page, pageSize: GALLERY_PAGE_SIZE, hasMore: false, sort };
     const build = (columns: string) => {
     let query = supabase.from("product_gallery_items").select(columns, { count: "exact" });
     if (!showHidden) query = query.eq("is_hidden", false);
@@ -178,6 +197,7 @@ export async function listGalleryItems(supabase: SupabaseClient, input: ListGall
     if (isGalleryId(categoryId)) query = query.eq("main_category_id", categoryId);
     if (isGalleryId(subCategoryId)) query = query.eq("sub_category_id", subCategoryId);
     if (currency) query = query.eq("currency", currency);
+    if (input?.updateAvailable === true && isEditor) query = query.in("id", offerIds.slice(0, 1000));
     if (tag) query = query.contains("tags", [tag]);
     // Every word must be found (one filter per word = AND), each in the search text, the curated name or the tags.
     for (const word of galleryQueryWords(input?.query)) {
@@ -227,6 +247,7 @@ export async function listGalleryItems(supabase: SupabaseClient, input: ListGall
         quotedCount: numberOr(row.quoted_count, 1),
         lastQuotedAt: row.last_quoted_at,
         isHidden: row.is_hidden === true,
+        updateAvailable: isEditor && offerIds.includes(row.id),
         available: isSetupUsable({ template_id: row.template_id }, activity),
         // The picture chosen in the quotation builder, only if it is still one of the template's own pictures; otherwise the default.
         picture: template ? (() => { const chosen = validSelectedImage(template, row.selected_image); return chosen ? { kind: "template" as const, path: chosen } : firstTemplatePicture(template); })() : null,
@@ -426,8 +447,12 @@ export async function getGalleryItemDetail(supabase: SupabaseClient, id: unknown
       materials = mapMaterials({ links, groups, linkItems, materials: allMaterials, subgroups });
     }
 
+    // Update offers and the "saved choices changed" notice are for editors only: everyone else gets no offer data.
+    const offers = (await rpcBoolean(supabase, "product_gallery_is_editor"))
+      ? await rows<{ kind: string; proposed_value: string | null; status: string }>(supabase.from("product_gallery_updates").select("kind,proposed_value,status").eq("item_id", item.id).limit(10), "item offers")
+      : null;
     const { detail } = buildGalleryDetail({
-      item,
+      item: { ...item, offers },
       template,
       brandName: item.brand_id ? brandNames.get(item.brand_id) ?? "" : "",
       categoryName: item.main_category_id ? categoryNames.get(item.main_category_id) ?? "" : "",
@@ -447,7 +472,7 @@ export async function getGalleryItemDetail(supabase: SupabaseClient, id: unknown
 // ── Curation (system_owner / admin_manager only; the database function decides) ─
 export type GalleryChangeResult = { ok: true } | { ok: false; kind: GalleryMessageKind };
 
-async function callCuration(supabase: SupabaseClient, name: string, args: Record<string, unknown>): Promise<GalleryChangeResult> {
+async function callCuration(supabase: SupabaseClient, name: string, args: Record<string, unknown>, missing: GalleryMessageKind = "item_not_found"): Promise<GalleryChangeResult> {
   try {
     const { data, error } = await supabase.rpc(name, args);
     if (error) {
@@ -455,7 +480,7 @@ async function callCuration(supabase: SupabaseClient, name: string, args: Record
       const text = typeof (error as { message?: unknown }).message === "string" ? (error as { message: string }).message : "";
       return { ok: false, kind: code === "42501" || /not allowed/i.test(text) ? "not_allowed" : "save_failed" };
     }
-    return data === true ? { ok: true } : { ok: false, kind: "item_not_found" };
+    return data === true ? { ok: true } : { ok: false, kind: missing };
   } catch (problem) {
     logProblem(name, problem);
     return { ok: false, kind: "save_failed" };
@@ -505,6 +530,79 @@ export async function removeGalleryItem(supabase: SupabaseClient, input: { id: u
     logProblem("product_gallery_remove", problem);
     return { ok: false, kind: "save_failed" };
   }
+}
+
+export type GalleryRemovedListResult = { ok: true; items: GalleryRemovedItem[] } | { ok: false; kind: GalleryMessageKind };
+
+/** Editors only: removed configurations, newest first (the database function checks the role again). */
+export async function listRemovedGalleryItems(supabase: SupabaseClient): Promise<GalleryRemovedListResult> {
+  if (!(await rpcBoolean(supabase, "product_gallery_is_editor"))) return { ok: false, kind: "not_allowed" };
+  try {
+    const { data, error } = await supabase.rpc("product_gallery_removed_list");
+    if (error || !Array.isArray(data)) return { ok: false, kind: "load_failed" };
+    const raw = (data as Array<Record<string, unknown>>).filter((row) => isGalleryIdentityKey(row?.identity_key));
+    const templateIds = Array.from(new Set(raw.flatMap((row) => (isGalleryId(row.template_id) ? [row.template_id] : []))));
+    const templateNames = new Map<string, string>();
+    if (templateIds.length) {
+      for (const row of await rows<{ id: string; template_name: string | null }>(supabase.from("product_templates").select("id,template_name").in("id", templateIds).limit(500), "removed templates")) {
+        if (row.template_name?.trim()) templateNames.set(row.id, row.template_name.trim());
+      }
+    }
+    const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : "");
+    const items: GalleryRemovedItem[] = raw.map((row) => {
+      const templateId = isGalleryId(row.template_id) ? row.template_id : null;
+      const count = Number(row.quoted_count);
+      return {
+        identityKey: String(row.identity_key),
+        removedAt: text(row.removed_at),
+        templateId,
+        name: text(row.display_name) || text(row.item_name) || (templateId ? templateNames.get(templateId) : "") || "Removed item",
+        quotedCount: row.quoted_count === null || row.quoted_count === undefined || !Number.isFinite(count) ? null : count,
+        hasSnapshot: row.has_snapshot === true,
+      };
+    });
+    return { ok: true, items };
+  } catch (problem) {
+    logProblem("removed list", problem);
+    return { ok: false, kind: "load_failed" };
+  }
+}
+
+export type GalleryRestoreResult = { ok: true; outcome: GalleryRestoreOutcome } | { ok: false; kind: GalleryMessageKind };
+
+/** Editors only: take a removed configuration back ("restored"), or only allow it again ("allowed_again" for an older removal). */
+export async function restoreGalleryItem(supabase: SupabaseClient, input: { key: unknown }): Promise<GalleryRestoreResult> {
+  if (!isGalleryIdentityKey(input?.key)) return { ok: false, kind: "invalid_request" };
+  if (!(await rpcBoolean(supabase, "product_gallery_is_editor"))) return { ok: false, kind: "not_allowed" };
+  try {
+    const { data, error } = await supabase.rpc("product_gallery_restore", { p_key: input.key });
+    if (error) {
+      const code = (error as { code?: string }).code;
+      const message = typeof (error as { message?: unknown }).message === "string" ? (error as { message: string }).message : "";
+      return { ok: false, kind: code === "42501" || /not allowed/i.test(message) ? "not_allowed" : "save_failed" };
+    }
+    if (data === "restored" || data === "allowed_again" || data === "not_found") return { ok: true, outcome: data };
+    return { ok: false, kind: "save_failed" };
+  } catch (problem) {
+    logProblem("product_gallery_restore", problem);
+    return { ok: false, kind: "save_failed" };
+  }
+}
+
+/** Editors only: apply an open specification or picture offer to the item. */
+export async function applyGalleryUpdate(supabase: SupabaseClient, input: { id: unknown; kind: unknown }): Promise<GalleryChangeResult> {
+  if (!isGalleryId(input?.id) || !isGalleryOfferKind(input?.kind)) return { ok: false, kind: "invalid_request" };
+  if (!(await rpcBoolean(supabase, "product_gallery_is_editor"))) return { ok: false, kind: "not_allowed" };
+  return callCuration(supabase, "product_gallery_update_apply", { p_item: input.id, p_kind: input.kind }, "update_not_found");
+}
+
+/** Editors only: ignore an offer. A "configuration" notice needs its short fingerprint (max 200 characters). */
+export async function ignoreGalleryUpdate(supabase: SupabaseClient, input: { id: unknown; kind: unknown; value?: unknown }): Promise<GalleryChangeResult> {
+  if (!isGalleryId(input?.id) || !isGalleryUpdateKind(input?.kind)) return { ok: false, kind: "invalid_request" };
+  const fingerprint = input.kind === "configuration" ? cleanGalleryFingerprint(input.value) : null;
+  if (input.kind === "configuration" && fingerprint === null) return { ok: false, kind: "invalid_request" };
+  if (!(await rpcBoolean(supabase, "product_gallery_is_editor"))) return { ok: false, kind: "not_allowed" };
+  return callCuration(supabase, "product_gallery_update_ignore", { p_item: input.id, p_kind: input.kind, p_value: fingerprint }, "update_not_found");
 }
 
 export async function mergeGalleryItems(supabase: SupabaseClient, input: { fromId: unknown; toId: unknown }): Promise<GalleryChangeResult> {

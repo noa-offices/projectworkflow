@@ -5,10 +5,10 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { DialogShell, galleryButton } from "@/components/products/product-gallery-dialogs";
 import { ProductLibraryPreviewImage } from "@/components/products/product-library-preview-image";
 import { resolveQuotationImageUrl, markQuotationImagePathFailed } from "@/lib/quotation-image-path";
-import { getGalleryItemDetailAction, updateGalleryItemSpecificationAction } from "@/lib/products/gallery/gallery-actions";
+import { applyGalleryUpdateAction, getGalleryItemDetailAction, ignoreGalleryUpdateAction, updateGalleryItemSpecificationAction } from "@/lib/products/gallery/gallery-actions";
 import { GALLERY_SPECIFICATION_MAX } from "@/lib/products/gallery/gallery";
 import type { GalleryDetail, GalleryDetailMaterialGroup, GalleryDetailSwatch, GallerySpecificationSource } from "@/lib/products/gallery/gallery-detail";
-import { COLLECTIONS_COLLAPSE_ABOVE, COLLECTIONS_SHOWN_FIRST, SWATCHES_SHOWN_FIRST, SPECIFICATION_HELP_TEXT, SPECIFICATION_SOURCE_LABELS, fullDetailHref, quotedText, specificationDraft, swatchCaption } from "@/lib/products/gallery/gallery-view";
+import { STALE_CHOICES_HELP, STALE_CHOICES_TEXT, UPDATE_AVAILABLE_TEXT, COLLECTIONS_COLLAPSE_ABOVE, COLLECTIONS_SHOWN_FIRST, SWATCHES_SHOWN_FIRST, SPECIFICATION_HELP_TEXT, SPECIFICATION_SOURCE_LABELS, fullDetailHref, quotedText, specificationDraft, swatchCaption } from "@/lib/products/gallery/gallery-view";
 
 // The details popup of the Product Gallery. Read-only: names and text only, no money values, no recipe. The data comes from
 // getGalleryItemDetailAction (the server decides what is readable). It opens from a card (Details button, picture or title); Escape and
@@ -249,6 +249,105 @@ function SpecificationBlock({ detail, canEdit, onSaved }: { detail: GalleryDetai
   );
 }
 
+/** One open offer with its Update and Ignore buttons. The server decides who gets offers (editors only); this only shows what it was given. */
+function UpdateOffer({ itemId, kind, title, onDone, children }: { itemId: string; kind: "specification" | "picture"; title: string; onDone: () => Promise<void>; children: ReactNode }) {
+  const [busy, setBusy] = useState<"" | "update" | "ignore">("");
+  const [problem, setProblem] = useState("");
+  async function run(which: "update" | "ignore") {
+    setBusy(which);
+    setProblem("");
+    try {
+      const result = which === "update" ? await applyGalleryUpdateAction({ id: itemId, kind }) : await ignoreGalleryUpdateAction({ id: itemId, kind });
+      if (result.ok) await onDone();
+      else setProblem(result.message);
+    } catch {
+      setProblem("The change could not be saved. Please try again.");
+    } finally {
+      setBusy("");
+    }
+  }
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-sky-200 bg-sky-50/50 p-2.5" data-testid={`update-offer-${kind}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide text-sky-900">{title}</p>
+      {children}
+      {problem ? <p role="alert" className="text-sm text-red-800">{problem}</p> : null}
+      <div className="flex justify-end gap-2">
+        <button type="button" className={galleryButton} onClick={() => void run("ignore")} disabled={busy !== ""}>{busy === "ignore" ? "Working…" : "Ignore"}</button>
+        <button type="button" className="h-8 rounded-md bg-emerald-800 px-3 text-xs font-semibold text-white transition hover:bg-emerald-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800 disabled:opacity-60" onClick={() => void run("update")} disabled={busy !== ""}>{busy === "update" ? "Working…" : "Update"}</button>
+      </div>
+    </div>
+  );
+}
+
+/** "Update available": a compare view of the current and the new specification / picture. Editors only (the server sends nothing to anyone else). */
+function UpdatesSection({ detail, onDone }: { detail: GalleryDetail; onDone: () => Promise<void> }) {
+  const updates = detail.updates;
+  if (!updates || (!updates.specification && !updates.picture)) return null;
+  return (
+    <Section title={UPDATE_AVAILABLE_TEXT} defaultOpen>
+      <div className="flex flex-col gap-3">
+        {updates.specification ? (
+          <UpdateOffer itemId={detail.id} kind="specification" title="Specification" onDone={onDone}>
+            <div className="grid grid-cols-1 gap-2 min-[560px]:grid-cols-2">
+              <div>
+                <p className="text-xs font-semibold text-zinc-500">Current</p>
+                <p className="whitespace-pre-line text-sm text-zinc-700">{updates.specification.current ?? "None saved."}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-sky-900">New</p>
+                <p className="whitespace-pre-line text-sm text-zinc-900">{updates.specification.proposed}</p>
+              </div>
+            </div>
+          </UpdateOffer>
+        ) : null}
+        {updates.picture ? (
+          <UpdateOffer itemId={detail.id} kind="picture" title="Picture" onDone={onDone}>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <p className="text-xs font-semibold text-zinc-500">Current</p>
+                <ProductLibraryPreviewImage alt="Current picture" path={updates.picture.currentPath} className="flex h-32 items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-white" placeholder="No image" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-sky-900">New</p>
+                <ProductLibraryPreviewImage alt="New picture" path={updates.picture.proposedPath} className="flex h-32 items-center justify-center overflow-hidden rounded-md border border-sky-200 bg-white" placeholder="No image" />
+              </div>
+            </div>
+          </UpdateOffer>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
+/** "Some saved choices changed in the product": read-only (changing the recipe would change the item's identity); it can only be ignored. */
+function StaleNotice({ detail, onDone }: { detail: GalleryDetail; onDone: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
+  if (!detail.staleNotice) return null;
+  const fingerprint = detail.staleNotice.fingerprint;
+  async function ignore() {
+    setBusy(true);
+    setProblem("");
+    try {
+      const result = await ignoreGalleryUpdateAction({ id: detail.id, kind: "configuration", value: fingerprint });
+      if (result.ok) await onDone();
+      else setProblem(result.message);
+    } catch {
+      setProblem("The change could not be saved. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div role="status" className="flex flex-col gap-1.5 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-sm text-amber-950" data-testid="stale-notice">
+      <p className="font-medium">{STALE_CHOICES_TEXT}</p>
+      <p className="text-xs">{STALE_CHOICES_HELP}</p>
+      {problem ? <p role="alert" className="text-red-800">{problem}</p> : null}
+      <div><button type="button" className={galleryButton} onClick={() => void ignore()} disabled={busy}>{busy ? "Working…" : "Ignore"}</button></div>
+    </div>
+  );
+}
+
 function Skeleton() {
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" aria-hidden="true" data-testid="gallery-detail-skeleton">
@@ -263,7 +362,7 @@ function Skeleton() {
   );
 }
 
-function Body({ detail, canEdit, onSpecificationSaved }: { detail: GalleryDetail; canEdit: boolean; onSpecificationSaved: () => Promise<void> }) {
+function Body({ detail, canEdit, onSpecificationSaved, onUpdateDone }: { detail: GalleryDetail; canEdit: boolean; onSpecificationSaved: () => Promise<void>; onUpdateDone: () => Promise<void> }) {
   return (
     <div className="grid grid-cols-1 gap-5 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       <Pictures detail={detail} />
@@ -280,6 +379,9 @@ function Body({ detail, canEdit, onSpecificationSaved }: { detail: GalleryDetail
           </div>
         ) : null}
         {detail.description ? <p className="whitespace-pre-line text-sm text-zinc-700">{detail.description}</p> : null}
+
+        <UpdatesSection detail={detail} onDone={onUpdateDone} />
+        <StaleNotice detail={detail} onDone={onUpdateDone} />
 
         <Section title="Saved configuration" defaultOpen>
           {detail.configuration.length ? (
@@ -350,7 +452,7 @@ function Body({ detail, canEdit, onSpecificationSaved }: { detail: GalleryDetail
   );
 }
 
-export function GalleryDetailDialog({ itemId, title, canEdit = false, onClose }: { itemId: string; title: string; canEdit?: boolean; onClose: () => void }) {
+export function GalleryDetailDialog({ itemId, title, canEdit = false, onChanged, onClose }: { itemId: string; title: string; canEdit?: boolean; onChanged?: () => void; onClose: () => void }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -393,7 +495,7 @@ export function GalleryDetailDialog({ itemId, title, canEdit = false, onClose }:
           <button type="button" className={galleryButton} onClick={() => setAttempt((count) => count + 1)}>Retry</button>
         </div>
       ) : null}
-      {phase.kind === "ready" ? <Body detail={phase.detail} canEdit={canEdit} onSpecificationSaved={refresh} /> : null}
+      {phase.kind === "ready" ? <Body detail={phase.detail} canEdit={canEdit} onSpecificationSaved={refresh} onUpdateDone={async () => { await refresh(); onChanged?.(); }} /> : null}
       <div className="sticky bottom-0 -mx-4 -mb-4 mt-1 flex flex-wrap justify-end gap-2 border-t border-zinc-100 bg-white px-4 py-3">
         <button type="button" className={`${galleryButton} h-9`} onClick={onClose}>Close</button>
         {phase.kind === "ready" ? <Link href={fullDetailHref(phase.detail.templateId)} className={openLink}>Open full detail</Link> : null}
