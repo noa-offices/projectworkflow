@@ -45,6 +45,7 @@ import {
   modularPricingDefaultsFromRows,
   modularRowRole,
 } from "@/lib/products/modular-pricing";
+import { modularMissingMessage, pricingModesProblem } from "@/lib/quotations/configurator-choosers";
 import { validateModularBaseModelExclusivity, validateModularCompositionGroups } from "@/lib/products/modular-composition";
 import { resolveMainAccessoryTargets } from "@/lib/products/main-accessory-targets";
 import { evaluateWithOptionItemPass, type OptionItemPassGroup } from "@/lib/products/option-item-targets";
@@ -6666,6 +6667,15 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const usesModularPricing = modularRows.length > 0;
   const usesDirectModularPricing = usesModularPricing && modularGroups.some((group) => isDirectModularPricingGroup(group));
   const usesMatrixModularPricing = usesModularPricing && modularGroups.some((group) => !isDirectModularPricingGroup(group));
+  // One pricing mode per line: modular items (or a workstation size) OR a Base / Model row / Price Matrix choice. Modular pricing applies only
+  // when a modular item has a quantity above 0; a template that offers only one mode is never constrained. (Same condition as the selector
+  // preview and the configuration engine.)
+  const modularInUse = usesModularPricing && modularGroups.some((group) => group.items.some((row) => {
+    const rowId = row.id ?? row.variant_name ?? row.display_name ?? "";
+    return (modularQtyById.get(`${group.id}\u0000${rowId}`) ?? modularQtyById.get(rowId) ?? 0) > 0;
+  }));
+  const offersBaseMode = (!activeWorkstationGroups.some((group) => group.items.length > 0) && activeBaseModelGroups.some((group) => group.items.some((row) => !isSystemBaseRow(row)))) || activeCategoryGroups.some((group) => group.items.length > 0);
+  const offersModularMode = usesModularPricing || activeWorkstationGroups.some((group) => group.items.length > 0);
   const configuredDimensionInput = optionalTextValue(formData, "configured_dimension");
   const configuredSpecificationInput = optionalTextValue(formData, "configured_specification");
   const finalSpecificationWasEdited = optionalTextValue(formData, "final_specification_was_edited") === "true";
@@ -6673,12 +6683,12 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const workstationLayoutTypeInput = optionalTextValue(formData, "workstation_layout_type");
   const submittedModularCategory = textValue(formData, "modular_pricing_category");
   const selectedMatrixModularCategory = resolvedMatrixModularPricingCategory(modularGroups, submittedModularCategory);
-  if (usesMatrixModularPricing && !selectedMatrixModularCategory) {
+  if (usesMatrixModularPricing && modularInUse && !selectedMatrixModularCategory) {
     redirectWithMessage(redirectPath, "Select a valid pricing category before saving this modular configuration.");
   }
-  const selectedCategory: string = usesMatrixModularPricing
+  const selectedCategory: string = usesMatrixModularPricing && modularInUse
     ? selectedMatrixModularCategory!
-    : usesDirectModularPricing
+    : usesDirectModularPricing && modularInUse
       ? ""
       : textValue(formData, "category_pricing_category") ||
       categoryPriceColumns(template.category_pricing)[0] ||
@@ -6727,14 +6737,25 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       };
     }))
     .filter((line) => line.qty > 0);
-  if (usesModularPricing && !selectedModularItems.length) {
-    redirectWithMessage(redirectPath, "Select at least one modular item before adding this product.");
+  // Neither mode used: a modular template needs a modular item, or (when it also offers Base / Model or Price Matrix) a model / size.
+  if (usesModularPricing && !selectedModularItems.length && !(selectedVariantPricingRow || selectedCategoryPricingRow)) {
+    redirectWithMessage(redirectPath, modularMissingMessage(offersBaseMode));
+  }
+  // Both modes with positive values are rejected, never silently resolved on the server.
+  const pricingModesIssue = pricingModesProblem({
+    exclusive: offersModularMode && offersBaseMode,
+    modularSelected: selectedModularItems.length > 0,
+    workstationSelected: Boolean(submittedDeskingSizeId),
+    baseSelected: Boolean(selectedVariantPricingRow || selectedCategoryPricingRow),
+  });
+  if (pricingModesIssue) {
+    redirectWithMessage(redirectPath, pricingModesIssue);
   }
   const modularCompositionIssue = validateModularCompositionGroups(
     modularGroups,
     (groupId, rowId) => modularQtyById.get(`${groupId}\u0000${rowId}`) ?? modularQtyById.get(rowId) ?? 0,
   );
-  if (usesModularPricing && modularCompositionIssue) {
+  if (modularInUse && modularCompositionIssue) {
     redirectWithMessage(redirectPath, modularCompositionIssue.message);
   }
   // Opt-in one-way-only (modular_excludes_base_models): never trust the client to keep the two ways apart.
@@ -6753,7 +6774,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     workstation: selectedSizePricing?.id && selectedWorkstationGroup
       ? [{ kind: "workstation" as const, group_id: selectedWorkstationGroup.id, row_id: selectedSizePricing.id }]
       : [],
-    usesModularPricing,
+    usesModularPricing: modularInUse,
     modular: selectedModularItems.map((item) => ({ kind: "modular" as const, group_id: item.group_id, row_id: item.id })),
     baseModel: selectedVariantPricingRow && selectedVariantGroup
       ? nativeBaseModelTargets({
@@ -7025,7 +7046,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
 
   const baseUnitPrice = derivedDesking
     ? derivedDesking.unitPrice || money(template.default_unit_price ?? 0)
-    : usesModularPricing
+    : modularInUse
       ? money(selectedModularItems.reduce((total, item) => total + item.total, 0))
     : selectedCategoryPricingRow
       ? selectedCategoryPrice
@@ -7195,7 +7216,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         : undefined)
     : undefined;
   const proposedImagePath = productImageSnapshotPath(selectedProposedImage);
-  const modularCompositionSpecification = usesModularPricing
+  const modularCompositionSpecification = modularInUse
     ? buildModularCompositionSpecification({
         items: selectedModularItems.map((item) => ({
           dimension: item.dimension,
@@ -7227,7 +7248,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       null,
     selectedOptionSnapshots,
     selectedWorkstationVariant: selectedWorkstationVariantPricingRow,
-    template: usesModularPricing
+    template: modularInUse
       ? {
           ...template,
           default_specification: modularDefaults.defaultSpecification ?? template.default_specification,
@@ -7243,7 +7264,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       null,
     selectedVariantSpecification: variantSpecification ?? null,
     selectedWorkstationVariantSpecification: selectedWorkstationVariantPricingRow?.specification ?? null,
-    template: usesModularPricing
+    template: modularInUse
       ? {
           ...template,
           default_specification: modularDefaults.defaultSpecification ?? template.default_specification,
@@ -7257,7 +7278,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   });
   const dimensionSnapshot = resolveProductDimensionSnapshot({
     derivedDeskingDimension:
-      usesModularPricing || derivedDesking
+      modularInUse || derivedDesking
         ? configuredDimension ?? derivedDesking?.dimensionValue ?? derivedDesking?.dimension
         : null,
     selectedSizeLabel: selectedSizePricing?.label ?? null,
@@ -7339,7 +7360,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     : null;
   const finalSelectedOptions = categorySnapshot
     ? [categorySnapshot, ...snapshotSelectedOptions]
-    : usesModularPricing
+    : modularInUse
       ? [...snapshotSelectedOptions, ...modularSnapshots]
     : variantSnapshot
       ? [variantSnapshot, ...snapshotSelectedOptions]
@@ -7385,7 +7406,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const singleOriginalSourceTotal = originalSourceTotals.length === 1 ? originalSourceTotals[0] : null;
   const baseSourcePriceType = derivedDesking
     ? "desking_size_pricing"
-    : usesModularPricing
+    : modularInUse
       ? "modular_item_pricing"
     : selectedCategoryPricingRow
       ? "category_pricing"
@@ -7396,7 +7417,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
           : "template_default";
   const sourcePriceLabel = derivedDesking
     ? [derivedDesking.sizeLabel, derivedDesking.clusterLabel].filter(Boolean).join(" / ")
-    : usesModularPricing
+    : modularInUse
       ? `${selectedModularItems.length} modular items / ${selectedCategory}`
     : selectedCategoryPricingRow
       ? [selectedCategoryPricingRow.variant_name, selectedCategory].filter(Boolean).join(" / ")
@@ -7407,7 +7428,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
           : template.template_name;
   const sourcePriceKey = derivedDesking
     ? derivedDesking.sizeLabel
-    : usesModularPricing
+    : modularInUse
       ? selectedModularItems.map((item) => item.id).join(",")
     : selectedCategoryPricingRow
       ? [selectedCategoryPricingRow.id, selectedCategory].filter(Boolean).join(":")
@@ -7427,7 +7448,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     quotation_currency: rowOutputCurrency,
   };
   const selectedSupplierPriceListCode =
-    (usesModularPricing
+    (modularInUse
       ? selectedModularItems
           .map((item) => item.supplier_price_list_code?.trim() || "")
           .filter(Boolean)
@@ -7466,7 +7487,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       supplier_price_list_code: selectedSupplierPriceListCode,
       default_specification:
         (derivedDesking ? configuredWorkstationSpecification : null) ??
-        (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
+        (modularInUse ? modularDefaults.defaultSpecification : null) ??
         template.default_specification,
       description: template.description,
       specification: specificationSnapshot,
@@ -7522,7 +7543,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
             },
           }
         : {}),
-      ...(usesModularPricing
+      ...(modularInUse
         ? {
             modular_pricing: {
               configured_dimension: configuredDimension || null,
@@ -7581,7 +7602,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     selected_options_snapshot: finalSelectedOptionsWithLinkedProducts,
     model_snapshot: derivedDesking
       ? `Cluster of ${derivedDesking.totalSeats}`
-      : usesModularPricing
+      : modularInUse
         ? (selectedModularItems.length ? `${selectedModularItems.length} modular items` : null)
       : selectedCategoryPricingRow?.variant_name ||
         selectedVariantPricingRow?.variant_name ||
