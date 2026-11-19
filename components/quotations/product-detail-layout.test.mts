@@ -16,7 +16,7 @@ const aside = source.slice(asideStart, asideEnd);
 test("the new card sits after Configuration and before Materials & Finishes, in the left column", () => {
   assert.ok(configuration < cardTitle && cardTitle < materials);
   // It is inside the left column (before the right column starts), inside the add form, in the same card style as Configuration.
-  assert.ok(at("action={addProductTemplateToQuotation}") < cardTitle && cardTitle < asideStart);
+  assert.ok(at("action={reconfigure ? undefined : addProductTemplateToQuotation}") < cardTitle && cardTitle < asideStart);
   assert.match(source.slice(cardTitle - 400, cardTitle), /<section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">/);
   assert.equal((source.match(/Pricing and details/g) ?? []).length, 1);
   assert.match(source.slice(asideStart - 300, asideStart), /<\/section>\s*<\/div>\s*$/, "the left column closes right before the right column");

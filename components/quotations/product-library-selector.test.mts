@@ -455,7 +455,7 @@ test("Final Details separates quotation dimensions and metadata while retaining 
   // Final Details, Dimensions, Brand and Country of Origin now live in the "Pricing and details" card (left column), before the right column.
   const details = source.split("Pricing and details")[1].split('<aside className="xl:sticky xl:top-24 xl:self-start">')[0];
   assert.match(source, /const generatedFinalSpecification = localSpecification \|\| ""/);
-  assert.match(source, /hasConfiguredDimensionOverride \? configuredDimensions\[template.id\]\?\.trim\(\) \|\| localDimension : localDimension/);
+  assert.match(source, /hasConfiguredDimensionOverride\s*\? configuredDimensions\[template\.id\]\?\.trim\(\) \|\| \(reconfigure \? null : localDimension\)\s*: localDimension/);
   assert.match(details, /configuredDimensions\[template.id\] \?\? localDimension/);
   assert.match(details, /dimensionBeforeEditing/);
   assert.match(details, /previous.value\?\.trim\(\)/);
