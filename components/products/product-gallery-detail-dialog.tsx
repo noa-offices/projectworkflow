@@ -6,6 +6,8 @@ import { DialogShell, galleryButton } from "@/components/products/product-galler
 import { ProductLibraryPreviewImage } from "@/components/products/product-library-preview-image";
 import { resolveQuotationImageUrl, markQuotationImagePathFailed } from "@/lib/quotation-image-path";
 import { applyGalleryUpdateAction, getGalleryItemDetailAction, ignoreGalleryUpdateAction, updateGalleryItemSpecificationAction } from "@/lib/products/gallery/gallery-actions";
+import { ProductGalleryPrice } from "@/components/products/product-gallery-price";
+import type { GalleryPriceState } from "@/lib/products/gallery/gallery-price-view";
 import { GALLERY_SPECIFICATION_MAX } from "@/lib/products/gallery/gallery";
 import type { GalleryDetail, GalleryDetailMaterialGroup, GalleryDetailSwatch, GallerySpecificationSource } from "@/lib/products/gallery/gallery-detail";
 import { STALE_CHOICES_HELP, STALE_CHOICES_TEXT, UPDATE_AVAILABLE_TEXT, COLLECTIONS_COLLAPSE_ABOVE, COLLECTIONS_SHOWN_FIRST, SWATCHES_SHOWN_FIRST, SPECIFICATION_HELP_TEXT, SPECIFICATION_SOURCE_LABELS, fullDetailHref, quotedText, specificationDraft, swatchCaption } from "@/lib/products/gallery/gallery-view";
@@ -362,7 +364,9 @@ function Skeleton() {
   );
 }
 
-function Body({ detail, canEdit, onSpecificationSaved, onUpdateDone }: { detail: GalleryDetail; canEdit: boolean; onSpecificationSaved: () => Promise<void>; onUpdateDone: () => Promise<void> }) {
+function Body({ detail, canEdit, price, onSpecificationSaved, onUpdateDone }: {
+  detail: GalleryDetail; canEdit: boolean; price: GalleryPriceState; onSpecificationSaved: () => Promise<void>; onUpdateDone: () => Promise<void>;
+}) {
   return (
     <div className="grid grid-cols-1 gap-5 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       <Pictures detail={detail} />
@@ -373,6 +377,7 @@ function Body({ detail, canEdit, onSpecificationSaved, onUpdateDone }: { detail:
           <p className="mt-1 text-sm font-medium text-zinc-700">{quotedText(detail.quotedCount)}</p>
         </div>
         <Labels detail={detail} />
+        <ProductGalleryPrice templateId={detail.templateId} price={price} detail />
         {detail.dimension ? <p className="text-sm text-zinc-700"><span className="font-semibold">Dimension:</span> {detail.dimension}</p> : null}
         {detail.tags.length ? (
           <div className="flex flex-wrap gap-1">
@@ -453,7 +458,9 @@ function Body({ detail, canEdit, onSpecificationSaved, onUpdateDone }: { detail:
   );
 }
 
-export function GalleryDetailDialog({ itemId, title, canEdit = false, onChanged, onClose }: { itemId: string; title: string; canEdit?: boolean; onChanged?: () => void; onClose: () => void }) {
+export function GalleryDetailDialog({ itemId, title, canEdit = false, price, onChanged, onClose }: {
+  itemId: string; title: string; canEdit?: boolean; price?: GalleryPriceState; onChanged?: () => void; onClose: () => void;
+}) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -496,7 +503,7 @@ export function GalleryDetailDialog({ itemId, title, canEdit = false, onChanged,
           <button type="button" className={galleryButton} onClick={() => setAttempt((count) => count + 1)}>Retry</button>
         </div>
       ) : null}
-      {phase.kind === "ready" ? <Body detail={phase.detail} canEdit={canEdit} onSpecificationSaved={refresh} onUpdateDone={async () => { await refresh(); onChanged?.(); }} /> : null}
+      {phase.kind === "ready" ? <Body detail={phase.detail} canEdit={canEdit} price={price} onSpecificationSaved={refresh} onUpdateDone={async () => { await refresh(); onChanged?.(); }} /> : null}
       <div className="sticky bottom-0 -mx-4 -mb-4 mt-1 flex flex-wrap justify-end gap-2 border-t border-zinc-100 bg-white px-4 py-3">
         <button type="button" className={`${galleryButton} h-9`} onClick={onClose}>Close</button>
         {phase.kind === "ready" ? <Link href={fullDetailHref(phase.detail.templateId)} className={openLink}>Open full detail</Link> : null}

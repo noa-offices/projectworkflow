@@ -16,6 +16,7 @@ type TemplateRow = GalleryPriceTemplate & {
 type PriceCheck = {
   checkedAt: string | null;
   checkedBy: string | null;
+  checkedByName?: string;
   intervalDays: number | null;
   note: string | null;
   state: ReturnType<typeof friendlyPriceHealth>;
@@ -57,7 +58,8 @@ export async function loadGalleryPrices(supabase: SupabaseClient, ids: string[])
   const templateMap = new Map(templates.map((template) => [template.id, template]));
   const childIds = unique(links.filter((link) => selectedLinks.has(link.id) && !templateMap.has(link.linked_template_id)).map((link) => link.linked_template_id));
   const brandIds = unique(templates.flatMap((template) => template.brand_id ? [template.brand_id] : []));
-  const [children, brands, updates] = await Promise.all([
+  const checkerIds = unique(templates.map((template) => template.last_price_checked_by).filter(isGalleryId));
+  const [children, brands, updates, checkers] = await Promise.all([
     childIds.length && childIds.length < 500 ? batch<GalleryPriceTemplate>(supabase.from("product_templates").select(TEMPLATE_COLUMNS).in("id", childIds)) : [],
     brandIds.length ? batch<{ id: string; last_price_list_checked_at: string | null; price_list_check_interval_days: number | null }>(
       supabase.from("brands").select("id,last_price_list_checked_at,price_list_check_interval_days").in("id", brandIds),
@@ -65,6 +67,10 @@ export async function loadGalleryPrices(supabase: SupabaseClient, ids: string[])
     brandIds.length ? batch<BrandPriceListUpdateForCheck & { brand_id: string }>(
       supabase.from("brand_price_list_updates").select("brand_id,title,effective_from,received_at,status,created_at,coverage_mode").in("brand_id", brandIds),
     ) : [],
+    // Profile visibility is independent of the price. Keep prices if names are unavailable.
+    checkerIds.length ? batch<{ id: string; full_name: string | null }>(
+      supabase.from("profiles").select("id,full_name").in("id", checkerIds),
+    ).catch(() => []) : [],
   ]);
   const linkedTemplates = new Map([...templates, ...children].map((template) => [template.id, template]));
   const priceChecks = new Map<string, PriceCheck>();
@@ -85,9 +91,11 @@ export async function loadGalleryPrices(supabase: SupabaseClient, ids: string[])
         now,
       }),
     });
+    const checkedByName = checkers.find((profile) => profile.id === template.last_price_checked_by)?.full_name?.trim();
     priceChecks.set(template.id, {
       checkedAt: template.last_price_checked_at ?? null,
       checkedBy: template.last_price_checked_by ?? null,
+      ...(checkedByName ? { checkedByName } : {}),
       intervalDays: template.price_check_interval_days ?? null,
       note: template.price_check_note ?? null,
       state: friendlyPriceHealth(state, latest, "quotation"),

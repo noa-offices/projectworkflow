@@ -1,6 +1,6 @@
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { ProductGalleryBrowser } from "@/components/products/product-gallery-browser";
-import { requireActiveUser } from "@/lib/auth";
+import { canManageProductLibrary, requireActiveUser } from "@/lib/auth";
 import { getGalleryCapabilitiesAction } from "@/lib/products/gallery/gallery-actions";
 import { parseGalleryQuery } from "@/lib/products/gallery/gallery-view";
 
@@ -28,7 +28,7 @@ export default async function ProductGalleryPage({ searchParams }: { searchParam
       userRole={profile?.role ?? null}
     >
       {canView ? (
-        <ProductGalleryBrowser canEdit={canEdit} canCurate={canCurate} initialState={initialState} />
+        <ProductGalleryBrowser canEdit={canEdit} canCurate={canCurate} canSeePrices={canManageProductLibrary(profile?.role)} initialState={initialState} />
       ) : (
         <p role="alert" className="rounded-lg border border-zinc-200 bg-white p-6 text-sm text-zinc-700">
           {capabilities.ok ? "You do not have access to the gallery." : capabilities.message}

@@ -8,6 +8,7 @@ const page = read("../../../app/products/gallery/page.tsx");
 const browser = read("../../../components/products/product-gallery-browser.tsx");
 const dialogs = read("../../../components/products/product-gallery-dialogs.tsx");
 const detailDialog = read("../../../components/products/product-gallery-detail-dialog.tsx");
+const priceBlock = read("../../../components/products/product-gallery-price.tsx");
 const service = read("./gallery-service.ts");
 const actionsSource = read("./gallery-actions.ts");
 const sidebar = read("../../../components/layout/erp-sidebar.tsx");
@@ -25,11 +26,11 @@ test("the page checks the capabilities FIRST and shows a short message when the 
   assert.match(page, /searchParams: Promise</, "this Next.js version passes searchParams as a Promise");
 });
 
-test("no price, discount or cost word is rendered or typed anywhere on the page or its components", () => {
-  for (const [name, text] of Object.entries({ page, browser, dialogs, view, detailDialog })) {
+test("the gallery displays source list prices without commercial fields from a quotation", () => {
+  for (const [name, text] of Object.entries({ page, browser, dialogs, view, detailDialog, priceBlock })) {
     // The one allowed line: the required help text under the specification box ("... prices or quote numbers"), which tells editors not to type them.
     const scanned = code(text).split(String.fromCharCode(10)).filter((line) => !line.includes("SPECIFICATION_HELP_TEXT =")).join(String.fromCharCode(10));
-    assert.doesNotMatch(scanned, /price|discount|\bcost\b|\btotal_|net_?price|list_?price|selling/i, name);
+    assert.doesNotMatch(scanned, /discount|\bcost\b|net_?price|internal_?cost|supplier_?price|margin|selling|exchange_?rate/i, name);
   }
 });
 
@@ -357,7 +358,7 @@ test("popup: a Required components block inside Saved configuration, supplier co
   assert.match(saved, /Supplier code: \{line\.supplierCode\}/, "on the saved configuration lines");
   const options = detailDialog.slice(detailDialog.indexOf('<Section title="Options and accessories">'));
   assert.match(options, /Supplier code: \{item\.supplierCode\}/, "in the options and accessories lists");
-  assert.doesNotMatch(code(detailDialog), /price|cost|currency|amount/i);
+  assert.doesNotMatch(code(saved), /price|cost|currency|amount/i);
   assert.match(read("./gallery-detail.ts"), /supplier_price_list_code/, "the field the quotation selector shows as Supplier Code");
   assert.match(read("./gallery-detail.ts"), /requiredComponentsFromEngine\(engineState\.autoApplied/, "the engine's own required-companion output");
 });
