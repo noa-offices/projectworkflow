@@ -336,7 +336,7 @@ test("server actions authenticate with requireActiveUser, use the caller's clien
 test("the existing Add path is untouched: Add / Add to Local Workspace unchanged and the saved state never enters the line", () => {
   const source = read("../../../components/quotations/product-library-selector.tsx");
   assert.ok(source.includes("onAddLocalItem?.(localProductItem);"));
-  assert.ok(source.includes("action={addProductTemplateToQuotation}"));
+  assert.ok(source.includes("action={reconfigure ? undefined : addProductTemplateToQuotation}"));
   assert.ok(source.includes("                                  Add to Local Workspace"));
   const lineStart = source.indexOf("const localProductItem: LocalQuotationItem = {");
   const stateStart = source.indexOf("const savedSetupState: SavedSetupPlainState = {");
@@ -446,7 +446,7 @@ test("pictures never use an elevated client, and the thumbnail reuses the existi
 test("PR 1b-1 leaves the Add / Add to Local Workspace code paths unchanged in the selector", () => {
   const source = read("../../../components/quotations/product-library-selector.tsx");
   assert.ok(source.includes("onAddLocalItem?.(localProductItem);"));
-  assert.ok(source.includes("action={addProductTemplateToQuotation}"));
+  assert.ok(source.includes("action={reconfigure ? undefined : addProductTemplateToQuotation}"));
   assert.ok(source.includes("                                  Add to Local Workspace"));
   const lineStart = source.indexOf("const localProductItem: LocalQuotationItem = {");
   const stateStart = source.indexOf("const savedSetupState: SavedSetupPlainState = {");
