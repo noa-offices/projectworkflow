@@ -18,7 +18,9 @@ export const GALLERY_DETAIL_TEXT_MAX = 4000;
 export type GalleryDetailLine = { label: string; value: string };
 /** One finish swatch: short code, full name, and the picture's storage path (the browser signs it with the existing image helper). */
 export type GalleryDetailSwatch = { code: string; name: string; imagePath: string | null };
-export type GalleryDetailMaterialGroup = { groupName: string; swatches: GalleryDetailSwatch[]; moreCount: number };
+/** A collection (the material subgroup, else the material collection name, else "Other") with its swatches. */
+export type GalleryDetailCollection = { name: string; grade: string | null; swatches: GalleryDetailSwatch[] };
+export type GalleryDetailMaterialGroup = { groupName: string; count: number; collections: GalleryDetailCollection[]; moreCount: number };
 export type GallerySpecificationSource = "gallery" | "generated" | "template" | "none";
 export type GalleryDetailOptionGroup = { groupName: string; kind: "option" | "accessory" | "linked"; items: string[] };
 
@@ -49,18 +51,38 @@ export type GalleryDetail = {
 export const PROPOSED_IMAGE_FIELDS = Array.from({ length: 20 }, (_, index) => `proposed_image_url_${index + 1}`);
 export const DETAIL_IMAGE_SELECT = ["default_image_url", "reference_image_url", ...PROPOSED_IMAGE_FIELDS].join(",");
 
-/** default, then the proposed pictures in order, then the reference picture. Empty ones removed, no duplicates, at most 12. */
-export function galleryDetailImages(template: Record<string, unknown>): string[] {
+/** A picture path compared the way the app stores template pictures: with or without the "product-images:" prefix. */
+const comparablePicture = (value: string) => value.trim().replace(/^product-images:/, "");
+
+/** The template's own pictures, in the default order: default, proposed 1..20, reference. Empty ones removed, no duplicates. */
+function templatePictures(template: Record<string, unknown>): string[] {
   const out: string[] = [];
   const add = (value: unknown) => {
     if (typeof value !== "string") return;
     const path = value.trim();
-    if (path && !out.includes(path) && out.length < GALLERY_DETAIL_IMAGES_MAX) out.push(path);
+    if (path && !out.some((known) => comparablePicture(known) === comparablePicture(path))) out.push(path);
   };
   add(template.default_image_url);
   for (const field of PROPOSED_IMAGE_FIELDS) add(template[field]);
   add(template.reference_image_url);
   return out;
+}
+
+/**
+ * The picture chosen in the quotation builder, but ONLY if it is one of the template's own pictures (same path after the app's usual
+ * prefix handling). The template's own spelling is returned, never the stored value. Anything else (removed, changed, unknown) is null.
+ */
+export function validSelectedImage(template: Record<string, unknown>, selected: unknown): string | null {
+  if (typeof selected !== "string" || !selected.trim()) return null;
+  const wanted = comparablePicture(selected);
+  return templatePictures(template).find((path) => comparablePicture(path) === wanted) ?? null;
+}
+
+/** The chosen picture (when valid) first, then default, proposed in order, reference. No duplicates, at most 12. */
+export function galleryDetailImages(template: Record<string, unknown>, selectedImage?: unknown): string[] {
+  const chosen = validSelectedImage(template, selectedImage);
+  const rest = templatePictures(template).filter((path) => !chosen || comparablePicture(path) !== comparablePicture(chosen));
+  return (chosen ? [chosen, ...rest] : rest).slice(0, GALLERY_DETAIL_IMAGES_MAX);
 }
 
 export function plainText(value: unknown): string | null {
@@ -73,7 +95,17 @@ export function plainText(value: unknown): string | null {
 export type TemplateMaterialGroupRow = { id: string; material_group_id: string; selection_mode: string | null; label_override: string | null; sort_order: number | null };
 export type MaterialGroupRow = { id: string; group_name: string | null };
 export type MaterialGroupItemRow = { product_template_material_group_id: string; brand_material_id: string; sort_order: number | null };
-export type MaterialRow = { id: string; material_group_id: string; material_code: string | null; material_name: string | null; image_url: string | null; sort_order: number | null };
+export type MaterialRow = {
+  id: string;
+  material_group_id: string;
+  material_code: string | null;
+  material_name: string | null;
+  image_url: string | null;
+  sort_order: number | null;
+  subgroup_id?: string | null;
+  material_collection?: string | null;
+};
+export type SubgroupRow = { id: string; name: string | null; grade: string | null; sort_order: number | null };
 
 const bySort = <T extends { sort_order?: number | null }>(a: T, b: T) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0);
 
@@ -86,13 +118,20 @@ export function swatchImagePath(value: unknown): string | null {
   return `product-images:${path}`;
 }
 
+const OTHER_COLLECTION = "Other";
+const byCode = (a: GalleryDetailSwatch, b: GalleryDetailSwatch) => a.code.localeCompare(b.code, undefined, { numeric: true });
+
 /**
- * Template material groups -> swatches per group. "full_group" lists the whole brand group, "selected_items" only the chosen ones.
- * Only code, name and picture path are read (no price, no supplier data). At most 400 per group and 1200 in all; moreCount says how many were left out.
+ * Template material groups -> sections, each with its collections, each with swatches. A collection is the material's subgroup name, else
+ * its material_collection text, else "Other". full_group lists the whole brand group, selected_items only the chosen ones.
+ * Order: groups by the template's order; collections by subgroup sort order then name, then the plain collection names, "Other" last;
+ * swatches by their own sort order, then code. Only code, name, picture path and the subgroup's grade are read (no price, no supplier data).
+ * At most 400 swatches per group and 1200 in all: the cap cuts the END of that order. moreCount says how many were left out.
  */
-export function mapMaterials(input: { links: TemplateMaterialGroupRow[]; groups: MaterialGroupRow[]; linkItems: MaterialGroupItemRow[]; materials: MaterialRow[] }): GalleryDetailMaterialGroup[] {
+export function mapMaterials(input: { links: TemplateMaterialGroupRow[]; groups: MaterialGroupRow[]; linkItems: MaterialGroupItemRow[]; materials: MaterialRow[]; subgroups?: SubgroupRow[] }): GalleryDetailMaterialGroup[] {
   const groupName = new Map(input.groups.map((group) => [group.id, group.group_name?.trim() ?? ""]));
   const materialById = new Map(input.materials.map((material) => [material.id, material]));
+  const subgroupById = new Map((input.subgroups ?? []).map((subgroup) => [subgroup.id, subgroup]));
   const result: GalleryDetailMaterialGroup[] = [];
   let remaining = GALLERY_DETAIL_SWATCHES_TOTAL_MAX;
   for (const link of [...input.links].sort(bySort)) {
@@ -100,23 +139,48 @@ export function mapMaterials(input: { links: TemplateMaterialGroupRow[]; groups:
     if (!name) continue;
     const rows = link.selection_mode === "selected_items"
       ? input.linkItems.filter((item) => item.product_template_material_group_id === link.id).sort(bySort).flatMap((item) => materialById.get(item.brand_material_id) ?? [])
-      : input.materials.filter((material) => material.material_group_id === link.material_group_id).sort(bySort);
+      : input.materials.filter((material) => material.material_group_id === link.material_group_id);
+
+    type Bucket = { key: string; rank: number; order: number; name: string; grade: string | null; swatches: Array<GalleryDetailSwatch & { order: number }> };
+    const buckets = new Map<string, Bucket>();
     const seen = new Set<string>();
-    const swatches: GalleryDetailSwatch[] = [];
     for (const row of rows) {
       if (seen.has(row.id)) continue;
       seen.add(row.id);
       const code = row.material_code?.trim() ?? "";
       const label = row.material_name?.trim() ?? "";
       if (!code && !label) continue;
-      swatches.push({ code: code || label, name: label || code, imagePath: swatchImagePath(row.image_url) });
+      const subgroup = row.subgroup_id ? subgroupById.get(row.subgroup_id) : undefined;
+      const subgroupName = subgroup?.name?.trim();
+      const collection = row.material_collection?.trim();
+      const bucket: Bucket = subgroup && subgroupName
+        ? { key: `s:${subgroup.id}`, rank: 0, order: Number(subgroup.sort_order ?? 0), name: subgroupName, grade: subgroup.grade?.trim() || null, swatches: [] }
+        : collection
+          ? { key: `c:${collection.toLowerCase()}`, rank: 1, order: 0, name: collection, grade: null, swatches: [] }
+          : { key: "other", rank: 2, order: 0, name: OTHER_COLLECTION, grade: null, swatches: [] };
+      const target = buckets.get(bucket.key) ?? bucket;
+      buckets.set(bucket.key, target);
+      target.swatches.push({ code: code || label, name: label || code, imagePath: swatchImagePath(row.image_url), order: Number(row.sort_order ?? 0) });
     }
-    if (!swatches.length) continue;
-    const allowed = Math.max(0, Math.min(GALLERY_DETAIL_SWATCHES_PER_GROUP_MAX, remaining));
-    const kept = swatches.slice(0, allowed);
-    remaining -= kept.length;
-    if (!kept.length) continue;
-    result.push({ groupName: name, swatches: kept, moreCount: swatches.length - kept.length });
+
+    const ordered = Array.from(buckets.values()).sort((a, b) => a.rank - b.rank || a.order - b.order || a.name.localeCompare(b.name, undefined, { numeric: true }));
+    let total = 0;
+    for (const bucket of ordered) total += bucket.swatches.length;
+    if (!total) continue;
+    let allowed = Math.max(0, Math.min(GALLERY_DETAIL_SWATCHES_PER_GROUP_MAX, remaining));
+    const collections: GalleryDetailCollection[] = [];
+    let kept = 0;
+    for (const bucket of ordered) {
+      if (allowed <= 0) break;
+      const sorted = bucket.swatches.sort((a, b) => a.order - b.order || byCode(a, b)).map(({ code, name: swatchName, imagePath }) => ({ code, name: swatchName, imagePath }));
+      const take = sorted.slice(0, allowed);
+      allowed -= take.length;
+      kept += take.length;
+      if (take.length) collections.push({ name: bucket.name, grade: bucket.grade, swatches: take });
+    }
+    remaining -= kept;
+    if (!kept) continue;
+    result.push({ groupName: name, count: kept, collections, moreCount: total - kept });
   }
   return result;
 }
@@ -329,7 +393,7 @@ export function chooseSpecification(input: { gallery?: unknown; generated?: stri
 
 // ── Whole payload ──────────────────────────────────────────────────────────
 export function buildGalleryDetail(input: {
-  item: { id: string; template_id: string; item_name: string; display_name: string | null; item_code: string | null; tags: string[] | null; quoted_count: number | string; recipe: unknown; specification?: string | null };
+  item: { id: string; template_id: string; item_name: string; display_name: string | null; item_code: string | null; tags: string[] | null; quoted_count: number | string; recipe: unknown; specification?: string | null; selected_image?: string | null };
   template: ConfigurationTemplateInput & Record<string, unknown>;
   brandName: string;
   categoryName: string;
@@ -358,7 +422,7 @@ export function buildGalleryDetail(input: {
     templateCode: typeof input.template.template_code === "string" ? input.template.template_code.trim() : "",
     tags: Array.isArray(input.item.tags) ? input.item.tags : [],
     quotedCount: Number.isFinite(quoted) ? quoted : 1,
-    images: galleryDetailImages(input.template),
+    images: galleryDetailImages(input.template, input.item.selected_image),
     // The description is shown on its own, unless it is the text used as the specification (then it is not shown twice).
     description: spec.usedDescription ? null : plainText(input.template.description),
     specification: spec.text,

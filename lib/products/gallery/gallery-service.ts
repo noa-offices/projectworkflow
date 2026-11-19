@@ -37,6 +37,7 @@ import {
 import {
   DETAIL_IMAGE_SELECT,
   buildGalleryDetail,
+  validSelectedImage,
   mapMaterials,
   type ComponentRow,
   type ConfigurationTemplateInput,
@@ -46,14 +47,17 @@ import {
   type MaterialGroupItemRow,
   type MaterialGroupRow,
   type MaterialRow,
+  type SubgroupRow,
   type TemplateMaterialGroupRow,
 } from "./gallery-detail";
 
 // The list NEVER selects the recipe. Display fields only.
 const LIST_COLUMNS = [
   "id", "template_id", "brand_id", "main_category_id", "sub_category_id", "item_name", "display_name", "item_code", "currency",
-  "tags", "quoted_count", "last_quoted_at", "is_hidden",
+  "tags", "quoted_count", "last_quoted_at", "is_hidden", "selected_image",
 ].join(",");
+// The same list without the picture column: used only if the database does not have it yet (before its migration).
+const LIST_COLUMNS_NO_IMAGE = LIST_COLUMNS.replace(",selected_image", "");
 
 type GalleryRow = {
   id: string;
@@ -69,6 +73,7 @@ type GalleryRow = {
   quoted_count: number | string;
   last_quoted_at: string;
   is_hidden: boolean;
+  selected_image?: string | null;
 };
 
 function logProblem(where: string, problem: unknown) {
@@ -87,7 +92,7 @@ function numberOr(value: unknown, fallback: number): number {
 
 const PROPOSED_IMAGE_FIELDS = Array.from({ length: 20 }, (_, index) => `proposed_image_url_${index + 1}`);
 // Template pictures AND availability in ONE batched query for the page.
-const TEMPLATE_SELECT = ["id", "is_active", "lifecycle_status", "default_image_url", ...PROPOSED_IMAGE_FIELDS].join(",");
+const TEMPLATE_SELECT = ["id", "is_active", "lifecycle_status", "default_image_url", "reference_image_url", ...PROPOSED_IMAGE_FIELDS].join(",");
 
 /** The template's first picture, chosen exactly like client history does for configured rows without a chosen picture. */
 function firstTemplatePicture(template: Record<string, unknown>): GalleryPicture {
@@ -166,7 +171,8 @@ export async function listGalleryItems(supabase: SupabaseClient, input: ListGall
   try {
     // Hidden items: only an editor asking for them. (The database also hides them from everyone else; this is not the only guard.)
     const showHidden = input?.includeHidden === true && (await rpcBoolean(supabase, "product_gallery_is_editor"));
-    let query = supabase.from("product_gallery_items").select(LIST_COLUMNS, { count: "exact" });
+    const build = (columns: string) => {
+    let query = supabase.from("product_gallery_items").select(columns, { count: "exact" });
     if (!showHidden) query = query.eq("is_hidden", false);
     if (isGalleryId(brandId)) query = query.eq("brand_id", brandId);
     if (isGalleryId(categoryId)) query = query.eq("main_category_id", categoryId);
@@ -181,8 +187,10 @@ export async function listGalleryItems(supabase: SupabaseClient, input: ListGall
     if (sort === "popular") query = query.order("quoted_count", { ascending: false }).order("last_quoted_at", { ascending: false });
     else if (sort === "newest") query = query.order("last_quoted_at", { ascending: false });
     else query = query.order("display_name", { ascending: true, nullsFirst: false }).order("item_name", { ascending: true });
-    query = query.order("id", { ascending: true }).range(from, from + GALLERY_PAGE_SIZE - 1);
-    const { data, error, count } = await query;
+    return query.order("id", { ascending: true }).range(from, from + GALLERY_PAGE_SIZE - 1);
+    };
+    let { data, error, count } = await build(LIST_COLUMNS);
+    if (error) ({ data, error, count } = await build(LIST_COLUMNS_NO_IMAGE));
     if (error || !data) return { ok: false, kind: "load_failed" };
     const rows = data as unknown as GalleryRow[];
 
@@ -220,7 +228,8 @@ export async function listGalleryItems(supabase: SupabaseClient, input: ListGall
         lastQuotedAt: row.last_quoted_at,
         isHidden: row.is_hidden === true,
         available: isSetupUsable({ template_id: row.template_id }, activity),
-        picture: template ? firstTemplatePicture(template) : null,
+        // The picture chosen in the quotation builder, only if it is still one of the template's own pictures; otherwise the default.
+        picture: template ? (() => { const chosen = validSelectedImage(template, row.selected_image); return chosen ? { kind: "template" as const, path: chosen } : firstTemplatePicture(template); })() : null,
       };
     });
     const total = typeof count === "number" ? count : from + rows.length;
@@ -335,8 +344,9 @@ export async function getGalleryItemForAdd(supabase: SupabaseClient, id: unknown
 
 // ── One item in full, for the details popup ─────────────────────────────────
 // Names and text only: the template's pricing JSON is read here to turn saved ids into readable lines and is never returned.
-const DETAIL_ITEM_COLUMNS = "id,template_id,brand_id,main_category_id,sub_category_id,item_name,display_name,item_code,tags,quoted_count,recipe,specification";
-// The same read without the specification column: used only if the database does not have that column yet (before its migration).
+const DETAIL_ITEM_COLUMNS = "id,template_id,brand_id,main_category_id,sub_category_id,item_name,display_name,item_code,tags,quoted_count,recipe,specification,selected_image";
+// The same read without the newest columns, tried in turn only if the database does not have them yet (before their migrations).
+const DETAIL_ITEM_COLUMNS_NO_IMAGE = "id,template_id,brand_id,main_category_id,sub_category_id,item_name,display_name,item_code,tags,quoted_count,recipe,specification";
 const DETAIL_ITEM_COLUMNS_NO_SPEC = "id,template_id,brand_id,main_category_id,sub_category_id,item_name,display_name,item_code,tags,quoted_count,recipe";
 const DETAIL_TEMPLATE_SELECT = [
   "id", "brand_id", "main_category_id", "sub_category_id", "template_code", "template_name", "internal_selection_name", "item_code", "description",
@@ -361,11 +371,10 @@ export async function getGalleryItemDetail(supabase: SupabaseClient, id: unknown
   try {
     if (!(await rpcBoolean(supabase, "product_gallery_can_view"))) return { ok: false, kind: "not_allowed" };
     let { data, error } = await supabase.from("product_gallery_items").select(DETAIL_ITEM_COLUMNS).eq("id", id).maybeSingle();
-    if (error) {
-      ({ data, error } = await supabase.from("product_gallery_items").select(DETAIL_ITEM_COLUMNS_NO_SPEC).eq("id", id).maybeSingle());
-      if (error) return { ok: false, kind: "load_failed" };
-    }
-    const item = data as unknown as (GalleryRow & { recipe: unknown; specification?: string | null }) | null;
+    if (error) ({ data, error } = await supabase.from("product_gallery_items").select(DETAIL_ITEM_COLUMNS_NO_IMAGE).eq("id", id).maybeSingle());
+    if (error) ({ data, error } = await supabase.from("product_gallery_items").select(DETAIL_ITEM_COLUMNS_NO_SPEC).eq("id", id).maybeSingle());
+    if (error) return { ok: false, kind: "load_failed" };
+    const item = data as unknown as (GalleryRow & { recipe: unknown; specification?: string | null; selected_image?: string | null }) | null;
     if (!item) return { ok: false, kind: "item_not_found" };
 
     const { data: templateData, error: templateError } = await supabase.from("product_templates").select(DETAIL_TEMPLATE_SELECT).eq("id", item.template_id).maybeSingle();
@@ -395,13 +404,18 @@ export async function getGalleryItemDetail(supabase: SupabaseClient, id: unknown
       ]);
       const [wholeGroupMaterials, chosenMaterials] = await Promise.all([
         wholeGroupIds.length
-          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,image_url,sort_order").in("material_group_id", wholeGroupIds).eq("is_active", true).limit(1500), "group materials")
+          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,image_url,sort_order,subgroup_id,material_collection").in("material_group_id", wholeGroupIds).eq("is_active", true).order("material_group_id", { ascending: true }).order("subgroup_id", { ascending: true }).order("sort_order", { ascending: true }).order("material_code", { ascending: true }).limit(3000), "group materials")
           : Promise.resolve([] as MaterialRow[]),
         linkItems.length
-          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,image_url,sort_order").in("id", linkItems.map((entry) => entry.brand_material_id)).eq("is_active", true).limit(1500), "chosen materials")
+          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,image_url,sort_order,subgroup_id,material_collection").in("id", linkItems.map((entry) => entry.brand_material_id)).eq("is_active", true).limit(3000), "chosen materials")
           : Promise.resolve([] as MaterialRow[]),
       ]);
-      materials = mapMaterials({ links, groups, linkItems, materials: [...wholeGroupMaterials, ...chosenMaterials] });
+      const allMaterials = [...wholeGroupMaterials, ...chosenMaterials];
+      const subgroupIds = Array.from(new Set(allMaterials.flatMap((material) => (material.subgroup_id ? [material.subgroup_id] : []))));
+      const subgroups = subgroupIds.length
+        ? await rows<SubgroupRow>(supabase.from("brand_material_subgroups").select("id,name,grade,sort_order").in("id", subgroupIds).eq("is_active", true).limit(1000), "material subgroups")
+        : [];
+      materials = mapMaterials({ links, groups, linkItems, materials: allMaterials, subgroups });
     }
 
     const { detail } = buildGalleryDetail({

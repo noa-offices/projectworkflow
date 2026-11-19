@@ -17,7 +17,7 @@ function makeWorld() {
     tables: {
       product_gallery_items: [] as Row[], product_templates: [] as Row[], brands: [] as Row[], product_categories: [] as Row[],
       product_components: [] as Row[], product_template_linked_families: [] as Row[], product_template_material_groups: [] as Row[],
-      brand_material_groups: [] as Row[], product_template_material_group_items: [] as Row[], brand_materials: [] as Row[],
+      brand_material_groups: [] as Row[], product_template_material_group_items: [] as Row[], brand_materials: [] as Row[], brand_material_subgroups: [] as Row[],
     },
     calls: [] as string[],
     selects: [] as Array<{ table: string; columns: string }>,
@@ -31,7 +31,7 @@ function makeWorld() {
     rpc: {} as Record<string, (args: any) => { data: any; error: any }>,
     adminCalls: 0,
     throwOnRpc: false,
-    noSpecColumn: false,
+    missingColumns: [] as string[],
   };
 }
 let world = makeWorld();
@@ -45,7 +45,7 @@ function buildClient() {
     private to = Infinity;
     constructor(private table: keyof ReturnType<typeof makeWorld>["tables"]) {}
     private missingColumn = false;
-    select(columns: string, options?: { count?: string }) { world.selects.push({ table: this.table, columns }); this.wantCount = Boolean(options?.count); this.missingColumn = world.noSpecColumn && columns.split(",").includes("specification"); return this; }
+    select(columns: string, options?: { count?: string }) { world.selects.push({ table: this.table, columns }); this.wantCount = Boolean(options?.count); this.missingColumn = world.missingColumns.some((column) => columns.split(",").includes(column)); return this; }
     eq(column: string, value: unknown) { world.eqs.push([column, value]); this.filters.push([column, value]); return this; }
     in(column: string, values: unknown[]) { this.inFilter = [column, values]; return this; }
     or(text: string) { world.ors.push(text); return this; }
@@ -61,6 +61,7 @@ function buildClient() {
     }
     then(resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) {
       world.calls.push(`select:${this.table}`);
+      if (this.missingColumn) return Promise.resolve({ data: null, count: null, error: { message: "column does not exist" } }).then(resolve, reject);
       const all = this.rows();
       return Promise.resolve({ data: all.slice(this.from, this.to + 1), count: this.wantCount ? all.length : null, error: null }).then(resolve, reject);
     }
@@ -441,7 +442,11 @@ function seedDetail() {
   world.tables.product_template_linked_families = [{ id: "f1", parent_template_id: TEMPLATE, label: "Matching table", sort_order: 0, is_active: true }];
   world.tables.product_template_material_groups = [{ id: LINK, product_template_id: TEMPLATE, material_group_id: MATERIAL_GROUP, selection_mode: "full_group", label_override: null, sort_order: 0, is_active: true }];
   world.tables.brand_material_groups = [{ id: MATERIAL_GROUP, group_name: "Fabrics", is_active: true }];
-  world.tables.brand_materials = [{ id: "m1", material_group_id: MATERIAL_GROUP, material_code: "F1", material_name: "Oak", image_url: "materials/f1.webp", sort_order: 0, is_active: true }];
+  world.tables.brand_materials = [
+    { id: "m1", material_group_id: MATERIAL_GROUP, material_code: "F1", material_name: "Oak", image_url: "materials/f1.webp", sort_order: 0, subgroup_id: "sg1", material_collection: null, is_active: true },
+    { id: "m2", material_group_id: MATERIAL_GROUP, material_code: "F2", material_name: "Ash", image_url: null, sort_order: 1, subgroup_id: null, material_collection: "Veneers", is_active: true },
+  ];
+  world.tables.brand_material_subgroups = [{ id: "sg1", name: "Era", grade: "A", sort_order: 0, is_active: true }];
 }
 
 test("details: header, pictures, texts, readable configuration, materials and options; no price, no recipe, no id of a recipe", async () => {
@@ -463,7 +468,15 @@ test("details: header, pictures, texts, readable configuration, materials and op
   assert.equal(detail.specification, "Mesh back, Cable Tray.", "the recipe is complete: the generated text, not the plain template text");
   assert.ok(detail.configuration.some((line: any) => line.value === "Chrome"));
   assert.ok(detail.configuration.some((line: any) => line.value === "Cable Tray x 2"));
-  assert.deepEqual(detail.materials, [{ groupName: "Fabrics", swatches: [{ code: "F1", name: "Oak", imagePath: "product-images:materials/f1.webp" }], moreCount: 0 }]);
+  assert.deepEqual(detail.materials, [{
+    groupName: "Fabrics",
+    count: 2,
+    collections: [
+      { name: "Era", grade: "A", swatches: [{ code: "F1", name: "Oak", imagePath: "product-images:materials/f1.webp" }] },
+      { name: "Veneers", grade: null, swatches: [{ code: "F2", name: "Ash", imagePath: null }] },
+    ],
+    moreCount: 0,
+  }]);
   assert.equal(detail.specificationSource, "generated", "the recipe is complete, so its text is generated");
   assert.match(detail.specification, /Cable Tray/);
   assert.deepEqual(detail.options.map((group: any) => [group.kind, group.groupName, group.items]), [["option", "Casters", ["Soft"]], ["accessory", "Add-ons", ["Cable Tray"]], ["linked", "Linked products", ["Matching table"]]]);
@@ -529,11 +542,11 @@ test("details: the gallery's own specification is shown first; without the colum
   assert.deepEqual([saved.detail.specification, saved.detail.specificationSource], ["Saved text.", "gallery"]);
   assert.ok(world.selects.some((entry) => entry.table === "product_gallery_items" && /specification/.test(entry.columns)));
   reset(); seedDetail();
-  world.noSpecColumn = true;
+  world.missingColumns = ["specification", "selected_image"];
   const before: any = await actions.getGalleryItemDetailAction({ id: G1 });
   assert.equal(before.ok, true, "before the migration the item is read without that column");
   assert.equal(before.detail.specificationSource, "generated");
-  assert.equal(world.selects.filter((entry) => entry.table === "product_gallery_items").length, 2, "one try with the column, one without");
+  assert.equal(world.selects.filter((entry) => entry.table === "product_gallery_items").length, 3, "full read, then without the picture column, then without the specification column");
 });
 
 const SPEC_RPC = "product_gallery_update_specification";
@@ -578,6 +591,49 @@ test("specification save: database answers become friendly messages and nothing 
   assert.doesNotMatch(JSON.stringify(failed), /secret/);
   world.rpc[SPEC_RPC] = () => { throw new Error("secret rpc detail"); };
   assert.deepEqual(await actions.updateGalleryItemSpecificationAction({ id: G1, specification: "x" }), { ok: false, message: GALLERY_MESSAGES.save_failed });
+});
+
+
+test("details: the picture chosen in the builder is first when it is one of the template's pictures, otherwise it is ignored; no price anywhere", async () => {
+  reset(); seedDetail();
+  world.tables.product_gallery_items = [galleryRow({ ...world.tables.product_gallery_items[0], selected_image: "product-images/b.webp" })];
+  const chosen: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.deepEqual(chosen.detail.images, ["product-images/b.webp", "product-images/a.webp", "product-images/ref.webp"]);
+  reset(); seedDetail();
+  world.tables.product_gallery_items = [galleryRow({ ...world.tables.product_gallery_items[0], selected_image: "product-images/not-a-template-picture.webp" })];
+  const ignored: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.deepEqual(ignored.detail.images, ["product-images/a.webp", "product-images/b.webp", "product-images/ref.webp"], "an unknown stored picture is never returned");
+  assert.doesNotMatch(JSON.stringify(ignored), /not-a-template-picture/);
+  reset(); seedDetail();
+  world.missingColumns = ["selected_image"];
+  const before: any = await actions.getGalleryItemDetailAction({ id: G1 });
+  assert.equal(before.ok, true, "before that migration the item is read without the picture column");
+  assert.equal(before.detail.specificationSource, "generated", "and the specification column is still read");
+  assert.deepEqual(before.detail.images[0], "product-images/a.webp");
+});
+
+test("list: a card uses the chosen picture when valid (the template's own, no extra query), otherwise the default; the list still works without the column", async () => {
+  reset(); seed();
+  world.tables.product_templates = [templateRow({ reference_image_url: "product-images/ref.webp" })];
+  world.tables.product_gallery_items = [galleryRow({ selected_image: "product-images/b.webp" })];
+  const chosen: any = await actions.listGalleryItemsAction({});
+  assert.deepEqual(chosen.items[0].picture, { kind: "template", path: "product-images/b.webp" });
+  assert.equal(world.calls.filter((call) => call === "select:product_templates").length, 1, "no extra query for the picture");
+  assert.ok(world.selects.some((entry) => entry.table === "product_gallery_items" && entry.columns.split(",").includes("selected_image")));
+  assert.deepEqual(Object.keys(chosen.items[0]).includes("selected_image"), false, "the stored value itself is never returned");
+  const reference = (await (async () => { reset(); seed(); world.tables.product_templates = [templateRow({ reference_image_url: "product-images/ref.webp" })]; world.tables.product_gallery_items = [galleryRow({ selected_image: "product-images/ref.webp" })]; return actions.listGalleryItemsAction({}); })()) as any;
+  assert.deepEqual(reference.items[0].picture, { kind: "template", path: "product-images/ref.webp" }, "the reference picture can be the chosen one");
+  reset(); seed();
+  world.tables.product_gallery_items = [galleryRow({ selected_image: "product-images/elsewhere.webp" })];
+  const unknown: any = await actions.listGalleryItemsAction({});
+  assert.deepEqual(unknown.items[0].picture, { kind: "template", path: "product-images/a.webp" }, "an unknown stored picture falls back to the default");
+  assert.doesNotMatch(JSON.stringify(unknown), /elsewhere/);
+  reset(); seed();
+  world.missingColumns = ["selected_image"];
+  const without: any = await actions.listGalleryItemsAction({});
+  assert.equal(without.ok, true, "before the migration the list is read without that column");
+  assert.deepEqual(without.items[0].picture, { kind: "template", path: "product-images/a.webp" });
+  assert.equal(world.selects.filter((entry) => entry.table === "product_gallery_items").length, 2);
 });
 
 // ── actions: auth first, never throw ───────────────────────────────────────
