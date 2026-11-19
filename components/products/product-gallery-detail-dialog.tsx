@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { DialogShell, galleryButton } from "@/components/products/product-gallery-dialogs";
 import { ProductLibraryPreviewImage } from "@/components/products/product-library-preview-image";
-import { getGalleryItemDetailAction } from "@/lib/products/gallery/gallery-actions";
-import type { GalleryDetail } from "@/lib/products/gallery/gallery-detail";
-import { fullDetailHref, quotedText } from "@/lib/products/gallery/gallery-view";
+import { resolveQuotationImageUrl, markQuotationImagePathFailed } from "@/lib/quotation-image-path";
+import { getGalleryItemDetailAction, updateGalleryItemSpecificationAction } from "@/lib/products/gallery/gallery-actions";
+import { GALLERY_SPECIFICATION_MAX } from "@/lib/products/gallery/gallery";
+import type { GalleryDetail, GalleryDetailMaterialGroup, GalleryDetailSwatch, GallerySpecificationSource } from "@/lib/products/gallery/gallery-detail";
+import { SWATCHES_SHOWN_FIRST, SPECIFICATION_HELP_TEXT, SPECIFICATION_SOURCE_LABELS, fullDetailHref, quotedText, specificationDraft, swatchCaption } from "@/lib/products/gallery/gallery-view";
 
 // The details popup of the Product Gallery. Read-only: names and text only, no money values, no recipe. The data comes from
 // getGalleryItemDetailAction (the server decides what is readable). It opens from a card (Details button, picture or title); Escape and
@@ -80,6 +82,149 @@ function Pictures({ detail }: { detail: GalleryDetail }) {
   );
 }
 
+function SwatchImage({ swatch, size }: { swatch: GalleryDetailSwatch; size: number }) {
+  const [url, setUrl] = useState("");
+  const path = swatch.imagePath;
+  useEffect(() => {
+    let cancelled = false;
+    if (!path) {
+      window.queueMicrotask(() => {
+        if (!cancelled) setUrl("");
+      });
+      return;
+    }
+    void resolveQuotationImageUrl(path)
+      .then((resolved) => {
+        if (!cancelled) setUrl(resolved);
+      })
+      .catch(() => {
+        if (!cancelled) setUrl("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+  return url ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt=""
+      loading="lazy"
+      width={size}
+      height={size}
+      onError={() => {
+        if (path) markQuotationImagePathFailed(path);
+        setUrl("");
+      }}
+      className="block h-full w-full object-cover"
+    />
+  ) : (
+    <span className="px-0.5 text-center text-[10px] font-semibold leading-tight text-zinc-500">{swatch.code}</span>
+  );
+}
+
+/** One material group as a grid of small square swatches: the first 24, then "Show all (N)". A click shows the code and full name above the grid. */
+function SwatchGroup({ group }: { group: GalleryDetailMaterialGroup }) {
+  const [showAll, setShowAll] = useState(false);
+  const [selected, setSelected] = useState<GalleryDetailSwatch | null>(null);
+  const total = group.swatches.length;
+  const shown = showAll ? group.swatches : group.swatches.slice(0, SWATCHES_SHOWN_FIRST);
+  return (
+    <div data-testid="swatch-group">
+      <p className="font-medium text-zinc-900">{group.groupName} <span className="font-normal text-zinc-500">({total})</span></p>
+      <p className="mt-1 min-h-5 text-xs text-zinc-700" aria-live="polite">{selected ? swatchCaption(selected) : ""}</p>
+      <ul className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(48px,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,minmax(56px,1fr))]">
+        {shown.map((swatch, index) => (
+          <li key={`${swatch.code}-${index}`} className="flex min-w-0 flex-col items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => setSelected(swatch)}
+              title={swatchCaption(swatch)}
+              aria-label={swatchCaption(swatch)}
+              aria-pressed={selected === swatch}
+              className={`flex h-12 w-12 items-center justify-center overflow-hidden rounded-md border bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800 sm:h-14 sm:w-14 ${selected === swatch ? "border-emerald-800" : "border-zinc-200 hover:border-zinc-400"}`}
+            >
+              <SwatchImage swatch={swatch} size={56} />
+            </button>
+            <span className="w-full truncate text-center text-[10px] text-zinc-600" title={swatchCaption(swatch)}>{swatch.code}</span>
+          </li>
+        ))}
+      </ul>
+      {total > SWATCHES_SHOWN_FIRST ? (
+        <button type="button" className={`${galleryButton} mt-2`} onClick={() => setShowAll((open) => !open)} aria-expanded={showAll}>
+          {showAll ? "Show less" : `Show all (${total})`}
+        </button>
+      ) : null}
+      {group.moreCount ? <p className="mt-1 text-xs text-zinc-500">and {group.moreCount} more</p> : null}
+    </div>
+  );
+}
+
+function SpecificationBlock({ detail, canEdit, onSaved }: { detail: GalleryDetail; canEdit: boolean; onSaved: () => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const source = detail.specificationSource;
+  const label = source === "none" ? "" : SPECIFICATION_SOURCE_LABELS[source as Exclude<GallerySpecificationSource, "none">];
+
+  function startEditing() {
+    setDraft(specificationDraft(detail.specification));
+    setMessage(null);
+    setEditing(true);
+  }
+
+  async function save() {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const result = await updateGalleryItemSpecificationAction({ id: detail.id, specification: draft });
+      if (result.ok) {
+        await onSaved();
+        setEditing(false);
+        setMessage({ kind: "ok", text: "Specification saved." });
+      } else setMessage({ kind: "error", text: result.message });
+    } catch {
+      setMessage({ kind: "error", text: "The change could not be saved. Please try again." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {editing ? (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="gallery-specification-edit" className="text-xs font-semibold text-zinc-600">Specification</label>
+          <textarea
+            id="gallery-specification-edit"
+            value={draft}
+            maxLength={GALLERY_SPECIFICATION_MAX}
+            rows={8}
+            onChange={(event) => setDraft(event.target.value)}
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800"
+          />
+          <div className="flex items-start justify-between gap-2 text-xs text-zinc-500">
+            <p>{SPECIFICATION_HELP_TEXT}</p>
+            <p className="shrink-0" aria-live="polite">{draft.length} / {GALLERY_SPECIFICATION_MAX}</p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button type="button" className={galleryButton} onClick={() => setEditing(false)} disabled={saving}>Cancel</button>
+            <button type="button" className="h-8 rounded-md bg-emerald-800 px-3 text-xs font-semibold text-white transition hover:bg-emerald-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800 disabled:opacity-60" onClick={() => void save()} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {label ? <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{label}</p> : null}
+          {detail.specification ? <p className="whitespace-pre-line">{detail.specification}</p> : <p className="text-zinc-500">No specification available.</p>}
+          {canEdit ? <div><button type="button" className={galleryButton} onClick={startEditing}>Edit specification</button></div> : null}
+        </>
+      )}
+      {message ? <p role={message.kind === "error" ? "alert" : "status"} className={message.kind === "error" ? "text-sm text-red-800" : "text-sm text-emerald-900"}>{message.text}</p> : null}
+    </div>
+  );
+}
+
 function Skeleton() {
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" aria-hidden="true" data-testid="gallery-detail-skeleton">
@@ -94,7 +239,7 @@ function Skeleton() {
   );
 }
 
-function Body({ detail }: { detail: GalleryDetail }) {
+function Body({ detail, canEditSpecification, onSpecificationSaved }: { detail: GalleryDetail; canEditSpecification: boolean; onSpecificationSaved: () => Promise<void> }) {
   return (
     <div className="grid grid-cols-1 gap-5 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       <Pictures detail={detail} />
@@ -125,23 +270,16 @@ function Body({ detail }: { detail: GalleryDetail }) {
         </Section>
 
         <Section title="Specification" defaultOpen>
-          {/* G-S1 (later PR): the gallery-owned specification goes HERE, above the template text, with an Edit option for editors.
-              Not built yet: this block only shows the product template's own specification. */}
-          {detail.specification ? <p className="whitespace-pre-line">{detail.specification}</p> : <p className="text-zinc-500">No specification available.</p>}
+          <SpecificationBlock detail={detail} canEdit={canEditSpecification} onSaved={onSpecificationSaved} />
         </Section>
 
         <Section title="Available materials">
           {detail.materials.length ? (
-            <div className="flex flex-col gap-3">
-              {detail.materials.map((group) => (
-                <div key={group.groupName}>
-                  <p className="font-medium text-zinc-900">{group.groupName}</p>
-                  <p className="text-zinc-600">{group.items.join(", ")}{group.moreCount ? ` and ${group.moreCount} more` : ""}</p>
-                </div>
-              ))}
+            <div className="flex flex-col gap-4">
+              {detail.materials.map((group) => <SwatchGroup key={group.groupName} group={group} />)}
             </div>
           ) : (
-            <p className="text-zinc-500">No materials listed for this product.</p>
+            <p className="text-zinc-500">No finishes connected to this product.</p>
           )}
         </Section>
 
@@ -164,7 +302,7 @@ function Body({ detail }: { detail: GalleryDetail }) {
   );
 }
 
-export function GalleryDetailDialog({ itemId, title, onClose }: { itemId: string; title: string; onClose: () => void }) {
+export function GalleryDetailDialog({ itemId, title, canEditSpecification = false, onClose }: { itemId: string; title: string; canEditSpecification?: boolean; onClose: () => void }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -177,6 +315,12 @@ export function GalleryDetailDialog({ itemId, title, onClose }: { itemId: string
     } catch {
       if (!isCancelled()) setPhase({ kind: "failed", message: "Could not load the details. Please try again." });
     }
+  }, [itemId]);
+
+  // After a save: read the item again and swap the text in place, without the loading state and without closing the popup.
+  const refresh = useCallback(async () => {
+    const result = await getGalleryItemDetailAction({ id: itemId });
+    if (result.ok) setPhase({ kind: "ready", detail: result.detail });
   }, [itemId]);
 
   useEffect(() => {
@@ -201,7 +345,7 @@ export function GalleryDetailDialog({ itemId, title, onClose }: { itemId: string
           <button type="button" className={galleryButton} onClick={() => setAttempt((count) => count + 1)}>Retry</button>
         </div>
       ) : null}
-      {phase.kind === "ready" ? <Body detail={phase.detail} /> : null}
+      {phase.kind === "ready" ? <Body detail={phase.detail} canEditSpecification={canEditSpecification} onSpecificationSaved={refresh} /> : null}
       <div className="sticky bottom-0 -mx-4 -mb-4 mt-1 flex flex-wrap justify-end gap-2 border-t border-zinc-100 bg-white px-4 py-3">
         <button type="button" className={`${galleryButton} h-9`} onClick={onClose}>Close</button>
         {phase.kind === "ready" ? <Link href={fullDetailHref(phase.detail.templateId)} className={openLink}>Open full detail</Link> : null}

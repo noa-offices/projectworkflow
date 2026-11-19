@@ -23,6 +23,7 @@ import {
   isGalleryId,
   neutralSpecOverrides,
   validateGalleryDisplayName,
+  validateGallerySpecification,
   validateGalleryTags,
   type GalleryCurrencyEntry,
   type GalleryFilterEntry,
@@ -334,7 +335,9 @@ export async function getGalleryItemForAdd(supabase: SupabaseClient, id: unknown
 
 // ── One item in full, for the details popup ─────────────────────────────────
 // Names and text only: the template's pricing JSON is read here to turn saved ids into readable lines and is never returned.
-const DETAIL_ITEM_COLUMNS = "id,template_id,brand_id,main_category_id,sub_category_id,item_name,display_name,item_code,tags,quoted_count,recipe";
+const DETAIL_ITEM_COLUMNS = "id,template_id,brand_id,main_category_id,sub_category_id,item_name,display_name,item_code,tags,quoted_count,recipe,specification";
+// The same read without the specification column: used only if the database does not have that column yet (before its migration).
+const DETAIL_ITEM_COLUMNS_NO_SPEC = "id,template_id,brand_id,main_category_id,sub_category_id,item_name,display_name,item_code,tags,quoted_count,recipe";
 const DETAIL_TEMPLATE_SELECT = [
   "id", "brand_id", "main_category_id", "sub_category_id", "template_code", "template_name", "internal_selection_name", "item_code", "description",
   "default_specification", "origin", "supplier_name", "is_active", "lifecycle_status", "variant_pricing", "category_pricing", "accessory_pricing",
@@ -357,9 +360,12 @@ export async function getGalleryItemDetail(supabase: SupabaseClient, id: unknown
   if (!isGalleryId(id)) return { ok: false, kind: "invalid_request" };
   try {
     if (!(await rpcBoolean(supabase, "product_gallery_can_view"))) return { ok: false, kind: "not_allowed" };
-    const { data, error } = await supabase.from("product_gallery_items").select(DETAIL_ITEM_COLUMNS).eq("id", id).maybeSingle();
-    if (error) return { ok: false, kind: "load_failed" };
-    const item = data as unknown as (GalleryRow & { recipe: unknown }) | null;
+    let { data, error } = await supabase.from("product_gallery_items").select(DETAIL_ITEM_COLUMNS).eq("id", id).maybeSingle();
+    if (error) {
+      ({ data, error } = await supabase.from("product_gallery_items").select(DETAIL_ITEM_COLUMNS_NO_SPEC).eq("id", id).maybeSingle());
+      if (error) return { ok: false, kind: "load_failed" };
+    }
+    const item = data as unknown as (GalleryRow & { recipe: unknown; specification?: string | null }) | null;
     if (!item) return { ok: false, kind: "item_not_found" };
 
     const { data: templateData, error: templateError } = await supabase.from("product_templates").select(DETAIL_TEMPLATE_SELECT).eq("id", item.template_id).maybeSingle();
@@ -389,10 +395,10 @@ export async function getGalleryItemDetail(supabase: SupabaseClient, id: unknown
       ]);
       const [wholeGroupMaterials, chosenMaterials] = await Promise.all([
         wholeGroupIds.length
-          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,sort_order").in("material_group_id", wholeGroupIds).eq("is_active", true).limit(600), "group materials")
+          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,image_url,sort_order").in("material_group_id", wholeGroupIds).eq("is_active", true).limit(1500), "group materials")
           : Promise.resolve([] as MaterialRow[]),
         linkItems.length
-          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,sort_order").in("id", linkItems.map((entry) => entry.brand_material_id)).eq("is_active", true).limit(600), "chosen materials")
+          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,image_url,sort_order").in("id", linkItems.map((entry) => entry.brand_material_id)).eq("is_active", true).limit(1500), "chosen materials")
           : Promise.resolve([] as MaterialRow[]),
       ]);
       materials = mapMaterials({ links, groups, linkItems, materials: [...wholeGroupMaterials, ...chosenMaterials] });
@@ -446,6 +452,14 @@ export async function updateGalleryItemDetails(supabase: SupabaseClient, input: 
   if (!isGalleryId(input?.id) || !name.ok || !tags.ok) return { ok: false, kind: "invalid_request" };
   if (!(await rpcBoolean(supabase, "product_gallery_is_editor"))) return { ok: false, kind: "not_allowed" };
   return callCuration(supabase, "product_gallery_update_details", { p_id: input.id, p_display_name: name.value, p_tags: tags.value });
+}
+
+/** Editors only. The server checks the role BEFORE the database function, which checks it again. Empty clears the text; over 2000 characters is refused. */
+export async function updateGalleryItemSpecification(supabase: SupabaseClient, input: { id: unknown; specification: unknown }): Promise<GalleryChangeResult> {
+  const text = validateGallerySpecification(input?.specification);
+  if (!isGalleryId(input?.id) || !text.ok) return { ok: false, kind: text.ok ? "invalid_request" : text.kind };
+  if (!(await rpcBoolean(supabase, "product_gallery_is_editor"))) return { ok: false, kind: "not_allowed" };
+  return callCuration(supabase, "product_gallery_update_specification", { p_id: input.id, p_specification: text.value });
 }
 
 export async function mergeGalleryItems(supabase: SupabaseClient, input: { fromId: unknown; toId: unknown }): Promise<GalleryChangeResult> {

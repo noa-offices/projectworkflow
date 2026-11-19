@@ -27,7 +27,9 @@ test("the page checks the capabilities FIRST and shows a short message when the 
 
 test("no price, discount or cost word is rendered or typed anywhere on the page or its components", () => {
   for (const [name, text] of Object.entries({ page, browser, dialogs, view, detailDialog })) {
-    assert.doesNotMatch(code(text), /price|discount|\bcost\b|\btotal_|net_?price|list_?price|selling/i, name);
+    // The one allowed line: the required help text under the specification box ("... prices or quote numbers"), which tells editors not to type them.
+    const scanned = code(text).split(String.fromCharCode(10)).filter((line) => !line.includes("SPECIFICATION_HELP_TEXT =")).join(String.fromCharCode(10));
+    assert.doesNotMatch(scanned, /price|discount|\bcost\b|\btotal_|net_?price|list_?price|selling/i, name);
   }
 });
 
@@ -186,12 +188,13 @@ test("details popup: a Details button, the picture and the title open it with th
   assert.equal((card.match(/onDialog\(\{ kind: "detail", item \}\)/g) ?? []).length, 3, "button, picture and title");
   assert.match(card, /<button .*>Details<\/button>/);
   assert.match(browser, /dialog\?\.kind === "detail" \? <GalleryDetailDialog itemId=\{dialog\.item\.id\}/, "the popup gets the item id");
-  assert.doesNotMatch(browser, /dialog\?\.kind === "detail".*editing/, "the popup is not an edit-mode feature: every viewer gets it");
+  assert.doesNotMatch(browser, /\{editing && dialog\?\.kind === "detail"/, "the popup is not an edit-mode feature: every viewer gets it");
+  assert.match(browser, /canEditSpecification=\{editing\}/, "only edit mode (which only editors can turn on) enables the specification edit button");
   assert.doesNotMatch(code(browser), /\/products\?template=/);
   assert.doesNotMatch(read("./gallery-view.ts"), /productLibraryHref/);
 });
 
-test("details popup: Close and Open full detail, the canonical URL, Retry, the unavailable state, collapsible sections, a G-S1 marker", () => {
+test("details popup: Close and Open full detail, the canonical URL, Retry, the unavailable state, collapsible sections, the specification block", () => {
   assert.match(detailDialog, /onClick=\{onClose\}>Close</);
   assert.match(detailDialog, /Open full detail/);
   assert.match(detailDialog, /fullDetailHref\(phase\.detail\.templateId\)/);
@@ -203,8 +206,7 @@ test("details popup: Close and Open full detail, the canonical URL, Retry, the u
   assert.match(detailDialog, /<Section title="Saved configuration" defaultOpen>/);
   assert.match(detailDialog, /<Section title="Specification" defaultOpen>/);
   assert.doesNotMatch(detailDialog, /<Section title="Available materials" defaultOpen|<Section title="Options and accessories" defaultOpen/, "only the first two start open");
-  assert.match(detailDialog, /G-S1 \(later PR\)/, "the marked place for the gallery-owned specification");
-  assert.doesNotMatch(code(detailDialog), /<textarea|updateGallery|Edit/, "no specification editing yet");
+  assert.doesNotMatch(detailDialog, /G-S1/, "the placeholder comment is gone");
   assert.doesNotMatch(code(detailDialog), /Add to quote|openSetupFromCollection/);
   assert.match(detailDialog, /ProductLibraryPreviewImage/);
   assert.match(detailDialog, /<DialogShell title=\{title\} onClose=\{onClose\} wide>/);
@@ -232,4 +234,46 @@ test("details service: signed in, canView first, the caller's client, a short li
   const detailType = detailSource.slice(detailSource.indexOf("export type GalleryDetail = {"), detailSource.indexOf("// ── Images"));
   assert.ok(detailType.includes("configuration: GalleryDetailLine[]"), "the type block was found");
   assert.doesNotMatch(detailType, /recipe/i, "the detail type has no recipe field");
+});
+
+test("specification editing: the button needs canEdit AND edit mode; textarea, counter, helper text, Save/Cancel, saving disabled, in-place update", () => {
+  assert.match(detailDialog, /\{canEdit \? <div><button[^\n]*onClick=\{startEditing\}>Edit specification<\/button><\/div> : null\}/, "the button only when the dialog was told the user may edit");
+  assert.match(detailDialog, /canEditSpecification = false/, "off by default");
+  assert.match(detailDialog, /onClick=\{\(\) => setEditing\(false\)\}/);
+  assert.match(detailDialog, /<textarea[\s\S]*?maxLength=\{GALLERY_SPECIFICATION_MAX\}/);
+  assert.match(detailDialog, /\{draft\.length\} \/ \{GALLERY_SPECIFICATION_MAX\}/, "character counter");
+  assert.match(detailDialog, /\{SPECIFICATION_HELP_TEXT\}/);
+  assert.match(view, /Generic text only\. Do not include client names, project names, prices or quote numbers\./);
+  assert.match(detailDialog, /disabled=\{saving\}>\{saving \? "Saving…" : "Save"\}/, "Save is disabled while saving");
+  assert.match(detailDialog, /updateGalleryItemSpecificationAction\(\{ id: detail\.id, specification: draft \}\)/);
+  assert.match(detailDialog, /await onSaved\(\);\s*setEditing\(false\)/, "the text is swapped in place and the popup stays open");
+  assert.match(detailDialog, /Specification saved\./);
+  assert.match(detailDialog, /setDraft\(specificationDraft\(detail\.specification\)\)/, "the box starts with the text that is shown (saved, generated or template)");
+  assert.match(detailDialog, /whitespace-pre-line/, "line breaks are kept");
+  for (const label of ["Saved specification", "Generated from the saved configuration", "From product template"]) assert.match(view, new RegExp(label));
+  const actions = actionsSource.slice(actionsSource.indexOf("export async function updateGalleryItemSpecificationAction"), actionsSource.indexOf("export async function mergeGalleryItemsAction"));
+  assert.ok(actions.indexOf("await requireActiveUser()") > 0 && actions.indexOf("await requireActiveUser()") < actions.indexOf("createClient()"));
+  assert.match(service, /product_gallery_is_editor"\)\)\) return \{ ok: false, kind: "not_allowed" \};\s*return callCuration\(supabase, "product_gallery_update_specification"/);
+});
+
+test("finish swatches: a grid per material group, 24 first with Show all / Show less, code under each swatch, lazy fixed-size pictures, the old text line is gone", () => {
+  assert.match(detailDialog, /function SwatchGroup/);
+  assert.match(detailDialog, /data-testid="swatch-group"/);
+  assert.match(detailDialog, /group\.swatches\.slice\(0, SWATCHES_SHOWN_FIRST\)/);
+  assert.match(view, /SWATCHES_SHOWN_FIRST = 24/);
+  assert.match(detailDialog, /`Show all \(\$\{total\}\)`/);
+  assert.match(detailDialog, /"Show less"/);
+  assert.match(detailDialog, /loading="lazy"/);
+  assert.match(detailDialog, /width=\{size\}\s*height=\{size\}/);
+  assert.match(detailDialog, /h-12 w-12[^"]*sm:h-14 sm:w-14/, "48px on a phone, 56px on a desktop");
+  assert.match(detailDialog, /rounded-md/);
+  assert.match(detailDialog, /title=\{swatchCaption\(swatch\)\}\s*aria-label=\{swatchCaption\(swatch\)\}/, "full name as tooltip and accessible label");
+  assert.match(detailDialog, /\{selected \? swatchCaption\(selected\) : ""\}/, "a click shows code and full name above the grid");
+  assert.match(detailDialog, /\{swatch\.code\}<\/span>/, "no picture: the code in a neutral box");
+  assert.match(detailDialog, /No finishes connected to this product\./);
+  assert.match(detailDialog, /resolveQuotationImageUrl\(path\)/, "the same picture helper the Product Library uses");
+  const materialsSection = detailDialog.slice(detailDialog.indexOf('<Section title="Available materials">'), detailDialog.indexOf('<Section title="Options and accessories">'));
+  assert.ok(materialsSection.includes("SwatchGroup"), "the materials section is the swatch grid");
+  assert.doesNotMatch(materialsSection, /\.items|join\(/, "no joined text line of finish names in the materials section");
+  assert.doesNotMatch(detailDialog.slice(detailDialog.indexOf("function SwatchGroup"), detailDialog.indexOf("function SpecificationBlock")), /join\(/, "and none in the swatch group");
 });

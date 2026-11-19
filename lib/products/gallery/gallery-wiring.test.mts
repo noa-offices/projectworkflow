@@ -25,7 +25,7 @@ test('the "use server" file exports only async functions (and types)', () => {
 test("every action calls requireActiveUser before anything else", () => {
   const actions = files["gallery-actions.ts"];
   const bodies = actions.split(/^export async function /m).slice(1);
-  assert.equal(bodies.length, 8);
+  assert.equal(bodies.length, 9);
   for (const body of bodies) {
     const name = body.slice(0, body.indexOf("("));
     assert.ok(body.indexOf("await requireActiveUser()") > 0, `${name}: requireActiveUser`);

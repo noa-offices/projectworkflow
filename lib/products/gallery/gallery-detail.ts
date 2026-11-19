@@ -9,12 +9,17 @@ import { restorePlainState } from "../saved-setups/recipe";
 import { completeGalleryRecipe, galleryDisplayName } from "./gallery";
 
 export const GALLERY_DETAIL_IMAGES_MAX = 12;
-export const GALLERY_DETAIL_MATERIALS_PER_GROUP_MAX = 40;
+export const GALLERY_DETAIL_SWATCHES_PER_GROUP_MAX = 400;
+export const GALLERY_DETAIL_SWATCHES_TOTAL_MAX = 1200;
+export const GALLERY_DETAIL_SPECIFICATION_MAX = 2000;
 export const GALLERY_DETAIL_ITEMS_PER_GROUP_MAX = 60;
 export const GALLERY_DETAIL_TEXT_MAX = 4000;
 
 export type GalleryDetailLine = { label: string; value: string };
-export type GalleryDetailMaterialGroup = { groupName: string; items: string[]; moreCount: number };
+/** One finish swatch: short code, full name, and the picture's storage path (the browser signs it with the existing image helper). */
+export type GalleryDetailSwatch = { code: string; name: string; imagePath: string | null };
+export type GalleryDetailMaterialGroup = { groupName: string; swatches: GalleryDetailSwatch[]; moreCount: number };
+export type GallerySpecificationSource = "gallery" | "generated" | "template" | "none";
 export type GalleryDetailOptionGroup = { groupName: string; kind: "option" | "accessory" | "linked"; items: string[] };
 
 export type GalleryDetail = {
@@ -32,8 +37,9 @@ export type GalleryDetail = {
   /** Storage paths (the popup resolves them with the existing image helper). At most 12, no duplicates. */
   images: string[];
   description: string | null;
-  /** The TEMPLATE's own default specification (plain text). A gallery-owned, editable specification is a later step (G-S1). */
+  /** The text to show, in this order: the gallery item's own, generated from the saved configuration, the template's, the template description. */
   specification: string | null;
+  specificationSource: GallerySpecificationSource;
   configuration: GalleryDetailLine[];
   materials: GalleryDetailMaterialGroup[];
   options: GalleryDetailOptionGroup[];
@@ -67,25 +73,50 @@ export function plainText(value: unknown): string | null {
 export type TemplateMaterialGroupRow = { id: string; material_group_id: string; selection_mode: string | null; label_override: string | null; sort_order: number | null };
 export type MaterialGroupRow = { id: string; group_name: string | null };
 export type MaterialGroupItemRow = { product_template_material_group_id: string; brand_material_id: string; sort_order: number | null };
-export type MaterialRow = { id: string; material_group_id: string; material_code: string | null; material_name: string | null; sort_order: number | null };
+export type MaterialRow = { id: string; material_group_id: string; material_code: string | null; material_name: string | null; image_url: string | null; sort_order: number | null };
 
 const bySort = <T extends { sort_order?: number | null }>(a: T, b: T) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0);
-const materialLabel = (row: MaterialRow) => [row.material_code, row.material_name].map((part) => part?.trim()).filter(Boolean).join(" - ");
 
-/** Template material groups -> "Group name: material names". "full_group" lists the whole brand group, "selected_items" only the chosen ones. */
+/** A stored swatch picture as a path the existing image helper can sign: material pictures live in the product-images bucket. */
+export function swatchImagePath(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const path = value.trim();
+  if (!path) return null;
+  if (/^(https?:|blob:|data:|\/)/i.test(path) || path.startsWith("product-images:") || path.startsWith("quote-images:")) return path;
+  return `product-images:${path}`;
+}
+
+/**
+ * Template material groups -> swatches per group. "full_group" lists the whole brand group, "selected_items" only the chosen ones.
+ * Only code, name and picture path are read (no price, no supplier data). At most 400 per group and 1200 in all; moreCount says how many were left out.
+ */
 export function mapMaterials(input: { links: TemplateMaterialGroupRow[]; groups: MaterialGroupRow[]; linkItems: MaterialGroupItemRow[]; materials: MaterialRow[] }): GalleryDetailMaterialGroup[] {
   const groupName = new Map(input.groups.map((group) => [group.id, group.group_name?.trim() ?? ""]));
   const materialById = new Map(input.materials.map((material) => [material.id, material]));
   const result: GalleryDetailMaterialGroup[] = [];
+  let remaining = GALLERY_DETAIL_SWATCHES_TOTAL_MAX;
   for (const link of [...input.links].sort(bySort)) {
     const name = link.label_override?.trim() || groupName.get(link.material_group_id) || "";
     if (!name) continue;
     const rows = link.selection_mode === "selected_items"
       ? input.linkItems.filter((item) => item.product_template_material_group_id === link.id).sort(bySort).flatMap((item) => materialById.get(item.brand_material_id) ?? [])
       : input.materials.filter((material) => material.material_group_id === link.material_group_id).sort(bySort);
-    const labels = Array.from(new Set(rows.map(materialLabel).filter(Boolean)));
-    if (!labels.length) continue;
-    result.push({ groupName: name, items: labels.slice(0, GALLERY_DETAIL_MATERIALS_PER_GROUP_MAX), moreCount: Math.max(0, labels.length - GALLERY_DETAIL_MATERIALS_PER_GROUP_MAX) });
+    const seen = new Set<string>();
+    const swatches: GalleryDetailSwatch[] = [];
+    for (const row of rows) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      const code = row.material_code?.trim() ?? "";
+      const label = row.material_name?.trim() ?? "";
+      if (!code && !label) continue;
+      swatches.push({ code: code || label, name: label || code, imagePath: swatchImagePath(row.image_url) });
+    }
+    if (!swatches.length) continue;
+    const allowed = Math.max(0, Math.min(GALLERY_DETAIL_SWATCHES_PER_GROUP_MAX, remaining));
+    const kept = swatches.slice(0, allowed);
+    remaining -= kept.length;
+    if (!kept.length) continue;
+    result.push({ groupName: name, swatches: kept, moreCount: swatches.length - kept.length });
   }
   return result;
 }
@@ -157,7 +188,13 @@ export type ConfigurationTemplateInput = {
 };
 
 /** Which step kinds produced a readable line, and which could not be read (those are skipped, never shown as ids). */
-export type ConfigurationReport = { lines: GalleryDetailLine[]; resolvedKinds: string[]; skippedKinds: string[] };
+export type ConfigurationReport = {
+  lines: GalleryDetailLine[];
+  resolvedKinds: string[];
+  skippedKinds: string[];
+  /** The text the configuration engine writes for the saved choices; null when the recipe is stale or incomplete or the text looks like money. */
+  generatedSpecification: string | null;
+};
 
 const UUID_LIKE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const readable = (text: string | null | undefined): text is string => typeof text === "string" && text.trim() !== "" && !UUID_LIKE.test(text);
@@ -168,7 +205,7 @@ export function describeRecipe(input: {
   components: ComponentRow[];
   linkedFamilies: LinkedFamilyRow[];
 }): ConfigurationReport {
-  const report: ConfigurationReport = { lines: [], resolvedKinds: [], skippedKinds: [] };
+  const report: ConfigurationReport = { lines: [], resolvedKinds: [], skippedKinds: [], generatedSpecification: null };
   const full = completeGalleryRecipe(input.recipe, input.template.id);
   if (!full) return report;
   const plain = restorePlainState(full, null);
@@ -198,7 +235,7 @@ export function describeRecipe(input: {
   };
   let steps: ProductConfigurationStep[] = [];
   try {
-    steps = resolveProductConfigurationState(
+    const engineState = resolveProductConfigurationState(
       {
         id: input.template.id,
         templateName: input.template.template_name,
@@ -217,7 +254,11 @@ export function describeRecipe(input: {
         deskingSizePricing: input.template.desking_size_pricing,
       },
       selections,
-    ).steps;
+    );
+    steps = engineState.steps;
+    // Only a complete, current recipe gives a text worth showing (a stale id or an unresolved required step falls through to the template text).
+    const text = engineState.staleSelections.length === 0 && engineState.nextRequiredStep === null ? plainText(engineState.specification) : null;
+    report.generatedSpecification = text && !looksLikeMoneyText(text) ? text.slice(0, GALLERY_DETAIL_SPECIFICATION_MAX) : null;
   } catch {
     steps = [];
   }
@@ -269,9 +310,26 @@ export function describeRecipe(input: {
   return report;
 }
 
+/**
+ * The specification to show: (a) the gallery item's own saved text, (b) the text generated from the saved configuration, (c) the
+ * template's default specification, (d) the template description, else none. Generated text equal to the template text is labelled
+ * "template" (nothing was generated from the choices). Text that looks like money is never used from a generated source.
+ */
+export function chooseSpecification(input: { gallery?: unknown; generated?: string | null; templateSpecification?: unknown; templateDescription?: unknown }): { text: string | null; source: GallerySpecificationSource; usedDescription: boolean } {
+  const gallery = plainText(input.gallery);
+  if (gallery) return { text: gallery.slice(0, GALLERY_DETAIL_SPECIFICATION_MAX), source: "gallery", usedDescription: false };
+  const templateSpec = plainText(input.templateSpecification);
+  const generated = plainText(input.generated);
+  if (generated && generated !== templateSpec) return { text: generated.slice(0, GALLERY_DETAIL_SPECIFICATION_MAX), source: "generated", usedDescription: false };
+  if (templateSpec) return { text: templateSpec, source: "template", usedDescription: false };
+  const description = plainText(input.templateDescription);
+  if (description) return { text: description, source: "template", usedDescription: true };
+  return { text: null, source: "none", usedDescription: false };
+}
+
 // ── Whole payload ──────────────────────────────────────────────────────────
 export function buildGalleryDetail(input: {
-  item: { id: string; template_id: string; item_name: string; display_name: string | null; item_code: string | null; tags: string[] | null; quoted_count: number | string; recipe: unknown };
+  item: { id: string; template_id: string; item_name: string; display_name: string | null; item_code: string | null; tags: string[] | null; quoted_count: number | string; recipe: unknown; specification?: string | null };
   template: ConfigurationTemplateInput & Record<string, unknown>;
   brandName: string;
   categoryName: string;
@@ -282,6 +340,12 @@ export function buildGalleryDetail(input: {
 }): { detail: GalleryDetail; report: ConfigurationReport } {
   const report = describeRecipe({ recipe: input.item.recipe, template: input.template, components: input.components, linkedFamilies: input.linkedFamilies });
   const quoted = Number(input.item.quoted_count);
+  const spec = chooseSpecification({
+    gallery: input.item.specification,
+    generated: report.generatedSpecification,
+    templateSpecification: input.template.default_specification,
+    templateDescription: input.template.description,
+  });
   const detail: GalleryDetail = {
     id: input.item.id,
     templateId: input.item.template_id,
@@ -295,8 +359,10 @@ export function buildGalleryDetail(input: {
     tags: Array.isArray(input.item.tags) ? input.item.tags : [],
     quotedCount: Number.isFinite(quoted) ? quoted : 1,
     images: galleryDetailImages(input.template),
-    description: plainText(input.template.description),
-    specification: plainText(input.template.default_specification),
+    // The description is shown on its own, unless it is the text used as the specification (then it is not shown twice).
+    description: spec.usedDescription ? null : plainText(input.template.description),
+    specification: spec.text,
+    specificationSource: spec.source,
     configuration: report.lines,
     materials: input.materials,
     options: mapOptions({ components: input.components, accessoryPricing: input.template.accessory_pricing, linkedFamilies: input.linkedFamilies }),

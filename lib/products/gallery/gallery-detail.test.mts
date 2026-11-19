@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   GALLERY_DETAIL_IMAGES_MAX,
-  GALLERY_DETAIL_MATERIALS_PER_GROUP_MAX,
+  GALLERY_DETAIL_SPECIFICATION_MAX,
+  GALLERY_DETAIL_SWATCHES_PER_GROUP_MAX,
+  GALLERY_DETAIL_SWATCHES_TOTAL_MAX,
+  chooseSpecification,
+  swatchImagePath,
   accessoryGroups,
   buildGalleryDetail,
   describeRecipe,
@@ -91,29 +95,58 @@ test("plain text: trimmed, empty is null, bounded", () => {
   assert.equal(plainText("x".repeat(9000))?.length, 4000);
 });
 
-test("materials: grouped by the template group, label override wins, full_group vs selected_items, long lists are capped with a count", () => {
-  const materials = Array.from({ length: 45 }, (_, index) => ({ id: `m${index}`, material_group_id: "g1", material_code: `C${index}`, material_name: `Fabric ${index}`, sort_order: index }));
+const material = (id: string, group: string, code: string | null, name: string | null, imageUrl: string | null = null, sort = 0) => ({ id, material_group_id: group, material_code: code, material_name: name, image_url: imageUrl, sort_order: sort });
+
+test("swatches: grouped by the template group, label override wins, full_group vs selected_items, picture paths for the existing image helper", () => {
   const result = mapMaterials({
     links: [
       { id: "l1", material_group_id: "g1", selection_mode: "full_group", label_override: null, sort_order: 0 },
       { id: "l2", material_group_id: "g2", selection_mode: "selected_items", label_override: "Seat finish", sort_order: 1 },
       { id: "l3", material_group_id: "g3", selection_mode: "full_group", label_override: null, sort_order: 2 },
     ],
-    groups: [{ id: "g1", group_name: "Fabrics" }, { id: "g2", group_name: "Leathers" }, { id: "g3", group_name: "Empty group" }],
+    groups: [{ id: "g1", group_name: "Fabric Finishes" }, { id: "g2", group_name: "Leathers" }, { id: "g3", group_name: "Empty group" }],
     linkItems: [{ product_template_material_group_id: "l2", brand_material_id: "x1", sort_order: 1 }, { product_template_material_group_id: "l2", brand_material_id: "x2", sort_order: 0 }],
     materials: [
-      ...materials,
-      { id: "x1", material_group_id: "g2", material_code: null, material_name: "Nappa", sort_order: 0 },
-      { id: "x2", material_group_id: "g2", material_code: "L9", material_name: "Aniline", sort_order: 0 },
-      { id: "x3", material_group_id: "g2", material_code: null, material_name: "Not chosen", sort_order: 0 },
+      material("m1", "g1", "ER01", "Jet Black", "materials/er01.webp", 0),
+      material("m2", "g1", "ER02", "Sand", null, 1),
+      material("m2", "g1", "ER02", "Sand", null, 1),
+      material("x1", "g2", null, "Nappa", "product-images:materials/nappa.webp"),
+      material("x2", "g2", "L9", "Aniline", "https://cdn.example/a.webp"),
+      material("x3", "g2", null, "Not chosen"),
     ],
   });
-  assert.deepEqual(result.map((group) => group.groupName), ["Fabrics", "Seat finish"], "a group with no materials is left out");
-  assert.equal(result[0].items.length, GALLERY_DETAIL_MATERIALS_PER_GROUP_MAX);
-  assert.equal(result[0].moreCount, 5);
-  assert.equal(result[0].items[0], "C0 - Fabric 0");
-  assert.deepEqual(result[1].items, ["L9 - Aniline", "Nappa"], "only the chosen materials, in their order");
-  assert.equal(result[1].moreCount, 0);
+  assert.deepEqual(result.map((group) => group.groupName), ["Fabric Finishes", "Seat finish"], "a group with no materials is left out");
+  assert.deepEqual(result[0].swatches, [
+    { code: "ER01", name: "Jet Black", imagePath: "product-images:materials/er01.webp" },
+    { code: "ER02", name: "Sand", imagePath: null },
+  ], "a duplicate row appears once; a missing picture is null (the UI shows the colour-less box with the code)");
+  assert.deepEqual(result[1].swatches, [
+    { code: "L9", name: "Aniline", imagePath: "https://cdn.example/a.webp" },
+    { code: "Nappa", name: "Nappa", imagePath: "product-images:materials/nappa.webp" },
+  ], "only the chosen materials, in their order; a missing code falls back to the name");
+  assert.equal(swatchImagePath("  "), null);
+  assert.equal(swatchImagePath(5), null);
+  assert.equal(swatchImagePath("a/b.webp"), "product-images:a/b.webp");
+});
+
+test("swatches: at most 400 per group and 1200 in all; the rest is counted, not sent", () => {
+  const many = (group: string, count: number) => Array.from({ length: count }, (_, index) => material(`${group}-${index}`, group, `C${index}`, `Finish ${index}`, `m/${group}-${index}.webp`, index));
+  const link = (id: string, group: string, order: number) => ({ id, material_group_id: group, selection_mode: "full_group", label_override: null, sort_order: order });
+  const one = mapMaterials({ links: [link("l1", "g1", 0)], groups: [{ id: "g1", group_name: "Big" }], linkItems: [], materials: many("g1", 450) });
+  assert.equal(one[0].swatches.length, GALLERY_DETAIL_SWATCHES_PER_GROUP_MAX);
+  assert.equal(one[0].moreCount, 50);
+  const three = mapMaterials({ links: [link("l1", "g1", 0), link("l2", "g2", 1), link("l3", "g3", 2), link("l4", "g4", 3)], groups: ["g1", "g2", "g3", "g4"].map((id) => ({ id, group_name: id })), linkItems: [], materials: [...many("g1", 400), ...many("g2", 400), ...many("g3", 400), ...many("g4", 10)] });
+  assert.equal(three.reduce((sum, group) => sum + group.swatches.length, 0), GALLERY_DETAIL_SWATCHES_TOTAL_MAX, "the whole popup is capped");
+  assert.deepEqual(three.map((group) => group.groupName), ["g1", "g2", "g3"], "a group that gets no room is not listed");
+  const small = mapMaterials({ links: [link("l1", "g1", 0)], groups: [{ id: "g1", group_name: "Small" }], linkItems: [], materials: many("g1", 5) });
+  assert.equal(small[0].moreCount, 0, "no note when no cap was hit");
+});
+
+test("swatches: no price, cost or supplier field in the payload", () => {
+  const rows = [{ ...material("m1", "g1", "ER01", "Jet Black", "a.webp"), price: 98765, supplier_price: 98765, cost: 98765 }];
+  const result = mapMaterials({ links: [{ id: "l1", material_group_id: "g1", selection_mode: "full_group", label_override: null, sort_order: 0 }], groups: [{ id: "g1", group_name: "Fabrics" }], linkItems: [], materials: rows });
+  assert.doesNotMatch(JSON.stringify(result), /98765|price|cost|supplier/i);
+  assert.deepEqual(Object.keys(result[0].swatches[0]).sort(), ["code", "imagePath", "name"]);
 });
 
 test("options and accessories: names only, grouped, inactive left out, no item without a name", () => {
@@ -208,7 +241,7 @@ test("PRIVACY: the mapped detail of a template that holds price data has no pric
   assert.deepEqual(keys.filter(isPriceLikeKey), [], "no price, prices, unit_price, cost, discount, amount or rate key");
   assert.ok(!json.includes(String(PRICE_MARK)) && !json.includes(String(PRICE_MARK + 1)), "no price number anywhere");
   assert.doesNotMatch(json, /default_unit_price|variant_pricing|category_pricing|accessory_pricing|desking_size_pricing|recipe_version|selections/, "no raw template JSON, no recipe");
-  assert.deepEqual(Object.keys(detail).sort(), ["brandName", "categoryName", "configuration", "description", "displayName", "id", "images", "itemCode", "itemName", "materials", "options", "quotedCount", "specification", "subCategoryName", "tags", "templateCode", "templateId"]);
+  assert.deepEqual(Object.keys(detail).sort(), ["brandName", "categoryName", "configuration", "description", "displayName", "id", "images", "itemCode", "itemName", "materials", "options", "quotedCount", "specification", "specificationSource", "subCategoryName", "tags", "templateCode", "templateId"]);
 });
 
 test("the last guard removes any price-like key and nothing else", () => {
@@ -227,4 +260,57 @@ test("the last guard removes any price-like key and nothing else", () => {
   assert.equal(looksLikeMoneyText("AED 1,200"), true);
   assert.equal(looksLikeMoneyText("250 USD"), true);
   assert.equal(looksLikeMoneyText("1800 x 900 mm"), false);
+});
+
+// ── specification ──────────────────────────────────────────────────────────
+test("specification order: gallery text, generated from the saved choices, template specification, template description, none", () => {
+  const all = { gallery: "  Saved by an editor.  ", generated: "Generated text.", templateSpecification: "Template spec.", templateDescription: "Template description." };
+  assert.deepEqual(chooseSpecification(all), { text: "Saved by an editor.", source: "gallery", usedDescription: false });
+  assert.deepEqual(chooseSpecification({ ...all, gallery: "   " }), { text: "Generated text.", source: "generated", usedDescription: false });
+  assert.deepEqual(chooseSpecification({ ...all, gallery: null, generated: null }), { text: "Template spec.", source: "template", usedDescription: false });
+  assert.deepEqual(chooseSpecification({ ...all, gallery: null, generated: "Template spec." }), { text: "Template spec.", source: "template", usedDescription: false }, "generated text equal to the template text is the template's");
+  assert.deepEqual(chooseSpecification({ gallery: null, generated: null, templateSpecification: "  ", templateDescription: "Template description." }), { text: "Template description.", source: "template", usedDescription: true });
+  assert.deepEqual(chooseSpecification({}), { text: null, source: "none", usedDescription: false });
+  assert.equal(chooseSpecification({ gallery: "x".repeat(5000) }).text?.length, GALLERY_DETAIL_SPECIFICATION_MAX);
+});
+
+const accessoryTemplate = { ...priceyTemplate, default_specification: "Mesh back, 5-star base." };
+const detailFor = (recipe: unknown, extra: Record<string, unknown> = {}, template: Record<string, unknown> = accessoryTemplate) =>
+  buildGalleryDetail({
+    item: { id: ITEM, template_id: TEMPLATE, item_name: "Buddy Chair", display_name: null, item_code: "BD1", tags: [], quoted_count: 1, recipe, ...extra },
+    template: template as typeof priceyTemplate,
+    brandName: "Acme", categoryName: "", subCategoryName: "", materials: [], components: [], linkedFamilies: [],
+  }).detail;
+
+test("detail specification: the gallery column wins; otherwise the generated text of a complete recipe; otherwise the template text", () => {
+  const complete = stored({ variant_row_id: "vr1", pricing_accessory_quantities: { ac1: 1 } });
+  assert.deepEqual([detailFor(complete, { specification: "Edited text." }).specification, detailFor(complete, { specification: "Edited text." }).specificationSource], ["Edited text.", "gallery"]);
+  const generated = detailFor(complete);
+  assert.equal(generated.specificationSource, "generated", "a complete saved configuration gives generated text");
+  assert.notEqual(generated.specification, "Mesh back, 5-star base.");
+  assert.match(generated.specification ?? "", /Cable Tray/, "the generated text names the chosen accessory");
+  const incomplete = detailFor(stored({}));
+  assert.deepEqual([incomplete.specification, incomplete.specificationSource], ["Mesh back, 5-star base.", "template"], "a recipe with an unresolved required step falls through to the template text");
+  const stale = detailFor(stored({ variant_row_id: "does-not-exist" }));
+  assert.equal(stale.specificationSource, "template", "a stale id falls through too");
+  const onlyDescription = detailFor(stored({}), {}, { ...accessoryTemplate, default_specification: null });
+  assert.deepEqual([onlyDescription.specification, onlyDescription.specificationSource, onlyDescription.description], ["A task chair.", "template", null], "the description is the specification and is not shown twice");
+  const nothing = detailFor(stored({}), {}, { ...accessoryTemplate, default_specification: null, description: null });
+  assert.deepEqual([nothing.specification, nothing.specificationSource], [null, "none"]);
+});
+
+test("detail specification: a template full of prices gives text without money, and a money-like generated text is never used", () => {
+  const detail = detailFor(stored({ variant_row_id: "vr2", pricing_accessory_quantities: { ac1: 2 } }));
+  const text = detail.specification ?? "";
+  assert.ok(text.length > 0);
+  assert.equal(looksLikeMoneyText(text), false);
+  assert.doesNotMatch(text, /98765|98766/);
+  assert.ok(text.length <= GALLERY_DETAIL_SPECIFICATION_MAX);
+  const spec = describeRecipe({
+    recipe: stored({ variant_row_id: "vr1" }),
+    template: { ...priceyTemplate, variant_pricing: [{ id: "vg1", pricing_type: "base_model_group", group_name: "Bases", is_active: true, sort_order: 0, items: [{ id: "vr1", display_name: "Chrome", specification: "Chrome base, AED 1,200 each", price: 1, is_active: true, sort_order: 0 }] }] },
+    components: [],
+    linkedFamilies: [],
+  }).generatedSpecification;
+  assert.equal(spec, null, "text that looks like a price is dropped, so the next source is used");
 });
