@@ -13,6 +13,7 @@ import {
   GALLERY_FILTER_TAGS_MAX,
   GALLERY_PAGE_SIZE,
   clampGalleryPage,
+  cleanGalleryCurrency,
   cleanGalleryTag,
   completeGalleryRecipe,
   galleryDisplayName,
@@ -23,11 +24,13 @@ import {
   neutralSpecOverrides,
   validateGalleryDisplayName,
   validateGalleryTags,
+  type GalleryCurrencyEntry,
   type GalleryFilterEntry,
   type GalleryListItem,
   type GalleryMessageKind,
   type GalleryPicture,
   type GallerySortMode,
+  type GallerySubCategoryEntry,
   type GalleryTagEntry,
 } from "./gallery";
 
@@ -114,6 +117,8 @@ export type ListGalleryInput = {
   query?: unknown;
   brandId?: unknown;
   categoryId?: unknown;
+  subCategoryId?: unknown;
+  currency?: unknown;
   tag?: unknown;
   sort?: unknown;
   includeHidden?: unknown;
@@ -129,6 +134,11 @@ export async function listGalleryItems(supabase: SupabaseClient, input: ListGall
   const categoryId = input?.categoryId;
   if (brandId !== undefined && brandId !== null && brandId !== "" && !isGalleryId(brandId)) return { ok: false, kind: "invalid_request" };
   if (categoryId !== undefined && categoryId !== null && categoryId !== "" && !isGalleryId(categoryId)) return { ok: false, kind: "invalid_request" };
+  const subCategoryId = input?.subCategoryId;
+  if (subCategoryId !== undefined && subCategoryId !== null && subCategoryId !== "" && !isGalleryId(subCategoryId)) return { ok: false, kind: "invalid_request" };
+  const hasCurrency = input?.currency !== undefined && input?.currency !== null && input?.currency !== "";
+  const currency = hasCurrency ? cleanGalleryCurrency(input.currency) : null;
+  if (hasCurrency && currency === null) return { ok: false, kind: "invalid_request" };
   const tag = input?.tag === undefined || input?.tag === null || input?.tag === "" ? null : cleanGalleryTag(input.tag);
   if (input?.tag !== undefined && input?.tag !== null && input?.tag !== "" && tag === null) return { ok: false, kind: "invalid_request" };
   const sort = gallerySortMode(input?.sort);
@@ -141,6 +151,8 @@ export async function listGalleryItems(supabase: SupabaseClient, input: ListGall
     if (!showHidden) query = query.eq("is_hidden", false);
     if (isGalleryId(brandId)) query = query.eq("brand_id", brandId);
     if (isGalleryId(categoryId)) query = query.or(`main_category_id.eq.${categoryId},sub_category_id.eq.${categoryId}`);
+    if (isGalleryId(subCategoryId)) query = query.eq("sub_category_id", subCategoryId);
+    if (currency) query = query.eq("currency", currency);
     if (tag) query = query.contains("tags", [tag]);
     // Every word must be found (one filter per word = AND), each in the search text, the curated name or the tags.
     for (const word of galleryQueryWords(input?.query)) {
@@ -200,7 +212,13 @@ export async function listGalleryItems(supabase: SupabaseClient, input: ListGall
   }
 }
 
-export type GalleryFilters = { brands: GalleryFilterEntry[]; categories: GalleryFilterEntry[]; tags: GalleryTagEntry[] };
+export type GalleryFilters = {
+  brands: GalleryFilterEntry[];
+  categories: GalleryFilterEntry[];
+  tags: GalleryTagEntry[];
+  subCategories: GallerySubCategoryEntry[];
+  currencies: GalleryCurrencyEntry[];
+};
 export type GalleryFiltersResult = ({ ok: true } & GalleryFilters) | { ok: false; kind: GalleryMessageKind };
 
 function countBy(ids: Iterable<string | null | undefined>): Map<string, number> {
@@ -214,22 +232,34 @@ export async function listGalleryFilters(supabase: SupabaseClient): Promise<Gall
   try {
     const { data, error } = await supabase
       .from("product_gallery_items")
-      .select("brand_id,main_category_id,sub_category_id,tags")
+      .select("brand_id,main_category_id,sub_category_id,currency,tags")
       .eq("is_hidden", false)
       .limit(GALLERY_FILTER_SCAN_MAX);
     if (error || !data) return { ok: false, kind: "load_failed" };
-    const rows = data as unknown as Array<{ brand_id: string | null; main_category_id: string | null; sub_category_id: string | null; tags: string[] | null }>;
+    const rows = data as unknown as Array<{ brand_id: string | null; main_category_id: string | null; sub_category_id: string | null; currency: string | null; tags: string[] | null }>;
     const brandCounts = countBy(rows.map((row) => row.brand_id));
     // A category counts once per item even when the main and the sub category are the same id.
     const categoryCounts = countBy(rows.flatMap((row) => Array.from(new Set([row.main_category_id, row.sub_category_id].filter((id): id is string => Boolean(id))))));
     const tagCounts = countBy(rows.flatMap((row) => (Array.isArray(row.tags) ? Array.from(new Set(row.tags)) : [])));
 
+    // Sub-categories with a visible item; the parent is the item's main category (the most common one if it ever differs).
+    const subCounts = new Map<string, { count: number; parents: Map<string, number> }>();
+    for (const row of rows) {
+      if (!row.sub_category_id) continue;
+      const entry = subCounts.get(row.sub_category_id) ?? { count: 0, parents: new Map<string, number>() };
+      entry.count += 1;
+      if (row.main_category_id) entry.parents.set(row.main_category_id, (entry.parents.get(row.main_category_id) ?? 0) + 1);
+      subCounts.set(row.sub_category_id, entry);
+    }
+    const currencyCounts = countBy(rows.map((row) => cleanGalleryCurrency(row.currency)));
+
     const topIds = (counts: Map<string, number>) => Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, GALLERY_FILTER_LIST_MAX);
     const brandTop = topIds(brandCounts);
     const categoryTop = topIds(categoryCounts);
+    const subTop = Array.from(subCounts.entries()).sort((a, b) => b[1].count - a[1].count).slice(0, GALLERY_FILTER_LIST_MAX);
     const [brandNames, categoryNames] = await Promise.all([
       namesFor(supabase, "brands", brandTop.map(([id]) => id)),
-      namesFor(supabase, "product_categories", categoryTop.map(([id]) => id)),
+      namesFor(supabase, "product_categories", [...categoryTop.map(([id]) => id), ...subTop.map(([id]) => id)]),
     ]);
     const entries = (top: Array<[string, number]>, names: Map<string, string>): GalleryFilterEntry[] =>
       top.flatMap(([id, count]) => (names.has(id) ? [{ id, name: names.get(id) as string, count }] : [])).sort((a, b) => a.name.localeCompare(b.name));
@@ -237,7 +267,19 @@ export async function listGalleryFilters(supabase: SupabaseClient): Promise<Gall
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, GALLERY_FILTER_TAGS_MAX)
       .map(([tag, count]) => ({ tag, count }));
-    return { ok: true, brands: entries(brandTop, brandNames), categories: entries(categoryTop, categoryNames), tags };
+    const subCategories: GallerySubCategoryEntry[] = subTop
+      .flatMap(([id, entry]) => {
+        const name = categoryNames.get(id);
+        if (!name) return [];
+        const parent = Array.from(entry.parents.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+        return [{ id, name, parentCategoryId: parent, count: entry.count }];
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const currencies: GalleryCurrencyEntry[] = Array.from(currencyCounts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, GALLERY_FILTER_LIST_MAX)
+      .map(([currency, count]) => ({ currency, count }));
+    return { ok: true, brands: entries(brandTop, brandNames), categories: entries(categoryTop, categoryNames), tags, subCategories, currencies };
   } catch (problem) {
     logProblem("filters", problem);
     return { ok: false, kind: "load_failed" };

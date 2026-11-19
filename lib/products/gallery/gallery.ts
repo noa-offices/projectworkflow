@@ -148,6 +148,15 @@ export type GalleryListItem = {
 
 export type GalleryFilterEntry = { id: string; name: string; count: number };
 export type GalleryTagEntry = { tag: string; count: number };
+export type GallerySubCategoryEntry = { id: string; name: string; parentCategoryId: string | null; count: number };
+export type GalleryCurrencyEntry = { currency: string; count: number };
+
+/** A currency filter: trimmed and upper-cased, then 1-8 capital letters only. Anything else is null (invalid). */
+export function cleanGalleryCurrency(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const upper = value.trim().toUpperCase();
+  return /^[A-Z]{1,8}$/.test(upper) ? upper : null;
+}
 
 /** Replay needs no edited text: a gallery configuration has none. The existing replay and its banner accept this as is. */
 export function neutralSpecOverrides(): SavedSetupSpecOverrides {

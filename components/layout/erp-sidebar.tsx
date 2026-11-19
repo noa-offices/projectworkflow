@@ -27,6 +27,7 @@ import {
   Database,
   FileText,
   FolderKanban,
+  GalleryThumbnails,
   HardHat,
   Layers,
   LayoutDashboard,
@@ -348,6 +349,8 @@ export function ErpSidebar({
         items: [
           // Private, owner-only saved setups: visible to every signed-in user of this sidebar (not gated by canManageProducts).
           { label: "My Collection", href: "/products/my-collection", icon: Bookmark, active: isMyCollectionActive(pathname), badge: pendingShares },
+          // Configured products the company has quoted. Same visibility rule as the Product Library entry; the page itself checks access again.
+          { label: "Product Gallery", href: "/products/gallery", icon: GalleryThumbnails, active: pathname === "/products/gallery" || pathname.startsWith("/products/gallery/"), hidden: !canManageProducts },
           { label: "Product Library", href: "/products", icon: Package, active: isProductLibraryActive(pathname, priceStatus, manage), hidden: !canManageProducts },
           { label: "Product Management", href: "/products/manage", icon: SlidersHorizontal, active: isProductManagementActive(pathname, manage), hidden: !canManageProducts },
           { label: "Brands", href: "/products/brands", icon: Tag, active: pathname === "/products/brands", hidden: !canManageProducts },
