@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SetupThumbnail } from "@/components/products/my-collection-list";
+import { GalleryDetailDialog } from "@/components/products/product-gallery-detail-dialog";
 import { ConfirmHiddenDialog, EditGalleryItemDialog, MergeGalleryItemDialog } from "@/components/products/product-gallery-dialogs";
 import { toolbarContainer, toolbarControl, toolbarPrimaryButton, toolbarSecondaryButton } from "@/components/products/product-toolbar-styles";
 import { listGalleryFiltersAction, listGalleryItemsAction, setGalleryItemHiddenAction } from "@/lib/products/gallery/gallery-actions";
@@ -16,7 +16,6 @@ import {
   clearedGalleryFilters,
   filterOptionLabel,
   hasActiveGalleryFilters,
-  productLibraryHref,
   quotedText,
   showingText,
   subCategoryLabel,
@@ -30,7 +29,7 @@ import {
 // to a quotation happens in the quote builder. The server and the database decide who may change anything; these flags only mirror that.
 type Filters = { brands: GalleryFilterEntry[]; categories: GalleryFilterEntry[]; tags: GalleryTagEntry[]; subCategories: GallerySubCategoryEntry[]; currencies: GalleryCurrencyEntry[] };
 const NO_FILTERS: Filters = { brands: [], categories: [], tags: [], subCategories: [], currencies: [] };
-type Dialog = { kind: "edit" | "hide" | "merge"; item: GalleryListItem } | null;
+type Dialog = { kind: "edit" | "hide" | "merge" | "detail"; item: GalleryListItem } | null;
 
 const control = `${toolbarControl} w-full`;
 const smallButton =
@@ -51,7 +50,9 @@ function GalleryCard({ item, editMode, canCurate, onDialog, onUnhide }: { item: 
     <li className={`flex h-full min-w-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-sm ${item.isHidden ? "opacity-60" : ""}`} data-testid="gallery-card">
       <div className="p-2 pb-0">
         <div className="relative flex h-24 items-center justify-center overflow-hidden rounded-md border border-zinc-100 bg-zinc-50">
-          <SetupThumbnail path={item.picture?.kind === "template" ? item.picture.path : null} alt={item.displayName} size={88} />
+          <button type="button" onClick={() => onDialog({ kind: "detail", item })} aria-label={`Open details of ${item.displayName}`} className="flex h-full w-full items-center justify-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">
+            <SetupThumbnail path={item.picture?.kind === "template" ? item.picture.path : null} alt={item.displayName} size={88} />
+          </button>
           <span className="pointer-events-none absolute left-1.5 top-1.5 z-10 flex flex-col items-start gap-1">
             {item.isHidden ? <span className="rounded-full border border-zinc-300 bg-white/90 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-700">Hidden</span> : null}
             {!item.available ? <span className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-900">No longer available</span> : null}
@@ -60,7 +61,9 @@ function GalleryCard({ item, editMode, canCurate, onDialog, onUnhide }: { item: 
         </div>
       </div>
       <div className="flex flex-1 flex-col gap-1 p-2.5">
-        <h3 className="min-w-0 truncate text-sm font-semibold text-zinc-950" title={item.displayName}>{item.displayName}</h3>
+        <h3 className="min-w-0 text-sm font-semibold text-zinc-950">
+          <button type="button" onClick={() => onDialog({ kind: "detail", item })} title={item.displayName} className="block w-full truncate text-left hover:text-emerald-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">{item.displayName}</button>
+        </h3>
         {item.brandName ? <p className="truncate text-xs text-zinc-500" title={item.brandName}>{item.brandName}</p> : null}
         {item.itemCode ? <p className="truncate text-xs text-zinc-500" title={item.itemCode}>{item.itemCode}</p> : null}
         <div className="flex flex-wrap gap-1">
@@ -74,7 +77,7 @@ function GalleryCard({ item, editMode, canCurate, onDialog, onUnhide }: { item: 
         ) : null}
         <p className="text-xs font-medium text-zinc-700">{quotedText(item.quotedCount)}</p>
         <div className="mt-auto grid grid-cols-2 gap-2 pt-2">
-          <Link href={productLibraryHref(item.templateId)} className={`${openButton} col-span-2`} aria-label={`View product ${item.displayName}`}>View product</Link>
+          <button type="button" className={`${openButton} col-span-2`} onClick={() => onDialog({ kind: "detail", item })} aria-label={`Details of ${item.displayName}`}>Details</button>
           {editMode ? (
             <>
               <button type="button" className={smallButton} onClick={() => onDialog({ kind: "edit", item })} aria-label={`Edit ${item.displayName}`}>Edit</button>
@@ -341,6 +344,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
         ) : null}
       </div>
 
+      {dialog?.kind === "detail" ? <GalleryDetailDialog itemId={dialog.item.id} title={dialog.item.displayName} onClose={() => setDialog(null)} /> : null}
       {editing && dialog?.kind === "edit" ? <EditGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onSaved={() => void afterChange("Saved.")} /> : null}
       {editing && dialog?.kind === "hide" ? <ConfirmHiddenDialog item={dialog.item} hide onClose={() => setDialog(null)} onConfirm={() => setHidden(dialog.item, true)} /> : null}
       {editing && canCurate && dialog?.kind === "merge" ? <MergeGalleryItemDialog item={dialog.item} onClose={() => setDialog(null)} onMerged={() => void afterChange("Items merged.")} /> : null}

@@ -33,6 +33,20 @@ import {
   type GallerySubCategoryEntry,
   type GalleryTagEntry,
 } from "./gallery";
+import {
+  DETAIL_IMAGE_SELECT,
+  buildGalleryDetail,
+  mapMaterials,
+  type ComponentRow,
+  type ConfigurationTemplateInput,
+  type GalleryDetail,
+  type GalleryDetailMaterialGroup,
+  type LinkedFamilyRow,
+  type MaterialGroupItemRow,
+  type MaterialGroupRow,
+  type MaterialRow,
+  type TemplateMaterialGroupRow,
+} from "./gallery-detail";
 
 // The list NEVER selects the recipe. Display fields only.
 const LIST_COLUMNS = [
@@ -317,6 +331,90 @@ export async function getGalleryItemForAdd(supabase: SupabaseClient, id: unknown
     return { ok: false, kind: "load_failed" };
   }
 }
+
+// ── One item in full, for the details popup ─────────────────────────────────
+// Names and text only: the template's pricing JSON is read here to turn saved ids into readable lines and is never returned.
+const DETAIL_ITEM_COLUMNS = "id,template_id,brand_id,main_category_id,sub_category_id,item_name,display_name,item_code,tags,quoted_count,recipe";
+const DETAIL_TEMPLATE_SELECT = [
+  "id", "brand_id", "main_category_id", "sub_category_id", "template_code", "template_name", "internal_selection_name", "item_code", "description",
+  "default_specification", "origin", "supplier_name", "is_active", "lifecycle_status", "variant_pricing", "category_pricing", "accessory_pricing",
+  "desking_size_pricing", DETAIL_IMAGE_SELECT,
+].join(",");
+
+export type GalleryDetailResult = { ok: true; detail: GalleryDetail } | { ok: false; kind: GalleryMessageKind };
+
+async function rows<T>(query: PromiseLike<{ data: unknown; error: unknown }>, where: string): Promise<T[]> {
+  try {
+    const { data, error } = await query;
+    return !error && Array.isArray(data) ? (data as T[]) : [];
+  } catch (problem) {
+    logProblem(where, problem);
+    return [];
+  }
+}
+
+export async function getGalleryItemDetail(supabase: SupabaseClient, id: unknown): Promise<GalleryDetailResult> {
+  if (!isGalleryId(id)) return { ok: false, kind: "invalid_request" };
+  try {
+    if (!(await rpcBoolean(supabase, "product_gallery_can_view"))) return { ok: false, kind: "not_allowed" };
+    const { data, error } = await supabase.from("product_gallery_items").select(DETAIL_ITEM_COLUMNS).eq("id", id).maybeSingle();
+    if (error) return { ok: false, kind: "load_failed" };
+    const item = data as unknown as (GalleryRow & { recipe: unknown }) | null;
+    if (!item) return { ok: false, kind: "item_not_found" };
+
+    const { data: templateData, error: templateError } = await supabase.from("product_templates").select(DETAIL_TEMPLATE_SELECT).eq("id", item.template_id).maybeSingle();
+    if (templateError) return { ok: false, kind: "load_failed" };
+    const template = templateData as unknown as (ConfigurationTemplateInput & Record<string, unknown> & { is_active: boolean | null; lifecycle_status: string | null }) | null;
+    // A deleted, archived or inactive product: the friendly "no longer available" state.
+    if (!template || !isSetupUsable({ template_id: item.template_id }, { is_active: template.is_active, lifecycle_status: template.lifecycle_status })) return { ok: false, kind: "product_unavailable" };
+
+    const categoryIds = [item.main_category_id, item.sub_category_id].filter((value): value is string => Boolean(value));
+    const [brandNames, categoryNames, components, linkedFamilies, links] = await Promise.all([
+      namesFor(supabase, "brands", item.brand_id ? [item.brand_id] : []),
+      namesFor(supabase, "product_categories", categoryIds),
+      rows<ComponentRow>(supabase.from("product_components").select("id,component_group,component_name,option_type,sort_order").eq("template_id", item.template_id).eq("is_active", true).limit(300), "components"),
+      rows<LinkedFamilyRow>(supabase.from("product_template_linked_families").select("id,label,sort_order").eq("parent_template_id", item.template_id).eq("is_active", true).limit(100), "linked families"),
+      rows<TemplateMaterialGroupRow>(supabase.from("product_template_material_groups").select("id,material_group_id,selection_mode,label_override,sort_order").eq("product_template_id", item.template_id).eq("is_active", true).limit(100), "material links"),
+    ]);
+
+    let materials: GalleryDetailMaterialGroup[] = [];
+    if (links.length) {
+      const wholeGroupIds = links.filter((link) => link.selection_mode !== "selected_items").map((link) => link.material_group_id);
+      const selectedLinkIds = links.filter((link) => link.selection_mode === "selected_items").map((link) => link.id);
+      const [groups, linkItems] = await Promise.all([
+        rows<MaterialGroupRow>(supabase.from("brand_material_groups").select("id,group_name").in("id", links.map((link) => link.material_group_id)).eq("is_active", true), "material groups"),
+        selectedLinkIds.length
+          ? rows<MaterialGroupItemRow>(supabase.from("product_template_material_group_items").select("product_template_material_group_id,brand_material_id,sort_order").in("product_template_material_group_id", selectedLinkIds).eq("is_active", true).limit(600), "material link items")
+          : Promise.resolve([] as MaterialGroupItemRow[]),
+      ]);
+      const [wholeGroupMaterials, chosenMaterials] = await Promise.all([
+        wholeGroupIds.length
+          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,sort_order").in("material_group_id", wholeGroupIds).eq("is_active", true).limit(600), "group materials")
+          : Promise.resolve([] as MaterialRow[]),
+        linkItems.length
+          ? rows<MaterialRow>(supabase.from("brand_materials").select("id,material_group_id,material_code,material_name,sort_order").in("id", linkItems.map((entry) => entry.brand_material_id)).eq("is_active", true).limit(600), "chosen materials")
+          : Promise.resolve([] as MaterialRow[]),
+      ]);
+      materials = mapMaterials({ links, groups, linkItems, materials: [...wholeGroupMaterials, ...chosenMaterials] });
+    }
+
+    const { detail } = buildGalleryDetail({
+      item,
+      template,
+      brandName: item.brand_id ? brandNames.get(item.brand_id) ?? "" : "",
+      categoryName: item.main_category_id ? categoryNames.get(item.main_category_id) ?? "" : "",
+      subCategoryName: item.sub_category_id ? categoryNames.get(item.sub_category_id) ?? "" : "",
+      materials,
+      components,
+      linkedFamilies,
+    });
+    return { ok: true, detail };
+  } catch (problem) {
+    logProblem("detail", problem);
+    return { ok: false, kind: "load_failed" };
+  }
+}
+
 
 // ── Curation (system_owner / admin_manager only; the database function decides) ─
 export type GalleryChangeResult = { ok: true } | { ok: false; kind: GalleryMessageKind };

@@ -16,7 +16,8 @@ const primaryButton =
   "h-9 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800 disabled:opacity-60";
 const fieldClass = "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800";
 
-function DialogShell({ title, description, onClose, children }: { title: string; description?: string; onClose: () => void; children: ReactNode }) {
+/** `wide` is the details popup: a large dialog on a desktop and a full-screen scrolling sheet on a phone. */
+export function DialogShell({ title, description, onClose, children, wide = false }: { title: string; description?: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const panel = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(typeof document === "undefined" ? null : document.activeElement);
   // The latest onClose, so the effect below runs once (focus is set when the dialog opens, never again while typing).
@@ -41,8 +42,8 @@ function DialogShell({ title, description, onClose, children }: { title: string;
     };
   }, []);
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={panel} role="dialog" aria-modal="true" aria-label={title} className="flex max-h-[90vh] w-full max-w-lg flex-col gap-3 overflow-y-auto rounded-t-lg bg-white p-4 shadow-xl sm:rounded-lg">
+    <div className={`fixed inset-0 z-50 flex justify-center bg-black/40 p-0 ${wide ? "items-stretch sm:items-center sm:p-6" : "items-end sm:items-center sm:p-4"}`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div ref={panel} role="dialog" aria-modal="true" aria-label={title} className={`flex w-full flex-col gap-3 overflow-y-auto bg-white p-4 shadow-xl ${wide ? "h-[100dvh] max-w-none rounded-none sm:h-auto sm:max-h-[92vh] sm:max-w-5xl sm:rounded-lg" : "max-h-[90vh] max-w-lg rounded-t-lg sm:rounded-lg"}`}>
         <div>
           <h2 className="text-base font-semibold text-zinc-900">{title}</h2>
           {description ? <p className="mt-1 text-sm text-zinc-600">{description}</p> : null}

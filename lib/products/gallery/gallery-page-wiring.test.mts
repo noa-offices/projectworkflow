@@ -7,6 +7,9 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf
 const page = read("../../../app/products/gallery/page.tsx");
 const browser = read("../../../components/products/product-gallery-browser.tsx");
 const dialogs = read("../../../components/products/product-gallery-dialogs.tsx");
+const detailDialog = read("../../../components/products/product-gallery-detail-dialog.tsx");
+const service = read("./gallery-service.ts");
+const actionsSource = read("./gallery-actions.ts");
 const sidebar = read("../../../components/layout/erp-sidebar.tsx");
 const view = read("./gallery-view.ts");
 const code = (text: string) => text.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*\*|\{\/\*)/.test(line)).join("\n");
@@ -23,13 +26,13 @@ test("the page checks the capabilities FIRST and shows a short message when the 
 });
 
 test("no price, discount or cost word is rendered or typed anywhere on the page or its components", () => {
-  for (const [name, text] of Object.entries({ page, browser, dialogs, view })) {
+  for (const [name, text] of Object.entries({ page, browser, dialogs, view, detailDialog })) {
     assert.doesNotMatch(code(text), /price|discount|\bcost\b|\btotal_|net_?price|list_?price|selling/i, name);
   }
 });
 
 test("the page never uses a recipe, an admin client or the add-for-quote action", () => {
-  for (const [name, text] of Object.entries({ page, browser, dialogs })) {
+  for (const [name, text] of Object.entries({ page, browser, dialogs, detailDialog })) {
     assert.doesNotMatch(code(text), /recipe|getGalleryItemForAdd|createAdminClient|supabase\/admin|service_role|createClient|from\("/i, name);
     assert.doesNotMatch(code(text), /Add to quot|Add to quote|openSetupFromCollection/i, `${name}: no Add button on this page`);
   }
@@ -122,8 +125,8 @@ test("cards show the agreed facts: Category and Sub-category as two separate lab
   assert.doesNotMatch(code(browser), /categoryLine/);
   assert.match(browser, /No longer available/);
   assert.match(browser, />Hidden</);
-  assert.match(browser, /View product/);
-  assert.match(browser, /productLibraryHref\(item\.templateId\)/);
+  assert.match(browser, />Details</);
+  assert.doesNotMatch(browser, /View product|productLibraryHref|\/products\?template=|next\/link/, "the link that left the gallery is gone");
 });
 
 test("dialogs are labelled modals that close on Escape", () => {
@@ -176,4 +179,57 @@ test("PR G-C diff guard: at most 12 files, no SQL, no package change, and none o
     /^components\/products\/product-gallery-(browser|dialogs)\.tsx$/.test(file);
   const outside = changed.filter((file) => !allowed(file));
   assert.deepEqual(outside, [], `unexpected files: ${outside.join(", ")}`);
+});
+
+test("details popup: a Details button, the picture and the title open it with the item id; the old link is gone", () => {
+  const card = browser.slice(browser.indexOf("function GalleryCard"), browser.indexOf("function Skeleton"));
+  assert.equal((card.match(/onDialog\(\{ kind: "detail", item \}\)/g) ?? []).length, 3, "button, picture and title");
+  assert.match(card, /<button .*>Details<\/button>/);
+  assert.match(browser, /dialog\?\.kind === "detail" \? <GalleryDetailDialog itemId=\{dialog\.item\.id\}/, "the popup gets the item id");
+  assert.doesNotMatch(browser, /dialog\?\.kind === "detail".*editing/, "the popup is not an edit-mode feature: every viewer gets it");
+  assert.doesNotMatch(code(browser), /\/products\?template=/);
+  assert.doesNotMatch(read("./gallery-view.ts"), /productLibraryHref/);
+});
+
+test("details popup: Close and Open full detail, the canonical URL, Retry, the unavailable state, collapsible sections, a G-S1 marker", () => {
+  assert.match(detailDialog, /onClick=\{onClose\}>Close</);
+  assert.match(detailDialog, /Open full detail/);
+  assert.match(detailDialog, /fullDetailHref\(phase\.detail\.templateId\)/);
+  assert.match(read("./gallery-view.ts"), /`\/products\/manage\?template=\$\{encodeURIComponent\(templateId\)\}`/);
+  assert.match(detailDialog, />Retry</);
+  assert.match(detailDialog, /This product is no longer available\./);
+  assert.match(detailDialog, /data-testid="gallery-detail-skeleton"/);
+  for (const title of ["Saved configuration", "Specification", "Available materials", "Options and accessories"]) assert.match(detailDialog, new RegExp(`<Section title="${title}"`));
+  assert.match(detailDialog, /<Section title="Saved configuration" defaultOpen>/);
+  assert.match(detailDialog, /<Section title="Specification" defaultOpen>/);
+  assert.doesNotMatch(detailDialog, /<Section title="Available materials" defaultOpen|<Section title="Options and accessories" defaultOpen/, "only the first two start open");
+  assert.match(detailDialog, /G-S1 \(later PR\)/, "the marked place for the gallery-owned specification");
+  assert.doesNotMatch(code(detailDialog), /<textarea|updateGallery|Edit/, "no specification editing yet");
+  assert.doesNotMatch(code(detailDialog), /Add to quote|openSetupFromCollection/);
+  assert.match(detailDialog, /ProductLibraryPreviewImage/);
+  assert.match(detailDialog, /<DialogShell title=\{title\} onClose=\{onClose\} wide>/);
+  assert.match(dialogs, /h-\[100dvh\] max-w-none/, "a full-screen sheet on a phone");
+  assert.match(dialogs, /event\.key === "Escape"/);
+  assert.match(dialogs, /returnTo\?\.focus/, "focus goes back to the card");
+});
+
+test("details service: signed in, canView first, the caller's client, a short list of selects, no price column", () => {
+  const body = actionsSource.slice(actionsSource.indexOf("export async function getGalleryItemDetailAction"), actionsSource.indexOf("export async function setGalleryItemHiddenAction"));
+  assert.ok(body.indexOf("await requireActiveUser()") > 0 && body.indexOf("await requireActiveUser()") < body.indexOf("createClient()"));
+  assert.match(body, /catch \(problem\)/);
+  const detail = service.slice(service.indexOf("export async function getGalleryItemDetail"), service.indexOf("export type GalleryChangeResult"));
+  assert.ok(detail.indexOf('rpcBoolean(supabase, "product_gallery_can_view")') > 0 && detail.indexOf('rpcBoolean(supabase, "product_gallery_can_view")') < detail.indexOf(".from("), "canView before any read");
+  const section = service.slice(service.indexOf("const DETAIL_ITEM_COLUMNS ="), service.indexOf("export type GalleryChangeResult"));
+  const selects = [
+    ...Array.from(section.matchAll(/\.select\("([^"]*)"/g), (match) => match[1]),
+    ...Array.from(section.matchAll(/const (?:DETAIL_ITEM_COLUMNS|DETAIL_TEMPLATE_SELECT) = ([\s\S]*?);\r?\n/g), (match) => match[1]),
+  ];
+  assert.ok(selects.length >= 9);
+  for (const text of selects) assert.doesNotMatch(text, /price|discount|cost|total/i, text);
+  assert.doesNotMatch(section, /createAdminClient|supabase\/admin|service_role/i);
+  assert.deepEqual(selects.filter((text) => /recipe/.test(text)).length, 1, "one select reads the recipe, on the server only, to name the saved choices");
+  const detailSource = read("./gallery-detail.ts");
+  const detailType = detailSource.slice(detailSource.indexOf("export type GalleryDetail = {"), detailSource.indexOf("// ── Images"));
+  assert.ok(detailType.includes("configuration: GalleryDetailLine[]"), "the type block was found");
+  assert.doesNotMatch(detailType, /recipe/i, "the detail type has no recipe field");
 });
