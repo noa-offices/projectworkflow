@@ -134,7 +134,7 @@ test("the actions use the quotation's rule; whole AED change detection and the a
 test("the builders pass the rule to the Product Library, the row editor and the manual conversion", () => {
   const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const local = read("../components/quotations/local-quotation-builder.tsx"), shared = read("../app/quotations/[id]/builder/page.tsx");
-  assert.equal(local.match(/^\s+pricingRule=\{readPricingRule\(workspace\.layout_settings\)\}$/gm)?.length, 2);
+  assert.equal(local.match(/^\s+pricingRule=\{readPricingRule\(workspace\.layout_settings\)\}$/gm)?.length, 3);
   assert.ok(shared.includes("const pricingRule = readPricingRule(quotation.layout_settings);"));
   assert.ok(shared.includes("<ProductLibrarySelector\n          pricingRule={readPricingRule(quotation.layout_settings)}"));
   assert.equal(shared.split("<QuotationRowEditorProvider\n").length - 1, shared.split("<QuotationRowEditorProvider\n                              pricingRule={item.pricing_rule}").length - 1);

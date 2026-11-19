@@ -3,7 +3,7 @@
 import { SupplierCoverageAction } from "./supplier-coverage-popup";
 import { ManualPriceLinesButton } from "./manual-price-lines-button";
 import { SupplierPriceLinesAction } from "./supplier-price-lines-popup";
-import { Fragment, useCallback, useEffect, useMemo, useState, useTransition, type Dispatch, type SetStateAction } from "react";
+import { Fragment, useCallback, useEffect, useEffectEvent, useMemo, useState, useTransition, type Dispatch, type SetStateAction } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import { SaveToMyCollectionButton } from "./save-to-my-collection-button";
 import type { SavedSetupPlainState } from "@/lib/products/saved-setups/recipe";
@@ -14,7 +14,7 @@ import { AddFromClientHistoryButton } from "./add-from-client-history-button";
 import { historyDiscountNote, type HistoryDiscount } from "@/lib/quotations/client-history/client-history-view";
 import { AddFromMyCollectionButton } from "./add-from-my-collection-button";
 import { SetupReplayBanner } from "./setup-replay-banner";
-import { evaluateSetup, type SetupProblem } from "@/lib/products/saved-setups/replay";
+import { evaluateSetup, specificationDrift, type SetupProblem } from "@/lib/products/saved-setups/replay";
 import type { SavedSetupSpecOverrides } from "@/lib/products/saved-setups/recipe";
 import type { SetupForUse } from "@/lib/products/saved-setups/saved-setups-service";
 import { listProductTemplateRowReferences } from "@/app/products/templates/row-reference-actions";
@@ -46,7 +46,7 @@ import {
   nextImagePreviewZoomOut,
   type ImagePreviewZoomMode,
 } from "@/lib/quotations/image-preview-zoom";
-import { createLocalId, localNow, type LocalQuotationItem } from "@/lib/local/quotation-workspace";
+import { createLocalId, localNow, workspaceItemDisplayPricing, type LocalQuotationItem, type LocalQuotationWorkspace } from "@/lib/local/quotation-workspace";
 import { friendlyPriceHealth, productTemplatePriceCheckState } from "@/lib/product-price-check";
 import { keepSupplierStatus, newRecordSupplierStatus, withSupplierStatus } from "@/lib/products/supplier-status-record";
 import {
@@ -85,6 +85,7 @@ import { variantOptionLabel } from "@/lib/products/variant-option-label";
 import { productTemplateRowReferenceKey, selectedRowReferencePreview, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
 import { formatRuleMoney, quotationLinePricing, ruleConvertedPrice, ruleExactAmount, type PricingRule } from "@/lib/quotation-pricing";
 import { configuratorHeaderTotal } from "./configurator-header-total";
+import { configurationFingerprint, formatReconfiguredMoney, reconfigurationDraft, reconfigureUnitPrice, reconfigureWarnings, snapshotObject, type ReconfigureChanges, type ReconfigureTarget } from "./local-reconfigure";
 import { missingExchangeRateCurrencies, roundSourceAmount } from "@/lib/quotations/source-price-components";
 import { announcedQuotationDelta, announcedSnapshot, announcedTotals, type AnnouncementView } from "@/lib/products/price-announcements";
 import { AnnouncedPriceBadge } from "@/components/products/announced-price-badge";
@@ -1248,6 +1249,7 @@ export function ProductLibrarySelector({
   materials,
   onAddLocalItem,
   pricingRule,
+  reconfigure,
   quotationId,
   returnTo,
   sectionId,
@@ -1269,6 +1271,13 @@ export function ProductLibrarySelector({
   onAddLocalItem?: (item: LocalQuotationItem) => void;
   /** The quotation's pricing rule. Without one the item is priced by the legacy rule. */
   pricingRule?: PricingRule;
+  reconfigure?: {
+    mode: "reconfigure";
+    target: ReconfigureTarget;
+    workspace: Pick<LocalQuotationWorkspace, "layout_settings" | "metadata">;
+    onClose: () => void;
+    onUpdate: (targetId: string, draft: LocalQuotationItem, changes: ReconfigureChanges) => boolean;
+  };
   quotationId: string;
   returnTo: string;
   sectionId: string;
@@ -1281,6 +1290,19 @@ export function ProductLibrarySelector({
   const isLocalMode = Boolean(onAddLocalItem);
   const [isTemplateActionPending, startTemplateActionTransition] = useTransition();
   const [isOpen, setIsOpen] = useState(false);
+  const [reconfigureError, setReconfigureError] = useState("");
+  const [reconfigureBaseline, setReconfigureBaseline] = useState<{
+    fingerprint: string; raw: number; currentPrice: string | null; missingRate: boolean;
+    image: string | null; dimension: string | null; specChanged: boolean;
+    displayedSpec: string | null; displayedDimension: string | null;
+    rates: Record<string, number>;
+  } | null>(null);
+  const [applyCurrentPrice, setApplyCurrentPrice] = useState(false);
+  const [confirmFixedDiscount, setConfirmFixedDiscount] = useState<string | null>(null);
+  const [acceptStaleChoices, setAcceptStaleChoices] = useState(false);
+  const [useGeneratedSpec, setUseGeneratedSpec] = useState(false);
+  const [resetDimension, setResetDimension] = useState(false);
+  const [resetImage, setResetImage] = useState(false);
   const [templateRecords, setTemplateRecords] = useState(() => templates);
   const [brandId, setBrandId] = useState("");
   const [categoryId, setCategoryId] = useState("");
@@ -1597,9 +1619,51 @@ export function ProductLibrarySelector({
     return null;
   };
 
+  const preloadReconfigure = useEffectEvent(() => {
+    if (!reconfigure) return;
+    const { line, setup } = reconfigure.target;
+    const problem = openSetupFromCollection({
+      id: line.id, templateId: setup.templateId, setupName: setup.defaultName,
+      recipe: setup.recipe, specOverrides: setup.specOverrides,
+    });
+    if (problem) {
+      setReconfigureError(problem);
+      setIsOpen(true);
+      return;
+    }
+    const conversion = snapshotObject(snapshotObject(line.source_component_data).currency_conversion);
+    const rates = Object.fromEntries(Object.entries(snapshotObject(conversion.exchange_rates ?? conversion.rates))
+      .filter(([, rate]) => (typeof rate === "string" || typeof rate === "number") && Number(rate) > 0)
+      .map(([currency, rate]) => [currency, String(rate)]));
+    setExchangeRates({ [setup.templateId]: rates });
+    setDiscountTypes({ [setup.templateId]: line.discount_type });
+    setDiscountValues({ [setup.templateId]: String(line.discount_value) });
+    if (setup.specOverrides.specification_edited || !setup.specOverrides.generated_specification_hash) {
+      setFinalSpecifications({ [setup.templateId]: line.specification_snapshot ?? "" });
+      setFinalSpecificationEditedByTemplate({ [setup.templateId]: true });
+    }
+    const previousDimension = snapshotObject(line.source_component_data).dimension;
+    if (setup.specOverrides.dimension || previousDimension !== line.size_snapshot) {
+      setConfiguredDimensions({ [setup.templateId]: line.size_snapshot ?? setup.specOverrides.dimension ?? "" });
+      setConfiguredDimensionEditedByTemplate({ [setup.templateId]: true });
+    }
+  });
+
+  const reconfigureId = reconfigure?.target.line.id;
+  useEffect(() => {
+    if (!reconfigureId) return;
+    const frame = requestAnimationFrame(() => preloadReconfigure());
+    return () => cancelAnimationFrame(frame);
+  }, [reconfigureId]);
+
+  function closeSelector() {
+    if (reconfigure) reconfigure.onClose();
+    else setIsOpen(false);
+  }
+
   return (
     <>
-      <button
+      {!reconfigure ? <><button
         type="button"
         onClick={() => setIsOpen(true)}
         className={triggerClassName ?? "border border-zinc-300 bg-white px-3 py-2 text-xs font-bold text-emerald-900 transition hover:bg-emerald-50"}
@@ -1609,7 +1673,7 @@ export function ProductLibrarySelector({
       <AddFromMyCollectionButton onChoose={openSetupFromCollection} />
       {clientHistory ? (
         <AddFromClientHistoryButton clientId={clientHistory.clientId} clientName={clientHistory.clientName} quoteCurrency={clientHistory.quoteCurrency ?? null} onOpenProduct={openProductFromHistory} onOpenSetup={openSetupFromHistory} />
-      ) : null}
+      ) : null}</> : null}
 
       {isOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/30 p-0 sm:px-4 sm:py-6">
@@ -1617,22 +1681,28 @@ export function ProductLibrarySelector({
             <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
               <div>
                 <h2 className="text-sm font-semibold text-zinc-950">
-                  Product Library
+                  {reconfigure ? "Reconfigure item" : "Product Library"}
                 </h2>
                 <p className="text-xs text-zinc-500">
-                  Add a reusable template as an editable quotation snapshot.
+                  {reconfigure ? reconfigure.target.line.item_name_snapshot : "Add a reusable template as an editable quotation snapshot."}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setIsOpen(false)}
+                onClick={closeSelector}
                 className="h-10 shrink-0 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-600 transition hover:text-zinc-950 sm:h-auto sm:border-0 sm:bg-transparent sm:px-0 sm:text-zinc-500"
               >
-                Close
+                {reconfigure ? "Cancel" : "Close"}
               </button>
             </div>
 
-            {!selectedTemplate ? (
+            {reconfigure && !selectedTemplate ? (
+              <div role="status" className="p-4 text-sm text-amber-950">
+                <p className="font-semibold">Changed since this line was saved</p>
+                <p>{reconfigureError || "Loading saved choices..."}</p>
+              </div>
+            ) : null}
+            {!selectedTemplate && !reconfigure ? (
               <>
                 <div className="grid shrink-0 gap-2 border-b border-zinc-200 bg-zinc-50 p-3 [&_button]:min-h-10 [&_input]:min-h-10 [&_select]:min-h-10 xl:grid-cols-[minmax(220px,1fr)_170px_170px_170px_80px] xl:[&_button]:min-h-9 xl:[&_input]:min-h-9 xl:[&_select]:min-h-9">
                   <input
@@ -2777,7 +2847,9 @@ export function ProductLibrarySelector({
                     selectedWorkstationVariantDimension: selectedWorkstationVariantRow?.dimension ?? null,
                   });
                   const generatedFinalSpecification = localSpecification || "";
-                  const quotationDimension = hasConfiguredDimensionOverride ? configuredDimensions[template.id]?.trim() || localDimension : localDimension;
+                  const quotationDimension = hasConfiguredDimensionOverride
+                    ? configuredDimensions[template.id]?.trim() || (reconfigure ? null : localDimension)
+                    : localDimension;
                   const finalSpecificationWasEdited = Boolean(finalSpecificationEditedByTemplate[template.id]);
                   const finalSpecification = resolveFinalProductSpecification({
                     editedSpecification: finalSpecifications[template.id],
@@ -3075,6 +3147,82 @@ export function ProductLibrarySelector({
                     localProductItem.source_component_data as Record<string, unknown>,
                     savedSetupState,
                   );
+                  const target = reconfigure?.target;
+                  const savedLine = target?.line;
+                  const fingerprint = target ? configurationFingerprint(buildLineConfigurationRecipe(savedSetupState).recipe) : "";
+                  if (target && replay && !reconfigureBaseline) {
+                    setReconfigureBaseline({
+                      fingerprint,
+                      raw: rawPreviewUnitPriceWithConversion,
+                      currentPrice: missingExchangeRate || replay.problems.length ? null : formatReconfiguredMoney(pricingRule, previewCurrency, previewUnitPriceWithConversion),
+                      missingRate: missingExchangeRate,
+                      image: localProductItem.proposed_image_url_snapshot,
+                      dimension: localDimension,
+                      specChanged: specificationDrift(target.setup.specOverrides, generatedFinalSpecification) === "changed",
+                      displayedSpec: savedFinalSpecification,
+                      displayedDimension: quotationDimension,
+                      rates: Object.fromEntries(nonAedCurrencies.map((currency) => [currency, Number(templateExchangeRates[currency])])),
+                    });
+                  }
+                  const configurationChanged = Boolean(reconfigureBaseline && fingerprint !== reconfigureBaseline.fingerprint);
+                  const staleProblems = replay?.problems ?? [];
+                  const configuredCurrencyChanged = Boolean(savedLine && normalizeCurrency(savedLine.currency) !== previewCurrency);
+                  const baselineRateChanged = Boolean(reconfigureBaseline && Object.entries(reconfigureBaseline.rates)
+                    .some(([currency, rate]) => nonAedCurrencies.includes(currency) && Number(templateExchangeRates[currency]) !== rate));
+                  const requiresCurrentPrice = configurationChanged && (configuredCurrencyChanged || reconfigureBaseline?.missingRate || staleProblems.length > 0 ||
+                    baselineRateChanged || (reconfigureBaseline && savedLine && savedLine.unit_price + rawPreviewUnitPriceWithConversion < reconfigureBaseline.raw));
+                  const useCandidatePrice = applyCurrentPrice || configurationChanged;
+                  const reconfiguredCurrency = savedLine && !useCandidatePrice ? savedLine.currency : previewCurrency;
+                  const reconfiguredUnitPrice = savedLine && reconfigureBaseline
+                    ? reconfigureUnitPrice(pricingRule, savedLine.unit_price, reconfigureBaseline.raw, rawPreviewUnitPriceWithConversion, configurationChanged, applyCurrentPrice)
+                    : effectiveQuoteUnitPrice;
+                  const priceChanged = Boolean(savedLine && useCandidatePrice &&
+                    (reconfiguredUnitPrice !== savedLine.unit_price || reconfiguredCurrency !== savedLine.currency || applyCurrentPrice || configurationChanged));
+                  const reconfiguredPricingContext = {
+                    layout_settings: reconfigure?.workspace.layout_settings,
+                    metadata: priceChanged ? undefined : reconfigure?.workspace.metadata,
+                  };
+                  const reconfiguredPricing = savedLine ? workspaceItemDisplayPricing(reconfiguredPricingContext, { ...savedLine, unit_price: reconfiguredUnitPrice }) : null;
+                  const reconfiguredGross = savedLine ? workspaceItemDisplayPricing(
+                    { layout_settings: reconfiguredPricingContext.layout_settings },
+                    { ...savedLine, unit_price: reconfiguredPricing?.unitPrice ?? reconfiguredUnitPrice, discount_type: "none", discount_value: 0 },
+                  ).netTotal : effectiveQuoteUnitPrice;
+                  const fixedCurrencyDecision = Boolean(savedLine && savedLine.discount_type === "amount" && savedLine.discount_value > 0 &&
+                    useCandidatePrice && configuredCurrencyChanged);
+                  const wouldChangeDiscount = Boolean(savedLine && reconfiguredPricing && reconfiguredPricing.discountValue !== savedLine.discount_value);
+                  const savedDimension = savedLine ? snapshotObject(savedLine.source_component_data).dimension : null;
+                  const savedImage = normalizeProductImageSnapshotPath(target?.setup.recipe.selected_image ?? null);
+                  const savedCrop = snapshotObject(snapshotObject(savedLine?.cell_layout).images).proposed_image_url_snapshot;
+                  const keepImage = Boolean(savedLine && (savedImage !== savedLine.proposed_image_url_snapshot || savedCrop));
+                  const imageChanged = Boolean(savedLine && reconfigureBaseline && (
+                    resetImage || localProductItem.proposed_image_url_snapshot !== reconfigureBaseline.image || (configurationChanged && !keepImage)
+                  ));
+                  const changes: ReconfigureChanges = {
+                    configuration: configurationChanged,
+                    price: priceChanged,
+                    specification: Boolean(savedLine && (configurationChanged || useGeneratedSpec || (reconfigureBaseline && savedFinalSpecification !== reconfigureBaseline.displayedSpec))),
+                    dimension: Boolean(savedLine && (configurationChanged || resetDimension || (reconfigureBaseline && quotationDimension !== reconfigureBaseline.displayedDimension))),
+                    image: imageChanged,
+                  };
+                  const warnings = target && reconfigureBaseline ? reconfigureWarnings({
+                    savedPrice: formatReconfiguredMoney(pricingRule, target.line.currency, target.line.unit_price),
+                    currentPrice: reconfigureBaseline.currentPrice ?? (!configurationChanged && !missingExchangeRate && !staleProblems.length ? formatReconfiguredMoney(pricingRule, previewCurrency, previewUnitPriceWithConversion) : null),
+                    specChanged: reconfigureBaseline.specChanged,
+                    savedDimension: typeof savedDimension === "string" ? savedDimension : target.line.size_snapshot,
+                    currentDimension: reconfigureBaseline.dimension,
+                    problems: staleProblems.map((problem) => problem.label),
+                  }) : [];
+                  const formatPreviewAmount = (amount: number) => reconfigure
+                    ? formatReconfiguredMoney(pricingRule, reconfiguredCurrency, amount)
+                    : formatRuleMoney(pricingRule, previewCurrency, amount);
+                  const hasReconfigurationChanges = Object.values(changes).some(Boolean);
+                  const existingAddBlocked = missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice;
+                  const reconfigureBlocked = !reconfigureBaseline || (hasReconfigurationChanges && (
+                    existingAddBlocked || wouldChangeDiscount || (requiresCurrentPrice && !applyCurrentPrice) ||
+                    (fixedCurrencyDecision && confirmFixedDiscount !== reconfiguredCurrency) ||
+                    (applyCurrentPrice && staleProblems.length > 0 && !configurationChanged) ||
+                    (staleProblems.length > 0 && (configurationChanged || applyCurrentPrice) && !acceptStaleChoices)
+                  ));
                   const mainItemCurrency = normalizeCurrency(
                     usesWorkstationFlow
                       ? selectedSizeRow?.currency ?? rowCurrency
@@ -3238,12 +3386,13 @@ export function ProductLibrarySelector({
                   const headerTotal = configuratorHeaderTotal({
                     pricingRule,
                     sourceTotals: originalCurrencyTotals,
-                    missingExchangeRate,
-                    currency: previewCurrency,
-                    quantity: localProductItem.qty,
-                    beforeDiscountTotal: effectiveQuoteUnitPrice, // The configurator adds one quotation unit.
-                    line: linePreview,
+                    missingExchangeRate: missingExchangeRate && (!reconfigure || useCandidatePrice),
+                    currency: reconfigure ? reconfiguredCurrency : previewCurrency,
+                    quantity: reconfiguredPricing?.qty ?? localProductItem.qty,
+                    beforeDiscountTotal: reconfiguredGross,
+                    line: reconfiguredPricing ?? linePreview,
                     discountType: selectedDiscountType,
+                    formatQuoteAmount: reconfigure ? formatPreviewAmount : undefined,
                   });
                   return (
                     <article
@@ -3252,13 +3401,13 @@ export function ProductLibrarySelector({
                     >
                       <div className="sticky top-0 z-10 border-b border-zinc-200 bg-white px-4 py-2 shadow-sm lg:px-6">
                         <div className="flex min-w-0 items-center gap-3">
-                          <button
+                          {!reconfigure ? <button
                             type="button"
                             onClick={() => setSelectedTemplateId("")}
                             className="shrink-0 text-sm font-semibold text-emerald-900 transition hover:text-emerald-700"
                           >
                             {"< Back to products"}
-                          </button>
+                          </button> : null}
                           <p
                             className="min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-zinc-500"
                             title={[
@@ -3310,10 +3459,71 @@ export function ProductLibrarySelector({
                           </div>
                         </div>
                       </div>
+                      {reconfigure && savedLine && reconfigureBaseline ? (
+                        <div className="space-y-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-950 lg:px-6">
+                          {warnings.length ? (
+                            <>
+                              <p className="font-semibold">Changed since this line was saved</p>
+                              <ul className="list-disc pl-5">{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+                            </>
+                          ) : null}
+                          <div className="flex flex-wrap gap-3">
+                            {warnings.some((warning) => warning.startsWith("Unit price:")) || requiresCurrentPrice || applyCurrentPrice ? (
+                              <button type="button" className="font-semibold underline disabled:opacity-60" disabled={missingExchangeRate} onClick={() => { setApplyCurrentPrice(!applyCurrentPrice); setConfirmFixedDiscount(null); }}>
+                                {applyCurrentPrice ? "Keep saved price basis" : "Apply new price"}
+                              </button>
+                            ) : null}
+                            {(reconfigureBaseline.specChanged || configurationChanged) && finalSpecificationWasEdited ? (
+                              <button type="button" className="font-semibold underline" onClick={() => {
+                                setUseGeneratedSpec(true);
+                                setFinalSpecificationEditedByTemplate({});
+                                setFinalSpecifications({});
+                              }}>Use new generated text</button>
+                            ) : null}
+                            {quotationDimension !== localDimension || (savedLine.size_snapshot || null) !== (localDimension || null) ? (
+                              <button type="button" className="font-semibold underline" onClick={() => {
+                                setResetDimension(true);
+                                setConfiguredDimensions({});
+                                setConfiguredDimensionEditedByTemplate({});
+                              }}>Reset to new generated dimension</button>
+                            ) : null}
+                            {keepImage ? <button type="button" className="font-semibold underline" onClick={() => {
+                              setResetImage(true);
+                              setSelectedImages({});
+                            }}>Reset to library image</button> : null}
+                          </div>
+                          {reconfigureBaseline.specChanged ? (
+                            <details>
+                              <summary className="cursor-pointer font-semibold">Compare specification text</summary>
+                              <p className="mt-1 whitespace-pre-wrap"><strong>Saved:</strong> {savedLine.specification_snapshot || "None"}</p>
+                              <p className="mt-1 whitespace-pre-wrap"><strong>Generated now:</strong> {generatedFinalSpecification || "None"}</p>
+                            </details>
+                          ) : null}
+                          {keepImage && !imageChanged ? <p>The saved quotation image and crop will be kept.</p> : null}
+                          {missingExchangeRate ? <p>Add the missing exchange rate below to compare current library prices.</p> : null}
+                          {staleProblems.length > 0 && !configurationChanged ? <p>Review the unavailable choices before applying a new price.</p> : null}
+                          {requiresCurrentPrice && !applyCurrentPrice ? <p>Apply the current library price to update this configuration. The original price difference cannot be calculated safely.</p> : null}
+                          {configurationChanged && !requiresCurrentPrice && !applyCurrentPrice ? <p>The unit price starts from the saved price and applies the cost of your selection changes at current rates.</p> : null}
+                          {wouldChangeDiscount && useCandidatePrice ? <p>The new price cannot retain this discount. Adjust the discount on the quotation line first.</p> : null}
+                          {fixedCurrencyDecision ? (
+                            <label className="flex gap-2">
+                              <input type="checkbox" checked={confirmFixedDiscount === reconfiguredCurrency} onChange={(event) => setConfirmFixedDiscount(event.target.checked ? reconfiguredCurrency : null)} />
+                              Keep the fixed discount of {savedLine.discount_value} in {reconfiguredCurrency} instead of {savedLine.currency}.
+                            </label>
+                          ) : null}
+                          {staleProblems.length > 0 && (configurationChanged || applyCurrentPrice) ? (
+                            <label className="flex gap-2">
+                              <input type="checkbox" checked={acceptStaleChoices} onChange={(event) => setAcceptStaleChoices(event.target.checked)} />
+                              I reviewed the unavailable choices and want to save the current selections.
+                            </label>
+                          ) : null}
+                          {reconfigureError ? <p role="alert">{reconfigureError}</p> : null}
+                        </div>
+                      ) : null}
                       {historyNote && historyNote.templateId === template.id && discountTypes[template.id] === historyNote.type && discountValues[template.id] === historyNote.value ? (
                         <p role="status" className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-900 lg:px-6">{historyNote.text}</p>
                       ) : null}
-                      {replay && replay.templateId === template.id ? (
+                      {!reconfigure && replay && replay.templateId === template.id ? (
                         <SetupReplayBanner
                           key={replay.key}
                           generatedSpecification={generatedFinalSpecification}
@@ -3332,7 +3542,8 @@ export function ProductLibrarySelector({
                         />
                       ) : null}
                       <form
-                        action={addProductTemplateToQuotation}
+                        action={reconfigure ? undefined : addProductTemplateToQuotation}
+                        onSubmit={reconfigure ? (event) => event.preventDefault() : undefined}
                         className="grid gap-4 p-4 lg:p-6 xl:grid-cols-[minmax(0,1fr)_320px]"
                       >
                         <div className="min-w-0 space-y-4">
@@ -4652,7 +4863,7 @@ export function ProductLibrarySelector({
                           </p>
                           <AnnouncedPriceTick announcement={activeAnnouncement} checked={Boolean(announcedChange)} upliftedTotals={announcedChange?.uplifted} blockedReason={announcedBlocked ? "You kept the current quote price, so the announced change is not added." : null} formatAmount={(currency, amount) => formatMoney(currency, amount)} onChange={(checked) => setAnnouncedTicks((current) => ({ ...current, [template.id]: checked }))} />
                           {announcedChange && activeAnnouncement ? <input type="hidden" name="announced_notice_id" value={activeAnnouncement.id} /> : null}
-                          <p>{missingExchangeRate ? "Quotation unit price: awaiting exchange rate" : "U.Price: " + formatRuleMoney(pricingRule, previewCurrency, effectiveQuoteUnitPrice)}</p>
+                          <p>{missingExchangeRate && (!reconfigure || useCandidatePrice) ? "Quotation unit price: awaiting exchange rate" : "U.Price: " + formatPreviewAmount(reconfiguredPricing?.unitPrice ?? effectiveQuoteUnitPrice)}</p>
                           {needsUpdatedPriceDecision ? (
                             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
                               <p className="font-semibold">
@@ -4698,6 +4909,7 @@ export function ProductLibrarySelector({
                             <span className="text-[10px] font-bold uppercase text-zinc-500">Discount Type</span>
                             <select
                               value={selectedDiscountType}
+                              disabled={Boolean(reconfigure)}
                               onChange={(event) =>
                                 setDiscountTypes((current) => ({
                                   ...current,
@@ -4718,7 +4930,7 @@ export function ProductLibrarySelector({
                               min={0}
                               max={selectedDiscountType === "percent" ? 100 : undefined}
                               step="0.01"
-                              disabled={selectedDiscountType === "none"}
+                              disabled={Boolean(reconfigure) || selectedDiscountType === "none"}
                               value={selectedDiscountType === "none" ? "" : discountValues[template.id] ?? ""}
                               onChange={(event) =>
                                 setDiscountValues((current) => ({
@@ -4731,10 +4943,10 @@ export function ProductLibrarySelector({
                           </label>
                           <p>
                             Discount: {selectedDiscountType === "percent" ? `${selectedDiscountValue}% / ` : ""}
-                            {formatRuleMoney(pricingRule, previewCurrency, unitDiscountAmount)}
+                            {formatPreviewAmount(reconfiguredPricing?.discountAmount ?? unitDiscountAmount)}
                           </p>
-                          <p>Net Price: {formatRuleMoney(pricingRule, previewCurrency, netPricePreview)}</p>
-                          <p>Net Total: {formatRuleMoney(pricingRule, previewCurrency, netTotalPreview)}</p>
+                          <p>Net Price: {formatPreviewAmount(reconfiguredPricing?.netPrice ?? netPricePreview)}</p>
+                          <p>Net Total: {formatPreviewAmount(reconfiguredPricing?.netTotal ?? netTotalPreview)}</p>
                         </div>
                               </div>
                               <div className="min-w-0 space-y-3">
@@ -5236,7 +5448,28 @@ export function ProductLibrarySelector({
                           </p>
                         ) : null}
                             <div className="sticky bottom-0 -mx-4 -mb-4 mt-1 border-t border-zinc-200 bg-white px-4 py-4">
-                              {isLocalMode ? (
+                              {reconfigure && target && savedLine ? (
+                                <button
+                                  type="button"
+                                  disabled={reconfigureBlocked}
+                                  onClick={() => {
+                                    if (reconfigureBlocked) return;
+                                    if (!hasReconfigurationChanges) { closeSelector(); return; }
+                                    const draft = reconfigurationDraft(target, {
+                                      ...localProductItem,
+                                      unit_price: reconfiguredUnitPrice,
+                                      currency: reconfiguredCurrency,
+                                      specification_snapshot: finalSpecificationWasEdited && savedFinalSpecification === reconfigureBaseline?.displayedSpec
+                                        ? savedLine.specification_snapshot : localProductItem.specification_snapshot,
+                                    }, changes);
+                                    if (reconfigure.onUpdate(savedLine.id, draft, changes)) closeSelector();
+                                    else setReconfigureError("This line changed or is no longer editable. Close and reopen it before saving.");
+                                  }}
+                                  className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                                >
+                                  Update item
+                                </button>
+                              ) : isLocalMode ? (
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -5257,11 +5490,11 @@ export function ProductLibrarySelector({
                                   Add
                                 </button>
                               )}
-                              <SaveToMyCollectionButton
+                              {!reconfigure ? <SaveToMyCollectionButton
                                 defaultName={defaultSetupName({ mainCode: savedSetupState.mainCode, templateName: template.template_name })}
                                 state={savedSetupState}
                                 templateId={template.id}
-                              />
+                              /> : null}
                             </div>
                           </div>
                         </aside>

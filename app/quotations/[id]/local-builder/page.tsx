@@ -4,6 +4,7 @@ import { LockedQuotationView } from "@/components/quotations/quotation-locked-vi
 import { isQuotationLocked } from "@/lib/quotations/quotation-lock";
 import { DocumentSetupDialog } from "@/components/quotations/document-setup-dialog";
 import { LocalQuotationBuilder } from "@/components/quotations/local-quotation-builder";
+import { canReconfigureLocalQuotation } from "@/components/quotations/local-reconfigure";
 import { OpportunityQuotationLinkSync } from "@/components/quotations/opportunity-quotation-link-sync";
 import {
   type ProductLibraryLinkedFamily,
@@ -335,6 +336,7 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
       <OpportunityQuotationLinkSync />
       <LocalQuotationBuilder
         canManageProductLibrary={canManageProductLibrary}
+        canWriteQuotation={canReconfigureLocalQuotation(profile?.role)}
         clientName={resolvedDocumentSetup.header.clientDisplayName}
         documentSetupAction={
           <DocumentSetupDialog

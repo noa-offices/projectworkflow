@@ -322,16 +322,16 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf
 test("selector: Add / Add to Local Workspace and the Save to My Collection block are unchanged; hydration is inactive by default", () => {
   const source = read("../../../components/quotations/product-library-selector.tsx");
   assert.ok(source.includes("onAddLocalItem?.(localProductItem);"));
-  assert.ok(source.includes("action={addProductTemplateToQuotation}"));
+  assert.ok(source.includes("action={reconfigure ? undefined : addProductTemplateToQuotation}"));
   assert.ok(source.includes("                                  Add to Local Workspace"));
   assert.ok(source.includes("const savedSetupState: SavedSetupPlainState = {"));
   assert.ok(source.includes("<SaveToMyCollectionButton"));
   assert.ok(source.includes("defaultName={defaultSetupName({ mainCode: savedSetupState.mainCode, templateName: template.template_name })}"));
   // Hydration only runs from the picker; with no setup chosen `replay` stays null and the banner never renders.
   assert.match(source, /useState<\{ key: number; problems: SetupProblem\[\][^>]*\} \| null>\(null\)/);
-  assert.equal((source.match(/openSetupFromCollection/g) ?? []).length, 3, "defined once, passed to the My Collection picker and the client history picker");
+  assert.equal((source.match(/openSetupFromCollection/g) ?? []).length, 4, "shared by My Collection, client history and local reconfigure");
   assert.equal((source.match(/setReplay\(/g) ?? []).length >= 2, true);
-  assert.ok(source.includes("{replay && replay.templateId === template.id ? ("));
+  assert.ok(source.includes("{!reconfigure && replay && replay.templateId === template.id ? ("));
   // The line object never receives replay data.
   const lineStart = source.indexOf("const localProductItem: LocalQuotationItem = {");
   const stateStart = source.indexOf("const savedSetupState: SavedSetupPlainState = {");
@@ -432,7 +432,7 @@ test("selector: dropdowns start from the selected row (unchanged when none), the
   assert.ok(source.includes('useState(() => baseModelPlacement(groups, selectedRowId)?.groupId ?? groups[0]?.id ?? "")'));
   assert.ok(source.includes('useState(() => baseModelPlacement(groups, selectedRowId)?.subgroupId ?? "")'));
   assert.ok(source.includes("onAddLocalItem?.(localProductItem);"));
-  assert.ok(source.includes("action={addProductTemplateToQuotation}"));
+  assert.ok(source.includes("action={reconfigure ? undefined : addProductTemplateToQuotation}"));
   assert.ok(source.includes("                                  Add to Local Workspace"));
   const lineStart = source.indexOf("const localProductItem: LocalQuotationItem = {");
   const stateStart = source.indexOf("const savedSetupState: SavedSetupPlainState = {");

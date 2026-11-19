@@ -29,6 +29,7 @@ import { LocalQuotationCustomPrintableImageCell, LocalQuotationImageCell } from 
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import { FinishImagePreview } from "@/components/quotations/finish-image-uploader";
 import { SharedQuotationMoreMenu } from "@/components/quotations/shared-quotation-row-details-panel";
+import { clearReconfiguredPriceRounding, reconfigureLocalRows, reconfigureTarget, type ReconfigureChanges, type ReconfigureTarget } from "./local-reconfigure";
 import {
   FinishSelectionsEditor,
   type FinishSelectionEditorRow,
@@ -1738,6 +1739,7 @@ function MainSectionTotalRow({ currency, label, total, totalColumns, pricingRule
 
 export function LocalQuotationBuilder({
   canManageProductLibrary,
+  canWriteQuotation = false,
   clientName,
   documentSetupAction,
   initialWorkspace,
@@ -1755,6 +1757,7 @@ export function LocalQuotationBuilder({
   templateMaterialGroups,
 }: {
   canManageProductLibrary: boolean;
+  canWriteQuotation?: boolean;
   clientName: string;
   documentSetupAction?: ReactNode;
   initialWorkspace: LocalQuotationWorkspace;
@@ -1780,6 +1783,7 @@ export function LocalQuotationBuilder({
     [baseProductTemplates, supplierPresentations, supplierLoadState],
   );
   const [workspace, setWorkspace] = useState(initialWorkspace);
+  const [reconfiguring, setReconfiguring] = useState<ReconfigureTarget | null>(null);
   const [historyPast, setHistoryPast] = useState<LocalQuotationWorkspace[]>([]);
   const [historyFuture, setHistoryFuture] = useState<LocalQuotationWorkspace[]>([]);
   const [hydrated, setHydrated] = useState(false);
@@ -2682,6 +2686,40 @@ export function LocalQuotationBuilder({
         },
       ],
     }));
+  }
+
+  function reconfigureButton(item: LocalQuotationItem, mobile = false) {
+    const target = reconfigureTarget(item, canWriteQuotation, workspace.layout_settings);
+    if (!target || !hydrated) return null;
+    return (
+      <button
+        type="button"
+        className={mobile ? "h-10 border border-zinc-300 bg-white px-3 text-left text-xs font-semibold text-emerald-900" : "h-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold text-emerald-900"}
+        onClick={() => { setMobileMoreItemId(null); setReconfiguring(target); }}
+      >
+        Reconfigure
+      </button>
+    );
+  }
+
+  function updateReconfiguredItem(targetId: string, draft: LocalQuotationItem, changes: ReconfigureChanges) {
+    const target = reconfiguring?.line;
+    const currentLine = workspace.items.find((item) => item.id === targetId);
+    if (!hydrated || !target || targetId !== target.id || !currentLine ||
+        currentLine.updated_at !== target.updated_at || currentLine.source_template_id !== draft.source_template_id ||
+        !reconfigureTarget(currentLine, canWriteQuotation, workspace.layout_settings)) return false;
+    commit((current) => {
+      const latest = current.items.find((item) => item.id === targetId);
+      if (!latest || !reconfigureTarget(latest, canWriteQuotation, current.layout_settings)) return current;
+      const items = reconfigureLocalRows(current.items, target, draft, changes);
+      const replaced = items.some((item, index) => item !== current.items[index]);
+      return replaced ? {
+        ...current,
+        items,
+        metadata: changes.price ? clearReconfiguredPriceRounding(current.metadata, targetId) : current.metadata,
+      } : current;
+    });
+    return true;
   }
 
   function duplicateItem(itemId: string) {
@@ -5166,6 +5204,7 @@ export function LocalQuotationBuilder({
                                       <div className="flex items-center justify-center gap-1">
                                         {localPersistenceError ? (<span role="img" aria-label="Not saved locally" title={localPersistenceError} className="flex h-6 w-4 items-center justify-center text-sm font-bold leading-none text-red-600">!</span>) : null}
                                         <button type="button" data-details-trigger={item.id} onClick={() => setDetailsModalRowId(item.id)} aria-label="Edit details" title="Edit details" className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"><svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 2.5l2.5 2.5L5.5 13H3v-2.5L11 2.5z" /></svg></button>
+                                        {reconfigureButton(item)}
                                         <button type="button" onClick={() => moveItem(section.id, item.id, -1)} aria-label="Move row up" title="Move row up" className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">▲</button>
                                         <button type="button" onClick={() => moveItem(section.id, item.id, 1)} aria-label="Move row down" title="Move row down" className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">▼</button>
                                       <SharedQuotationMoreMenu actionButtons={(<>{item.item_type === "product" && item.source_template_id ? (<SaveLineToMyCollectionButton line={item} />) : null}{copiedRowClipboard ? (<><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "above")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row above</button><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "below")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row below</button></>) : null}<button type="button" onClick={() => copyItem(item.id)} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Copy row</button><button type="button" onClick={() => duplicateItem(item.id)} className="h-7 w-full border border-zinc-300 bg-white px-2 text-left text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Duplicate below</button><button type="button" onClick={() => removeItem(item.id)} className="h-7 w-full border border-red-200 bg-white px-2 text-left text-xs font-semibold text-red-700 transition hover:border-red-300 hover:text-red-800">Remove</button><SaveAsCustomItemButton row={item} /></>)} itemId={item.id} menuClassName="absolute right-0 z-30 mt-1 w-56 border border-zinc-300 bg-white p-2 text-left shadow-lg" mergeControl={(<><label className="grid gap-1"><span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span><select value={mergeModeForItem(item)} onChange={(event) => updateItem(item.id, updateItemMergeMode(item, event.target.value))} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"><option value="none">No merge</option><option value="merge_specification">Merge spec</option><option value="merge_full_row">Merge full row</option></select></label><label className="grid gap-1 mt-2"><span className="text-[10px] font-semibold uppercase text-zinc-500">Row Height (px)</span><input type="number" min={40} value={item.row_height || ""} onChange={(event) => updateItem(item.id, { row_height: event.target.value ? clampRowHeight(Number(event.target.value)) : null })} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" placeholder="Auto" /></label></>)} />
@@ -5514,6 +5553,7 @@ export function LocalQuotationBuilder({
                         {mobileMoreItemId === item.id ? (
                           <div className="mt-3 grid min-w-0 gap-2 border border-zinc-300 bg-zinc-50 p-3">
                             {item.item_type === "product" && item.source_template_id ? (<SaveLineToMyCollectionButton line={item} />) : null}<SaveAsCustomItemButton row={item} />
+                            {reconfigureButton(item, true)}
                             {itemType !== "blank" ? (
                               <>
                                 <button
@@ -5713,6 +5753,31 @@ export function LocalQuotationBuilder({
           </div>
         </section>
       </main>
+      {reconfiguring ? (
+        <ProductLibrarySelector
+          key={reconfiguring.line.id}
+          brands={productBrands}
+          categories={productCategories}
+          components={productComponents}
+          linkedFamilies={productLinkedFamilies}
+          materialGroups={materialGroups}
+          materials={materials}
+          pricingRule={readPricingRule(workspace.layout_settings)}
+          quotationId={workspace.server_quotation_id}
+          returnTo={`/quotations/${workspace.server_quotation_id}/local-builder`}
+          sectionId={reconfiguring.line.section_id ?? ""}
+          templateMaterialGroupItems={templateMaterialGroupItems}
+          templateMaterialGroups={templateMaterialGroups}
+          templates={productTemplates}
+          reconfigure={{
+            mode: "reconfigure",
+            target: reconfiguring,
+            workspace,
+            onClose: () => setReconfiguring(null),
+            onUpdate: updateReconfiguredItem,
+          }}
+        />
+      ) : null}
     </div>
   );
 }
