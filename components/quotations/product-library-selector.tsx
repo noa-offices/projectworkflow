@@ -84,6 +84,7 @@ import { flattenWorkstationPricingRows, workstationPricingGroups } from "@/lib/p
 import { variantOptionLabel } from "@/lib/products/variant-option-label";
 import { productTemplateRowReferenceKey, selectedRowReferencePreview, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
 import { formatRuleMoney, quotationLinePricing, ruleConvertedPrice, ruleExactAmount, type PricingRule } from "@/lib/quotation-pricing";
+import { configuratorHeaderTotal } from "./configurator-header-total";
 import { missingExchangeRateCurrencies, roundSourceAmount } from "@/lib/quotations/source-price-components";
 import { announcedQuotationDelta, announcedSnapshot, announcedTotals, type AnnouncementView } from "@/lib/products/price-announcements";
 import { AnnouncedPriceBadge } from "@/components/products/announced-price-badge";
@@ -3234,6 +3235,16 @@ export function ProductLibrarySelector({
                       amount: roundSourceAmount(amount),
                       currency: normalizeCurrency(currency),
                     }));
+                  const headerTotal = configuratorHeaderTotal({
+                    pricingRule,
+                    sourceTotals: originalCurrencyTotals,
+                    missingExchangeRate,
+                    currency: previewCurrency,
+                    quantity: localProductItem.qty,
+                    beforeDiscountTotal: effectiveQuoteUnitPrice, // The configurator adds one quotation unit.
+                    line: linePreview,
+                    discountType: selectedDiscountType,
+                  });
                   return (
                     <article
                       key={template.id}
@@ -3264,17 +3275,39 @@ export function ProductLibrarySelector({
                             {` / ${templateSelectionName(template)}`}
                           </p>
                         </div>
-                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-                          <h3 className="text-lg font-semibold leading-tight text-zinc-950">
-                            {templateSelectionName(template)}
-                          </h3>
-                          {template.internal_selection_name ? (
-                            <p className="text-sm font-medium text-zinc-500">
-                              Quote name: {template.template_name}
-                            </p>
-                          ) : null}
-                          <PriceCheckBadge inline template={template} onSupplierStatus={updateSupplierStatus} />
-                          <AnnouncedPriceBadge announcement={template.announced_price_change} />
+                        <div className="mt-1 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                            <h3 className="text-lg font-semibold leading-tight text-zinc-950">
+                              {templateSelectionName(template)}
+                            </h3>
+                            {template.internal_selection_name ? (
+                              <p className="text-sm font-medium text-zinc-500">
+                                Quote name: {template.template_name}
+                              </p>
+                            ) : null}
+                            <PriceCheckBadge inline template={template} onSupplierStatus={updateSupplierStatus} />
+                            <AnnouncedPriceBadge announcement={template.announced_price_change} />
+                          </div>
+                          <div className="rounded-lg bg-emerald-50 px-3 py-1.5 tabular-nums text-emerald-950" aria-label="Configuration prices">
+                            {headerTotal.source.length ? (
+                              <p className="flex flex-wrap items-baseline gap-x-2 text-xs font-medium">
+                                <span>Source</span>
+                                {headerTotal.source.map((amount) => (
+                                  <span key={amount} className={headerTotal.note ? "whitespace-nowrap text-base font-semibold" : "whitespace-nowrap"}>{amount}</span>
+                                ))}
+                              </p>
+                            ) : null}
+                            {headerTotal.note ? <p className="text-xs font-medium text-amber-900">{headerTotal.note}</p> : null}
+                            {headerTotal.quote ? (
+                              <div className="flex flex-wrap items-baseline gap-x-2">
+                                {headerTotal.quote.unit ? <span className="text-xs">Unit {headerTotal.quote.unit}</span> : null}
+                                <span className="text-xs font-semibold">{headerTotal.quote.label}</span>
+                                <strong className="whitespace-nowrap text-xl leading-tight">{headerTotal.quote.total}</strong>
+                                {headerTotal.quote.previous ? <s className="text-xs text-zinc-600"><span className="sr-only">Before discount </span>{headerTotal.quote.previous}</s> : null}
+                                {headerTotal.quote.discount ? <span className="text-xs font-semibold">{headerTotal.quote.discount}</span> : null}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                       {historyNote && historyNote.templateId === template.id && discountTypes[template.id] === historyNote.type && discountValues[template.id] === historyNote.value ? (
