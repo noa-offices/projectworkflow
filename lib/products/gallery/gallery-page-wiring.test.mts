@@ -345,3 +345,19 @@ test("popup fixes: materials are read in group/subgroup/sort order with subgroup
   assert.match(sql, /add column if not exists selected_image text/);
   assert.match(sql, /product_gallery_clean_image/);
 });
+
+test("popup: a Required components block inside Saved configuration, supplier codes after names, no price", () => {
+  const saved = detailDialog.slice(detailDialog.indexOf('<Section title="Saved configuration" defaultOpen>'), detailDialog.indexOf('<Section title="Specification" defaultOpen>'));
+  assert.match(saved, /data-testid="required-components"/);
+  assert.match(saved, /<h4 [^>]*>Required components<\/h4>/);
+  assert.match(saved, /detail\.requiredComponents\.map\(\(component\) =>/);
+  assert.match(saved, /<\/span> x \{component\.quantity\}/, "name x quantity");
+  assert.match(saved, /Size: \{component\.size\}/);
+  assert.match(saved, /Supplier code: \{component\.supplierCode\}/);
+  assert.match(saved, /Supplier code: \{line\.supplierCode\}/, "on the saved configuration lines");
+  const options = detailDialog.slice(detailDialog.indexOf('<Section title="Options and accessories">'));
+  assert.match(options, /Supplier code: \{item\.supplierCode\}/, "in the options and accessories lists");
+  assert.doesNotMatch(code(detailDialog), /price|cost|currency|amount/i);
+  assert.match(read("./gallery-detail.ts"), /supplier_price_list_code/, "the field the quotation selector shows as Supplier Code");
+  assert.match(read("./gallery-detail.ts"), /requiredComponentsFromEngine\(engineState\.autoApplied/, "the engine's own required-companion output");
+});

@@ -8,6 +8,8 @@ import {
   chooseSpecification,
   swatchImagePath,
   validSelectedImage,
+  requiredComponentsFromEngine,
+  supplierCodeIndex,
   accessoryGroups,
   buildGalleryDetail,
   describeRecipe,
@@ -49,7 +51,7 @@ const priceyTemplate = {
     {
       id: "vg1", pricing_type: "base_model_group", group_name: "Bases", is_active: true, sort_order: 0,
       items: [
-        { id: "vr1", display_name: "Chrome", price: PRICE_MARK, is_active: true, sort_order: 0 },
+        { id: "vr1", display_name: "Chrome", supplier_price_list_code: "BASE 55", price: PRICE_MARK, is_active: true, sort_order: 0 },
         { id: "vr2", display_name: "Black", price: PRICE_MARK + 1, is_active: true, sort_order: 1 },
       ],
     },
@@ -59,7 +61,7 @@ const priceyTemplate = {
     {
       id: "ag1", group_name: "Add-ons", group_is_required: false, is_active: true, sort_order: 0,
       items: [
-        { id: "ac1", item_name: "Cable Tray", price: PRICE_MARK, currency: "AED", is_active: true, sort_order: 0, role: "normal" },
+        { id: "ac1", item_name: "Cable Tray", supplier_price_list_code: "CT 100 200", price: PRICE_MARK, currency: "AED", is_active: true, sort_order: 0, role: "normal" },
         { id: "ac2", item_name: "Hidden Tray", price: PRICE_MARK, is_active: false, sort_order: 1 },
         { id: "ac3", price: PRICE_MARK, is_active: true, sort_order: 2 },
       ],
@@ -232,9 +234,9 @@ test("swatches: no price, cost or supplier field in the payload", () => {
 
 test("options and accessories: names only, grouped, inactive left out, no item without a name", () => {
   const groups = accessoryGroups(priceyTemplate.accessory_pricing);
-  assert.deepEqual(groups, [{ groupName: "Add-ons", kind: "accessory", items: ["Cable Tray"] }]);
+  assert.deepEqual(groups, [{ groupName: "Add-ons", kind: "accessory", items: [{ name: "Cable Tray", supplierCode: "CT 100 200" }] }], "name and supplier code");
   assert.deepEqual(accessoryGroups(null), []);
-  assert.deepEqual(accessoryGroups([{ item_name: "Loose item", is_active: true }]), [{ groupName: "Accessories", kind: "accessory", items: ["Loose item"] }]);
+  assert.deepEqual(accessoryGroups([{ item_name: "Loose item", is_active: true }]), [{ groupName: "Accessories", kind: "accessory", items: [{ name: "Loose item" }] }]);
   const options = mapOptions({
     components: [
       { id: "c1", component_group: "Casters", component_name: "Hard", option_type: "component_option", sort_order: 1 },
@@ -246,10 +248,10 @@ test("options and accessories: names only, grouped, inactive left out, no item w
     linkedFamilies: [{ id: "f1", label: "Matching table", sort_order: 0 }, { id: "f2", label: null, sort_order: 1 }],
   });
   assert.deepEqual(options.map((group) => [group.kind, group.groupName, group.items]), [
-    ["option", "Casters", ["Soft", "Hard"]],
-    ["option", "Options", ["Headrest"]],
-    ["accessory", "Add-ons", ["Cable Tray"]],
-    ["linked", "Linked products", ["Matching table"]],
+    ["option", "Casters", [{ name: "Soft" }, { name: "Hard" }]],
+    ["option", "Options", [{ name: "Headrest" }]],
+    ["accessory", "Add-ons", [{ name: "Cable Tray", supplierCode: "CT 100 200" }]],
+    ["linked", "Linked products", [{ name: "Matching table" }]],
   ]);
 });
 
@@ -322,7 +324,7 @@ test("PRIVACY: the mapped detail of a template that holds price data has no pric
   assert.deepEqual(keys.filter(isPriceLikeKey), [], "no price, prices, unit_price, cost, discount, amount or rate key");
   assert.ok(!json.includes(String(PRICE_MARK)) && !json.includes(String(PRICE_MARK + 1)), "no price number anywhere");
   assert.doesNotMatch(json, /default_unit_price|variant_pricing|category_pricing|accessory_pricing|desking_size_pricing|recipe_version|selections/, "no raw template JSON, no recipe");
-  assert.deepEqual(Object.keys(detail).sort(), ["brandName", "categoryName", "configuration", "description", "displayName", "id", "images", "itemCode", "itemName", "materials", "options", "quotedCount", "specification", "specificationSource", "subCategoryName", "tags", "templateCode", "templateId"]);
+  assert.deepEqual(Object.keys(detail).sort(), ["brandName", "categoryName", "configuration", "description", "displayName", "id", "images", "itemCode", "itemName", "materials", "options", "quotedCount", "requiredComponents", "specification", "specificationSource", "subCategoryName", "tags", "templateCode", "templateId"]);
 });
 
 test("the last guard removes any price-like key and nothing else", () => {
@@ -418,4 +420,124 @@ test("detail pictures: the chosen one first, the rest in the default order witho
   const chosen = galleryDetailImages(many, "ref.webp");
   assert.equal(chosen.length, 12);
   assert.equal(chosen[0], "ref.webp", "the chosen picture is first even when it would have been cut");
+});
+
+// ── required components and supplier codes ─────────────────────────────────
+// A modular product (like OXI_P) whose template rules add a required component for the selected modules.
+const MODULAR_GROUP = "mgrp1";
+const oxiModular = [{
+  id: MODULAR_GROUP, pricing_type: "modular_group", group_name: "Benches", is_active: true, sort_order: 0,
+  modular_pricing_mode: "direct", modular_composition: { min_starters: 1, max_starters: 4 },
+  items: [
+    { id: "bench-a", pricing_type: "modular_item", modular_role: "starter", display_name: "Bench with Panel Base (A) W:140", supplier_price_list_code: "OXI 0A 140", price: 98765, currency: "EUR", is_active: true, sort_order: 0 },
+    { id: "bench-b", pricing_type: "modular_item", modular_role: "starter", display_name: "Bench with Central Panels (B) W:140", price: 98766, currency: "EUR", is_active: true, sort_order: 1 },
+  ],
+}];
+const requiredGroup = (extra: Record<string, unknown> = {}) => [{
+  id: "req-top", group_name: "Top-Access", is_active: true, sort_order: 0,
+  items: [{ id: "top-access", item_name: "Top-Access with Soft-Close", supplier_price_list_code: "111 058", dimension: "W:60", price: 98765, currency: "EUR", is_active: true, sort_order: 0, role: "companion", ...extra }],
+  conditional_configuration: {
+    role: "companion", selection: "choose_multiple",
+    applicability: [{ target: { kind: "modular", group_id: MODULAR_GROUP, row_id: "bench-a" }, required: true, visible: true, allowed_item_ids: ["top-access"], fixed_quantity: 2, scale_with_target_quantity: true }],
+  },
+}];
+const oxiTemplate = (accessory: unknown = requiredGroup(), extra: Record<string, unknown> = {}) => ({ ...priceyTemplate, variant_pricing: [], category_pricing: oxiModular, accessory_pricing: accessory, ...extra });
+const oxiRecipe = (selections: Record<string, unknown> = { modular_quantities: { "bench-a": 2 } }) => stored(selections);
+
+test("required components: the engine's quantity, the supplier code and the size; no price", () => {
+  const report = describeRecipe({ recipe: oxiRecipe(), template: oxiTemplate(), components: [], linkedFamilies: [] });
+  assert.deepEqual(report.requiredComponents, [{ name: "Top-Access with Soft-Close", quantity: 4, supplierCode: "111 058", size: "W:60" }]);
+  assert.doesNotMatch(JSON.stringify(report.requiredComponents), /98765|price|currency/i);
+});
+
+test("required components: the quantity follows the saved modules (the rule engine, not a stored number)", () => {
+  const one = describeRecipe({ recipe: oxiRecipe({ modular_quantities: { "bench-a": 1 } }), template: oxiTemplate(requiredGroup()), components: [], linkedFamilies: [] });
+  assert.equal(one.requiredComponents[0]?.quantity, 2, "2 per bench x 1 bench");
+  const two = describeRecipe({ recipe: oxiRecipe({ modular_quantities: { "bench-a": 2 } }), template: oxiTemplate(requiredGroup()), components: [], linkedFamilies: [] });
+  assert.equal(two.requiredComponents[0]?.quantity, 4, "2 per bench x 2 benches");
+  const none = describeRecipe({ recipe: oxiRecipe({ modular_quantities: { "bench-b": 1 } }), template: oxiTemplate(requiredGroup()), components: [], linkedFamilies: [] });
+  assert.deepEqual(none.requiredComponents, [], "no rule for bench B: no required component");
+});
+
+test("required components: no item name falls back to the supplier code; no name and no code is skipped; empty case is an empty list", () => {
+  const byCode = describeRecipe({ recipe: oxiRecipe(), template: oxiTemplate(requiredGroup({ item_name: "" })), components: [], linkedFamilies: [] });
+  assert.deepEqual(byCode.requiredComponents.map((component) => [component.name, component.supplierCode]), [["111 058", "111 058"]]);
+  const unnamed = describeRecipe({ recipe: oxiRecipe(), template: oxiTemplate(requiredGroup({ item_name: "", supplier_price_list_code: "" })), components: [], linkedFamilies: [] });
+  assert.deepEqual(unnamed.requiredComponents, []);
+  const noCodeNoSize = describeRecipe({ recipe: oxiRecipe(), template: oxiTemplate(requiredGroup({ supplier_price_list_code: undefined, dimension: undefined })), components: [], linkedFamilies: [] });
+  assert.deepEqual(noCodeNoSize.requiredComponents, [{ name: "Top-Access with Soft-Close", quantity: 4 }], "missing code and size show nothing");
+  const plain = describeRecipe({ recipe: oxiRecipe(), template: oxiTemplate([]), components: [], linkedFamilies: [] });
+  assert.deepEqual(plain.requiredComponents, []);
+});
+
+test("required components: a stale or incomplete recipe, or one the engine cannot compute, skips the block silently (no crash)", () => {
+  const stale = describeRecipe({ recipe: oxiRecipe({ modular_quantities: { "bench-a": 2, "bench-gone": 1 } }), template: oxiTemplate(), components: [], linkedFamilies: [] });
+  assert.deepEqual(stale.requiredComponents, []);
+  const incomplete = describeRecipe({ recipe: oxiRecipe({}), template: oxiTemplate(), components: [], linkedFamilies: [] });
+  assert.deepEqual(incomplete.requiredComponents, []);
+  const broken = describeRecipe({ recipe: oxiRecipe(), template: { ...oxiTemplate(), accessory_pricing: { not: "an array" }, category_pricing: "nonsense" }, components: [], linkedFamilies: [] });
+  assert.deepEqual(broken.requiredComponents, []);
+  assert.deepEqual(describeRecipe({ recipe: { not: "a recipe" }, template: oxiTemplate(), components: [], linkedFamilies: [] }).requiredComponents, []);
+  assert.deepEqual(requiredComponentsFromEngine([{ stepKey: "accessory:req-top", optionId: "top-access", reason: "Required companion applied automatically (quantity 4)." }], "nonsense"), []);
+});
+
+test("required components: the engine's override wording is read too, and other auto-applied entries are ignored", () => {
+  const entries = [
+    { stepKey: "accessory:req-top", optionId: "top-access", reason: "Required companion quantity overridden to 6 by an earlier selection." },
+    { stepKey: "variant_row", optionId: "vr1", reason: "Only one Base / Model row is available." },
+    { stepKey: "accessory:req-top", optionId: "top-access", reason: "Required companion applied automatically (quantity 0)." },
+  ];
+  assert.deepEqual(requiredComponentsFromEngine(entries, requiredGroup()), [{ name: "Top-Access with Soft-Close", quantity: 6, supplierCode: "111 058", size: "W:60" }]);
+});
+
+test("supplier codes: on the saved configuration lines (modular rows, accessories, base rows) and in the options lists; missing codes show nothing", () => {
+  const report = describeRecipe({
+    recipe: oxiRecipe({ modular_quantities: { "bench-a": 1, "bench-b": 1 }, pricing_accessory_quantities: {} }),
+    template: oxiTemplate(requiredGroup()),
+    components: [],
+    linkedFamilies: [],
+  });
+  const a = report.lines.find((line) => line.value.includes("(A)"));
+  const b = report.lines.find((line) => line.value.includes("(B)"));
+  assert.equal(a?.supplierCode, "OXI 0A 140");
+  assert.ok(b && !("supplierCode" in b), "a row without a code has no supplierCode at all");
+  const base = describe({ variant_row_id: "vr1" }).lines.find((line) => line.value === "Chrome");
+  assert.equal(base?.supplierCode, "BASE 55");
+  const acc = describe({ variant_row_id: "vr1", pricing_accessory_quantities: { ac1: 2 } }).lines.find((line) => line.value.startsWith("Cable Tray"));
+  assert.equal(acc?.supplierCode, "CT 100 200");
+  assert.deepEqual(supplierCodeIndex(priceyTemplate).get("ac1"), "CT 100 200");
+  assert.equal(supplierCodeIndex(priceyTemplate).has("vr2"), false);
+});
+
+test("PRIVACY: price fields everywhere still give a payload with no price key or amount, but WITH the supplier codes and required components", () => {
+  const { detail } = buildGalleryDetail({
+    item: { id: ITEM, template_id: TEMPLATE, item_name: "OXI_P", display_name: null, item_code: "OXI", tags: [], quoted_count: 2, recipe: oxiRecipe({ modular_quantities: { "bench-a": 1 } }) },
+    template: oxiTemplate(requiredGroup(), { variant_pricing: priceyTemplate.variant_pricing }),
+    brandName: "LAS MOBILI", categoryName: "", subCategoryName: "", materials: [], components: [], linkedFamilies: [],
+  });
+  const json = JSON.stringify(detail);
+  assert.ok(json.includes("111 058") && json.includes("OXI 0A 140"), "the supplier codes are in the payload");
+  assert.equal(detail.configuration.some((line) => line.supplierCode === "OXI 0A 140"), true);
+  assert.equal(detail.options.some((group) => group.items.some((item) => item.supplierCode === "111 058")), true, "and in the options and accessories list");
+  assert.ok(detail.requiredComponents.length === 1);
+  const keys: string[] = [];
+  const walk = (value: unknown) => {
+    if (Array.isArray(value)) value.forEach(walk);
+    else if (value && typeof value === "object") for (const [key, entry] of Object.entries(value)) { keys.push(key); walk(entry); }
+    else if (typeof value === "string") assert.equal(looksLikeMoneyText(value), false, `money-like text: ${value}`);
+    else if (typeof value === "number") assert.notEqual(value, PRICE_MARK);
+  };
+  walk(detail);
+  assert.deepEqual(keys.filter(isPriceLikeKey), []);
+  assert.equal(isPriceLikeKey("supplierCode"), false, "a supplier code is not a price");
+  assert.equal(looksLikeMoneyText("111 058"), false);
+  assert.ok(!json.includes(String(PRICE_MARK)) && !json.includes(String(PRICE_MARK + 1)));
+});
+
+test("required components: a modular product that also carries a legacy Base / Model group still shows them (Base / Model is not required there)", () => {
+  const legacy = [{ id: "legacy", pricing_type: "base_model_group", group_name: "Legacy", is_active: true, sort_order: 0, items: [{ id: "d1", display_name: "Desk 1", price: 1, is_active: true, sort_order: 0 }, { id: "d2", display_name: "Desk 2", price: 2, is_active: true, sort_order: 1 }] }];
+  const report = describeRecipe({ recipe: oxiRecipe(), template: oxiTemplate(requiredGroup(), { variant_pricing: legacy }), components: [], linkedFamilies: [] });
+  assert.deepEqual(report.requiredComponents.map((component) => [component.name, component.quantity]), [["Top-Access with Soft-Close", 4]]);
+  const plainBaseModel = describeRecipe({ recipe: oxiRecipe({}), template: { ...oxiTemplate(requiredGroup(), { variant_pricing: legacy }), category_pricing: [] }, components: [], linkedFamilies: [] });
+  assert.deepEqual(plainBaseModel.requiredComponents, [], "a Base / Model product with no row chosen is still incomplete: no block");
 });
