@@ -6,7 +6,7 @@ import { SetupThumbnail } from "@/components/products/my-collection-list";
 import { GalleryDetailDialog } from "@/components/products/product-gallery-detail-dialog";
 import { ConfirmRemoveDialog, EditGalleryItemDialog, MergeGalleryItemDialog, RemovedItemsDialog } from "@/components/products/product-gallery-dialogs";
 import { toolbarContainer, toolbarControl, toolbarPrimaryButton, toolbarSecondaryButton } from "@/components/products/product-toolbar-styles";
-import { listGalleryFiltersAction, listGalleryItemsAction, removeGalleryItemAction } from "@/lib/products/gallery/gallery-actions";
+import { checkGalleryUpdatesAction, listGalleryFiltersAction, listGalleryItemsAction, removeGalleryItemAction } from "@/lib/products/gallery/gallery-actions";
 import { GALLERY_SORT_MODES, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "@/lib/products/gallery/gallery";
 import {
   GALLERY_SEARCH_DEBOUNCE_MS,
@@ -117,6 +117,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
   const [phase, setPhase] = useState<"loading" | "ready" | "failed">("loading");
   const [failure, setFailure] = useState("");
   const [loadingMore, setLoadingMore] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [notice, setNotice] = useState("");
   const [actionProblem, setActionProblem] = useState("");
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -245,6 +246,21 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
     await Promise.all([reload(state), loadFilters()]);
   }
 
+  async function checkUpdates() {
+    setCheckingUpdates(true);
+    setNotice("");
+    setActionProblem("");
+    try {
+      const result = await checkGalleryUpdatesAction();
+      if (result.ok) await afterChange(result.message);
+      else setActionProblem(result.message);
+    } catch {
+      setActionProblem("The change could not be saved. Please try again.");
+    } finally {
+      setCheckingUpdates(false);
+    }
+  }
+
   async function removeItem(item: GalleryListItem): Promise<string | null> {
     const result = await removeGalleryItemAction({ id: item.id });
     if (!result.ok) return result.message;
@@ -276,6 +292,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, initialState }: { ca
             <button type="button" className={`${toolbarSecondaryButton} @xl:hidden`} aria-expanded={filtersOpen} aria-controls="gallery-filter-panel" onClick={() => setFiltersOpen((open) => !open)}>
               Filters{filterCount ? ` (${filterCount})` : ""}
             </button>
+            {canEdit ? <button type="button" className={toolbarSecondaryButton} onClick={() => void checkUpdates()} disabled={checkingUpdates}>{checkingUpdates ? "Checking?" : "Check for updates"}</button> : null}
             {canEdit ? (
               <button type="button" className={state.updateAvailable ? toolbarPrimaryButton : toolbarSecondaryButton} aria-pressed={state.updateAvailable} onClick={() => change({ updateAvailable: !state.updateAvailable })}>
                 {UPDATE_AVAILABLE_TEXT}

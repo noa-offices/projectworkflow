@@ -326,7 +326,7 @@ test("PRIVACY: the mapped detail of a template that holds price data has no pric
   assert.deepEqual(keys.filter(isPriceLikeKey), [], "no price, prices, unit_price, cost, discount, amount or rate key");
   assert.ok(!json.includes(String(PRICE_MARK)) && !json.includes(String(PRICE_MARK + 1)), "no price number anywhere");
   assert.doesNotMatch(json, /default_unit_price|variant_pricing|category_pricing|accessory_pricing|desking_size_pricing|recipe_version|selections/, "no raw template JSON, no recipe");
-  assert.deepEqual(Object.keys(detail).sort(), ["brandName", "categoryName", "configuration", "description", "displayName", "id", "images", "itemCode", "itemName", "materials", "options", "quotedCount", "requiredComponents", "specification", "specificationSource", "staleNotice", "subCategoryName", "tags", "templateCode", "templateId", "updates"]);
+  assert.deepEqual(Object.keys(detail).sort(), ["brandName", "categoryName", "configuration", "description", "dimension", "displayName", "id", "images", "itemCode", "itemName", "materials", "options", "quotedCount", "requiredComponents", "specification", "specificationSource", "staleNotice", "subCategoryName", "tags", "templateCode", "templateId", "updates"]);
 });
 
 test("the last guard removes any price-like key and nothing else", () => {
@@ -586,4 +586,19 @@ test("the editors-only fields are null for everyone else", () => {
   });
   assert.equal(detail.updates, null);
   assert.equal(detail.staleNotice, null);
+});
+
+test("saved recipe dimension comes from the engine, without exposing prices", () => {
+  const template = { ...priceyTemplate, variant_pricing: [{ ...priceyTemplate.variant_pricing[0], items: [{ ...priceyTemplate.variant_pricing[0].items[0], dimension: "W:2800 D:1452 H:736 mm" }] }] };
+  const report = describeRecipe({ recipe: stored({ variant_row_id: "vr1" }), template, components: [], linkedFamilies: [] });
+  assert.equal(report.dimension, "W:2800 D:1452 H:736 mm");
+  assert.equal(JSON.stringify(report).includes(String(PRICE_MARK)), false);
+  const empty = describeRecipe({ recipe: null, template, components: [], linkedFamilies: [] });
+  assert.equal(empty.dimension, null);
+});
+
+test("modular dimension uses the quotation builder's saved default", () => {
+  const template = oxiTemplate([], { category_pricing: [...oxiModular, { pricing_type: "modular_meta", modular_default_dimension: "W:140: W:2800 D:1452 H:736 mm" }] });
+  const report = describeRecipe({ recipe: oxiRecipe(), template, components: [], linkedFamilies: [] });
+  assert.equal(report.dimension, "W:140: W:2800 D:1452 H:736 mm");
 });

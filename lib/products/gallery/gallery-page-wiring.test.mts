@@ -405,3 +405,7 @@ test("restore and updates: editors only in the UI, the four actions are imported
   assert.match(sql, /create table if not exists public\.product_gallery_updates/);
   assert.match(sql, /create or replace function public\.product_gallery_restore\(p_key text\)/);
 });
+
+test("check for updates is only rendered for editors", () => {
+  assert.match(browser, /\{canEdit \? <button[^\n]*Check for updates[^\n]*: null\}/);
+});

@@ -921,3 +921,17 @@ test("nothing logs a recipe, a row or a price", async () => {
   assert.ok(logged.length > 0);
   assert.doesNotMatch(JSON.stringify(logged), /secret|recipe|selections|price|variant_row_id/i);
 });
+
+test("check updates: editor guard, count messages and revalidation", async () => {
+  reset(); seed();
+  world.rpc.product_gallery_can_view = () => ({ data: true, error: null });
+  world.rpc.product_gallery_is_editor = () => ({ data: false, error: null });
+  assert.deepEqual(await actions.checkGalleryUpdatesAction(), { ok: false, message: GALLERY_MESSAGES.not_allowed });
+  assert.equal(world.rpcCalls.some((call) => call.name === "product_gallery_check_updates"), false);
+  world.rpc.product_gallery_is_editor = () => ({ data: true, error: null });
+  world.rpc.product_gallery_check_updates = () => ({ data: 2, error: null });
+  assert.deepEqual(await actions.checkGalleryUpdatesAction(), { ok: true, message: "2 update(s) found" });
+  world.rpc.product_gallery_check_updates = () => ({ data: 0, error: null });
+  assert.deepEqual(await actions.checkGalleryUpdatesAction(), { ok: true, message: "No updates found" });
+  assert.deepEqual(world.revalidated, ["/products/gallery", "/products/gallery"]);
+});

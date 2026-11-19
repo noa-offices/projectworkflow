@@ -1,3 +1,5 @@
+import { isDirectModularPricingGroup, modularItemPricingGroups, modularPricingDefaultsFromRows, type ModularCategoryPricingShape } from "../modular-pricing";
+import { buildDirectModularDimensionSuggestion } from "../../quotations/product-template-snapshot";
 /**
  * Product Gallery details popup: PURE mapper from template rows to the detail payload. No React, no database, no server-only.
  * The payload carries NAMES and TEXT only. There is no price of any kind: every field is picked by name from the rows (nothing is
@@ -53,6 +55,7 @@ export type GalleryDetail = {
   /** The text to show, in this order: the gallery item's own, generated from the saved configuration, the template's, the template description. */
   specification: string | null;
   specificationSource: GallerySpecificationSource;
+  dimension: string | null;
   configuration: GalleryDetailLine[];
   /** Required components the rules add for this configuration (empty when the engine cannot compute them). */
   requiredComponents: GalleryDetailRequiredComponent[];
@@ -320,6 +323,7 @@ export type ConfigurationReport = {
   resolvedKinds: string[];
   skippedKinds: string[];
   /** The text the configuration engine writes for the saved choices; null when the recipe is stale or incomplete or the text looks like money. */
+  dimension: string | null;
   generatedSpecification: string | null;
   /** Required components from the engine (empty when the recipe is stale or incomplete, or the engine cannot compute them). */
   requiredComponents: GalleryDetailRequiredComponent[];
@@ -367,7 +371,7 @@ export function describeRecipe(input: {
   components: ComponentRow[];
   linkedFamilies: LinkedFamilyRow[];
 }): ConfigurationReport {
-  const report: ConfigurationReport = { lines: [], resolvedKinds: [], skippedKinds: [], generatedSpecification: null, requiredComponents: [], staleFingerprint: null };
+  const report: ConfigurationReport = { lines: [], resolvedKinds: [], skippedKinds: [], dimension: null, generatedSpecification: null, requiredComponents: [], staleFingerprint: null };
   const full = completeGalleryRecipe(input.recipe, input.template.id);
   if (!full) return report;
   const plain = restorePlainState(full, null);
@@ -423,6 +427,14 @@ export function describeRecipe(input: {
     // Only a complete, current recipe gives a text worth showing (a stale id or an unresolved required step falls through to the template text).
     report.staleFingerprint = staleFingerprint(engineState.staleSelections);
     const complete = engineState.staleSelections.length === 0 && !hasBlockingRequiredStep(engineState.steps);
+    const rows = Array.isArray(input.template.category_pricing) ? input.template.category_pricing as (ModularCategoryPricingShape & { dimension?: string; display_name?: string; variant_name?: string })[] : [];
+    const groups = modularItemPricingGroups(rows).filter((group) => group.is_active !== false);
+    const direct = groups.some(isDirectModularPricingGroup) ? buildDirectModularDimensionSuggestion(groups.flatMap((group) => (group.items ?? []).filter((row) => row.is_active !== false).map((row) => {
+      const item = row as typeof rows[number];
+      return { dimension: item.dimension, itemName: item.display_name || item.variant_name || "Modular item", quantity: plain.modularQuantities?.[item.id ?? ""] ?? 0 };
+    }))) : null;
+    const dimension = complete ? plainText(groups.length ? direct ?? modularPricingDefaultsFromRows(rows).defaultDimension ?? engineState.dimension : engineState.dimension) : null;
+    report.dimension = dimension && !looksLikeMoneyText(dimension) ? dimension : null;
     const text = complete ? plainText(engineState.specification) : null;
     report.generatedSpecification = text && !looksLikeMoneyText(text) ? text.slice(0, GALLERY_DETAIL_SPECIFICATION_MAX) : null;
     // Required components: only for a complete, current recipe (same condition as the generated text); otherwise the block is skipped.
@@ -531,6 +543,7 @@ export function buildGalleryDetail(input: {
     description: spec.usedDescription ? null : plainText(input.template.description),
     specification: spec.text,
     specificationSource: spec.source,
+    dimension: report.dimension,
     configuration: report.lines,
     requiredComponents: report.requiredComponents,
     updates: input.item.offers ? buildUpdates({ offers: input.item.offers, currentSpecification: input.item.specification, template: input.template, selectedImage: input.item.selected_image }) : null,
