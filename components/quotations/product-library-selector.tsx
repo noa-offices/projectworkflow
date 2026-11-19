@@ -85,6 +85,7 @@ import { variantOptionLabel } from "@/lib/products/variant-option-label";
 import { productTemplateRowReferenceKey, selectedRowReferencePreview, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
 import { formatRuleMoney, quotationLinePricing, ruleConvertedPrice, ruleExactAmount, type PricingRule } from "@/lib/quotation-pricing";
 import { configuratorHeaderTotal } from "./configurator-header-total";
+import { configuratorChoosers } from "@/lib/quotations/configurator-choosers";
 import { configurationFingerprint, formatReconfiguredMoney, reconfigurationDraft, reconfigureUnitPrice, reconfigureWarnings, snapshotObject, type ReconfigureChanges, type ReconfigureTarget } from "./local-reconfigure";
 import { missingExchangeRateCurrencies, roundSourceAmount } from "@/lib/quotations/source-price-components";
 import { announcedQuotationDelta, announcedSnapshot, announcedTotals, type AnnouncementView } from "@/lib/products/price-announcements";
@@ -2000,6 +2001,10 @@ export function ProductLibrarySelector({
                   const usesModularPricing = modularRows.length > 0;
                   const usesDirectModularPricing = usesModularPricing && modularGroups.some((group) => isDirectModularPricingGroup(group));
                   const usesCategoryPricing = !usesVariantPricing && !usesModularPricing && categoryRows.length > 0;
+                  // Modular items and base items are separate. When the configuration is driven by modular items or by a workstation, Base / Model and
+                  // Price Matrix are not offered (the price already ignores them: workstation, modular, Base / Model, Price Matrix). usesVariantPricing
+                  // already excludes the workstation flow and usesCategoryPricing already excludes modular pricing. No price rule changes here.
+                  const { showBaseModelChooser, showPriceMatrixChooser } = configuratorChoosers({ usesWorkstationFlow, usesVariantPricing, usesModularPricing, usesCategoryPricing });
                   const templatePricingAccessoryQuantities = pricingAccessoryQuantities[template.id] ?? {};
                   const templateModularQuantities = selectedModularQuantities[template.id] ?? {};
                   // Native System / Base: inactive (no role="system_base" rows) => everything below is unchanged.
@@ -2180,7 +2185,7 @@ export function ProductLibrarySelector({
                     systemGroupId: nativeSystem.selected?.group.id,
                     systemRowId: nativeSystem.selected?.row.id,
                   });
-                  const missingRequiredSystemSelection = usesVariantPricing && nativeSystem.requiresSystem && (!nativeSystem.selected || !selectedVariantRow);
+                  const missingRequiredSystemSelection = usesVariantPricing && nativeSystem.requiresSystem && (!nativeSystem.selected || (showBaseModelChooser && !selectedVariantRow));
                   // Same priority as the server action (shared helper): workstation, modular, Base / Model, Price Matrix.
                   const selectedMainAccessoryTargets = resolveMainAccessoryTargets({
                     workstation: usesWorkstationFlow && selectedWorkstationGroup?.id && selectedSizeRow?.id
@@ -3800,7 +3805,7 @@ export function ProductLibrarySelector({
                             ) : null}
                           </div>
                         ) : null}
-                        {usesCategoryPricing ? (
+                        {showPriceMatrixChooser ? (
                           <div className="mt-3 grid gap-2 md:grid-cols-2">
                             {selectedCategoryGroup && categoryGroups.length > 1 ? (
                               <label className="block md:col-span-2">
@@ -3961,7 +3966,7 @@ export function ProductLibrarySelector({
                           </div>
                         ) : null}
                         <StructuralSupportFields groups={allAccessoryGroups} evaluations={accessoryConfiguration.groups.filter((evaluation) => !ordinaryOptionGroupIds.has(evaluation.groupId))} quantities={templatePricingAccessoryQuantities} rowCurrency={rowCurrency} onQuantityChange={updateStructuralSupportQuantity} />
-                        {usesVariantPricing ? (
+                        {usesVariantPricing && (showBaseModelChooser || nativeSystem.active) ? (
                           <div className="mt-3 space-y-2">
                             {nativeSystem.active ? (
                               <div className="space-y-1 rounded-md border border-emerald-200 bg-emerald-50/50 p-2">
@@ -4021,6 +4026,7 @@ export function ProductLibrarySelector({
                                 </div>
                               );
                             })() : null}
+                            {showBaseModelChooser ? (<>
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
                               {nativeSystem.active ? "Main Product" : "Base Size / Main Price"}
                             </p>
@@ -4060,6 +4066,7 @@ export function ProductLibrarySelector({
                                 </div>
                               ) : null}
                             </div>
+                            </>) : null}
                           </div>
                         ) : null}
                         <AccessoryConfigurationFields
@@ -5337,7 +5344,7 @@ export function ProductLibrarySelector({
                             ) : null}
                           </div>
                         ) : null}
-                        {usesVariantPricing && selectedVariantRow ? (
+                        {showBaseModelChooser && selectedVariantRow ? (
                           <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
                             <p className="font-semibold text-zinc-950">
                               Model: {pricingDisplayName(selectedVariantRow) || selectedVariantRow.variant_name}

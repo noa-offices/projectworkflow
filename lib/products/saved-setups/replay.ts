@@ -124,13 +124,14 @@ const KIND_BY_STALE_KEY: Record<string, SetupProblemKind> = {
   accessoryQuantities: "accessory_removed",
 };
 
-// The engine lists Base / Model as required whenever the template has Base / Model rows. The real add flow does not ask for one when the
-// product is priced through MODULAR rows: addProductTemplateToQuotation (app/quotations/actions.ts) prices in the order workstation,
-// modular, Base / Model, Price Matrix, and takes the base price from the modular rows (usesModularPricing) whatever Base / Model rows
-// the template also carries; the selector (usesModularPricing / missingRequiredModularSelection) only asks for a modular selection.
-// So for a template that uses modular pricing the Base / Model steps are not required here either; a modular product with NO modular
-// selection is still reported (as its modular step). Every other template keeps the engine's own answer unchanged.
+// The engine lists Base / Model (and the Price Matrix steps) as required whenever the template has those rows. The configurator does not offer
+// them when the product is priced through MODULAR items or a WORKSTATION: modular items and base items are separate, and the price order is
+// workstation, modular, Base / Model, Price Matrix (addProductTemplateToQuotation in app/quotations/actions.ts; showBaseModelChooser and
+// showPriceMatrixChooser in components/quotations/product-library-selector.tsx). So for such a template those steps are not required here
+// either; a modular product with NO modular selection (or a workstation with no size) is still reported. Every other template keeps the
+// engine's own answer unchanged. A saved Base / Model or category choice in such a recipe is simply ignored (it still prices as before).
 const BASE_MODEL_STEP_KINDS = new Set(["variant_group", "variant_subgroup", "variant_row"]);
+const PRICE_MATRIX_STEP_KINDS = new Set(["category_group", "category_row"]);
 const REPLAY_STEP_ORDER = ["system_base", "workstation_size", "category_group", "category_row", "fabric_category", "modular", "accessory"];
 
 function nextRequiredForReplay(
@@ -139,12 +140,15 @@ function nextRequiredForReplay(
   modularQuantities: Record<string, number>,
 ): { label: string } | null {
   const modularSteps = steps.filter((step) => step.kind === "modular");
-  if (modularSteps.length === 0) return engineNext;
-  const unresolved = steps.filter((step) => step.required && !step.resolved && !BASE_MODEL_STEP_KINDS.has(step.kind));
+  const usesWorkstation = steps.some((step) => step.kind === "workstation_size");
+  if (modularSteps.length === 0 && !usesWorkstation) return engineNext;
+  const hidden = (kind: string) => BASE_MODEL_STEP_KINDS.has(kind) || PRICE_MATRIX_STEP_KINDS.has(kind) || (usesWorkstation && modularSteps.length === 0 && kind === "fabric_category");
+  const unresolved = steps.filter((step) => step.required && !step.resolved && !hidden(step.kind));
   for (const kind of REPLAY_STEP_ORDER) {
     const found = unresolved.find((step) => step.kind === kind);
     if (found) return found;
   }
+  if (modularSteps.length === 0) return null;
   const modularSelected = modularSteps.some((step) => step.options.some((option) => Number(modularQuantities[option.id] ?? 0) > 0));
   return modularSelected ? null : modularSteps[0];
 }

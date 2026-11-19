@@ -220,6 +220,48 @@ test("R-1: a modular product that unexpectedly also saved a Base / Model row kee
   assert.equal(evaluation.state?.variantRowId, "desk-80");
 });
 
+// ── Base / Model and Price Matrix are not offered for a modular or workstation product (configurator-choosers) ─────────
+const oxiMatrix = [{
+  id: "cgrp-legacy", group_name: "Fabric", is_active: true, sort_order: 0, price_categories: ["Cat A", "Cat B"],
+  items: [{ id: "crow-legacy", display_name: "Legacy shell", prices: { "Cat A": 400, "Cat B": 450 }, is_active: true, sort_order: 0 }, { id: "crow-two", display_name: "Second shell", prices: { "Cat A": 500, "Cat B": 550 }, is_active: true, sort_order: 1 }],
+}];
+const requiredOf = (problems: Array<{ kind: string; label: string }>) => problems.filter((problem) => problem.kind === "required_step").map((problem) => problem.label);
+
+test("choosers: a WORKSTATION product with legacy Base / Model and Price Matrix rows: only the workstation size can be required", () => {
+  const template = tpl({ desking_size_pricing: deskingTwo, variant_pricing: oxiVariant, category_pricing: oxiMatrix });
+  const withSize = evaluateSetup(recipeOf({ workstationSizeId: "size2" }).recipe, undefined, template);
+  assert.deepEqual(withSize.validation, { status: "ok", problems: [] }, "no Base / Model or Price Matrix warning");
+  const noSize = evaluateSetup(recipeOf({}).recipe, undefined, template);
+  assert.deepEqual(requiredOf(noSize.validation.problems), ["A required choice is not set: Workstation size."], "a workstation with no size is still reported, and only that");
+});
+
+test("choosers: a modular product with legacy Base / Model AND Price Matrix rows replays clean; a saved legacy choice is ignored silently", () => {
+  const template = oxi({ category_pricing: [...directModular, ...oxiMatrix] });
+  const plain = evaluateSetup(recipeOf({ modularQuantities: { starter1: 1 } }).recipe, undefined, template);
+  assert.deepEqual(plain.validation, { status: "ok", problems: [] });
+  const legacyChoices = evaluateSetup(recipeOf({ modularQuantities: { starter1: 1 }, variantRowId: "desk-80", categoryGroupId: "cgrp-legacy", categoryRowId: "crow-legacy", fabricCategory: "Cat A" }).recipe, undefined, template);
+  assert.deepEqual(legacyChoices.validation, { status: "ok", problems: [] }, "no stale-choice warning caused by hiding");
+  assert.equal(legacyChoices.state?.variantRowId, "desk-80", "the saved choice is kept, so the quote line prices exactly as before");
+  assert.deepEqual(legacyChoices.state?.modularQuantities, { starter1: 1 });
+});
+
+test("choosers: templates with NO modular and NO workstation still require Base / Model or the Price Matrix, exactly as today", () => {
+  const baseModel = validateSetupAgainstTemplate(recipeOf({}).recipe, tpl({ variant_pricing: oxiVariant }));
+  assert.deepEqual(requiredOf(baseModel.problems), ["A required choice is not set: Base / Model."]);
+  const matrix = validateSetupAgainstTemplate(recipeOf({}).recipe, tpl({ category_pricing: oxiMatrix }));
+  assert.equal(matrix.status, "needs_review");
+  assert.ok(requiredOf(matrix.problems).length >= 1, "an unset Price Matrix choice is still flagged");
+  assert.deepEqual(validateSetupAgainstTemplate(recipeOf({ categoryGroupId: "cgrp-legacy", categoryRowId: "crow-two", fabricCategory: "Cat B" }).recipe, tpl({ category_pricing: oxiMatrix })), { status: "ok", problems: [] });
+});
+
+test("choosers: local reconfigure opens a modular line with a legacy Base / Model choice without any Base / Model warning", () => {
+  // The reconfigure mode opens the line recipe through the same replay (openSetupFromCollection -> evaluateSetup).
+  const line = recipeOf({ modularQuantities: { starter1: 1 }, variantRowId: "desk-100", pricingAccessoryQuantities: { "panel-1": 1 } });
+  const evaluation = evaluateSetup(line.recipe, line.specOverrides, oxi());
+  assert.deepEqual(evaluation.validation.problems.filter((problem) => /Base \/ Model/.test(problem.label)), []);
+  assert.equal(evaluation.validation.status, "ok");
+});
+
 test("needs_review: a rule is newly incompatible (accessory no longer applies to the chosen model)", () => {
   // The exactly_one service units apply to row1 only; the saved setup now uses row2.
   const { recipe } = recipeOf({ variantRowId: "row2", pricingAccessoryQuantities: { "1af-090": 1 } });
