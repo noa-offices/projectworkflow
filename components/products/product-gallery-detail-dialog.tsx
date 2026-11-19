@@ -373,6 +373,7 @@ function Body({ detail, canEdit, onSpecificationSaved, onUpdateDone }: { detail:
           <p className="mt-1 text-sm font-medium text-zinc-700">{quotedText(detail.quotedCount)}</p>
         </div>
         <Labels detail={detail} />
+        {detail.dimension ? <p className="text-sm text-zinc-700"><span className="font-semibold">Dimension:</span> {detail.dimension}</p> : null}
         {detail.tags.length ? (
           <div className="flex flex-wrap gap-1">
             {detail.tags.map((tag) => <span key={tag} className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-900">{tag}</span>)}

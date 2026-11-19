@@ -266,3 +266,19 @@ export async function ignoreGalleryUpdateAction(input: { id: string; kind: "spec
     return failure("save_failed", problem);
   }
 }
+
+/** Editors only: scan saved quotations for new offers. */
+export async function checkGalleryUpdatesAction(): Promise<{ ok: true; message: string } | GalleryActionFailure> {
+  try {
+    await requireActiveUser();
+    const supabase = await createClient();
+    const capabilities = await getGalleryCapabilities(supabase);
+    if (!capabilities.canEdit) return failure("not_allowed");
+    const { data, error } = await supabase.rpc("product_gallery_check_updates");
+    if (error || !Number.isInteger(data) || data < 0) return failure("save_failed");
+    refreshGallery();
+    return { ok: true, message: data ? `${data} update(s) found` : "No updates found" };
+  } catch (problem) {
+    return failure("save_failed", problem);
+  }
+}

@@ -11,3 +11,5 @@ Read the existing [architecture](../ARCHITECTURE.md), [database](../DATABASE.md)
 - Commission variations use a separate signed adjustment ledger, inherited parent-rule entitlement differences, guarded maker-checker transitions and a non-blocking AFTER INSERT hook. Original commissions and variation application stay unchanged. See [D2 contract and deployment limits](COMMISSION_VARIATION_ADJUSTMENTS_D2.md); deployed migration state remains unverified.
 
 Database field-by-field completeness, all policy interactions, storage permissions and cross-deployment state are **NOT VERIFIED** by this audit. Inspect relevant migrations and tests before modifying a contract.
+
+- Product Gallery update scans call `product_gallery_check_updates()` using the authenticated editor session; it creates specification and picture offers from saved quotations without adding gallery items or changing counts. Applying the migration is a separate deployment step.
