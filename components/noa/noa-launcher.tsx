@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { NoaAvatar } from "@/components/noa/noa-avatar";
 import type { NoaVisualState } from "@/lib/noa/noa-types";
@@ -17,6 +18,11 @@ const MODE_DRAG_THRESHOLD_PX = 38;
 // and survives open/close for the rest of the page session by simply never being reset - see the
 // comment above `mode` below for why no reset-on-open logic is even needed).
 type NoaLauncherMode = "full" | "sneak";
+
+// Inside the quotation builder the launcher docks in sneak mode so it never covers the sheet's last column:
+// /quotations/<id>/builder and /quotations/<id>/local-builder (the only pages that render the quotation sheet table).
+const QUOTATION_BUILDER_PATH = /^\/quotations\/[^/]+\/(?:local-)?builder\/?$/;
+export const isQuotationBuilderPath = (pathname: string | null | undefined) => Boolean(pathname && QUOTATION_BUILDER_PATH.test(pathname));
 
 // N2A3 PART 6: pure display formatting only, no business meaning - 1-9 shown as-is, anything
 // higher collapses to "9+" (PART 6) so the badge never grows unbounded.
@@ -52,7 +58,23 @@ export function NoaLauncher({
   // PART 20: clicking the robot (the ONLY way to open the drawer from this component, in either
   // mode - PART 3/8) never touches `mode`, so whichever mode the user picked is exactly what's
   // still selected the next time the drawer closes. No reset effect needed.
+  const onBuilderRoute = isQuotationBuilderPath(usePathname());
   const [mode, setMode] = useState<NoaLauncherMode>("full");
+  // Route changes (adjusted during render, no effect): entering the builder docks the robot; leaving gives it back only if the
+  // app docked it. A sneak the user chose elsewhere stays, and dragging the robot out on the builder page is not undone until the route changes.
+  // (A first render directly on a builder page also counts as entering it; React re-renders at once, before anything is painted.)
+  const [lastOnBuilderRoute, setLastOnBuilderRoute] = useState(false);
+  const [dockedByRoute, setDockedByRoute] = useState(false);
+  if (lastOnBuilderRoute !== onBuilderRoute) {
+    setLastOnBuilderRoute(onBuilderRoute);
+    if (onBuilderRoute) {
+      setDockedByRoute(mode === "full");
+      setMode("sneak");
+    } else {
+      if (dockedByRoute) setMode("full");
+      setDockedByRoute(false);
+    }
+  }
   const isSneak = mode === "sneak";
   const dragRef = useRef<{ horizontal: boolean; pointerId: number; startX: number; startY: number } | null>(null);
   const suppressClickRef = useRef(false);
