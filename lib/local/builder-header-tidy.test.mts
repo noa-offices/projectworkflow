@@ -48,7 +48,6 @@ test("identity cluster keeps the status badge and the save-state chip; 'Local Bu
   assert.match(more, /importRef\.current\?\.click\(\)/);
 });
 
-test("dropdowns are not clipped: no overflow rule on the header, and the wide Columns panel opens to the right of its button", () => {
+test("dropdowns are not clipped: no overflow rule on the header (the Columns panel anchoring is covered in builder-columns-panel-position.test.mts)", () => {
   assert.doesNotMatch(header.slice(0, 400), /overflow-/);
-  assert.match(header, /absolute right-0 xl:left-0 xl:right-auto z-30 mt-2 flex w-\[760px\] max-w-\[calc\(100vw-2rem\)\]/);
 });
