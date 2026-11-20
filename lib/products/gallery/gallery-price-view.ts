@@ -14,10 +14,32 @@ const badges = {
   needs_check: { label: supplierFamilyStatusLabels.update_available, tone: "warning" },
 } as const;
 
+const reasonTexts: Record<string, string> = {
+  unresolved_choices: "Some saved choices changed in the product",
+  invalid_recipe: "Some saved choices changed in the product",
+  retired_template: "This product is no longer active",
+  ambiguous_precedence: "Modular and workstation pricing both apply",
+  unresolved_linked_product: "A linked product could not be resolved",
+};
+export const configureReasonText = (reason?: string) => (reason && Object.hasOwn(reasonTexts, reason) ? reasonTexts[reason] : null) || "Price cannot be calculated here";
+
+type AedPart = { amounts: string[]; notes: string[]; missing: string[]; noRate: boolean } | null;
+/** Decides which lines the price box shows, and which one is the large headline. */
+export function galleryPriceLayout(sourceTotals: ReadonlyArray<{ currency: string; amount: number }>, aed: AedPart) {
+  const source = sourceTotals.map(({ currency, amount }) => formatMoney(currency, amount));
+  if (aed && !aed.noRate && aed.amounts.length === 1 && !aed.missing.length) {
+    return { headline: aed.amounts[0], lines: source, notes: aed.notes, muted: [] as string[] };
+  }
+  if (aed && !aed.noRate) {
+    return { headline: null, lines: [...source, ...aed.amounts], notes: aed.notes, muted: aed.missing.map((c) => `No rate for ${c}`) };
+  }
+  return { headline: source.join(" + "), lines: [] as string[], notes: [] as string[], muted: aed?.noRate ? ["No rate set"] : [] };
+}
+
 export function galleryPriceView(templateId: string, price: GalleryPriceState) {
   if (!price) return null;
   if (price === "loading") return { kind: "loading" } as const;
-  if (price.status === "needs_configure") return { kind: "configure", href: fullDetailHref(templateId) } as const;
+  if (price.status === "needs_configure") return { kind: "configure", href: fullDetailHref(templateId), reason: configureReasonText("reason" in price ? price.reason : undefined) } as const;
   if (!price.sourceTotals.length) return null;
   const { checkedAt, checkedByName, state } = price.priceCheck;
   const checked = checkedAt && Number.isFinite(Date.parse(checkedAt))

@@ -21,7 +21,7 @@ type PriceCheck = {
   note: string | null;
   state: ReturnType<typeof friendlyPriceHealth>;
 };
-type PriceResult = { status: "needs_configure" } | (Extract<RecipePrice, { status: "priced" }> & { priceCheck: PriceCheck });
+type PriceResult = { status: "needs_configure"; reason?: string } | (Extract<RecipePrice, { status: "priced" }> & { priceCheck: PriceCheck });
 
 const unique = (ids: string[]) => [...new Set(ids)];
 async function batch<T>(query: PromiseLike<{ data: unknown; error: unknown }>): Promise<T[]> {
@@ -106,6 +106,6 @@ export async function loadGalleryPrices(supabase: SupabaseClient, ids: string[])
     const priceCheck = priceChecks.get(template_id);
     if (!template || !priceCheck) return [id, { status: "needs_configure" }];
     const price = priceRecipe(template, recipe, { components, links, linkedTemplates });
-    return [id, price.status === "priced" ? { ...price, priceCheck } : { status: "needs_configure" }];
+    return [id, price.status === "priced" ? { ...price, priceCheck } : { status: "needs_configure", reason: price.reason }];
   }));
 }
