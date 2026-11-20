@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { fetchGalleryPriceBatches, galleryPriceView, type GalleryPriceEntry } from "./gallery-price-view";
+import { galleryAedView } from "./gallery-aed";
+import { configureReasonText, fetchGalleryPriceBatches, galleryPriceLayout, galleryPriceView, type GalleryPriceEntry } from "./gallery-price-view";
 
 const template = "11111111-1111-4111-8111-111111111111";
 const priced = (key: "current" | "needs_check" | "no_price_list" = "current"): Extract<GalleryPriceEntry, { status: "priced" }> => ({
@@ -28,7 +29,7 @@ test("formats the current source price, keeps split currencies and maps the retu
 });
 
 test("links unpriceable products to Product Management and separates loading from absent data", () => {
-  assert.deepEqual(galleryPriceView(template, { status: "needs_configure" }), { kind: "configure", href: `/products/manage?template=${template}` });
+  assert.deepEqual(galleryPriceView(template, { status: "needs_configure" }), { kind: "configure", href: `/products/manage?template=${template}`, reason: "Price cannot be calculated here" });
   assert.deepEqual(galleryPriceView(template, "loading"), { kind: "loading" });
   assert.equal(galleryPriceView(template, undefined), null);
 });
@@ -70,4 +71,43 @@ test("only the list loader requests amounts, and the popup reuses its result", (
   for (const source of [page, browser, popup, block, pricing]) {
     assert.doesNotMatch(source, /createAdminClient|supabase\/admin|service_role|SUPABASE_SERVICE/i);
   }
+});
+
+test("maps needs_configure reason codes to plain language", () => {
+  const text = (reason?: string) => configureReasonText(reason);
+  assert.equal(text("unresolved_choices"), "Some saved choices changed in the product");
+  assert.equal(text("invalid_recipe"), "Some saved choices changed in the product");
+  assert.equal(text("retired_template"), "This product is no longer active");
+  assert.equal(text("ambiguous_precedence"), "Modular and workstation pricing both apply");
+  assert.equal(text("unresolved_linked_product"), "A linked product could not be resolved");
+  for (const other of ["mixed_base_currencies", "constructor", "", undefined]) assert.equal(text(other), "Price cannot be calculated here");
+  const view = galleryPriceView(template, { status: "needs_configure", reason: "retired_template" });
+  assert.equal(view?.kind === "configure" ? view.reason : "", "This product is no longer active");
+});
+
+test("price box layout variants", () => {
+  const eur = [{ currency: "EUR", amount: 435 }];
+  const price = (sourceTotals: typeof eur): GalleryPriceEntry => ({ ...priced(), sourceTotals });
+  const aed = (totals: typeof eur, defaults: Record<string, number>) => galleryAedView(price(totals), defaults, {});
+  assert.deepEqual(galleryPriceLayout(eur, aed(eur, { EUR: 4.5 })), {
+    headline: "≈ AED 1,958", lines: ["EUR 435.00"], notes: ["1 EUR = 4.5 AED (default)"], muted: [],
+  });
+  assert.deepEqual(galleryPriceLayout(eur, aed(eur, {})), { headline: "EUR 435.00", lines: [], notes: [], muted: ["No rate set"] });
+  assert.deepEqual(galleryPriceLayout(eur, null), { headline: "EUR 435.00", lines: [], notes: [], muted: [] });
+  const many = [...eur, { currency: "USD", amount: 100 }];
+  const both = galleryPriceLayout(many, aed(many, { EUR: 4.5, USD: 3.67 }));
+  assert.equal(both.headline, "≈ AED 2,325");
+  assert.deepEqual(both.lines, ["EUR 435.00", "USD 100.00"]);
+  const partial = galleryPriceLayout(many, aed(many, { EUR: 4.5 }));
+  assert.equal(partial.headline, null);
+  assert.deepEqual(partial.muted, ["No rate for USD"]);
+});
+
+test("loading keeps the box height and no access renders nothing", () => {
+  const block = readFileSync(new URL("../../../components/products/product-gallery-price.tsx", import.meta.url), "utf8");
+  const browser = readFileSync(new URL("../../../components/products/product-gallery-browser.tsx", import.meta.url), "utf8");
+  assert.match(block, /const box = detail \? "min-h-24 p-4" : "min-h-24 p-3"/);
+  assert.match(block, /kind === "loading"\) return \(\s*<div[^>]*\$\{box\}/);
+  assert.match(browser, /canSeePrices \? <div className="min-h-24 min-w-0">/);
+  assert.equal(galleryPriceView(template, undefined), null);
 });

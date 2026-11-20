@@ -87,7 +87,7 @@ function GalleryCard({ item, editMode, canCurate, canSeePrices, price, onDialog 
           </div>
         ) : null}
         <p className="text-xs font-medium text-zinc-700">{quotedText(item.quotedCount)}</p>
-        {canSeePrices ? <div className="min-h-20 min-w-0"><ProductGalleryPrice templateId={item.templateId} price={price} /></div> : null}
+        {canSeePrices ? <div className="min-h-24 min-w-0"><ProductGalleryPrice templateId={item.templateId} price={price} /></div> : null}
         <div className="mt-auto grid grid-cols-2 gap-2 pt-2">
           <button type="button" className={`${openButton} col-span-2`} onClick={() => onDialog({ kind: "detail", item })} aria-label={`Details of ${item.displayName}`}>Details</button>
           {editMode ? (
