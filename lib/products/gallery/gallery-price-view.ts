@@ -56,7 +56,7 @@ export function galleryPriceView(templateId: string, price: GalleryPriceState) {
   return { kind: "priced", amount: price.sourceTotals.map(({ currency, amount }) => formatMoney(currency, amount)).join(" + "), badge, checked } as const;
 }
 
-export async function fetchGalleryPriceBatches(ids: string[], fetch: (ids: string[]) => Promise<PriceResponse>): Promise<PriceEntries> {
+export async function fetchGalleryListFacts(ids: string[], fetch: (ids: string[]) => Promise<PriceResponse>): Promise<{ prices: PriceEntries; dimensions: Record<string, string> }> {
   const distinct = [...new Set(ids)];
   const pending: Array<Promise<PriceResponse>> = [];
   for (let offset = 0; offset < distinct.length; offset += 60) {
@@ -64,6 +64,14 @@ export async function fetchGalleryPriceBatches(ids: string[], fetch: (ids: strin
     pending.push(Promise.resolve().then(() => fetch(batch)));
   }
   const results = await Promise.allSettled(pending);
-  return Object.assign({}, ...results.flatMap((result) =>
-    result.status === "fulfilled" && result.value.ok ? [result.value.prices] : []));
+  const ok = results.flatMap((result) => result.status === "fulfilled" && result.value.ok ? [result.value] : []);
+  return {
+    prices: Object.assign({}, ...ok.map((value) => value.prices)),
+    dimensions: Object.assign({}, ...ok.map((value) => value.dimensions ?? {})),
+  };
+}
+
+/** Prices only (one action per normal page, split over 60). */
+export async function fetchGalleryPriceBatches(ids: string[], fetch: (ids: string[]) => Promise<PriceResponse>): Promise<PriceEntries> {
+  return (await fetchGalleryListFacts(ids, fetch)).prices;
 }

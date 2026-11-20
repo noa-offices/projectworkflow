@@ -22,7 +22,7 @@ import {
   type GalleryAddItem,
 } from "./gallery-service";
 import type { GalleryDetail } from "./gallery-detail";
-import { loadGalleryPrices } from "./gallery-price-service";
+import { loadGalleryListFacts } from "./gallery-price-service";
 
 // Server Actions are public POST endpoints: every action authenticates FIRST with requireActiveUser, takes the user from the SESSION,
 // uses the CALLER's Supabase client (RLS stays on) and never an admin client. An action never throws to the browser: it returns
@@ -30,21 +30,24 @@ import { loadGalleryPrices } from "./gallery-price-service";
 // fields are ignored. Pricing uses a separate explicitly authorized action and never enters existing gallery payloads.
 export type GalleryActionFailure = { ok: false; message: string };
 
-/** Prices are returned only to callers who can open Product Library Management. */
+/**
+ * One batch of list facts. Prices are returned only to callers who can open Product Library Management; the size (dimension) is
+ * returned to every signed-in caller and never depends on price access.
+ */
 export async function getGalleryPricesAction(ids: string[]): Promise<
-  { ok: true; prices: Awaited<ReturnType<typeof loadGalleryPrices>> } | GalleryActionFailure
+  { ok: true; prices: Awaited<ReturnType<typeof loadGalleryListFacts>>["prices"]; dimensions: Record<string, string> } | GalleryActionFailure
 > {
   try {
     const { profile } = await requireActiveUser();
-    if (!canManageProductLibrary(profile?.role)) return { ok: true, prices: {} };
     if (!Array.isArray(ids) || ids.length > 60 || !Array.from(ids).every(isGalleryId)) return failure("invalid_request");
-    if (!ids.length) return { ok: true, prices: {} };
+    if (!ids.length) return { ok: true, prices: {}, dimensions: {} };
     const supabase = await createClient();
-    return { ok: true, prices: await loadGalleryPrices(supabase, [...new Set(ids.map((id) => id.toLowerCase()))]) };
+    const facts = await loadGalleryListFacts(supabase, [...new Set(ids.map((id) => id.toLowerCase()))], canManageProductLibrary(profile?.role));
+    return { ok: true, ...facts };
   } catch (problem) {
     // requireActiveUser also redirects accounts that cannot access this part of the app.
     const digest = (problem as { digest?: unknown } | null)?.digest;
-    if (typeof digest === "string" && digest.startsWith("NEXT_REDIRECT")) return { ok: true, prices: {} };
+    if (typeof digest === "string" && digest.startsWith("NEXT_REDIRECT")) return { ok: true, prices: {}, dimensions: {} };
     return failure("load_failed", problem);
   }
 }

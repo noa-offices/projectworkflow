@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { galleryAedView } from "./gallery-aed";
-import { configureReasonText, fetchGalleryPriceBatches, galleryPriceLayout, galleryPriceRow, galleryPriceView, type GalleryPriceEntry } from "./gallery-price-view";
+import { configureReasonText, fetchGalleryListFacts, fetchGalleryPriceBatches, galleryPriceLayout, galleryPriceRow, galleryPriceView, type GalleryPriceEntry } from "./gallery-price-view";
 
 const template = "11111111-1111-4111-8111-111111111111";
 const priced = (key: "current" | "needs_check" | "no_price_list" = "current"): Extract<GalleryPriceEntry, { status: "priced" }> => ({
@@ -37,7 +37,7 @@ test("links unpriceable products to Product Management and separates loading fro
 test("one action per normal page, splits over 60 and omits empty or failed responses", async () => {
   const calls: string[][] = [];
   const ids = Array.from({ length: 125 }, (_, i) => String(i));
-  const fetch = async (ids: string[]) => { calls.push(ids); return { ok: true as const, prices: {} }; };
+  const fetch = async (ids: string[]) => { calls.push(ids); return { ok: true as const, prices: {}, dimensions: {} }; };
   assert.deepEqual(await fetchGalleryPriceBatches(ids.slice(0, 30), fetch), {});
   assert.deepEqual(calls.map((ids) => ids.length), [30]);
   calls.length = 0;
@@ -45,6 +45,7 @@ test("one action per normal page, splits over 60 and omits empty or failed respo
   assert.deepEqual(calls.map((ids) => ids.length), [60, 60, 5]);
   assert.deepEqual(await fetchGalleryPriceBatches(["a"], async () => { throw new Error("offline"); }), {});
   assert.deepEqual(await fetchGalleryPriceBatches(["a"], async () => ({ ok: false, message: "unavailable" })), {});
+  assert.deepEqual(await fetchGalleryPriceBatches(["a"], async () => ({ ok: true as const, prices: {}, dimensions: {} })), {});
 });
 
 test("only the list loader requests amounts, and the popup reuses its result", () => {
@@ -56,8 +57,8 @@ test("only the list loader requests amounts, and the popup reuses its result", (
   const pricing = read("./gallery-price-service.ts");
   const card = browser.slice(browser.indexOf("function GalleryCard"), browser.indexOf("function Skeleton"));
   assert.match(page, /canSeePrices=\{canManageProductLibrary\(profile\?\.role\)\}/);
-  assert.match(browser, /if \(!canSeePrices \|\| !items\.length\) return/);
-  assert.equal((browser.match(/fetchGalleryPriceBatches\(ids, getGalleryPricesAction\)/g) ?? []).length, 1);
+  assert.match(browser, /if \(!items\.length\) return;[^]*?if \(canSeePrices\) setPrices/, "the list facts load for every role; only the price state needs price access");
+  assert.equal((browser.match(/fetchGalleryListFacts\(ids, getGalleryPricesAction\)/g) ?? []).length, 1);
   assert.match(browser, /void loadPrices\(result\.items, id\)/);
   assert.match(browser, /void loadPrices\(result\.items\.filter\(/);
   assert.match(browser, /request !== requestId\.current/);
@@ -67,7 +68,7 @@ test("only the list loader requests amounts, and the popup reuses its result", (
   assert.match(browser, /price=\{canSeePrices \? prices\[dialog\.item\.id\] : undefined\}/);
   assert.match(popup, /getGalleryItemDetailAction\(\{ id: itemId \}\)/);
   assert.match(block, /detail && view\.checked/);
-  assert.doesNotMatch(card + popup, /getGalleryPricesAction|fetchGalleryPriceBatches/);
+  assert.doesNotMatch(card + popup, /getGalleryPricesAction|fetchGalleryPriceBatches|fetchGalleryListFacts/);
   for (const source of [page, browser, popup, block, pricing]) {
     assert.doesNotMatch(source, /createAdminClient|supabase\/admin|service_role|SUPABASE_SERVICE/i);
   }
@@ -127,7 +128,7 @@ test("compact list row: AED bold on the left, source amount small on the right",
   assert.deepEqual(galleryPriceRow(galleryPriceLayout(many, aed(many, { EUR: 4.5, USD: 3.67 }))), { primary: "≈ AED 2,325", secondary: "EUR 435.00 + USD 100.00" });
 });
 
-test("compact card: name, kind line, Update available pill for editors only, edit menu, no storage or admin client, dimension not in the list", () => {
+test("compact card: name, kind line, size line, Update available pill for editors only, edit menu, no storage or admin client", () => {
   const browser = readFileSync(new URL("../../../components/products/product-gallery-browser.tsx", import.meta.url), "utf8");
   const block = readFileSync(new URL("../../../components/products/product-gallery-price.tsx", import.meta.url), "utf8");
   const card = browser.slice(browser.indexOf("function GalleryCard"), browser.indexOf("function Skeleton"));
@@ -137,9 +138,34 @@ test("compact card: name, kind line, Update available pill for editors only, edi
   assert.match(card, /\{editMode \? \(\s*<div ref=\{menuRef\} className="absolute right-2 top-2/, "the menu button is only in edit mode, top-right of the picture");
   for (const label of ["Rename / Tags", "Remove", "Merge into..."]) assert.ok(card.includes(`>${label}</button>`), label);
   assert.match(card, /\{canCurate \? <button[^\n]*>Merge into\.\.\.<\/button> : null\}/);
-  assert.doesNotMatch(card, /dimension/i, "the list data has no dimension; it stays in the popup");
+  assert.match(card, /\{dimension \? <p className="mt-0\.5 truncate text-\[12\.5px\] text-\[#5d6159\]"/, "a muted one-line size under the kind line");
   assert.match(block, /<strong className="min-w-0 truncate text-\[15px\] font-bold/);
   assert.match(block, /<span className="shrink-0 truncate text-xs text-\[#5d6159\]">/);
   assert.doesNotMatch(block, /PriceStatusBadge[^\n]*\n[^\n]*Row/);
   for (const source of [browser, block]) assert.doesNotMatch(source, /localStorage|sessionStorage|createAdminClient|supabase\/admin|service_role/i);
+});
+
+test("list size: batches of 60 (Load more too), merges sizes, skips failures, and the line is independent of price access", async () => {
+  const calls: string[][] = [];
+  const ids = Array.from({ length: 125 }, (_, i) => `id${i}`);
+  const fetch = async (batch: string[]) => { calls.push(batch); return { ok: true as const, prices: {}, dimensions: Object.fromEntries(batch.filter((id) => id !== "id7").map((id) => [id, `W${id}`])) }; };
+  const facts = await fetchGalleryListFacts(ids, fetch);
+  assert.deepEqual(calls.map((batch) => batch.length), [60, 60, 5]);
+  assert.equal(facts.dimensions.id0, "Wid0");
+  assert.equal(facts.dimensions.id124, "Wid124");
+  assert.equal("id7" in facts.dimensions, false, "an item without a size has no entry");
+  const mixed = await fetchGalleryListFacts(["a", "b"], async (batch) => { if (batch[0] === "a") throw new Error("offline"); return { ok: true as const, prices: {}, dimensions: {} }; });
+  assert.deepEqual(mixed, { prices: {}, dimensions: {} });
+  const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+  const browser = read("../../../components/products/product-gallery-browser.tsx");
+  const card = browser.slice(browser.indexOf("function GalleryCard"), browser.indexOf("function Skeleton"));
+  assert.match(browser, /setDimensions\(\(current\) => \(\{ \.\.\.current, \.\.\.Object\.fromEntries\(ids\.map\(\(id\) => \[id, results\.dimensions\[id\] \?\? null\]\)\) \}\)\)/, "every requested item ends as a size or null");
+  assert.match(browser, /void loadPrices\(result\.items\.filter\(/, "Load more uses the same loader");
+  assert.match(card, /\{dimension === undefined \? <div aria-hidden="true"[^>]*h-\[17px\]/, "a reserved line height while loading: no layout jump");
+  assert.doesNotMatch(card.slice(card.indexOf("{dimension ?"), card.indexOf("{canSeePrices ?")), /canSeePrices/, "the size line does not depend on price access");
+  const action = read("./gallery-actions.ts");
+  const service = read("./gallery-price-service.ts");
+  assert.match(action, /canManageProductLibrary\(profile\?\.role\)\);[^]*return \{ ok: true, \.\.\.facts \}/);
+  assert.match(service, /import \{ describeRecipe \} from "\.\/gallery-detail"/, "the popup's own function");
+  for (const source of [browser, action, service]) assert.doesNotMatch(source, /localStorage|sessionStorage|createAdminClient|supabase\/admin|service_role/i);
 });

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { brandPriceBaselineDate, friendlyPriceHealth, latestBrandPriceListUpdate, productTemplatePriceCheckState, scheduledBrandPriceListUpdate, type BrandPriceListUpdateForCheck } from "@/lib/product-price-check";
 import { completeGalleryRecipe, isGalleryId } from "./gallery";
+import { describeRecipe } from "./gallery-detail";
 import { priceRecipe, type GalleryPriceComponent, type GalleryPriceLink, type GalleryPriceTemplate, type RecipePrice } from "./gallery-price";
 
 const TEMPLATE_COLUMNS = "id,template_name,brand_id,is_active,lifecycle_status,currency,default_unit_price,variant_pricing,category_pricing,accessory_pricing,desking_size_pricing";
@@ -31,13 +32,40 @@ async function batch<T>(query: PromiseLike<{ data: unknown; error: unknown }>): 
   return data as T[];
 }
 
-/** Caller must authorize price access before passing the user-session client. */
-export async function loadGalleryPrices(supabase: SupabaseClient, ids: string[]): Promise<Record<string, PriceResult>> {
+/**
+ * The size text of each item, from the template rows that are already loaded for the batch. It is the SAME text the Details popup shows
+ * (describeRecipe), never a price; an item whose size cannot be worked out is simply left out.
+ */
+function dimensionsOf(items: ReadonlyArray<{ id: string; template_id: string; recipe: unknown }>, templates: ReadonlyArray<GalleryPriceTemplate>): Record<string, string> {
+  const byId = new Map(templates.map((template) => [template.id, template]));
+  const out: Record<string, string> = {};
+  for (const item of items) {
+    const template = byId.get(item.template_id);
+    if (!template) continue;
+    try {
+      const { dimension } = describeRecipe({ recipe: item.recipe, template, components: [], linkedFamilies: [] });
+      if (dimension) out[item.id] = dimension;
+    } catch {
+      // a size that cannot be read is omitted, never an error for the list
+    }
+  }
+  return out;
+}
+
+/**
+ * Prices and sizes for one batch of list items. Prices are only computed when includePrices is true: the CALLER must authorize price
+ * access first (the size does not depend on it). Uses the user-session client only.
+ */
+export async function loadGalleryListFacts(supabase: SupabaseClient, ids: string[], includePrices: boolean): Promise<{ prices: Record<string, PriceResult>; dimensions: Record<string, string> }> {
   const items = await batch<{ id: string; template_id: string; recipe: unknown }>(
     supabase.from("product_gallery_items").select("id,template_id,recipe").in("id", ids).eq("is_hidden", false),
   );
-  if (!items.length) return {};
+  if (!items.length) return { prices: {}, dimensions: {} };
   const templateIds = unique(items.map((item) => item.template_id));
+  if (!includePrices) {
+    const only = await batch<GalleryPriceTemplate>(supabase.from("product_templates").select(TEMPLATE_COLUMNS).in("id", templateIds));
+    return { prices: {}, dimensions: dimensionsOf(items, only) };
+  }
   const recipes = items.map((item) => completeGalleryRecipe(item.recipe, item.template_id));
   const componentIds = unique(recipes.flatMap((recipe) => recipe ? [
     ...Object.values(recipe.selections.component_option_selections).flat(),
@@ -101,11 +129,17 @@ export async function loadGalleryPrices(supabase: SupabaseClient, ids: string[])
       state: friendlyPriceHealth(state, latest, "quotation"),
     });
   }
-  return Object.fromEntries(items.map(({ id, template_id, recipe }): [string, PriceResult] => {
+  const prices = Object.fromEntries(items.map(({ id, template_id, recipe }): [string, PriceResult] => {
     const template = templateMap.get(template_id);
     const priceCheck = priceChecks.get(template_id);
     if (!template || !priceCheck) return [id, { status: "needs_configure" }];
     const price = priceRecipe(template, recipe, { components, links, linkedTemplates });
     return [id, price.status === "priced" ? { ...price, priceCheck } : { status: "needs_configure", reason: price.reason }];
   }));
+  return { prices, dimensions: dimensionsOf(items, templates) };
+}
+
+/** Caller must authorize price access before passing the user-session client. */
+export async function loadGalleryPrices(supabase: SupabaseClient, ids: string[]): Promise<Record<string, PriceResult>> {
+  return (await loadGalleryListFacts(supabase, ids, true)).prices;
 }

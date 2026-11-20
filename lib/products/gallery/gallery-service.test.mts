@@ -95,18 +95,18 @@ mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => {
 const actions = await import("./gallery-actions");
 const { GALLERY_MESSAGES } = await import("./gallery");
 
-test("price action denies the role before opening a database client, and bounds UUID batches", async () => {
+test("price action gives a role without price access no price (only the size), and bounds UUID batches", async () => {
   reset();
   world.role = "warehouse_staff";
-  assert.deepEqual(await actions.getGalleryPricesAction([G1]), { ok: true, prices: {} });
-  assert.deepEqual(world.calls, ["auth"]);
+  assert.deepEqual(await actions.getGalleryPricesAction([G1]), { ok: true, prices: {}, dimensions: {} });
+  assert.deepEqual(world.calls, ["auth", "client", "select:product_gallery_items"], "no price table is read for this role");
   world.role = "sales_designer";
   for (const ids of [["bad"], Array<string>(61).fill(G1)]) {
     assert.deepEqual(await actions.getGalleryPricesAction(ids), { ok: false, message: GALLERY_MESSAGES.invalid_request });
   }
   world.authMode = "redirect";
-  assert.deepEqual(await actions.getGalleryPricesAction([G1]), { ok: true, prices: {} });
-  assert.deepEqual(world.calls, ["auth", "auth", "auth", "auth"]);
+  assert.deepEqual(await actions.getGalleryPricesAction([G1]), { ok: true, prices: {}, dimensions: {} });
+  assert.deepEqual(world.calls, ["auth", "client", "select:product_gallery_items", "auth", "auth", "auth"]);
 });
 
 test("price action batches 20 visible items by template and exposes only the authorized price payload", async () => {
@@ -991,4 +991,66 @@ test("check updates: editor guard, count messages and revalidation", async () =>
   world.rpc.product_gallery_check_updates = () => ({ data: 0, error: null });
   assert.deepEqual(await actions.checkGalleryUpdatesAction(), { ok: true, message: "No updates found" });
   assert.deepEqual(world.revalidated, ["/products/gallery", "/products/gallery"]);
+});
+
+// ── Size (dimension) on the list: the same text as the Details popup, independent of price access ──
+const { describeRecipe } = await import("./gallery-detail");
+const sizedItem = (id: string, name: string, dimension: string) => ({ id, pricing_type: "modular_item", modular_role: "starter", display_name: name, dimension, price: 1000, currency: "EUR", is_active: true, sort_order: 0 });
+const modularCategory = (items: Row[]) => [{ id: "mg1", pricing_type: "modular_group", group_name: "Modules", is_active: true, sort_order: 0, modular_pricing_mode: "direct", modular_composition: { min_starters: 1, max_starters: 4 }, items }];
+const modularRecipe = (templateId: string, quantities: Record<string, number>) => ({ recipe_version: 1, template_id: templateId, selections: { modular_quantities: quantities, pricing_accessory_quantities: {}, component_accessory_quantities: {}, skipped_accessory_group_ids: [], component_option_selections: {}, accessory_category_choices: {} }, linked: { selections: {} } });
+const OXI_Q_ITEM = "aaaaaaaa-aaaa-4aaa-8aaa-0000000000a1";
+const OXI_P_ITEM = "aaaaaaaa-aaaa-4aaa-8aaa-0000000000b1";
+const NO_SIZE_ITEM = "aaaaaaaa-aaaa-4aaa-8aaa-0000000000c1";
+const TEMPLATE_P = "bbbbbbbb-bbbb-4bbb-8bbb-0000000000b1";
+function seedSizes() {
+  const q = modularCategory([sizedItem("q-a", "Sofa (A) W:1400 D:1452 H:736", "W:1400 D:1452 H:736 mm")]);
+  const p = modularCategory([sizedItem("p-a", "Bench (A) W:140", "W:1400 D:700 H:450 mm"), sizedItem("p-b", "Bench (B) W:140", "W:1400 D:700 H:450 mm")]);
+  world.tables.product_templates = [
+    templateRow({ brand_id: BRAND, template_name: "Oxi_Q", variant_pricing: [], category_pricing: q, accessory_pricing: [], desking_size_pricing: [], currency: "EUR", default_unit_price: 0 }),
+    templateRow({ id: TEMPLATE_P, brand_id: BRAND, template_name: "OXI_P", variant_pricing: [], category_pricing: p, accessory_pricing: [], desking_size_pricing: [], currency: "EUR", default_unit_price: 0 }),
+  ];
+  world.tables.product_gallery_items = [
+    galleryRow({ id: OXI_Q_ITEM, recipe: modularRecipe(TEMPLATE, { "q-a": 1 }) }),
+    galleryRow({ id: OXI_P_ITEM, template_id: TEMPLATE_P, recipe: modularRecipe(TEMPLATE_P, { "p-a": 1, "p-b": 1 }) }),
+    galleryRow({ id: NO_SIZE_ITEM, recipe: { not: "a recipe" } }),
+  ];
+  return { q, p };
+}
+const popupSize = (template: Row, recipe: unknown) => describeRecipe({ recipe, template: template as never, components: [], linkedFamilies: [] }).dimension;
+
+test("list size: the same text as the Details popup for Oxi_Q-like and OXI_P-like modular items; an item without a computable size is left out", async () => {
+  reset();
+  seedSizes();
+  const result = await actions.getGalleryPricesAction([OXI_Q_ITEM, OXI_P_ITEM, NO_SIZE_ITEM]);
+  assert.ok(result.ok);
+  const expectedQ = popupSize(world.tables.product_templates[0], modularRecipe(TEMPLATE, { "q-a": 1 }));
+  const expectedP = popupSize(world.tables.product_templates[1], modularRecipe(TEMPLATE_P, { "p-a": 1, "p-b": 1 }));
+  assert.ok(expectedQ && /W/.test(expectedQ), "the fixture really has a popup size");
+  assert.ok(expectedP);
+  assert.equal(result.dimensions[OXI_Q_ITEM], expectedQ);
+  assert.equal(result.dimensions[OXI_P_ITEM], expectedP);
+  assert.equal(OXI_P_ITEM in result.dimensions && NO_SIZE_ITEM in result.dimensions, false, "the uncomputable item has no size entry");
+  assert.ok(Object.hasOwn(result.prices, OXI_Q_ITEM), "a price role still gets prices in the same call");
+});
+
+test("list size: shown to a role without price access, while no price is read or returned", async () => {
+  reset();
+  seedSizes();
+  world.role = "warehouse_staff";
+  const result = await actions.getGalleryPricesAction([OXI_Q_ITEM, OXI_P_ITEM]);
+  assert.ok(result.ok);
+  assert.deepEqual(result.prices, {});
+  assert.ok(result.dimensions[OXI_Q_ITEM] && result.dimensions[OXI_P_ITEM]);
+  assert.deepEqual(world.selects.map(({ table }) => table).sort(), ["product_gallery_items", "product_templates"], "only the item and template rows, no price-only tables");
+  assert.ok(!JSON.stringify(result.dimensions).match(/amount|currency|EUR|AED/i), "nothing money-like in the size text for this role");
+  assert.equal(world.adminCalls, 0);
+});
+
+test("list size: adds no query to the price path (same six tables) and never uses an admin client", async () => {
+  reset();
+  seedSizes();
+  await actions.getGalleryPricesAction([OXI_Q_ITEM, OXI_P_ITEM]);
+  assert.deepEqual(world.selects.map(({ table }) => table).sort(),
+    ["brand_price_list_updates", "brands", "product_components", "product_gallery_items", "product_template_linked_families", "product_templates"]);
+  assert.equal(world.adminCalls, 0);
 });
