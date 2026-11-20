@@ -8,6 +8,7 @@ import { buildDirectModularDimensionSuggestion } from "../../quotations/product-
  */
 import { parseAccessoryConfigurationGroups } from "../accessory-conditional-configuration";
 import { groupMaterialsIntoSections } from "../../quotations/finish-material-groups";
+import { modularAlternativeSelected } from "../saved-setups/replay";
 import { resolveProductConfigurationState, type ProductConfigurationSelections, type ProductConfigurationStep } from "../product-configuration-state";
 import { restorePlainState } from "../saved-setups/recipe";
 import { completeGalleryRecipe, galleryDisplayName } from "./gallery";
@@ -362,7 +363,8 @@ export function buildUpdates(input: { offers: ReadonlyArray<{ kind: string; prop
  */
 function hasBlockingRequiredStep(steps: ReadonlyArray<{ kind: string; required: boolean; resolved: boolean }>): boolean {
   const usesModular = steps.some((step) => step.kind === "modular");
-  return steps.some((step) => step.required && !step.resolved && !(usesModular && (step.kind === "variant_group" || step.kind === "variant_subgroup" || step.kind === "variant_row")));
+  const modularChosen = modularAlternativeSelected(steps);
+  return steps.some((step) => step.required && !step.resolved && !(modularChosen && step.kind === "modular") && !(usesModular && (step.kind === "variant_group" || step.kind === "variant_subgroup" || step.kind === "variant_row")));
 }
 
 export function describeRecipe(input: {
