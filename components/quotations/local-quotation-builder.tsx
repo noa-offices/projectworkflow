@@ -29,6 +29,8 @@ import { LocalQuotationCustomPrintableImageCell, LocalQuotationImageCell } from 
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import { FinishImagePreview } from "@/components/quotations/finish-image-uploader";
 import { SharedQuotationMoreMenu } from "@/components/quotations/shared-quotation-row-details-panel";
+import { runPreSendChecks, type PreSendDocument, type PreSendTarget } from "@/lib/quotations/pre-send-checks";
+import { preSendRowsFromWorkspace } from "@/lib/local/pre-send-rows";
 import { clearReconfiguredPriceRounding, reconfigureLocalRows, reconfigureTarget, type ReconfigureChanges, type ReconfigureTarget } from "./local-reconfigure";
 import {
   FinishSelectionsEditor,
@@ -1755,6 +1757,7 @@ export function LocalQuotationBuilder({
   canWriteQuotation = false,
   clientName,
   documentSetupAction,
+  preSendFacts,
   initialWorkspace,
   materialGroups,
   materials,
@@ -1773,6 +1776,8 @@ export function LocalQuotationBuilder({
   canWriteQuotation?: boolean;
   clientName: string;
   documentSetupAction?: ReactNode;
+  /** Document setup facts for the read-only pre-send checks (omit to skip those checks). */
+  preSendFacts?: PreSendDocument | null;
   initialWorkspace: LocalQuotationWorkspace;
   materialGroups: FinishMaterialGroup[];
   materials: FinishMaterial[];
@@ -1831,7 +1836,7 @@ export function LocalQuotationBuilder({
   const [newPrintableColumnShowInClient, setNewPrintableColumnShowInClient] = useState(true);
   const [newPrintableColumnShowInInternal, setNewPrintableColumnShowInInternal] = useState(true);
   const [roundingStepInput, setRoundingStepInput] = useState("5");
-  const [openToolbarDropdown, setOpenToolbarDropdown] = useState<"downloads" | "columns" | "more" | null>(null);
+  const [openToolbarDropdown, setOpenToolbarDropdown] = useState<"downloads" | "columns" | "more" | "checks" | null>(null);
   const [mobileToolbarExpanded, setMobileToolbarExpanded] = useState(true);
   const [mobileBuilderTab, setMobileBuilderTab] = useState<"details" | "items" | "summary">("items");
   const [mobileDetailsExpanded, setMobileDetailsExpanded] = useState(false);
@@ -2106,6 +2111,63 @@ export function LocalQuotationBuilder({
     });
   const collapseAllSections = () => setCollapsedSections(new Map(orderedSectionRows.map((section) => [section.id, sectionSizeById.get(section.id) ?? 0])));
   const expandAllSections = () => setCollapsedSections(new Map());
+  const rowSerialByItemId = useMemo(() => {
+    // The S. No. shown for each counted row, in display order (the same rule the table used while rendering, now independent of folded sections).
+    const map = new Map<string, number>();
+    let next = 0;
+    for (const section of displaySections) {
+      if (section.renderAsMainOnly) continue;
+      const { childrenByParent: optionalKids, topLevel } = orderedItemsWithOptionalChildren(workspace.items, section.id);
+      for (const item of topLevel) {
+        if (isSerialCountedLine(item)) map.set(item.id, ++next);
+        if (collapsedOptionalParentIds.has(item.id)) continue;
+        for (const child of optionalKids.get(item.id) ?? []) if (isSerialCountedLine(child)) map.set(child.id, ++next);
+      }
+    }
+    return map;
+  }, [collapsedOptionalParentIds, displaySections, workspace.items]);
+  // Pre-send reminders: read-only, recomputed from the in-memory workspace (one pass over the rows; no storage, nothing saved).
+  const preSendChecks = useMemo(() => runPreSendChecks({
+    rows: preSendRowsFromWorkspace(workspace, rowSerialByItemId, itemCountsInLocalTotals),
+    sections: orderedSectionRows
+      .filter((section) => !(section.section_kind === "main" && (childrenByParent.get(section.id)?.length ?? 0) > 0))
+      .map((section) => ({ id: section.id, title: section.section_title, itemCount: sectionItemCountById.get(section.id) ?? 0 })),
+    finalTotal: workspace.totals.grand_total,
+    document: preSendFacts ?? null,
+  }), [childrenByParent, orderedSectionRows, preSendFacts, rowSerialByItemId, sectionItemCountById, workspace]);
+  const preSendErrorCount = preSendChecks.filter((check) => check.severity === "error").length;
+  const preSendWarningCount = preSendChecks.length - preSendErrorCount;
+  function goToCheckTarget(target: PreSendTarget | undefined) {
+    setOpenToolbarDropdown(null);
+    if (!target) return;
+    if (target.kind === "document") {
+      // The existing Document Setup button owns that dialog: press it.
+      window.requestAnimationFrame(() => {
+        Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Document Setup")?.click();
+      });
+      return;
+    }
+    const sectionId = target.kind === "section" ? target.id : workspace.items.find((item) => item.id === target.id)?.section_id;
+    if (sectionId) {
+      // Open the section (and its main section) first if it is folded.
+      const parentId = sectionsById.get(sectionId)?.parent_section_id;
+      setCollapsedSections((current) => {
+        const next = new Map(current);
+        next.delete(sectionId);
+        if (parentId) next.delete(parentId);
+        return next;
+      });
+    }
+    const selector = target.kind === "section" ? `[data-section-id="${target.id}"]` : `[data-row-id="${target.id}"]`;
+    window.setTimeout(() => {
+      const element = document.querySelector<HTMLElement>(selector);
+      if (!element) return;
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+      element.style.outline = "3px solid #f59e0b";
+      element.style.outlineOffset = "-3px";
+      window.setTimeout(() => { element.style.outline = ""; element.style.outlineOffset = ""; }, 1800);
+    }, 80);
+  }
   const sectionCollapseControl = (sectionId: string, tone: "dark" | "light") => {
     const collapsed = isSectionCollapsed(sectionId);
     const count = sectionItemCountById.get(sectionId) ?? 0;
@@ -2193,7 +2255,6 @@ export function LocalQuotationBuilder({
         .some((value) => value!.toLowerCase().includes(query)),
     ).slice(0, 100);
   }, [productTemplates, saveLibraryTemplateSearch]);
-  let runningSerialNumber = 0;
   let mobileRunningSerialNumber = 0;
 
   function updateColumnSetting(key: string, patch: { visible?: boolean; width?: number }) {
@@ -4172,6 +4233,53 @@ export function LocalQuotationBuilder({
               >
                 Compact
               </button>
+              <ClickAwayWrapper
+                className="relative xl:static"
+                buttonClassName="inline-flex h-9 cursor-pointer items-center gap-1.5 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                buttonLabel={(
+                  <>
+                    Checks
+                    {preSendErrorCount ? (
+                      <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold leading-5 text-white">{preSendChecks.length}</span>
+                    ) : preSendWarningCount ? (
+                      <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-400 px-1.5 text-[10px] font-bold leading-5 text-amber-950">{preSendChecks.length}</span>
+                    ) : (
+                      <span aria-hidden="true" className="font-bold text-emerald-700">&#10003;</span>
+                    )}
+                    <span className="sr-only">{preSendChecks.length ? `${preSendErrorCount} errors, ${preSendWarningCount} warnings` : "no problems"}</span>
+                  </>
+                )}
+                open={openToolbarDropdown === "checks"}
+                onOpenChange={(open) => setOpenToolbarDropdown(open ? "checks" : null)}
+              >
+                <div data-pre-send-checks className="absolute right-0 xl:right-3 xl:top-full z-30 mt-2 xl:mt-1 flex w-[560px] max-w-[calc(100vw-2rem)] xl:max-w-[calc(100vw-1.5rem)] max-h-[calc(100dvh-10rem)] flex-col overflow-hidden border border-zinc-300 bg-white text-xs text-zinc-600 shadow-lg">
+                  <div className="border-b border-zinc-200 px-4 py-3">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500">Check before sending</p>
+                    <p className="mt-1 text-xs text-zinc-500">These are reminders. Nothing is blocked.</p>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                    {preSendChecks.length ? (
+                      <ul className="grid gap-2">
+                        {preSendChecks.map((check) => (
+                          <li key={check.id} className="flex items-start justify-between gap-3 border border-zinc-200 bg-zinc-50 px-3 py-2">
+                            <span className="min-w-0 flex-1">
+                              <span className={`mr-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${check.severity === "error" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-900"}`}>{check.severity === "error" ? "Fix" : "Check"}</span>
+                              <span className="text-xs text-zinc-800">{check.message}</span>
+                            </span>
+                            {check.target ? (
+                              <button type="button" onClick={() => goToCheckTarget(check.target)} className="shrink-0 border border-zinc-300 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-900 hover:border-emerald-900">
+                                {check.target.kind === "document" ? "Open Document Setup" : "Go to row"}
+                              </button>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-xs font-semibold text-emerald-800">&#10003; Nothing to fix.</p>
+                    )}
+                  </div>
+                </div>
+              </ClickAwayWrapper>
               <div className="flex border border-zinc-300 text-xs font-semibold">
                 <button type="button" onClick={() => setView("client")} className={`h-9 px-3 ${view === "client" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}>Client View</button>
                 <button type="button" onClick={() => setView("internal")} className={`h-9 border-l border-zinc-300 px-3 ${view === "internal" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}>Internal View</button>
@@ -4975,7 +5083,7 @@ export function LocalQuotationBuilder({
                       <Fragment key={section.id}>
                         <InsertSectionRow canManage onAddMain={() => addSection("main", null, section.id)} onAddSub={() => addSection("sub", insertSubParentId ?? section.id, section.id)} totalColumns={totalColumns} />
                         <tr>
-                          <td colSpan={totalColumns} className={`relative border border-zinc-300 px-3 py-3 uppercase tracking-wide ${sectionTitleClass(section)}`} style={section.row_height ? { height: `${section.row_height}px` } : undefined}>
+                          <td colSpan={totalColumns} data-section-id={section.id} className={`relative border border-zinc-300 px-3 py-3 uppercase tracking-wide ${sectionTitleClass(section)}`} style={section.row_height ? { height: `${section.row_height}px` } : undefined}>
                               <div className="flex items-center justify-between gap-3">
                                 {sectionCollapseControl(section.id, "dark")}
                                 <input value={section.section_title} onChange={(event) => updateSection(section.id, { section_title: event.target.value })} className="min-w-0 flex-1 bg-transparent outline-none" />
@@ -5014,7 +5122,7 @@ export function LocalQuotationBuilder({
                       {!parentCollapsed ? (<>
                       <InsertSectionRow canManage onAddMain={() => addSection("main", null, section.id)} onAddSub={() => addSection("sub", section.parent_section_id ?? null, section.id)} totalColumns={totalColumns} />
                       <tr>
-                        <td colSpan={totalColumns} className={`relative border border-zinc-300 px-3 py-2 uppercase tracking-wide ${sectionTitleClass(section)}`} style={section.row_height ? { height: `${section.row_height}px` } : undefined}>
+                        <td colSpan={totalColumns} data-section-id={section.id} className={`relative border border-zinc-300 px-3 py-2 uppercase tracking-wide ${sectionTitleClass(section)}`} style={section.row_height ? { height: `${section.row_height}px` } : undefined}>
                           <div className="flex items-center justify-between gap-3">
                             {sectionCollapseControl(section.id, "light")}
                             <input value={section.section_title} onChange={(event) => updateSection(section.id, { section_title: event.target.value })} className="min-w-0 flex-1 bg-transparent outline-none" />
@@ -5130,7 +5238,7 @@ export function LocalQuotationBuilder({
                               <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
                             </>
                           ) : (() => {
-                            const rowSerial = isSerialCountedLine(item) ? ++runningSerialNumber : 0;
+                            const rowSerial = rowSerialByItemId.get(item.id) ?? 0;
                             const imageCellHeight = rowContentHeight(item.row_height, 118);
                             const compactCellClassName = "border border-zinc-300 px-2.5 py-2.5 align-middle text-zinc-700";
                             const dimensionValue = localDimensionValue(item);
@@ -5309,6 +5417,7 @@ export function LocalQuotationBuilder({
                             return (
                             <>
                               <tr
+                                data-row-id={item.id}
                                 className={`align-middle ${isOptionalChild ? "bg-red-50/20" : ""} ${detailsModalRowId === item.id ? "bg-emerald-50/80" : ""}`}
                                 style={{ minHeight: `${itemRowMinHeight(item.row_height)}px` }}
                                 onBlur={() => {
