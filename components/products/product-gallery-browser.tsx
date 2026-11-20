@@ -11,7 +11,7 @@ import { toolbarContainer, toolbarControl, toolbarPrimaryButton, toolbarSecondar
 import { checkGalleryUpdatesAction, getGalleryPricesAction, listGalleryFiltersAction, listGalleryItemsAction, removeGalleryItemAction } from "@/lib/products/gallery/gallery-actions";
 import { listCurrencyDefaultRatesAction } from "@/lib/products/gallery/currency-default-rates-actions";
 import { EMPTY_RATES, type CurrencyRates } from "@/lib/products/gallery/gallery-aed";
-import { fetchGalleryPriceBatches, type GalleryPriceState } from "@/lib/products/gallery/gallery-price-view";
+import { fetchGalleryListFacts, type GalleryPriceState } from "@/lib/products/gallery/gallery-price-view";
 import { GALLERY_SORT_MODES, type GalleryCurrencyEntry, type GalleryFilterEntry, type GalleryListItem, type GallerySortMode, type GallerySubCategoryEntry, type GalleryTagEntry } from "@/lib/products/gallery/gallery";
 import {
   GALLERY_SEARCH_DEBOUNCE_MS,
@@ -49,8 +49,8 @@ function Select({ label, value, onChange, children }: { label: string; value: st
   );
 }
 
-function GalleryCard({ item, editMode, canCurate, canSeePrices, price, onDialog }: {
-  item: GalleryListItem; editMode: boolean; canCurate: boolean; canSeePrices: boolean; price: GalleryPriceState; onDialog: (dialog: Dialog) => void;
+function GalleryCard({ item, editMode, canCurate, canSeePrices, price, dimension, onDialog }: {
+  item: GalleryListItem; editMode: boolean; canCurate: boolean; canSeePrices: boolean; price: GalleryPriceState; dimension: string | null | undefined; onDialog: (dialog: Dialog) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -93,6 +93,8 @@ function GalleryCard({ item, editMode, canCurate, canSeePrices, price, onDialog 
         <button type="button" onClick={() => onDialog({ kind: "detail", item })} title={item.displayName} className="block w-full truncate text-left hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">{item.displayName}</button>
       </h3>
       {kind ? <p className="truncate text-[13px] text-[#5d6159]" title={kind}>{kind}</p> : null}
+      {dimension === undefined ? <div aria-hidden="true" data-testid="gallery-card-size-loading" className="mt-0.5 h-[17px] w-32 animate-pulse rounded bg-[#f1f2ee]" /> : null}
+      {dimension ? <p className="mt-0.5 truncate text-[12.5px] text-[#5d6159]" title={dimension} data-testid="gallery-card-size">{dimension}</p> : null}
       {canSeePrices ? <ProductGalleryPriceRow templateId={item.templateId} price={price} /> : null}
     </li>
   );
@@ -117,6 +119,8 @@ export function ProductGalleryBrowser({ canEdit, canCurate, canSeePrices, initia
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [items, setItems] = useState<GalleryListItem[]>([]);
   const [prices, setPrices] = useState<Record<string, GalleryPriceState>>({});
+  // Item size text: a key is absent while its batch is loading, null when no size can be worked out. It does not depend on price access.
+  const [dimensions, setDimensions] = useState<Record<string, string | null>>({});
   const [defaultRates, setDefaultRates] = useState<CurrencyRates | null>(null);
   const [temporaryRates, setTemporaryRates] = useState<CurrencyRates>(EMPTY_RATES);
   const [total, setTotal] = useState(0);
@@ -172,12 +176,13 @@ export function ProductGalleryBrowser({ canEdit, canCurate, canSeePrices, initia
   );
 
   const loadPrices = useCallback(async (items: GalleryListItem[], request: number) => {
-    if (!canSeePrices || !items.length) return;
+    if (!items.length) return;
     const ids = items.map((item) => item.id);
-    setPrices((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, "loading" as const])) }));
-    const results = await fetchGalleryPriceBatches(ids, getGalleryPricesAction);
+    if (canSeePrices) setPrices((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, "loading" as const])) }));
+    const results = await fetchGalleryListFacts(ids, getGalleryPricesAction);
     if (request !== requestId.current) return;
-    setPrices((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, results[id]])) }));
+    if (canSeePrices) setPrices((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, results.prices[id]])) }));
+    setDimensions((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, results.dimensions[id] ?? null])) }));
   }, [canSeePrices]);
 
   const reload = useCallback(
@@ -185,6 +190,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, canSeePrices, initia
       const id = ++requestId.current;
       setPhase("loading");
       setPrices({});
+      setDimensions({});
       try {
         const result = await fetchPage(current, 1);
         if (id !== requestId.current) return;
@@ -421,7 +427,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, canSeePrices, initia
             <p className="text-sm text-zinc-600" aria-live="polite">{showingText(items.length, total)}</p>
             <ul className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-x-5 gap-y-7">
               {items.map((item) => (
-                <GalleryCard key={item.id} item={item} editMode={editing} canCurate={canCurate} canSeePrices={canSeePrices} price={prices[item.id]} onDialog={setDialog} />
+                <GalleryCard key={item.id} item={item} editMode={editing} canCurate={canCurate} canSeePrices={canSeePrices} price={prices[item.id]} dimension={dimensions[item.id]} onDialog={setDialog} />
               ))}
             </ul>
             {hasMore ? (
