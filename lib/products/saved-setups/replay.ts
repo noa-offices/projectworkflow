@@ -138,6 +138,13 @@ const PRICE_MATRIX_STEP_KINDS = new Set(["category_group", "category_row"]);
 const REPLAY_STEP_ORDER = ["system_base", "workstation_size", "category_group", "category_row", "fabric_category", "modular", "accessory"];
 const BASE_MODE_STEP_ORDER = ["system_base", "variant_group", "variant_subgroup", "variant_row", "category_group", "category_row", "fabric_category", "accessory"];
 
+/**
+ * Modular groups are alternatives: once any modular item has a quantity (its step is resolved), the other modular groups are not required.
+ * With no modular item selected they stay required exactly as before. Shared with the Gallery popup's completeness check.
+ */
+export const modularAlternativeSelected = (steps: ReadonlyArray<{ kind: string; resolved: boolean }>) =>
+  steps.some((step) => step.kind === "modular" && step.resolved);
+
 type ReplayStep = { kind: string; label: string; required: boolean; resolved: boolean; options: ReadonlyArray<{ id: string }> };
 
 function nextRequiredForReplay(
@@ -170,7 +177,7 @@ function nextRequiredForReplay(
 
   // The finish category that belongs to a standalone Price Matrix row is not required while the line uses modular items.
   const hasCategoryRowStep = steps.some((step) => step.kind === "category_row");
-  const hidden = (kind: string) => BASE_MODEL_STEP_KINDS.has(kind) || PRICE_MATRIX_STEP_KINDS.has(kind) || (usesWorkstation && modularSteps.length === 0 && kind === "fabric_category") || (modularSteps.length > 0 && hasCategoryRowStep && kind === "fabric_category");
+  const hidden = (kind: string) => (kind === "modular" && modularSelected) || BASE_MODEL_STEP_KINDS.has(kind) || PRICE_MATRIX_STEP_KINDS.has(kind) || (usesWorkstation && modularSteps.length === 0 && kind === "fabric_category") || (modularSteps.length > 0 && hasCategoryRowStep && kind === "fabric_category");
   const unresolved = steps.filter((step) => step.required && !step.resolved && !hidden(step.kind));
   for (const kind of REPLAY_STEP_ORDER) {
     const found = unresolved.find((step) => step.kind === kind);
