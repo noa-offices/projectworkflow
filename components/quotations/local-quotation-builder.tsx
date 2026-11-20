@@ -3687,16 +3687,16 @@ export function LocalQuotationBuilder({
                 </p>
               </div>
               <StatusBadge status={workspace.status} />
-              <span className="border border-zinc-300 bg-zinc-50 px-2.5 py-1 text-xs font-semibold text-zinc-700">Local Builder</span>
               <span className={`border px-2.5 py-1 text-xs font-semibold ${
                 workspace.has_unsaved_changes
-                  ? "border-amber-200 bg-amber-50 text-amber-900"
+                  ? "border-amber-400 bg-amber-100 text-amber-950"
                   : "border-emerald-200 bg-emerald-50 text-emerald-900"
               }`}>
                 {statusText(workspace, localDraftSaved, saveState)}
               </span>
             </div>
-            <div className="flex flex-wrap items-center justify-start gap-2 xl:justify-end">
+            <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-2 xl:justify-end" data-builder-header="controls">
+              <div className="flex flex-wrap items-center gap-2 xl:border-r xl:border-zinc-200 xl:pr-3" data-builder-header-cluster="tools">
               <button
                 type="button"
                 onClick={undoLastChange}
@@ -3715,105 +3715,6 @@ export function LocalQuotationBuilder({
               >
                 ↷
               </button>
-              <button type="button" onClick={() => void saveToSoftware()} disabled={isPending} className="inline-flex h-9 items-center bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:bg-zinc-400">Save to Software</button>
-              <ClickAwayWrapper
-                className="relative"
-                buttonClassName="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
-                buttonLabel="Downloads"
-                open={openToolbarDropdown === "downloads"}
-                onOpenChange={(open) => setOpenToolbarDropdown(open ? "downloads" : null)}
-              >
-                <div
-                  className="fixed inset-x-3 bottom-3 top-3 z-50 flex w-auto max-w-none flex-col overflow-hidden rounded-lg border border-zinc-300 bg-white text-xs shadow-lg xl:absolute xl:inset-x-auto xl:bottom-auto xl:right-0 xl:top-auto xl:z-30 xl:mt-2 xl:w-[560px] xl:max-w-[calc(100vw-2rem)]"
-                  onClickCapture={(event) => {
-                    const target = event.target;
-                    if (target instanceof Element && target.closest("a[href]")) {
-                      setOpenToolbarDropdown(null);
-                    }
-                  }}
-                >
-                  <div className="border-b border-zinc-200 px-4 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Downloads</p>
-                      <button
-                        type="button"
-                        onClick={() => setOpenToolbarDropdown(null)}
-                        aria-label="Close downloads"
-                        className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 xl:hidden"
-                      >
-                        Close
-                      </button>
-                    </div>
-                    <p className="mt-1 text-[11px] text-zinc-500">
-                      Preview and export client and supplier documents from the current saved server quotation.
-                    </p>
-                  </div>
-                  <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 xl:max-h-[68vh] xl:flex-none">
-                    <div className="grid gap-4">
-                      <section>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Client Documents</p>
-                        <div className="mt-2 grid gap-2">
-                          <DownloadMenuRow
-                            disabled={workspace.has_unsaved_changes}
-                            title="Quotation"
-                            description="Client-facing commercial quote."
-                            previewHref={`/quotations/${workspace.server_quotation_id}/pdf`}
-                            previewLabel="Preview"
-                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-pdf`}
-                            extraAction={{ label: "Download Excel", run: () => exportQuotationToExcel(workspace.server_quotation_id) }}
-                          />
-                          <DownloadMenuRow
-                            disabled={workspace.has_unsaved_changes}
-                            title="Specification Sheet"
-                            description="Technical product specification."
-                            previewHref={`/quotations/${workspace.server_quotation_id}/specification`}
-                            previewLabel="Preview"
-                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-specification`}
-                          />
-                          <DownloadMenuRow
-                            disabled={workspace.has_unsaved_changes}
-                            title="Presentation"
-                            description="Visual client presentation."
-                            previewHref={`/quotations/${workspace.server_quotation_id}/presentation`}
-                            previewLabel="Preview"
-                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-presentation`}
-                            extraAction={{ label: "Download PPTX", run: () => exportPresentationToPptx(workspace.server_quotation_id) }}
-                          />
-                          <DownloadMenuRow
-                            disabled={workspace.has_unsaved_changes}
-                            title="Order Confirmation"
-                            description="Client approval confirmation."
-                            previewHref={`/quotations/${workspace.server_quotation_id}/order-confirmation`}
-                            previewLabel="Preview / Edit"
-                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-order-confirmation`}
-                          />
-                        </div>
-                      </section>
-                      <section>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Supplier Documents</p>
-                        <div className="mt-2 grid gap-2">
-                          <DownloadMenuRow
-                            disabled={workspace.has_unsaved_changes}
-                            title="Procurement RFQ"
-                            description="Supplier request for quotation."
-                            previewHref={`/quotations/${workspace.server_quotation_id}/procurement-rfq`}
-                            previewLabel="Preview / Edit"
-                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-procurement-rfq`}
-                          />
-                          <DownloadMenuRow
-                            disabled={workspace.has_unsaved_changes}
-                            title="Purchase Order"
-                            description="Supplier purchase order."
-                            previewHref={`/quotations/${workspace.server_quotation_id}/purchase-order`}
-                            previewLabel="Preview / Edit"
-                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-purchase-order`}
-                          />
-                        </div>
-                      </section>
-                    </div>
-                  </div>
-                </div>
-              </ClickAwayWrapper>
               <ClickAwayWrapper
                 className="relative"
                 buttonClassName="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -3821,7 +3722,7 @@ export function LocalQuotationBuilder({
                 open={openToolbarDropdown === "columns"}
                 onOpenChange={(open) => setOpenToolbarDropdown(open ? "columns" : null)}
               >
-                <div className="absolute right-0 z-30 mt-2 flex w-[760px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden border border-zinc-300 bg-white text-xs text-zinc-600 shadow-lg">
+                <div className="absolute right-0 xl:left-0 xl:right-auto z-30 mt-2 flex w-[760px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden border border-zinc-300 bg-white text-xs text-zinc-600 shadow-lg">
                   <div className="border-b border-zinc-200 px-4 py-3">
                     <p className="text-[10px] font-bold uppercase text-zinc-500">Local Column Settings</p>
                     <p className="mt-1 text-xs text-zinc-500">
@@ -4195,6 +4096,111 @@ export function LocalQuotationBuilder({
                   </div>
                 </div>
               </ClickAwayWrapper>
+              <div className="flex border border-zinc-300 text-xs font-semibold">
+                <button type="button" onClick={() => setView("client")} className={`h-9 px-3 ${view === "client" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}>Client View</button>
+                <button type="button" onClick={() => setView("internal")} className={`h-9 border-l border-zinc-300 px-3 ${view === "internal" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}>Internal View</button>
+              </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2" data-builder-header-cluster="actions">
+              <button type="button" onClick={() => void saveToSoftware()} disabled={isPending} className="inline-flex h-9 items-center bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:bg-zinc-400">Save to Software</button>
+              <ClickAwayWrapper
+                className="relative"
+                buttonClassName="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                buttonLabel="Downloads"
+                open={openToolbarDropdown === "downloads"}
+                onOpenChange={(open) => setOpenToolbarDropdown(open ? "downloads" : null)}
+              >
+                <div
+                  className="fixed inset-x-3 bottom-3 top-3 z-50 flex w-auto max-w-none flex-col overflow-hidden rounded-lg border border-zinc-300 bg-white text-xs shadow-lg xl:absolute xl:inset-x-auto xl:bottom-auto xl:right-0 xl:top-auto xl:z-30 xl:mt-2 xl:w-[560px] xl:max-w-[calc(100vw-2rem)]"
+                  onClickCapture={(event) => {
+                    const target = event.target;
+                    if (target instanceof Element && target.closest("a[href]")) {
+                      setOpenToolbarDropdown(null);
+                    }
+                  }}
+                >
+                  <div className="border-b border-zinc-200 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Downloads</p>
+                      <button
+                        type="button"
+                        onClick={() => setOpenToolbarDropdown(null)}
+                        aria-label="Close downloads"
+                        className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 xl:hidden"
+                      >
+                        Close
+                      </button>
+                    </div>
+                    <p className="mt-1 text-[11px] text-zinc-500">
+                      Preview and export client and supplier documents from the current saved server quotation.
+                    </p>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 xl:max-h-[68vh] xl:flex-none">
+                    <div className="grid gap-4">
+                      <section>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Client Documents</p>
+                        <div className="mt-2 grid gap-2">
+                          <DownloadMenuRow
+                            disabled={workspace.has_unsaved_changes}
+                            title="Quotation"
+                            description="Client-facing commercial quote."
+                            previewHref={`/quotations/${workspace.server_quotation_id}/pdf`}
+                            previewLabel="Preview"
+                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-pdf`}
+                            extraAction={{ label: "Download Excel", run: () => exportQuotationToExcel(workspace.server_quotation_id) }}
+                          />
+                          <DownloadMenuRow
+                            disabled={workspace.has_unsaved_changes}
+                            title="Specification Sheet"
+                            description="Technical product specification."
+                            previewHref={`/quotations/${workspace.server_quotation_id}/specification`}
+                            previewLabel="Preview"
+                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-specification`}
+                          />
+                          <DownloadMenuRow
+                            disabled={workspace.has_unsaved_changes}
+                            title="Presentation"
+                            description="Visual client presentation."
+                            previewHref={`/quotations/${workspace.server_quotation_id}/presentation`}
+                            previewLabel="Preview"
+                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-presentation`}
+                            extraAction={{ label: "Download PPTX", run: () => exportPresentationToPptx(workspace.server_quotation_id) }}
+                          />
+                          <DownloadMenuRow
+                            disabled={workspace.has_unsaved_changes}
+                            title="Order Confirmation"
+                            description="Client approval confirmation."
+                            previewHref={`/quotations/${workspace.server_quotation_id}/order-confirmation`}
+                            previewLabel="Preview / Edit"
+                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-order-confirmation`}
+                          />
+                        </div>
+                      </section>
+                      <section>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Supplier Documents</p>
+                        <div className="mt-2 grid gap-2">
+                          <DownloadMenuRow
+                            disabled={workspace.has_unsaved_changes}
+                            title="Procurement RFQ"
+                            description="Supplier request for quotation."
+                            previewHref={`/quotations/${workspace.server_quotation_id}/procurement-rfq`}
+                            previewLabel="Preview / Edit"
+                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-procurement-rfq`}
+                          />
+                          <DownloadMenuRow
+                            disabled={workspace.has_unsaved_changes}
+                            title="Purchase Order"
+                            description="Supplier purchase order."
+                            previewHref={`/quotations/${workspace.server_quotation_id}/purchase-order`}
+                            previewLabel="Preview / Edit"
+                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-purchase-order`}
+                          />
+                        </div>
+                      </section>
+                    </div>
+                  </div>
+                </div>
+              </ClickAwayWrapper>
               <Link href={`/quotations/${workspace.server_quotation_id}`} className="inline-flex h-9 items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Summary</Link>
               <ClickAwayWrapper
                 className="relative"
@@ -4204,6 +4210,7 @@ export function LocalQuotationBuilder({
                 onOpenChange={(open) => setOpenToolbarDropdown(open ? "more" : null)}
               >
                 <div className="absolute right-0 z-30 mt-2 grid min-w-[220px] gap-2 border border-zinc-300 bg-white p-2 text-xs shadow-lg">
+                  <p className="px-3 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Local Builder mode</p>
                   <button type="button" onClick={exportBackup} className="h-9 border border-zinc-300 bg-white px-3 text-left font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
                     Export Backup JSON
                   </button>
@@ -4221,12 +4228,7 @@ export function LocalQuotationBuilder({
               <div className="inline-flex h-9 items-center border border-emerald-900 bg-emerald-50 px-3 text-xs font-semibold text-emerald-950">
                 Final Total: {formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total, readPricingRule(workspace.layout_settings))}
               </div>
-            </div>
-          </div>
-          <div className="flex justify-start xl:justify-end">
-            <div className="flex border border-zinc-300 text-xs font-semibold">
-              <button type="button" onClick={() => setView("client")} className={`h-9 px-3 ${view === "client" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}>Client View</button>
-              <button type="button" onClick={() => setView("internal")} className={`h-9 border-l border-zinc-300 px-3 ${view === "internal" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}>Internal View</button>
+              </div>
             </div>
           </div>
         </div>
