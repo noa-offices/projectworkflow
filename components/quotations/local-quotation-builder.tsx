@@ -3783,21 +3783,21 @@ export function LocalQuotationBuilder({
                 ↷
               </button>
               <ClickAwayWrapper
-                className="relative"
+                className="relative xl:static"
                 buttonClassName="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
                 buttonLabel="Columns"
                 open={openToolbarDropdown === "columns"}
                 onOpenChange={(open) => setOpenToolbarDropdown(open ? "columns" : null)}
               >
-                <div className="absolute right-0 xl:left-0 xl:right-auto z-30 mt-2 flex w-[760px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden border border-zinc-300 bg-white text-xs text-zinc-600 shadow-lg">
+                <div className="absolute right-0 xl:right-3 xl:top-full z-30 mt-2 xl:mt-1 flex w-[760px] max-w-[calc(100vw-2rem)] xl:max-w-[calc(100vw-1.5rem)] max-h-[calc(100dvh-10rem)] flex-col overflow-hidden border border-zinc-300 bg-white text-xs text-zinc-600 shadow-lg">
                   <div className="border-b border-zinc-200 px-4 py-3">
                     <p className="text-[10px] font-bold uppercase text-zinc-500">Local Column Settings</p>
                     <p className="mt-1 text-xs text-zinc-500">
                       Column changes stay in this IndexedDB workspace until you use Save to Software.
                     </p>
                   </div>
-                  <div className="max-h-[68vh] overflow-y-auto px-4 py-3">
-                    <div className="grid gap-3 xl:grid-cols-2">
+                  <div className="max-h-[68vh] min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                    <div className="grid items-start gap-3 xl:grid-cols-2">
                       <fieldset className="border border-zinc-200 bg-zinc-50 p-3">
                         <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
                           Specification Display
