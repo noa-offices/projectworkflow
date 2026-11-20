@@ -106,7 +106,8 @@ function ClickAwayWrapper({
   return (
     <div
       ref={wrapperRef}
-      className={className}
+      // While open, the whole menu sits above the floating NOA launcher (z-40); closed buttons keep their normal stacking.
+      className={isOpen ? `${className ?? ""} z-50` : className}
       data-state-key={dataStateKey}
     >
       <button type="button" className={buttonClassName} onClick={() => setOpen(!isOpen)}>
