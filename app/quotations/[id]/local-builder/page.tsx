@@ -349,6 +349,13 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
             triggerClassName="inline-flex h-9 items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
           />
         }
+        preSendFacts={{
+          clientName: resolvedDocumentSetup.header.clientDisplayName,
+          contactEmail: resolvedDocumentSetup.header.contactEmail,
+          paymentTerms: resolvedDocumentSetup.commercial.paymentTerms,
+          validity: resolvedDocumentSetup.commercial.validity,
+          deliveryTerms: resolvedDocumentSetup.commercial.deliveryTerms,
+        }}
         initialWorkspace={initialWorkspace}
         materialGroups={materialGroups ?? []}
         materials={materials ?? []}
