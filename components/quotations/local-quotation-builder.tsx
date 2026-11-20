@@ -31,6 +31,9 @@ import { FinishImagePreview } from "@/components/quotations/finish-image-uploade
 import { SharedQuotationMoreMenu } from "@/components/quotations/shared-quotation-row-details-panel";
 import { runPreSendChecks, type PreSendDocument, type PreSendTarget } from "@/lib/quotations/pre-send-checks";
 import { preSendRowsFromWorkspace } from "@/lib/local/pre-send-rows";
+import { canMergeHistory, nextHistoryGroup, runInHistoryBatch, withHistoryBatch } from "@/lib/local/history-batch";
+import { bulkDeletePlan, bulkPercentMessage, bulkPercentPatch, canTakeBulkPercent, duplicateRowsBelow, moveRowsToSectionEnd, parseBulkPercent } from "@/lib/local/bulk-row-actions";
+import { LocalBulkActionBar } from "@/components/quotations/local-bulk-action-bar";
 import { clearReconfiguredPriceRounding, reconfigureLocalRows, reconfigureTarget, type ReconfigureChanges, type ReconfigureTarget } from "./local-reconfigure";
 import {
   FinishSelectionsEditor,
@@ -1821,6 +1824,13 @@ export function LocalQuotationBuilder({
   const [specExpandedRowIds, setSpecExpandedRowIds] = useState<Set<string>>(() => new Set());
   // A collapsed section remembers its size (items + sub sections) when it was folded; it opens by itself when something is added.
   const [collapsedSections, setCollapsedSections] = useState<Map<string, number>>(() => new Map());
+  // Bulk row selection: plain React state (never saved, not in the workspace or the undo history); cleared after every bulk action.
+  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => new Set());
+  const lastSelectedRowIdRef = useRef<string | null>(null);
+  const [bulkPercentText, setBulkPercentText] = useState("");
+  const [bulkMoveTarget, setBulkMoveTarget] = useState("");
+  const [bulkConfirmingDelete, setBulkConfirmingDelete] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState("");
   const [saveLibraryChoiceRowId, setSaveLibraryChoiceRowId] = useState<string | null>(null);
   const [saveLibraryMode, setSaveLibraryMode] = useState<"new" | "existing">("new");
   const [saveLibraryTemplateSearch, setSaveLibraryTemplateSearch] = useState("");
@@ -1859,6 +1869,7 @@ export function LocalQuotationBuilder({
   const importRef = useRef<HTMLInputElement | null>(null);
   const lastPersistedSignatureRef = useRef<string | null>(null);
   const historyGroupRef = useRef<{ key: string; timestamp: number } | null>(null);
+  const historyBatchRef = useRef<string | null>(null);
   const clientSnapshot = (workspace.client_snapshot ?? {}) as Record<string, unknown>;
   const projectSnapshot = (workspace.project_snapshot ?? {}) as Record<string, unknown>;
   const quotationSnapshot = ((workspace.header_snapshot ?? {}) as { quotation?: Record<string, unknown> }).quotation ?? {};
@@ -2187,6 +2198,122 @@ export function LocalQuotationBuilder({
       </>
     );
   };
+  // ── Bulk row actions (local builder only). Every action runs the existing row helpers inside ONE history step. ──
+  const selectableRowIds = useMemo(() => [...rowSerialByItemId.entries()].sort((a, b) => a[1] - b[1]).map(([id]) => id), [rowSerialByItemId]);
+  const visibleSelectableRowIds = useMemo(() => {
+    const itemSection = new Map(workspace.items.map((item) => [item.id, item.section_id]));
+    return selectableRowIds.filter((id) => {
+      const sectionId = itemSection.get(id);
+      if (!sectionId) return true;
+      const parentId = sectionsById.get(sectionId)?.parent_section_id;
+      const folded = (id: string) => collapsedSections.has(id) && (sectionSizeById.get(id) ?? 0) <= (collapsedSections.get(id) ?? 0);
+      return !folded(sectionId) && !(parentId && folded(parentId));
+    });
+  }, [selectableRowIds, workspace.items, sectionsById, collapsedSections, sectionSizeById]);
+  const activeSelectedIds = selectableRowIds.filter((id) => selectedRowIds.has(id));
+  const bulkDelete = bulkDeletePlan(workspace.items, new Set(activeSelectedIds));
+  const bulkMoveSections = orderedSectionRows
+    .filter((section) => !(section.section_kind === "main" && (childrenByParent.get(section.id)?.length ?? 0) > 0))
+    .map((section) => {
+      const parent = section.parent_section_id ? sectionsById.get(section.parent_section_id) : null;
+      const title = section.section_title.trim() || "Untitled section";
+      return { id: section.id, label: parent ? `${parent.section_title.trim() || "Main section"} / ${title}` : title };
+    });
+  function toggleRowSelected(itemId: string, withRange: boolean) {
+    setBulkConfirmingDelete(false);
+    setSelectedRowIds((current) => {
+      const next = new Set(current);
+      const anchor = lastSelectedRowIdRef.current;
+      const from = anchor ? visibleSelectableRowIds.indexOf(anchor) : -1;
+      const to = visibleSelectableRowIds.indexOf(itemId);
+      if (withRange && from >= 0 && to >= 0) {
+        for (const id of visibleSelectableRowIds.slice(Math.min(from, to), Math.max(from, to) + 1)) next.add(id);
+      } else if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+    lastSelectedRowIdRef.current = itemId;
+  }
+  function setSectionSelected(sectionId: string, selected: boolean) {
+    const ids = visibleSelectableRowIds.filter((id) => workspace.items.find((item) => item.id === id)?.section_id === sectionId);
+    setBulkConfirmingDelete(false);
+    setSelectedRowIds((current) => {
+      const next = new Set(current);
+      for (const id of ids) if (selected) next.add(id); else next.delete(id);
+      return next;
+    });
+  }
+  function finishBulkAction(message: string) {
+    setSelectedRowIds(new Set());
+    lastSelectedRowIdRef.current = null;
+    setBulkConfirmingDelete(false);
+    setBulkMessage(message);
+    window.setTimeout(() => setBulkMessage((current) => (current === message ? "" : current)), 4000);
+  }
+  function applyBulkPercent() {
+    const parsed = parseBulkPercent(bulkPercentText);
+    if (!parsed.ok) {
+      setBulkMessage(parsed.message);
+      return;
+    }
+    const rows = workspace.items.filter((item) => activeSelectedIds.includes(item.id));
+    const eligible = rows.filter(canTakeBulkPercent);
+    runInHistoryBatch(historyBatchRef, () => {
+      for (const item of eligible) updateItem(item.id, bulkPercentPatch(parsed.value));
+    });
+    setBulkPercentText("");
+    finishBulkAction(bulkPercentMessage(eligible.length, rows.length - eligible.length));
+  }
+  function duplicateSelectedRows() {
+    const ids = new Set(activeSelectedIds);
+    if (!ids.size) return;
+    runInHistoryBatch(historyBatchRef, () => {
+      commit((current) => duplicateRowsBelow(current, ids, (source) => `${source.id}-copy-${crypto.randomUUID()}`, localNow()));
+    });
+    finishBulkAction(`Duplicated ${ids.size} ${ids.size === 1 ? "row" : "rows"}.`);
+  }
+  function moveSelectedRows() {
+    if (!bulkMoveTarget) return;
+    const check = moveRowsToSectionEnd(workspace, activeSelectedIds, bulkMoveTarget);
+    if (!check.ok) {
+      setBulkMessage(check.message);
+      return;
+    }
+    const ids = [...activeSelectedIds];
+    const target = bulkMoveTarget;
+    runInHistoryBatch(historyBatchRef, () => {
+      commit((current) => {
+        const result = moveRowsToSectionEnd(current, ids, target);
+        return result.ok ? result.workspace : current;
+      });
+    });
+    setBulkMoveTarget("");
+    finishBulkAction(`Moved ${check.moved} ${check.moved === 1 ? "row" : "rows"}.`);
+  }
+  function deleteSelectedRows() {
+    const plan = bulkDelete;
+    if (!plan.ids.length) return;
+    runInHistoryBatch(historyBatchRef, () => {
+      for (const id of plan.ids) removeItem(id);
+    });
+    finishBulkAction(plan.done);
+  }
+  const sectionSelectControl = (sectionId: string) => {
+    const ids = visibleSelectableRowIds.filter((id) => workspace.items.find((item) => item.id === id)?.section_id === sectionId);
+    const all = ids.length > 0 && ids.every((id) => selectedRowIds.has(id));
+    return (
+      <input
+        type="checkbox"
+        checked={all}
+        disabled={!ids.length}
+        onChange={(event) => setSectionSelected(sectionId, event.target.checked)}
+        aria-label="Select all rows in this section"
+        title="Select all rows in this section"
+        className="h-3.5 w-3.5 shrink-0 print:hidden"
+      />
+    );
+  };
+  // ── end of bulk row actions ──
 
   const layoutSettings = localLayoutSettings(workspace.layout_settings);
   const layoutColumns = columnsForLayoutMode(workspace.layout_mode);
@@ -2500,18 +2627,14 @@ export function LocalQuotationBuilder({
       return;
     }
     setLocalDraftSaved(false);
-    const mode = options.mode ?? "push";
+    // Inside a bulk action (runInHistoryBatch) every commit joins the batch's own history step; otherwise the options are unchanged.
+    const historyOptions = withHistoryBatch(historyBatchRef.current, options);
+    const mode = historyOptions.mode ?? "push";
     const now = Date.now();
     setWorkspace((current) => {
       const resolved = typeof next === "function" ? next(current) : next;
       if (mode !== "skip") {
-        const currentHistoryGroup = historyGroupRef.current;
-        const canMerge =
-          mode === "merge" &&
-          Boolean(options.groupKey) &&
-          currentHistoryGroup !== null &&
-          currentHistoryGroup.key === options.groupKey &&
-          now - currentHistoryGroup.timestamp <= localHistoryMergeWindowMs;
+        const canMerge = canMergeHistory(historyGroupRef.current, historyOptions, now, localHistoryMergeWindowMs);
 
         if (!canMerge) {
           setHistoryPast((previous) => [
@@ -2521,12 +2644,7 @@ export function LocalQuotationBuilder({
         }
 
         setHistoryFuture([]);
-        historyGroupRef.current =
-          mode === "merge" && options.groupKey
-            ? (canMerge
-              ? historyGroupRef.current
-              : { key: options.groupKey, timestamp: now })
-            : null;
+        historyGroupRef.current = nextHistoryGroup(historyGroupRef.current, historyOptions, canMerge, now);
       }
       const stamped = { ...resolved, has_unsaved_changes: true, updated_at: localNow() };
       return recalculateWorkspace(stamped);
@@ -5058,6 +5176,25 @@ export function LocalQuotationBuilder({
 
           <div className="hidden w-full xl:block">
             <style>{compactRowsCss}</style>
+            <style>{"@media screen { tr[data-selected=\"true\"] > td { background-color: rgb(240 249 255); } }"}</style>
+            <LocalBulkActionBar
+              count={activeSelectedIds.length}
+              percentText={bulkPercentText}
+              onPercentText={setBulkPercentText}
+              onApplyPercent={applyBulkPercent}
+              onDuplicate={duplicateSelectedRows}
+              sections={bulkMoveSections}
+              moveTarget={bulkMoveTarget}
+              onMoveTarget={setBulkMoveTarget}
+              onMove={moveSelectedRows}
+              deleteQuestion={bulkDelete.question}
+              confirmingDelete={bulkConfirmingDelete}
+              onAskDelete={() => setBulkConfirmingDelete(true)}
+              onConfirmDelete={deleteSelectedRows}
+              onCancelDelete={() => setBulkConfirmingDelete(false)}
+              onClear={() => { setSelectedRowIds(new Set()); lastSelectedRowIdRef.current = null; setBulkConfirmingDelete(false); }}
+              message={bulkMessage}
+            />
             <QuotationSheetTable
               columns={sheetColumns}
               compactRows={compactRows}
@@ -5125,6 +5262,7 @@ export function LocalQuotationBuilder({
                         <td colSpan={totalColumns} data-section-id={section.id} className={`relative border border-zinc-300 px-3 py-2 uppercase tracking-wide ${sectionTitleClass(section)}`} style={section.row_height ? { height: `${section.row_height}px` } : undefined}>
                           <div className="flex items-center justify-between gap-3">
                             {sectionCollapseControl(section.id, "light")}
+                            {sectionSelectControl(section.id)}
                             <input value={section.section_title} onChange={(event) => updateSection(section.id, { section_title: event.target.value })} className="min-w-0 flex-1 bg-transparent outline-none" />
                             <div className="flex gap-2 text-[11px] normal-case">
                               <button type="button" onClick={() => moveSection(section.id, -1)} className="border border-zinc-300 bg-white px-2 py-1 hover:border-emerald-900 hover:text-emerald-900">Up</button>
@@ -5346,7 +5484,7 @@ export function LocalQuotationBuilder({
                                 case "manual_serial":
                                   return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}><div className="grid h-full content-center"><input value={item.manual_serial ?? ""} onChange={(event) => updateItem(item.id, { manual_serial: keepTypedValue(event.target.value) })} className="w-full bg-transparent text-center text-xs outline-none" /></div></td>;
                                 case "s_no":
-                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}>{rowSerial || "-"}</td>;
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}>{rowSerial ? <input type="checkbox" checked={selectedRowIds.has(item.id)} onChange={() => undefined} onClick={(event) => toggleRowSelected(item.id, event.shiftKey)} aria-label={`Select row ${rowSerial}`} className="mr-1 h-3.5 w-3.5 align-middle print:hidden" /> : null}{rowSerial || "-"}</td>;
                                 case "code":
                                   return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.item_code_snapshot ?? ""} onChange={(event) => updateItem(item.id, { item_code_snapshot: event.target.value || null })} className="w-full bg-transparent text-xs font-semibold outline-none" /></div></td>;
                                 case "specified_image":
@@ -5419,6 +5557,7 @@ export function LocalQuotationBuilder({
                               <tr
                                 data-row-id={item.id}
                                 className={`align-middle ${isOptionalChild ? "bg-red-50/20" : ""} ${detailsModalRowId === item.id ? "bg-emerald-50/80" : ""}`}
+                                data-selected={selectedRowIds.has(item.id) ? "true" : undefined}
                                 style={{ minHeight: `${itemRowMinHeight(item.row_height)}px` }}
                                 onBlur={() => {
                                   const patch = trimmedTextPatch(item as unknown as Record<string, unknown>, TRIM_ON_BLUR_ITEM_FIELDS);
