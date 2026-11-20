@@ -422,7 +422,7 @@ test("selector: Add / Add to Local Workspace and the Save to My Collection block
   assert.ok(source.includes("defaultName={defaultSetupName({ mainCode: savedSetupState.mainCode, templateName: template.template_name })}"));
   // Hydration only runs from the picker; with no setup chosen `replay` stays null and the banner never renders.
   assert.match(source, /useState<\{ key: number; problems: SetupProblem\[\][^>]*\} \| null>\(null\)/);
-  assert.equal((source.match(/openSetupFromCollection/g) ?? []).length, 4, "shared by My Collection, client history and local reconfigure");
+  assert.equal((source.match(/openSetupFromCollection/g) ?? []).length, 5, "shared by My Collection, Add from Gallery, client history and local reconfigure");
   assert.equal((source.match(/setReplay\(/g) ?? []).length >= 2, true);
   assert.ok(source.includes("{!reconfigure && replay && replay.templateId === template.id ? ("));
   // The line object never receives replay data.

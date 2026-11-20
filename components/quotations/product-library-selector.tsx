@@ -12,6 +12,7 @@ import { LINE_RECIPE_FORM_FIELD, buildLineConfigurationRecipe, withConfiguration
 import { baseModelPlacement } from "@/lib/products/saved-setups/base-model-placement";
 import { AddFromClientHistoryButton } from "./add-from-client-history-button";
 import { historyDiscountNote, type HistoryDiscount } from "@/lib/quotations/client-history/client-history-view";
+import { AddFromGalleryButton } from "./add-from-gallery-button";
 import { AddFromMyCollectionButton } from "./add-from-my-collection-button";
 import { SetupReplayBanner } from "./setup-replay-banner";
 import { evaluateSetup, specificationDrift, type SetupProblem } from "@/lib/products/saved-setups/replay";
@@ -1674,6 +1675,7 @@ export function ProductLibrarySelector({
         {triggerLabel}
       </button>
       <AddFromMyCollectionButton onChoose={openSetupFromCollection} />
+      <AddFromGalleryButton onChoose={openSetupFromCollection} />
       {clientHistory ? (
         <AddFromClientHistoryButton clientId={clientHistory.clientId} clientName={clientHistory.clientName} quoteCurrency={clientHistory.quoteCurrency ?? null} onOpenProduct={openProductFromHistory} onOpenSetup={openSetupFromHistory} />
       ) : null}</> : null}
