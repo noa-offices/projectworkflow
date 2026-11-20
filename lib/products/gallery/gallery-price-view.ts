@@ -36,6 +36,13 @@ export function galleryPriceLayout(sourceTotals: ReadonlyArray<{ currency: strin
   return { headline: source.join(" + "), lines: [] as string[], notes: [] as string[], muted: aed?.noRate ? ["No rate set"] : [] };
 }
 
+/** The compact list row: one bold amount on the left, the rest small and muted on the right. */
+export function galleryPriceRow(layout: ReturnType<typeof galleryPriceLayout>) {
+  if (layout.headline) return { primary: layout.headline, secondary: layout.lines.length ? layout.lines.join(" + ") : layout.muted[0] ?? "" };
+  const [first = "", ...rest] = layout.lines;
+  return { primary: first, secondary: rest.join(" + ") };
+}
+
 export function galleryPriceView(templateId: string, price: GalleryPriceState) {
   if (!price) return null;
   if (price === "loading") return { kind: "loading" } as const;

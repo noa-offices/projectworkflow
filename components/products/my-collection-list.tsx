@@ -24,7 +24,7 @@ import type { SetupListItem } from "@/lib/products/saved-setups/saved-setups-ser
 
 // Picture. The stored path is resolved to a URL by the existing image helper (signed in the browser under the
 // user's own session); no picture file is ever copied. No path or failure => neutral placeholder.
-export function SetupThumbnail({ path, alt, size = 48 }: { path: string | null; alt: string; size?: number }) {
+export function SetupThumbnail({ path, alt, size = 48, fill = false }: { path: string | null; alt: string; size?: number; fill?: boolean }) {
   const [url, setUrl] = useState("");
 
   useEffect(() => {
@@ -49,8 +49,10 @@ export function SetupThumbnail({ path, alt, size = 48 }: { path: string | null; 
 
   return (
     <div
-      style={{ width: size, height: size }}
-      className="flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 text-[10px] text-zinc-400"
+      style={fill ? undefined : { width: size, height: size }}
+      className={fill
+        ? "flex h-full w-full items-center justify-center overflow-hidden text-[10px] text-zinc-400"
+        : "flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 text-[10px] text-zinc-400"}
     >
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
