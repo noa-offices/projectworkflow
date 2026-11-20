@@ -55,6 +55,7 @@ export function QuotationSheetTable({
   minimumTableWidth,
   onColumnWidthChange,
   onRowHeightChange,
+  compactRows = false,
 }: {
   quotationId: string;
   columns: SheetColumn[];
@@ -62,6 +63,8 @@ export function QuotationSheetTable({
   minimumTableWidth?: number;
   onColumnWidthChange?: (key: string, width: number) => void;
   onRowHeightChange?: (type: "item" | "section", id: string, height: number) => void;
+  /** Screen-only shorter rows (display only; set by the builder, never saved). */
+  compactRows?: boolean;
 }) {
   const [widths, setWidths] = useState(() =>
     Object.fromEntries(columns.map((column) => [column.key, clampWidth(column.width)])),
@@ -292,6 +295,7 @@ export function QuotationSheetTable({
         <table
           className="w-full table-fixed border-collapse text-left text-xs"
           style={{ minWidth: tableMinWidth }}
+          data-compact-rows={compactRows ? "true" : undefined}
           onMouseDown={startResize}
         >
           <colgroup>

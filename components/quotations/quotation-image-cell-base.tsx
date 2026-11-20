@@ -227,6 +227,7 @@ export function QuotationImageCellBase({
       onMouseDown={handleCellMouseDown}
       onPaste={handlePaste}
       className={resolvedContainerClassName}
+      data-quotation-image-cell
       aria-label={fieldLabel ?? (canEdit ? "Quotation image cell. Paste image or upload." : "Quotation image cell")}
     >
       {previewUrl ? (
@@ -236,6 +237,7 @@ export function QuotationImageCellBase({
           rel="noreferrer"
           className={`${boxClassName} ${selectedClassName}`}
           style={boxStyle}
+          data-quotation-image-box
         >
           <span ref={frameRef} className="absolute inset-0 h-full w-full overflow-hidden">
             <QuotationImageFrame
@@ -252,6 +254,7 @@ export function QuotationImageCellBase({
           ref={frameRef}
           className={`${boxClassName} ${selectedClassName} px-2 text-center text-[11px] text-zinc-400`}
           style={boxStyle}
+          data-quotation-image-box
         >
           {canEdit ? (emptyHint ?? "Paste image or upload") : "No image"}
         </span>
@@ -266,7 +269,7 @@ export function QuotationImageCellBase({
             className="sr-only"
             onChange={handleFileChange}
           />
-          <div className={resolvedControlsClassName}>
+          <div className={resolvedControlsClassName} data-quotation-image-controls>
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
