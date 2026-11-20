@@ -4,7 +4,7 @@ import { Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SetupThumbnail } from "@/components/products/my-collection-list";
 import { GalleryDetailDialog } from "@/components/products/product-gallery-detail-dialog";
-import { GalleryRatesContext, ProductGalleryPrice } from "@/components/products/product-gallery-price";
+import { GalleryRatesContext, ProductGalleryPriceRow } from "@/components/products/product-gallery-price";
 import { ProductGalleryRatePopover } from "@/components/products/product-gallery-rate-popover";
 import { ConfirmRemoveDialog, EditGalleryItemDialog, MergeGalleryItemDialog, RemovedItemsDialog } from "@/components/products/product-gallery-dialogs";
 import { toolbarContainer, toolbarControl, toolbarPrimaryButton, toolbarSecondaryButton } from "@/components/products/product-toolbar-styles";
@@ -21,7 +21,6 @@ import {
   clearedGalleryFilters,
   filterOptionLabel,
   hasActiveGalleryFilters,
-  quotedText,
   showingText,
   updateTagText,
   UPDATE_AVAILABLE_TEXT,
@@ -41,10 +40,6 @@ type Dialog = { kind: "edit" | "remove" | "merge" | "detail"; item: GalleryListI
 const control = `${toolbarControl} w-full`;
 const smallButton =
   "inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800";
-const removeButton =
-  "inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700";
-const openButton =
-  "inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800";
 
 function Select({ label, value, onChange, children }: { label: string; value: string; onChange: (value: string) => void; children: React.ReactNode }) {
   return (
@@ -57,57 +52,57 @@ function Select({ label, value, onChange, children }: { label: string; value: st
 function GalleryCard({ item, editMode, canCurate, canSeePrices, price, onDialog }: {
   item: GalleryListItem; editMode: boolean; canCurate: boolean; canSeePrices: boolean; price: GalleryPriceState; onDialog: (dialog: Dialog) => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointer = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setMenuOpen(false); };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("pointerdown", onPointer); document.removeEventListener("keydown", onKey); };
+  }, [menuOpen]);
+  const kind = [item.brandName, item.categoryName].filter(Boolean).join(" · ");
+  const open = (kindOfDialog: "edit" | "remove" | "merge") => { setMenuOpen(false); onDialog({ kind: kindOfDialog, item }); };
+  const menuItem = "block w-full px-3 py-1.5 text-left text-xs font-semibold text-[#1d1f1c] hover:bg-[#f1f2ee] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800";
   return (
-    <li className={`flex h-full min-w-0 flex-col rounded-lg border border-zinc-200 bg-white shadow-sm`} data-testid="gallery-card">
-      <div className="p-2 pb-0">
-        <div className="relative flex h-24 items-center justify-center overflow-hidden rounded-md border border-zinc-100 bg-zinc-50">
-          <button type="button" onClick={() => onDialog({ kind: "detail", item })} aria-label={`Open details of ${item.displayName}`} className="flex h-full w-full items-center justify-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">
-            <SetupThumbnail path={item.picture?.kind === "template" ? item.picture.path : null} alt={item.displayName} size={88} />
-          </button>
-          <span className="pointer-events-none absolute left-1.5 top-1.5 z-10 flex flex-col items-start gap-1">
-            {updateTagText(item) ? <span className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-900">{updateTagText(item)}</span> : null}
-            {!item.available ? <span className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-900">No longer available</span> : null}
-          </span>
-          {item.currency ? <span className="pointer-events-none absolute right-1.5 top-1.5 z-10 rounded-full border border-zinc-200 bg-white/90 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-600" title="Currency">{item.currency}</span> : null}
-        </div>
-      </div>
-      <div className="flex flex-1 flex-col gap-1 p-2.5">
-        <h3 className="min-w-0 text-sm font-semibold text-zinc-950">
-          <button type="button" onClick={() => onDialog({ kind: "detail", item })} title={item.displayName} className="block w-full truncate text-left hover:text-emerald-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">{item.displayName}</button>
-        </h3>
-        {item.brandName ? <p className="truncate text-xs text-zinc-500" title={item.brandName}>{item.brandName}</p> : null}
-        {item.itemCode ? <p className="truncate text-xs text-zinc-500" title={item.itemCode}>{item.itemCode}</p> : null}
-        <div className="flex flex-wrap gap-1">
-          {item.categoryName ? <span className="max-w-full truncate rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[11px] text-zinc-600" title="Category">{item.categoryName}</span> : null}
-          {item.subCategoryName ? <span className="max-w-full truncate rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[11px] text-zinc-600" title="Sub-category">{item.subCategoryName}</span> : null}
-        </div>
-        {item.tags.length ? (
-          <div className="flex flex-wrap gap-1">
-            {item.tags.map((tag) => <span key={tag} className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-900">{tag}</span>)}
+    <li className="flex min-w-0 flex-col text-[#1d1f1c]" data-testid="gallery-card">
+      <div className="relative aspect-[4/3] overflow-hidden rounded-[10px] bg-[#f1f2ee]">
+        <button type="button" onClick={() => onDialog({ kind: "detail", item })} aria-label={`Open details of ${item.displayName}`} className="block h-full w-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">
+          <SetupThumbnail path={item.picture?.kind === "template" ? item.picture.path : null} alt={item.displayName} fill />
+        </button>
+        <span className="pointer-events-none absolute left-2 top-2 z-10 flex flex-col items-start gap-1">
+          {updateTagText(item) ? <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">{updateTagText(item)}</span> : null}
+          {!item.available ? <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">No longer available</span> : null}
+        </span>
+        {editMode ? (
+          <div ref={menuRef} className="absolute right-2 top-2 z-20">
+            <button type="button" aria-haspopup="menu" aria-expanded={menuOpen} aria-label={`Edit options for ${item.displayName}`} onClick={() => setMenuOpen((openNow) => !openNow)}
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-sm font-bold leading-none text-[#1d1f1c] shadow-sm hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">…</button>
+            {menuOpen ? (
+              <div role="menu" className="absolute right-0 mt-1 w-40 overflow-hidden rounded-md border border-[#e6e8e1] bg-white py-1 shadow-md">
+                <button type="button" role="menuitem" className={menuItem} onClick={() => open("edit")} aria-label={`Rename or edit tags of ${item.displayName}`}>Rename / Tags</button>
+                <button type="button" role="menuitem" className={`${menuItem} text-red-700`} onClick={() => open("remove")} aria-label={`Remove ${item.displayName} from the gallery`}>Remove</button>
+                {canCurate ? <button type="button" role="menuitem" className={menuItem} onClick={() => open("merge")} aria-label={`Merge ${item.displayName} into another item`}>Merge into...</button> : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
-        <p className="text-xs font-medium text-zinc-700">{quotedText(item.quotedCount)}</p>
-        {canSeePrices ? <div className="min-h-24 min-w-0"><ProductGalleryPrice templateId={item.templateId} price={price} /></div> : null}
-        <div className="mt-auto grid grid-cols-2 gap-2 pt-2">
-          <button type="button" className={`${openButton} col-span-2`} onClick={() => onDialog({ kind: "detail", item })} aria-label={`Details of ${item.displayName}`}>Details</button>
-          {editMode ? (
-            <>
-              <button type="button" className={smallButton} onClick={() => onDialog({ kind: "edit", item })} aria-label={`Edit ${item.displayName}`}>Edit</button>
-              <button type="button" className={removeButton} onClick={() => onDialog({ kind: "remove", item })} aria-label={`Remove ${item.displayName} from the gallery`}>Remove</button>
-              {canCurate ? <button type="button" className={`${smallButton} col-span-2`} onClick={() => onDialog({ kind: "merge", item })} aria-label={`Merge ${item.displayName} into another item`}>Merge into...</button> : null}
-            </>
-          ) : null}
-        </div>
       </div>
+      <h3 className="mt-2.5 min-w-0 text-[15px] font-semibold leading-snug">
+        <button type="button" onClick={() => onDialog({ kind: "detail", item })} title={item.displayName} className="block w-full truncate text-left hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800">{item.displayName}</button>
+      </h3>
+      {kind ? <p className="truncate text-[13px] text-[#5d6159]" title={kind}>{kind}</p> : null}
+      {canSeePrices ? <ProductGalleryPriceRow templateId={item.templateId} price={price} /> : null}
     </li>
   );
 }
 
 function Skeleton() {
   return (
-    <ul className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5" aria-hidden="true" data-testid="gallery-skeleton">
+    <ul className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-x-5 gap-y-7" aria-hidden="true" data-testid="gallery-skeleton">
       {Array.from({ length: 10 }, (_, index) => (
-        <li key={index} className="h-56 animate-pulse rounded-lg border border-zinc-200 bg-zinc-100" />
+        <li key={index} className="aspect-[4/3] animate-pulse rounded-[10px] bg-[#f1f2ee]" />
       ))}
     </ul>
   );
@@ -424,7 +419,7 @@ export function ProductGalleryBrowser({ canEdit, canCurate, canSeePrices, initia
         {phase === "ready" && items.length > 0 ? (
           <>
             <p className="text-sm text-zinc-600" aria-live="polite">{showingText(items.length, total)}</p>
-            <ul className="grid auto-rows-fr grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+            <ul className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-x-5 gap-y-7">
               {items.map((item) => (
                 <GalleryCard key={item.id} item={item} editMode={editing} canCurate={canCurate} canSeePrices={canSeePrices} price={prices[item.id]} onDialog={setDialog} />
               ))}

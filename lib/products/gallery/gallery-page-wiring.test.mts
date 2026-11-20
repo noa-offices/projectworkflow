@@ -53,7 +53,7 @@ test("edit mode: one Edit/Done toggle for editors only; cards are clean until it
   const card = browser.slice(browser.indexOf("function GalleryCard"), browser.indexOf("function Skeleton"));
   const editBranch = card.indexOf("{editMode ? (");
   assert.ok(editBranch > 0, "an edit-mode branch exists on the card");
-  assert.ok(card.indexOf(">Edit</button>") > editBranch, "Edit only inside the edit-mode branch");
+  assert.ok(card.indexOf(">Rename / Tags</button>") > editBranch, "Rename / Tags (the existing edit dialog) only inside the edit-mode branch");
   assert.ok(card.indexOf(">Remove</button>") > editBranch, "Remove only inside the edit-mode branch");
   assert.doesNotMatch(code(browser), /Unhide|>Hide<|onUnhide|isHidden|"Hidden"|>Hidden</, "no Hide, Unhide or Hidden badge in the UI any more");
   assert.ok(card.indexOf("{canCurate ? <button") > editBranch, "Merge is behind canCurate inside the edit-mode branch");
@@ -128,7 +128,8 @@ test("the toolbar reuses the Product Library styles; search, Clear filters, coun
   assert.match(browser, /aria-expanded=\{filtersOpen\}/);
   assert.match(browser, /Load more/);
   assert.doesNotMatch(code(browser), /IntersectionObserver|onScroll/, "a button, not infinite scroll");
-  assert.match(browser, /min-\[480px\]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5/, "denser grid: 1-2, 3, 4 and 5 columns");
+  assert.match(browser, /grid grid-cols-\[repeat\(auto-fill,minmax\(210px,1fr\)\)\] gap-x-5 gap-y-7/, "compact auto-fill grid, 28px rows / 20px columns");
+  assert.doesNotMatch(browser, /grid-cols-1 gap-3 min-\[480px\]:grid-cols-2 lg:grid-cols-3/, "not the old fixed 2-column steps");
 });
 
 test("every state is there: loading skeleton, empty, empty after a filter, and a failure with Retry", () => {
@@ -140,13 +141,12 @@ test("every state is there: loading skeleton, empty, empty after a filter, and a
 
 test("cards show the agreed facts: Category and Sub-category as two separate labels, no joined string", () => {
   assert.match(browser, /SetupThumbnail path=\{item\.picture\?\.kind === "template" \? item\.picture\.path : null\}/);
-  assert.match(browser, /quotedText\(item\.quotedCount\)/);
-  assert.match(browser, /\{item\.categoryName \? <span[^\n]*title="Category">\{item\.categoryName\}<\/span>/);
-  assert.match(browser, /\{item\.subCategoryName \? <span[^\n]*title="Sub-category">\{item\.subCategoryName\}<\/span>/);
+  assert.match(browser, /const kind = \[item\.brandName, item\.categoryName\]\.filter\(Boolean\)\.join\(" · "\)/, "one muted BRAND · Category line");
+  assert.doesNotMatch(browser.slice(browser.indexOf("function GalleryCard"), browser.indexOf("function Skeleton")), /quotedText|item\.tags|item\.subCategoryName|item\.itemCode|specification/, "tags, quoted count and the rest stay in the popup");
   assert.doesNotMatch(code(browser), /categoryLine/);
   assert.match(browser, /No longer available/);
   assert.doesNotMatch(code(browser), />Hidden</, "no Hidden badge any more");
-  assert.match(browser, />Details</);
+  assert.match(browser, /Open details of \$\{item\.displayName\}/, "the picture is a real button");
   assert.doesNotMatch(browser, /View product|productLibraryHref|\/products\?template=|next\/link/, "the link that left the gallery is gone");
 });
 
@@ -221,8 +221,7 @@ test("PR G-C diff guard: at most 12 files, no SQL, no package change, and none o
 
 test("details popup: a Details button, the picture and the title open it with the item id; the old link is gone", () => {
   const card = browser.slice(browser.indexOf("function GalleryCard"), browser.indexOf("function Skeleton"));
-  assert.equal((card.match(/onDialog\(\{ kind: "detail", item \}\)/g) ?? []).length, 3, "button, picture and title");
-  assert.match(card, /<button .*>Details<\/button>/);
+  assert.equal((card.match(/onDialog\(\{ kind: "detail", item \}\)/g) ?? []).length, 2, "the picture and the name, both real buttons");
   assert.match(browser, /dialog\?\.kind === "detail" \? <GalleryDetailDialog itemId=\{dialog\.item\.id\}/, "the popup gets the item id");
   assert.doesNotMatch(browser, /\{editing && dialog\?\.kind === "detail"/, "the popup is not an edit-mode feature: every viewer gets it");
   assert.match(browser, /<GalleryDetailDialog [^\n]*canEdit=\{canEdit\}/, "the popup gets the server capability, not the page toggle");

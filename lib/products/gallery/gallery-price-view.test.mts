@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { galleryAedView } from "./gallery-aed";
-import { configureReasonText, fetchGalleryPriceBatches, galleryPriceLayout, galleryPriceView, type GalleryPriceEntry } from "./gallery-price-view";
+import { configureReasonText, fetchGalleryPriceBatches, galleryPriceLayout, galleryPriceRow, galleryPriceView, type GalleryPriceEntry } from "./gallery-price-view";
 
 const template = "11111111-1111-4111-8111-111111111111";
 const priced = (key: "current" | "needs_check" | "no_price_list" = "current"): Extract<GalleryPriceEntry, { status: "priced" }> => ({
@@ -107,7 +107,39 @@ test("loading keeps the box height and no access renders nothing", () => {
   const block = readFileSync(new URL("../../../components/products/product-gallery-price.tsx", import.meta.url), "utf8");
   const browser = readFileSync(new URL("../../../components/products/product-gallery-browser.tsx", import.meta.url), "utf8");
   assert.match(block, /const box = detail \? "min-h-24 p-4" : "min-h-24 p-3"/);
-  assert.match(block, /kind === "loading"\) return \(\s*<div[^>]*\$\{box\}/);
-  assert.match(browser, /canSeePrices \? <div className="min-h-24 min-w-0">/);
+  assert.match(block, /kind === "loading"\) return \(\s*<div[^>]*\$\{box\}/, "the popup keeps its box height while loading");
+  const row = block.slice(block.indexOf("export function ProductGalleryPriceRow"));
+  assert.match(row, /const row = "mt-2 flex min-h-9 /, "the list row has one fixed height in every state");
+  assert.match(row, /kind === "loading"\) return \(\s*<div[^>]*\$\{row\}/);
+  assert.match(browser, /\{canSeePrices \? <ProductGalleryPriceRow templateId=\{item\.templateId\} price=\{price\} \/> : null\}/, "no price access: no price row, no divider");
   assert.equal(galleryPriceView(template, undefined), null);
+});
+
+test("compact list row: AED bold on the left, source amount small on the right", () => {
+  const eur = [{ currency: "EUR", amount: 435 }];
+  const price = (sourceTotals: typeof eur): GalleryPriceEntry => ({ ...priced(), sourceTotals });
+  const aed = (totals: typeof eur, defaults: Record<string, number>) => galleryAedView(price(totals), defaults, {});
+  assert.deepEqual(galleryPriceRow(galleryPriceLayout(eur, aed(eur, { EUR: 4.5 }))), { primary: "≈ AED 1,958", secondary: "EUR 435.00" });
+  assert.deepEqual(galleryPriceRow(galleryPriceLayout(eur, aed(eur, {}))), { primary: "EUR 435.00", secondary: "No rate set" });
+  assert.deepEqual(galleryPriceRow(galleryPriceLayout(eur, null)), { primary: "EUR 435.00", secondary: "" });
+  const many = [...eur, { currency: "USD", amount: 100 }];
+  assert.deepEqual(galleryPriceRow(galleryPriceLayout(many, aed(many, { EUR: 4.5 }))), { primary: "EUR 435.00", secondary: "USD 100.00 + EUR ≈ AED 1,958" }, "no combined AED: first amount bold, the rest small (partial AED kept)");
+  assert.deepEqual(galleryPriceRow(galleryPriceLayout(many, aed(many, { EUR: 4.5, USD: 3.67 }))), { primary: "≈ AED 2,325", secondary: "EUR 435.00 + USD 100.00" });
+});
+
+test("compact card: name, kind line, Update available pill for editors only, edit menu, no storage or admin client, dimension not in the list", () => {
+  const browser = readFileSync(new URL("../../../components/products/product-gallery-browser.tsx", import.meta.url), "utf8");
+  const block = readFileSync(new URL("../../../components/products/product-gallery-price.tsx", import.meta.url), "utf8");
+  const card = browser.slice(browser.indexOf("function GalleryCard"), browser.indexOf("function Skeleton"));
+  assert.match(card, /aspect-\[4\/3\] overflow-hidden rounded-\[10px\] bg-\[#f1f2ee\]/);
+  assert.match(card, /text-\[15px\] font-semibold/);
+  assert.match(card, /\{updateTagText\(item\) \? <span[^>]*text-amber-800/, "the pill uses the editors-only updateAvailable flag");
+  assert.match(card, /\{editMode \? \(\s*<div ref=\{menuRef\} className="absolute right-2 top-2/, "the menu button is only in edit mode, top-right of the picture");
+  for (const label of ["Rename / Tags", "Remove", "Merge into..."]) assert.ok(card.includes(`>${label}</button>`), label);
+  assert.match(card, /\{canCurate \? <button[^\n]*>Merge into\.\.\.<\/button> : null\}/);
+  assert.doesNotMatch(card, /dimension/i, "the list data has no dimension; it stays in the popup");
+  assert.match(block, /<strong className="min-w-0 truncate text-\[15px\] font-bold/);
+  assert.match(block, /<span className="shrink-0 truncate text-xs text-\[#5d6159\]">/);
+  assert.doesNotMatch(block, /PriceStatusBadge[^\n]*\n[^\n]*Row/);
+  for (const source of [browser, block]) assert.doesNotMatch(source, /localStorage|sessionStorage|createAdminClient|supabase\/admin|service_role/i);
 });
