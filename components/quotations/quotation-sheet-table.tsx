@@ -288,7 +288,7 @@ export function QuotationSheetTable({
           </div>
         </div>
       ) : null}
-      <div ref={mainScrollRef} className="w-full overflow-x-auto overscroll-x-contain pb-2">
+      <div ref={mainScrollRef} className="w-full overflow-x-auto overscroll-x-contain pb-2 pr-24 print:pr-0">
         <table
           className="w-full table-fixed border-collapse text-left text-xs"
           style={{ minWidth: tableMinWidth }}
