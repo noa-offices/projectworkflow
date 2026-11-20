@@ -180,6 +180,19 @@ type HistoryCommitOptions = {
   mode?: HistoryCommitMode;
 };
 
+// Compact rows: screen-only CSS keyed on the table's data-compact-rows attribute. Nothing is saved, and print/PDF never see it (@media screen).
+const compactRowsCss = [
+  "@media screen {",
+  '[data-compact-rows="true"] tbody td{padding-top:.25rem !important;padding-bottom:.25rem !important}',
+  '[data-compact-rows="true"] tbody td textarea,[data-compact-rows="true"] tbody td input{font-size:11px !important}',
+  '[data-compact-rows="true"] tbody [style*="min-height"]{min-height:0 !important}',
+  '[data-compact-rows="true"] [data-quotation-image-box]{height:64px !important;min-height:0 !important}',
+  '[data-compact-rows="true"] [data-quotation-image-controls]{max-height:0;overflow:hidden;opacity:0}',
+  '[data-compact-rows="true"] [data-quotation-image-cell]:hover [data-quotation-image-controls],[data-compact-rows="true"] [data-quotation-image-cell]:focus-within [data-quotation-image-controls]{max-height:6rem;opacity:1}',
+  '[data-compact-rows="true"] td[data-cell="specification"]:not([data-spec-open="true"]):not(:focus-within) textarea{max-height:2.6em !important;overflow:hidden !important}',
+  '[data-compact-rows="true"] td[data-cell="specification"]:not([data-spec-open="true"]):not(:focus-within) dl{display:none}',
+  "}",
+].join("\n");
 const minColumnWidth = 40;
 const maxColumnWidth = 800;
 const minRowHeight = 40;
@@ -1798,6 +1811,11 @@ export function LocalQuotationBuilder({
   const [detailsModalRowId, setDetailsModalRowId] = useState<string | null>(null);
   const detailsPanelRef = useRef<HTMLElement | null>(null);
   const [collapsedOptionalParentIds, setCollapsedOptionalParentIds] = useState<Set<string>>(() => new Set());
+  // Display-only view state (plain React state: never saved, reset on reload, not part of undo/redo or any export).
+  const [compactRows, setCompactRows] = useState(false);
+  const [specExpandedRowIds, setSpecExpandedRowIds] = useState<Set<string>>(() => new Set());
+  // A collapsed section remembers its size (items + sub sections) when it was folded; it opens by itself when something is added.
+  const [collapsedSections, setCollapsedSections] = useState<Map<string, number>>(() => new Map());
   const [saveLibraryChoiceRowId, setSaveLibraryChoiceRowId] = useState<string | null>(null);
   const [saveLibraryMode, setSaveLibraryMode] = useState<"new" | "existing">("new");
   const [saveLibraryTemplateSearch, setSaveLibraryTemplateSearch] = useState("");
@@ -2058,6 +2076,55 @@ export function LocalQuotationBuilder({
     }
     return map;
   }, [childrenByParent, orderedSectionRows, sectionTotalById]);
+  const { sectionSizeById, sectionItemCountById } = useMemo(() => {
+    const own = new Map<string, number>();
+    for (const item of workspace.items) if (item.section_id) own.set(item.section_id, (own.get(item.section_id) ?? 0) + 1);
+    const size = new Map<string, number>();
+    const items = new Map<string, number>();
+    for (const section of orderedSectionRows) {
+      const children = section.section_kind === "main" ? childrenByParent.get(section.id) ?? [] : [];
+      items.set(section.id, (own.get(section.id) ?? 0) + children.reduce((sum, child) => sum + (own.get(child.id) ?? 0), 0));
+      size.set(section.id, (items.get(section.id) ?? 0) + children.length);
+    }
+    return { sectionSizeById: size, sectionItemCountById: items };
+  }, [childrenByParent, orderedSectionRows, workspace.items]);
+  const isSectionCollapsed = (sectionId: string) => collapsedSections.has(sectionId) && (sectionSizeById.get(sectionId) ?? 0) <= (collapsedSections.get(sectionId) ?? 0);
+  // Something was added to a collapsed section: forget the fold (adjusted while rendering, no effect).
+  const grownCollapsedIds = [...collapsedSections].filter(([id, size]) => (sectionSizeById.get(id) ?? 0) > size).map(([id]) => id);
+  if (grownCollapsedIds.length) {
+    setCollapsedSections((current) => {
+      const next = new Map(current);
+      for (const id of grownCollapsedIds) next.delete(id);
+      return next;
+    });
+  }
+  const toggleSectionCollapsed = (sectionId: string) =>
+    setCollapsedSections((current) => {
+      const next = new Map(current);
+      if (isSectionCollapsed(sectionId)) next.delete(sectionId); else next.set(sectionId, sectionSizeById.get(sectionId) ?? 0);
+      return next;
+    });
+  const collapseAllSections = () => setCollapsedSections(new Map(orderedSectionRows.map((section) => [section.id, sectionSizeById.get(section.id) ?? 0])));
+  const expandAllSections = () => setCollapsedSections(new Map());
+  const sectionCollapseControl = (sectionId: string, tone: "dark" | "light") => {
+    const collapsed = isSectionCollapsed(sectionId);
+    const count = sectionItemCountById.get(sectionId) ?? 0;
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => toggleSectionCollapsed(sectionId)}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand section" : "Collapse section"}
+          title={collapsed ? "Expand section" : "Collapse section"}
+          className={`h-6 w-6 shrink-0 border text-[11px] font-bold normal-case leading-none ${tone === "dark" ? "border-white/30 text-white hover:bg-white/10" : "border-zinc-300 bg-white text-zinc-700 hover:border-emerald-900 hover:text-emerald-900"}`}
+        >
+          {collapsed ? "▸" : "▾"}
+        </button>
+        {collapsed ? <span className="shrink-0 text-[11px] font-normal normal-case opacity-70">{count} {count === 1 ? "item" : "items"}</span> : null}
+      </>
+    );
+  };
 
   const layoutSettings = localLayoutSettings(workspace.layout_settings);
   const layoutColumns = columnsForLayoutMode(workspace.layout_mode);
@@ -4096,6 +4163,15 @@ export function LocalQuotationBuilder({
                   </div>
                 </div>
               </ClickAwayWrapper>
+              <button
+                type="button"
+                onClick={() => setCompactRows((on) => !on)}
+                aria-pressed={compactRows}
+                title="Show shorter rows. Screen only: nothing is saved and print/PDF are unchanged."
+                className={`inline-flex h-9 items-center border px-3 text-xs font-semibold transition ${compactRows ? "border-emerald-900 bg-emerald-900 text-white" : "border-zinc-300 bg-white text-zinc-700 hover:border-emerald-900 hover:text-emerald-900"}`}
+              >
+                Compact
+              </button>
               <div className="flex border border-zinc-300 text-xs font-semibold">
                 <button type="button" onClick={() => setView("client")} className={`h-9 px-3 ${view === "client" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}>Client View</button>
                 <button type="button" onClick={() => setView("internal")} className={`h-9 border-l border-zinc-300 px-3 ${view === "internal" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}>Internal View</button>
@@ -4211,6 +4287,8 @@ export function LocalQuotationBuilder({
               >
                 <div className="absolute right-0 z-30 mt-2 grid min-w-[220px] gap-2 border border-zinc-300 bg-white p-2 text-xs shadow-lg">
                   <p className="px-3 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Local Builder mode</p>
+                  <button type="button" onClick={collapseAllSections} className="h-9 border border-zinc-300 bg-white px-3 text-left font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Collapse all sections</button>
+                  <button type="button" onClick={expandAllSections} className="h-9 border border-zinc-300 bg-white px-3 text-left font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Expand all sections</button>
                   <button type="button" onClick={exportBackup} className="h-9 border border-zinc-300 bg-white px-3 text-left font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
                     Export Backup JSON
                   </button>
@@ -4871,8 +4949,10 @@ export function LocalQuotationBuilder({
           </div>
 
           <div className="hidden w-full xl:block">
+            <style>{compactRowsCss}</style>
             <QuotationSheetTable
               columns={sheetColumns}
+              compactRows={compactRows}
               key={sheetColumnSignature}
               minimumTableWidth={Math.max(1480, tableWidth)}
               onColumnWidthChange={(key, width) => updateColumnSetting(key, { width })}
@@ -4897,6 +4977,7 @@ export function LocalQuotationBuilder({
                         <tr>
                           <td colSpan={totalColumns} className={`relative border border-zinc-300 px-3 py-3 uppercase tracking-wide ${sectionTitleClass(section)}`} style={section.row_height ? { height: `${section.row_height}px` } : undefined}>
                               <div className="flex items-center justify-between gap-3">
+                                {sectionCollapseControl(section.id, "dark")}
                                 <input value={section.section_title} onChange={(event) => updateSection(section.id, { section_title: event.target.value })} className="min-w-0 flex-1 bg-transparent outline-none" />
                                 <div className="flex gap-2 text-[11px] normal-case">
                                   <button type="button" onClick={() => addSection("sub", section.id)} className="border border-white/20 px-2 py-1 hover:bg-white/10">+ Sub</button>
@@ -4915,6 +4996,9 @@ export function LocalQuotationBuilder({
                     );
                   }
 
+                  // Display-only folding: a sub section under a collapsed main section hides everything but the main section total row.
+                  const parentCollapsed = Boolean(section.parent_section_id && isSectionCollapsed(section.parent_section_id));
+                  const selfCollapsed = isSectionCollapsed(section.id);
                   const { childrenByParent: optionalChildrenByParent, topLevel: topLevelSectionItems } = orderedItemsWithOptionalChildren(workspace.items, section.id);
                   const sectionItems = topLevelSectionItems.flatMap((item) => [
                     { item, isOptionalChild: false },
@@ -4927,10 +5011,12 @@ export function LocalQuotationBuilder({
 
                   return (
                     <Fragment key={section.id}>
+                      {!parentCollapsed ? (<>
                       <InsertSectionRow canManage onAddMain={() => addSection("main", null, section.id)} onAddSub={() => addSection("sub", section.parent_section_id ?? null, section.id)} totalColumns={totalColumns} />
                       <tr>
                         <td colSpan={totalColumns} className={`relative border border-zinc-300 px-3 py-2 uppercase tracking-wide ${sectionTitleClass(section)}`} style={section.row_height ? { height: `${section.row_height}px` } : undefined}>
                           <div className="flex items-center justify-between gap-3">
+                            {sectionCollapseControl(section.id, "light")}
                             <input value={section.section_title} onChange={(event) => updateSection(section.id, { section_title: event.target.value })} className="min-w-0 flex-1 bg-transparent outline-none" />
                             <div className="flex gap-2 text-[11px] normal-case">
                               <button type="button" onClick={() => moveSection(section.id, -1)} className="border border-zinc-300 bg-white px-2 py-1 hover:border-emerald-900 hover:text-emerald-900">Up</button>
@@ -4942,6 +5028,8 @@ export function LocalQuotationBuilder({
                           <span aria-hidden="true" title="Drag to resize row" data-resize-row-id={section.id} data-resize-row-type="section" className="absolute bottom-0 left-0 h-2 w-full cursor-row-resize border-b-2 border-transparent transition hover:border-emerald-700" />
                         </td>
                       </tr>
+                      </>) : null}
+                      {!selfCollapsed && !parentCollapsed ? (<>
                       <tr className="bg-zinc-100 text-[11px] font-bold uppercase text-zinc-700">
                         {visibleColumns.map((col) => (
                           <th
@@ -5158,7 +5246,7 @@ export function LocalQuotationBuilder({
                                 case "proposed_image":
                                   return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="flex h-full items-center"><LocalQuotationImageCell field="proposed_image_url_snapshot" item={item} quotationId={workspace.server_quotation_id} rowHeight={imageCellHeight} updateItem={(patch) => updateItem(item.id, patch)} /></div></td>;
                                 case "specification":
-                                  return <td key={column.key} className={`${compactCellClassName} break-words whitespace-pre-wrap ${isOptionalChild ? "bg-red-50/40 pl-5" : ""}`}><div className="flex h-full min-h-full flex-col justify-center py-0.5 text-left"><div className="flex items-center gap-2">{hasOptionalChildren ? (<button type="button" onClick={() => setCollapsedOptionalParentIds((current) => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} className="h-5 w-5 border border-zinc-300 bg-white text-[11px] font-bold text-zinc-700" title={optionalChildrenCollapsed ? "Show optional items" : "Hide optional items"}>{optionalChildrenCollapsed ? ">" : "v"}</button>) : isOptionalChild ? (<span className="h-5 w-5 border-l border-red-200" />) : null}{showSpecificationTitle ? (<input value={item.item_name_snapshot ?? specificationTitle} onChange={(event) => updateItem(item.id, { item_name_snapshot: keepTypedValue(event.target.value) })} className="min-w-0 flex-1 bg-transparent text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50" />) : (<span className="text-[10px] font-semibold uppercase text-zinc-400">Title hidden in specification</span>)}{isOptionalQuotationItem(item) ? <OptionalBadge /> : null}{item.is_rate_only || item.line_style === "rate_only" ? <RateOnlyBadge /> : null}</div><LocalAutoResizeTextarea value={cleanedSpecification ?? ""} onChange={(value) => { const original = item.specification_snapshot; const suppressed = metadataSettings.size && original !== specificationWithoutDuplicateDimension(original, item.size_snapshot); const suffix = suppressed ? original?.split(/\r?\n/).at(-1) : null; updateItem(item.id, { specification_snapshot: keepTypedValue([value, suffix].filter(Boolean).join("\n")) }); }} placeholder="Click to add specification" className="mt-1 w-full resize-none overflow-hidden bg-transparent text-xs leading-5 text-zinc-700 outline-none focus:bg-emerald-50" />{showSpecificationDimension ? (<label className="mt-1 flex items-center gap-1 text-xs leading-4 text-zinc-500"><span className="font-semibold">Dimension:</span><input value={item.size_snapshot ?? dimensionValue ?? ""} onChange={(event) => updateItem(item.id, { size_snapshot: keepTypedValue(event.target.value) })} placeholder="Click to add dimension" className="min-w-0 flex-1 bg-transparent text-xs text-zinc-600 outline-none focus:bg-emerald-50" /></label>) : null}{specificationDetailRows.length ? (<dl className="mt-2 grid gap-0.5 border-t border-zinc-200 pt-1.5 text-[11px] leading-4 text-zinc-500">{specificationDetailRows.map(([label, value]) => (<div key={label} className="grid grid-cols-[88px_1fr] gap-1"><dt className="font-semibold text-zinc-500">{label}:</dt><dd className="text-zinc-600">{value}</dd></div>))}</dl>) : null}</div></td>;
+                                  return <td key={column.key} data-cell="specification" data-spec-open={specExpandedRowIds.has(item.id) ? "true" : undefined} className={`${compactCellClassName} break-words whitespace-pre-wrap ${isOptionalChild ? "bg-red-50/40 pl-5" : ""}`}><div className="flex h-full min-h-full flex-col justify-center py-0.5 text-left"><div className="flex items-center gap-2">{hasOptionalChildren ? (<button type="button" onClick={() => setCollapsedOptionalParentIds((current) => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} className="h-5 w-5 border border-zinc-300 bg-white text-[11px] font-bold text-zinc-700" title={optionalChildrenCollapsed ? "Show optional items" : "Hide optional items"}>{optionalChildrenCollapsed ? ">" : "v"}</button>) : isOptionalChild ? (<span className="h-5 w-5 border-l border-red-200" />) : null}{showSpecificationTitle ? (<input value={item.item_name_snapshot ?? specificationTitle} onChange={(event) => updateItem(item.id, { item_name_snapshot: keepTypedValue(event.target.value) })} className="min-w-0 flex-1 bg-transparent text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50" />) : (<span className="text-[10px] font-semibold uppercase text-zinc-400">Title hidden in specification</span>)}{isOptionalQuotationItem(item) ? <OptionalBadge /> : null}{item.is_rate_only || item.line_style === "rate_only" ? <RateOnlyBadge /> : null}</div><LocalAutoResizeTextarea value={cleanedSpecification ?? ""} onChange={(value) => { const original = item.specification_snapshot; const suppressed = metadataSettings.size && original !== specificationWithoutDuplicateDimension(original, item.size_snapshot); const suffix = suppressed ? original?.split(/\r?\n/).at(-1) : null; updateItem(item.id, { specification_snapshot: keepTypedValue([value, suffix].filter(Boolean).join("\n")) }); }} placeholder="Click to add specification" className="mt-1 w-full resize-none overflow-hidden bg-transparent text-xs leading-5 text-zinc-700 outline-none focus:bg-emerald-50" />{showSpecificationDimension ? (<label className="mt-1 flex items-center gap-1 text-xs leading-4 text-zinc-500"><span className="font-semibold">Dimension:</span><input value={item.size_snapshot ?? dimensionValue ?? ""} onChange={(event) => updateItem(item.id, { size_snapshot: keepTypedValue(event.target.value) })} placeholder="Click to add dimension" className="min-w-0 flex-1 bg-transparent text-xs text-zinc-600 outline-none focus:bg-emerald-50" /></label>) : null}{specificationDetailRows.length ? (<dl className="mt-2 grid gap-0.5 border-t border-zinc-200 pt-1.5 text-[11px] leading-4 text-zinc-500">{specificationDetailRows.map(([label, value]) => (<div key={label} className="grid grid-cols-[88px_1fr] gap-1"><dt className="font-semibold text-zinc-500">{label}:</dt><dd className="text-zinc-600">{value}</dd></div>))}</dl>) : null}{compactRows ? (<button type="button" onClick={() => setSpecExpandedRowIds((current) => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} aria-expanded={specExpandedRowIds.has(item.id)} className="mt-1 self-start text-[10px] font-semibold text-emerald-900 underline print:hidden">{specExpandedRowIds.has(item.id) ? "Show less" : "Show more"}</button>) : null}</div></td>;
                                 case "origin":
                                   return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="flex h-full min-h-full flex-col justify-center gap-1.5 py-0.5 text-center leading-5" onBlur={(event) => { const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null; if (!event.currentTarget.contains(nextTarget)) { setEditingOriginCellId((current) => (current === item.id ? null : current)); } }}>{isEditingOriginCell ? (<><input autoFocus value={item.brand_name_snapshot ?? (originDisplay.brand ?? "")} onChange={(event) => updateItem(item.id, { brand_name_snapshot: keepTypedValue(event.target.value) })} placeholder="Brand" className="w-full bg-transparent text-center text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50" /><input value={item.origin_snapshot ?? (originDisplay.origin ?? "")} onChange={(event) => updateItem(item.id, { origin_snapshot: keepTypedValue(event.target.value) })} placeholder="Origin" className="w-full bg-transparent text-center text-xs text-zinc-700 outline-none focus:bg-emerald-50" /><input value={item.supplier_name_snapshot ?? (originDisplay.supplier ?? "")} onChange={(event) => updateItem(item.id, { supplier_name_snapshot: keepTypedValue(event.target.value) })} placeholder="Supplier" className="w-full bg-transparent text-center text-xs text-zinc-500 outline-none focus:bg-emerald-50" /></>) : (<button type="button" onClick={() => setEditingOriginCellId(item.id)} className="w-full bg-transparent text-center outline-none">{originDisplay.primaryLine ? (<span className="block text-xs font-semibold uppercase text-zinc-950">{originDisplay.primaryLine}</span>) : (<span className="block text-xs text-zinc-400">Click to add origin / supplier</span>)}{originDisplay.supplier ? (<span className="mt-1 block text-[11px] text-zinc-500">Supplier: {originDisplay.supplier}</span>) : null}</button>)}</div></td>;
                                 case "model":
@@ -5276,6 +5364,7 @@ export function LocalQuotationBuilder({
                           </div>
                         </td>
                       </tr>
+                      </>) : null}
                       {section.parent_section_id && sectionsById.get(section.parent_section_id)?.section_kind === "main" && nextSection?.parent_section_id !== section.parent_section_id ? (
                         <MainSectionTotalRow currency={workspace.currency} label={sectionsById.get(section.parent_section_id)?.section_title ?? ""} total={mainSectionTotalById.get(section.parent_section_id) ?? 0} totalColumns={totalColumns} pricingRule={readPricingRule(workspace.layout_settings)} />
                       ) : null}
