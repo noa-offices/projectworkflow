@@ -62,3 +62,9 @@ test("local builder only, and no price code in the builder diff", () => {
   const lib = read("lib/local/bulk-row-actions.ts");
   assert.doesNotMatch(lib, /workspaceTotals|itemLinePricing|workspaceItemDisplayPricing|quotation-pricing/, "the bulk helpers never compute a price");
 });
+
+test("single-row Remove goes through removeItemWithOptionals (same plan as bulk delete)", () => {
+  const src = read("components/quotations/local-quotation-builder.tsx");
+  assert.doesNotMatch(src, /onClick=\{\(\) => removeItem\(item\.id\)\}/);
+  assert.match(src, /function removeItemWithOptionals[\s\S]{0,200}bulkDeletePlan\(workspace\.items, new Set\(\[itemId\]\)\)/);
+});

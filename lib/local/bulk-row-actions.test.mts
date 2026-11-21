@@ -157,3 +157,27 @@ test("move to section: keeps relative order, goes to the end, optional children 
   assert.deepEqual(moveRowsToSectionEnd(ws, ["A-opt"], "s2"), { ok: false, message: "Optional items move with their main row. Select the main row too." });
   assert.deepEqual(moveRowsToSectionEnd(ws, [], "s2"), { ok: false, message: "Select at least one row to move." });
 });
+
+test("single-row delete reuses the bulk plan: parent removes its optional children, in ONE undo step, no orphan totals", () => {
+  const rows = [item("A", 0), item("A-opt", 1, { is_optional: true, parent_item_id: "A", include_in_total: true }), item("B", 2)];
+  const h = history(workspace(rows));
+  const before = h.state.workspace.totals.net_total;
+  const plan = bulkDeletePlan(h.state.workspace.items, new Set(["A"]));
+  assert.deepEqual(plan.ids, ["A", "A-opt"]);
+  assert.equal(plan.optionalCount, 1);
+  runInHistoryBatch(h.batchRef, () => { for (const id of plan.ids) h.removeItem(id); });
+  assert.deepEqual(h.state.workspace.items.map((entry) => entry.id), ["B"]);
+  assert.equal(h.state.workspace.totals.net_total, 200, "only B counts; no orphan amount");
+  assert.equal(h.state.past.length, 1);
+  h.undo();
+  assert.deepEqual(h.state.workspace.items.map((entry) => entry.id), ["A", "A-opt", "B"]);
+  assert.equal(h.state.workspace.totals.net_total, before);
+});
+
+test("single-row delete of an optional child leaves the parent", () => {
+  const rows = [item("A", 0), item("A-opt", 1, { is_optional: true, parent_item_id: "A" })];
+  const h = history(workspace(rows));
+  const plan = bulkDeletePlan(h.state.workspace.items, new Set(["A-opt"]));
+  runInHistoryBatch(h.batchRef, () => { for (const id of plan.ids) h.removeItem(id); });
+  assert.deepEqual(h.state.workspace.items.map((entry) => entry.id), ["A"]);
+});
