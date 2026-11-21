@@ -3075,6 +3075,14 @@ export function LocalQuotationBuilder({
     }));
   }
 
+  /** Single-row remove: same plan as bulk delete, so a main row also removes its optional items, as one undo step. */
+  function removeItemWithOptionals(itemId: string) {
+    const plan = bulkDeletePlan(workspace.items, new Set([itemId]));
+    runInHistoryBatch(historyBatchRef, () => {
+      for (const id of plan.ids) removeItem(id);
+    });
+  }
+
   function removeSection(sectionId: string) {
     commit((current) => ({
       ...current,
@@ -5339,7 +5347,7 @@ export function LocalQuotationBuilder({
                                         </>
                                       ) : null}
                                       <button type="button" onClick={() => copyItem(item.id)} className="text-left text-emerald-900">Copy row</button>
-                                      <button type="button" onClick={() => removeItem(item.id)} className="text-left text-red-700">Remove</button>
+                                      <button type="button" onClick={() => removeItemWithOptionals(item.id)} className="text-left text-red-700">Remove</button>
                                     </div>
                                   </td>
                                 )}
@@ -5368,7 +5376,7 @@ export function LocalQuotationBuilder({
                                       ) : null}
                                       <button type="button" onClick={() => copyItem(item.id)} className="text-left text-emerald-900">Copy row</button>
                                       <button type="button" onClick={() => duplicateItem(item.id)} className="text-left text-zinc-700">Duplicate</button>
-                                      <button type="button" onClick={() => removeItem(item.id)} className="text-left text-red-700">Remove</button>
+                                      <button type="button" onClick={() => removeItemWithOptionals(item.id)} className="text-left text-red-700">Remove</button>
                                     </div>
                                   </td>
                                 )}
@@ -5543,7 +5551,7 @@ export function LocalQuotationBuilder({
                                         {reconfigureButton(item)}
                                         <button type="button" onClick={() => moveItem(section.id, item.id, -1)} aria-label="Move row up" title="Move row up" className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">▲</button>
                                         <button type="button" onClick={() => moveItem(section.id, item.id, 1)} aria-label="Move row down" title="Move row down" className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">▼</button>
-                                      <SharedQuotationMoreMenu actionButtons={(<>{item.item_type === "product" && item.source_template_id ? (<SaveLineToMyCollectionButton line={item} />) : null}{copiedRowClipboard ? (<><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "above")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row above</button><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "below")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row below</button></>) : null}<button type="button" onClick={() => copyItem(item.id)} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Copy row</button><button type="button" onClick={() => duplicateItem(item.id)} className="h-7 w-full border border-zinc-300 bg-white px-2 text-left text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Duplicate below</button><button type="button" onClick={() => removeItem(item.id)} className="h-7 w-full border border-red-200 bg-white px-2 text-left text-xs font-semibold text-red-700 transition hover:border-red-300 hover:text-red-800">Remove</button><SaveAsCustomItemButton row={item} /></>)} itemId={item.id} menuClassName="absolute right-0 z-30 mt-1 w-56 border border-zinc-300 bg-white p-2 text-left shadow-lg" mergeControl={(<><label className="grid gap-1"><span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span><select value={mergeModeForItem(item)} onChange={(event) => updateItem(item.id, updateItemMergeMode(item, event.target.value))} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"><option value="none">No merge</option><option value="merge_specification">Merge spec</option><option value="merge_full_row">Merge full row</option></select></label><label className="grid gap-1 mt-2"><span className="text-[10px] font-semibold uppercase text-zinc-500">Row Height (px)</span><input type="number" min={40} value={item.row_height || ""} onChange={(event) => updateItem(item.id, { row_height: event.target.value ? clampRowHeight(Number(event.target.value)) : null })} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" placeholder="Auto" /></label></>)} />
+                                      <SharedQuotationMoreMenu actionButtons={(<>{item.item_type === "product" && item.source_template_id ? (<SaveLineToMyCollectionButton line={item} />) : null}{copiedRowClipboard ? (<><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "above")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row above</button><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "below")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row below</button></>) : null}<button type="button" onClick={() => copyItem(item.id)} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Copy row</button><button type="button" onClick={() => duplicateItem(item.id)} className="h-7 w-full border border-zinc-300 bg-white px-2 text-left text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Duplicate below</button><button type="button" onClick={() => removeItemWithOptionals(item.id)} className="h-7 w-full border border-red-200 bg-white px-2 text-left text-xs font-semibold text-red-700 transition hover:border-red-300 hover:text-red-800">Remove</button><SaveAsCustomItemButton row={item} /></>)} itemId={item.id} menuClassName="absolute right-0 z-30 mt-1 w-56 border border-zinc-300 bg-white p-2 text-left shadow-lg" mergeControl={(<><label className="grid gap-1"><span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span><select value={mergeModeForItem(item)} onChange={(event) => updateItem(item.id, updateItemMergeMode(item, event.target.value))} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"><option value="none">No merge</option><option value="merge_specification">Merge spec</option><option value="merge_full_row">Merge full row</option></select></label><label className="grid gap-1 mt-2"><span className="text-[10px] font-semibold uppercase text-zinc-500">Row Height (px)</span><input type="number" min={40} value={item.row_height || ""} onChange={(event) => updateItem(item.id, { row_height: event.target.value ? clampRowHeight(Number(event.target.value)) : null })} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" placeholder="Auto" /></label></>)} />
                                       </div>
                                     </div>
                                   </td>;
@@ -5966,8 +5974,9 @@ export function LocalQuotationBuilder({
                             <button
                               type="button"
                               onClick={() => {
-                                if (window.confirm("Remove this quotation row?")) {
-                                  removeItem(item.id);
+                                const deletePlan = bulkDeletePlan(workspace.items, new Set([item.id]));
+                                if (window.confirm(deletePlan.optionalCount ? `Delete this row and ${deletePlan.optionalCount} optional ${deletePlan.optionalCount === 1 ? "item" : "items"}?` : "Remove this quotation row?")) {
+                                  removeItemWithOptionals(item.id);
                                   setMobileMoreItemId(null);
                                 }
                               }}
