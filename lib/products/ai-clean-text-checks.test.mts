@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ProductTemplateDraftOptionGroup } from "./product-template-draft";
-import { accessoryNamesFromSavedAccessoryPricing, buildAccessoryNameList, isSeatingRow, isValidShortDimension, isWordSubset, numbersInText } from "./ai-clean-text-checks";
+import { accessoryNamesFromSavedAccessoryPricing, buildAccessoryNameList, isSeatingFurnitureRow, isSeatingRow, isValidShortDimension, isWordSubset, numbersInText } from "./ai-clean-text-checks";
 
 const chairDimension = "Seat: H 415-540 x W 490 x D 450 mm, seat depth adjustment 405-465 mm; backrest H 600 mm; total: H 1130 x W 520 (without armrests) / 680 (with armrests) x D 615 mm";
 
@@ -108,4 +108,11 @@ test("seating gate: soft seating words count; exclusion words still win", () => 
   assert.equal(isSeatingRow({ displayName: "Bench desk" }), false);
   assert.equal(isSeatingRow({ displayName: "Lounge table" }), false);
   assert.equal(isSeatingRow({ displayName: "Workbench" }), false, "whole words only");
+});
+
+test("seating furniture gate: bench, sofa, stool, pouf are furniture; chairs and non-seating rows are not", () => {
+  for (const name of ["Bench for Comby (OXI_R) W:120 D:165.2", "Lounge Sofa 2-seater", "Counter stool", "Pouf", "Ottoman"]) assert.equal(isSeatingFurnitureRow({ displayName: name }), true, name);
+  assert.equal(isSeatingFurnitureRow({ category: "Seating", displayName: "Bench for Comby" }), true);
+  for (const name of ["Swivel Chair, Medium-High Back", "Visitor armchair", "Desk 1600", "Bench desk"]) assert.equal(isSeatingFurnitureRow({ displayName: name }), false, name);
+  assert.equal(isSeatingFurnitureRow({ groupLabel: "Task Chairs", displayName: "Bench" }), false, "chair group stays strict");
 });

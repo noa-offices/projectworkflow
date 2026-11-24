@@ -1,10 +1,10 @@
-import { buildAccessoryNameList, isSeatingRow, isWordSubset } from "./ai-clean-text-checks";
+import { buildAccessoryNameList, isSeatingFurnitureRow, isSeatingRow, isWordSubset } from "./ai-clean-text-checks";
 import { mapRows, type Row } from "./dimension-shortening";
 import type { ProductTemplateDraft } from "./product-template-draft";
 import { flattenBatchSpecificationTargets } from "./specification-enrichment-batch";
 
 // Pure logic for "Clean specification with AI" (seating rows only). Only row.specification is ever read or changed.
-export type SpecificationMode = "seating" | "accessory_only";
+export type SpecificationMode = "seating" | "seating_furniture" | "accessory_only";
 export type SpecificationTarget = { targetId: string; label: string; text: string; mode: SpecificationMode };
 export type SpecificationSuggestion = { targetId: string; specification: string };
 export type SpecificationUndoEntry = { targetId: string; before: string; after: string };
@@ -16,7 +16,8 @@ export function buildSpecificationTargets(draft: ProductTemplateDraft): Specific
   return flattenBatchSpecificationTargets(draft).flatMap((target) => {
     const text = target.currentSpecification?.trim();
     if (!text || target.kind === "option") return [];
-    const mode: SpecificationMode = isSeatingRow({ groupLabel: target.context.groupLabel, displayName: target.row.displayName ?? target.label }) ? "seating" : "accessory_only";
+    const where = { groupLabel: target.context.groupLabel, displayName: target.row.displayName ?? target.label };
+    const mode: SpecificationMode = isSeatingFurnitureRow(where) ? "seating_furniture" : isSeatingRow(where) ? "seating" : "accessory_only";
     return [{ targetId: target.targetId, label: target.label, text, mode }];
   });
 }

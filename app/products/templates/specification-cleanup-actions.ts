@@ -12,7 +12,7 @@ export async function runSpecificationCleanup(request: { items: { targetId: stri
   await requireProductLibraryManager();
   const { items, accessoryNames } = request ?? {};
   const valid = Array.isArray(items) && items.length > 0 && items.length <= SPECIFICATION_CLEANUP_BATCH_SIZE
-    && items.every((item) => item && typeof item.targetId === "string" && item.targetId.length > 0 && item.targetId.length <= 400 && typeof item.text === "string" && item.text.trim().length > 0 && item.text.length <= 5000 && (item.mode === "seating" || item.mode === "accessory_only"))
+    && items.every((item) => item && typeof item.targetId === "string" && item.targetId.length > 0 && item.targetId.length <= 400 && typeof item.text === "string" && item.text.trim().length > 0 && item.text.length <= 5000 && (item.mode === "seating" || item.mode === "seating_furniture" || item.mode === "accessory_only"))
     && new Set(items.map((item) => item.targetId)).size === items.length
     && Array.isArray(accessoryNames) && accessoryNames.length <= 60 && accessoryNames.every((name) => typeof name === "string" && name.length <= 80);
   if (!valid) return { ok: false, code: "invalid_request", message: "A valid list of specifications is required." };
