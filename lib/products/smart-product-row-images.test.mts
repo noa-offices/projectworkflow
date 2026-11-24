@@ -3,7 +3,8 @@ import test from "node:test";
 import type { ProductTemplateDraft, ProductTemplateDraftPriceMatrix } from "./product-template-draft.js";
 import { assertCompressedProductImageSize, clipboardImageFile, clipboardImageFileFromClipboard, formatProductImageSize, MAX_STAGED_PRODUCT_IMAGE_BYTES } from "./product-template-row-image-client.js";
 import { createSmartSetupReviewRouting } from "./smart-product-review-routing.js";
-import { baseModelSubgroupsForSmartSetupApply, canonicalSubgroupsForSmartSetupApply, disposeStagedReviewedRowImages, pendingRowImagesForSmartSetupApply, pendingSubgroupImagesForSmartSetupApply, reviewedRowImageKey, reviewedSubgroupImageKey, updateStagedReviewedRowImage, uploadPendingRowImagesAfterSave, type SmartReviewedPricingSubgroups, type StagedReviewedRowImage } from "./smart-product-row-images.js";
+import { productTemplateRowReferenceKey } from "./product-template-row-references.js";
+import { baseModelSubgroupsForSmartSetupApply, canonicalSubgroupsForSmartSetupApply, disposeStagedReviewedRowImages, pendingRowImagesForSmartSetupApply, pendingSubgroupImagesForSmartSetupApply, reviewedRowImageKey, savedPictureForReviewRow, displayedReviewRowPicture, reviewedSubgroupImageKey, updateStagedReviewedRowImage, uploadPendingRowImagesAfterSave, type SmartReviewedPricingSubgroups, type StagedReviewedRowImage } from "./smart-product-row-images.js";
 
 const pricedRow = (id: string) => ({ id, label: id, displayName: id, dimensions: null, currency: "EUR" as const, price: 10, specification: null, supplierCodes: [id], referenceCodes: [] });
 const matrix = (id: string, columns = [{ id: "price", label: "Price" }]): ProductTemplateDraftPriceMatrix => ({ id, label: id, columns, rows: [{ ...pricedRow(`${id}-row`), prices: Object.fromEntries(columns.map((column) => [column.id, 10])) }] });
@@ -100,4 +101,20 @@ test("final upload waits for template success and isolates partial failures", as
   assert.equal(uploaded.length, 0);
   const result = await uploadPendingRowImagesAfterSave<string, { rowId: string }>({ entries, templateSaved: true, resolveIdentity: (entry) => entry === "missing" ? null : { rowId: entry }, upload: async (entry) => { uploaded.push(entry); if (entry === "two") throw new Error("failed"); } });
   assert.deepEqual(result, { attempted: 2, failed: 1 }); assert.deepEqual(uploaded, ["one", "two"]);
+});
+
+test("direct-priced modular rows stage, apply as modular, and never touch pricing data", () => {
+  const direct = { ...pricedRow("direct-row"), role: "starter" as const };
+  const withDirect: ProductTemplateDraft = { ...draft, pricing: { ...draft.pricing, modularGroups: [{ id: "direct", label: "Direct", defaultDimensions: null, defaultSpecification: null, directRows: [direct] }] } };
+  const before = JSON.stringify(withDirect.pricing);
+  const plan = createSmartSetupReviewRouting(withDirect);
+  const staged = { [reviewedRowImageKey("modular:direct", "direct-row")]: image("modular:direct", "direct-row", "blob:direct") };
+  const pending = pendingRowImagesForSmartSetupApply(withDirect, plan, staged);
+  assert.deepEqual(pending.map((entry) => `${entry.pricingType}:${entry.rowId}`), ["modular:direct-row"]);
+  assert.equal(JSON.stringify(withDirect.pricing), before, "staging an image does not change pricing data");
+  // Pending state: saved picture lookup for the same key stays read-only and a staged picture wins.
+  const saved = { [productTemplateRowReferenceKey("modular", "direct", "direct-row")]: { previewUrl: "https://saved/x" } };
+  assert.equal(savedPictureForReviewRow(saved, "modular:direct", "direct-row")?.previewUrl, "https://saved/x");
+  assert.equal(displayedReviewRowPicture(staged[reviewedRowImageKey("modular:direct", "direct-row")], savedPictureForReviewRow(saved, "modular:direct", "direct-row")), "blob:direct");
+  assert.equal(displayedReviewRowPicture(null, savedPictureForReviewRow(saved, "modular:direct", "direct-row")), "https://saved/x");
 });
