@@ -24,7 +24,7 @@ test("sends strict-schema requests with the accessory list to the existing speci
   assert.equal(requests[0].timeoutMs, 90_000);
   assert.deepEqual(requests[0].userContent, { accessoryNames: names, items });
   assert.deepEqual((requests[0].userContent.items as { mode: string }[]).map((item) => item.mode), ["seating", "accessory_only"], "each input row carries its mode");
-  for (const expected of ["at most 2 short sentences", "ONLY words that are in the original", "return null", "accessory list", 'Mode "seating"', 'Mode "accessory_only"', "including facts marked as included"]) assert.ok(requests[0].systemInstructions.includes(expected), expected);
+  for (const expected of ["at most 2 short sentences", "ONLY words that are in the original", "return null", "accessory list", 'Mode "seating"', 'Mode "accessory_only"', 'Mode "seating_furniture"', "including facts marked as included", "no sentence limit"]) assert.ok(requests[0].systemInstructions.includes(expected), expected);
   const walk = (node: unknown): void => {
     if (!node || typeof node !== "object") return;
     const record = node as Record<string, unknown>;

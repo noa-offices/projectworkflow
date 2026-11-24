@@ -110,8 +110,18 @@ const SEATING_WORDS = new Set(["chair", "chairs", "armchair", "armchairs", "stoo
 // Chair parts and other furniture are not seating rows, even inside a chair group.
 const NOT_SEATING_WORDS = new Set(["mat", "mats", "castor", "castors", "caster", "casters", "armrest", "armrests", "headrest", "headrests", "desk", "desks", "table", "tables", "screen", "screens", "cabinet", "cabinets"]);
 
+// Words that make a seating row an office/task chair (strict "seating" mode). Other seating words (bench, sofa, stool, pouf...) are furniture.
+const CHAIR_WORDS = new Set(["chair", "chairs", "armchair", "armchairs", "swivel", "visitor"]);
+
 /** True only when a closed seating word is found in the group label, display name or category, and no non-seating word is. Unsure means false. */
 export function isSeatingRow(input: { groupLabel?: string | null; displayName?: string | null; category?: string | null }): boolean {
   const tokens = words([input.groupLabel, input.displayName, input.category].filter((value): value is string => typeof value === "string").join(" "));
   return tokens.some((word) => SEATING_WORDS.has(word)) && !tokens.some((word) => NOT_SEATING_WORDS.has(word));
+}
+
+/** Seating row that is not a chair (bench, sofa, stool, pouf...): it keeps its useful facts, so it must not use the strict chair rule. Any chair word in the group, name or category keeps the strict rule. */
+export function isSeatingFurnitureRow(input: { groupLabel?: string | null; displayName?: string | null; category?: string | null }): boolean {
+  if (!isSeatingRow(input)) return false;
+  const tokens = words([input.groupLabel, input.displayName, input.category].filter((value): value is string => typeof value === "string").join(" "));
+  return !tokens.some((word) => CHAIR_WORDS.has(word));
 }

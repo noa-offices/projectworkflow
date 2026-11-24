@@ -26,7 +26,7 @@ const draft = () => ({
 test("targets: every row with a specification, each with the right mode; empty specs and accessory rows are skipped", () => {
   const targets = buildSpecificationTargets(draft());
   assert.deepEqual(targets.map((t) => [t.label, t.mode]), [
-    ["Swivel Chair, Medium-High Back (Mesh)", "seating"], ["Desk 1600", "accessory_only"], ["Lounge Sofa 2-seater", "seating"], ["Screen", "accessory_only"], ["Visitor chair", "seating"], ["Finish A", "seating"],
+    ["Swivel Chair, Medium-High Back (Mesh)", "seating"], ["Desk 1600", "accessory_only"], ["Lounge Sofa 2-seater", "seating_furniture"], ["Screen", "accessory_only"], ["Visitor chair", "seating"], ["Finish A", "seating"],
   ]);
   const ids = new Set(flattenBatchSpecificationTargets(draft()).map((t) => t.targetId));
   assert.ok(targets.every((t) => ids.has(t.targetId)), "same ids as the specification helper");
@@ -136,4 +136,16 @@ test("cancelling stops new batches from starting", async () => {
   const results = await runInBatches([1, 2, 3, 4, 5, 6], 2, async (value) => { started += 1; if (value === 2) cancelled = true; await new Promise((resolve) => setTimeout(resolve, 5)); return value; }, () => cancelled);
   assert.ok(started < 6, `started ${started}`);
   assert.equal(results.filter((r) => r !== undefined).length, started);
+});
+
+const BENCH = "Bench for Comby, depth 165.2 cm (80+80 cm), 25 mm thick tops. Stirrups for fixing to Comby included.";
+test("bench row: furniture-seating mode (not the strict chair mode); chair rows stay strict", () => {
+  const benchDraft = { ...draft(), pricing: { ...draft().pricing, baseModelRows: [row("b1", "Bench for Comby (OXI_R) W:120 D:165.2", BENCH), row("c1", "Swivel Chair, Medium-High Back (Mesh)", SPEC)], workstationRows: [], priceMatrices: [] } } as unknown as ProductTemplateDraft;
+  assert.deepEqual(buildSpecificationTargets(benchDraft).map((t) => t.mode), ["seating_furniture", "seating"]);
+});
+test("bench row: a result that keeps '25 mm thick tops' and 'Stirrups ... included' is accepted; a new word is still rejected", () => {
+  const items = [{ targetId: "b", text: BENCH }];
+  const kept = "Bench for Comby, 25 mm thick tops. Stirrups for fixing to Comby included.";
+  assert.deepEqual(validateSpecificationResults(items, [{ targetId: "b", specification: kept }]), [{ targetId: "b", specification: kept }]);
+  assert.deepEqual(validateSpecificationResults(items, [{ targetId: "b", specification: "Wooden bench for Comby, 25 mm thick tops." }]), [], "new word");
 });

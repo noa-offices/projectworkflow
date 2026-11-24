@@ -6,6 +6,7 @@ import { isWordSubset } from "@/lib/products/ai-clean-text-checks";
 import type { ProductTemplateDraft } from "@/lib/products/product-template-draft";
 import { acceptableSpecificationPatches, applySpecificationPatches, buildSpecificationAccessoryNames, buildSpecificationTargets, chunkSpecificationTargets, runInBatches, SPECIFICATION_CLEANUP_PARALLEL, specificationFingerprint, undoSpecificationPatches, type SpecificationReviewEntry, type SpecificationSuggestion, type SpecificationUndoEntry } from "@/lib/products/specification-cleanup";
 
+const modeLabels = { seating: "Seating", seating_furniture: "Seating furniture", accessory_only: "Accessory-only" } as const;
 type Review = { fingerprint: string; entries: SpecificationReviewEntry[]; accessoryNames: string[]; message: string };
 
 export function SpecificationCleanupControl({ draft, onApply }: { draft: ProductTemplateDraft; onApply: (draft: ProductTemplateDraft) => void }) {
@@ -73,7 +74,7 @@ export function SpecificationCleanupControl({ draft, onApply }: { draft: Product
     {stale ? <p className="mt-2 text-xs font-semibold text-red-700">The specifications or accessories changed after this run. Regenerate before accepting.</p> : null}
     <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
       {review.entries.map((entry) => <article key={entry.targetId} className="rounded bg-white p-3 text-xs">
-        <label className="flex items-center gap-2 font-semibold text-zinc-900"><input type="checkbox" checked={entry.selected} onChange={(event) => edit(entry.targetId, { selected: event.target.checked })} />{labels.get(entry.targetId) ?? entry.targetId}<span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600">{modes.get(entry.targetId) === "seating" ? "Seating" : "Accessory-only"}</span></label>
+        <label className="flex items-center gap-2 font-semibold text-zinc-900"><input type="checkbox" checked={entry.selected} onChange={(event) => edit(entry.targetId, { selected: event.target.checked })} />{labels.get(entry.targetId) ?? entry.targetId}<span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600">{modeLabels[modes.get(entry.targetId) ?? "accessory_only"]}</span></label>
         <p className="mt-1 text-zinc-600">Before: {entry.original}</p>
         <label className="mt-1 block font-medium text-zinc-600">After
           <textarea value={entry.value} onChange={(event) => edit(entry.targetId, { value: event.target.value })} className="mt-1 min-h-16 w-full rounded border border-zinc-300 p-1 font-normal text-zinc-900" />
