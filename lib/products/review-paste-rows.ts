@@ -19,15 +19,14 @@ const entry = (sourceKey: string, kind: ReviewPasteRowKind, groupLabel: string, 
   ({ sourceKey, rowId: row.id, kind, groupLabel, label: row.label, displayName: row.displayName, supplierCodes: row.supplierCodes, referenceCodes: row.referenceCodes });
 
 /**
- * Every row that shows a "Paste image" box in the Smart Setup review. Direct modular rows (DirectModularRowsEditor)
- * have no paste box and are intentionally absent.
+ * Every row that shows a "Paste image" box in the Smart Setup review (direct-priced modular rows included).
  */
 export function reviewPasteRows(draft: ProductTemplateDraft): ReviewPasteRow[] {
   return [
     ...draft.pricing.baseModelRows.map((row) => entry(baseModelRowImageScope(row.groupId), "Base / Model", row.groupId ? row.groupLabel ?? row.groupId : "Base / Model Pricing", row)),
     ...draft.pricing.workstationRows.map((row) => entry(WORKSTATION_IMAGE_SCOPE, "Workstation", "Workstation Pricing", row)),
     ...draft.pricing.priceMatrices.flatMap((matrix) => matrix.rows.map((row) => entry(matrixImageScope(matrix.id), "Category / Matrix", matrix.label ?? matrix.id, row))),
-    ...draft.pricing.modularGroups.filter((group) => group.matrix).flatMap((group) => draftModularRows(group).map((row) => entry(modularImageScope(group.id), "Modular", group.label ?? group.id, row))),
+    ...draft.pricing.modularGroups.flatMap((group) => draftModularRows(group).map((row) => entry(modularImageScope(group.id), "Modular", group.label ?? group.id, row))),
     ...draft.optionGroups.flatMap((group) => group.items.map((row) => entry(optionImageScope(group.id), "Accessory", group.label ?? group.id, row))),
   ];
 }

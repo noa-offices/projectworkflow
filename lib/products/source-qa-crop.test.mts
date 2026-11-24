@@ -143,14 +143,14 @@ test("edit crop targets equal the paste-box rows, use paste keys, and put the co
   const targets = editSourceCropTargets(draft, subgroups);
   assert.deepEqual(targets.map(({ sourceKey, rowId }) => [sourceKey, rowId]), [
     ["base_model_group:meeting-std", "mono-047"], ["base_model_group:meeting-std", "mono-048"], ["base_model_group:meeting-std", "mono-049"],
-    ["workstation:rows", "ws1"], ["matrix:mx", "mrow"], ["modular:modules", "mrow"], ["option:acc", "acc1"], ["subgroup:matrix:mx", "mesh"],
+    ["workstation:rows", "ws1"], ["matrix:mx", "mrow"], ["modular:modules", "mrow"], ["modular:direct", "direct-row"], ["option:acc", "acc1"], ["subgroup:matrix:mx", "mesh"],
   ]);
-  assert.ok(!targets.some((target) => target.rowId === "direct-row"), "direct modular rows have no paste box");
+  assert.ok(targets.some((target) => target.sourceKey === "modular:direct" && target.rowId === "direct-row"), "direct modular rows have a paste/crop box");
   assert.equal(targets[0].label, "1AF 047 — MONOLITH Standard Rectangular Meeting Table - W2100 — Hole + Top Access");
   assert.equal(targets[2].label, "MONOLITH Standard Rectangular Meeting Table - W2102 — Hole + Top Access", "no code: model name first");
   assert.equal(targets[4].label, "220B — Mesh Conference Chair — BUDDYis3 Mesh Conference Chairs");
   assert.equal(targets[5].label, "220B — Mesh Conference Chair — Modular Chairs");
-  assert.equal(targets[7].label, "Subgroup — Mesh — BUDDYis3 Mesh Conference Chairs");
+  assert.equal(targets[8].label, "Subgroup — Mesh — BUDDYis3 Mesh Conference Chairs");
   assert.deepEqual(sourceCropSearchPages([{ pageNumber: 3, text: "1AF 047 prices" }], targets[0].label.split(" — ")[0]), [3]);
   assert.equal(sourceCropTargets(draft)[0].sourceKey, "base_model_group:meeting-std", "add targets are unchanged");
   assert.equal(sourceCropTargets(draft).find((target) => target.sourceKey === "matrix:mx")?.label, "220B — Mesh Conference Chair", "add labels are unchanged");
