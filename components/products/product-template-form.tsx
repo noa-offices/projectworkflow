@@ -36,6 +36,8 @@ import { mapDraftOptionGroupsToAccessories } from "@/lib/products/product-templa
 import { draftForSmartSetupReviewApply, smartReviewMatrixOverrides, type SmartSetupReviewRoutingPlan } from "@/lib/products/smart-product-review-routing";
 import type { AccessoryConditionalConfiguration } from "@/lib/products/accessory-conditional-configuration";
 import type { ProductTemplateGroupReferenceType } from "@/lib/products/product-template-group-references";
+import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
+import { isFrameworkRedirect, SAVE_REQUEST_FAILED_MESSAGE, STAGED_IMAGE_BUCKET, uploadStagedImages, type StagedUploadCache } from "@/lib/products/staged-image-upload";
 import { pendingRowImageKey, pendingSubgroupImageKey, type PendingProductTemplateRowImage, type PendingProductTemplateSubgroupImage, type SmartAppliedPricingSubgroups } from "@/lib/products/smart-product-row-images";
 import { productTemplateFormSmartWorkspace } from "@/lib/products/product-template-form-smart-workspace";
 import type { ManufacturerPriceDifference } from "@/lib/products/manufacturer-update-diff";
@@ -453,6 +455,8 @@ export function ProductTemplateForm({
   template,
 }: ProductTemplateFormProps) {
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [imageProgress, setImageProgress] = useState<string | null>(null);
+  const stagedUploadsRef = useRef<StagedUploadCache<File>>(new Map());
   const preserveFailedSave = useRef(false);
   const templateId = useMemo(() => template?.id ?? fallbackTemplateId(), [template?.id]);
   const pricingRef = useRef<HTMLDivElement | null>(null);
@@ -751,16 +755,27 @@ export function ProductTemplateForm({
       }
     }
 
-    const metadata = Object.values(pendingRowImagesRef.current).map((image, index) => {
-      const field = `pending_row_reference_file_${index}`;
-      formData.append(field, image.file, image.file.name);
-      return { field, pricingType: image.pricingType, rowId: image.rowId };
+    // Images go straight from the browser to Storage (the user's own session); the save request carries only their paths.
+    const rowImages = Object.values(pendingRowImagesRef.current), subgroupImages = Object.values(pendingSubgroupImagesRef.current);
+    const rowKey = (image: (typeof rowImages)[number]) => `row\u0000${image.pricingType}\u0000${image.rowId}`;
+    const subgroupKey = (image: (typeof subgroupImages)[number]) => `subgroup\u0000${image.pricingType}\u0000${image.groupId}\u0000${image.subgroupId}`;
+    const staged = await uploadStagedImages({
+      entries: [...rowImages.map((image) => ({ key: rowKey(image), file: image.file })), ...subgroupImages.map((image) => ({ key: subgroupKey(image), file: image.file }))],
+      cache: stagedUploadsRef.current,
+      upload: async (file, path) => {
+        const { error } = await createBrowserSupabase().storage.from(STAGED_IMAGE_BUCKET).upload(path, file, { contentType: file.type, cacheControl: "3600", upsert: true });
+        if (error) throw new Error(error.message || "storage error");
+      },
+      onProgress: (done, total) => setImageProgress(total ? `Uploading images ${done} of ${total}...` : null),
     });
-    formData.set("pending_row_references", JSON.stringify(metadata));
-    const subgroupMetadata = Object.values(pendingSubgroupImagesRef.current).map((image, index) => { const field = `pending_subgroup_reference_file_${index}`; formData.append(field, image.file, image.file.name); return { field, pricingType: image.pricingType, groupId: image.groupId, subgroupId: image.subgroupId }; });
-    formData.set("pending_subgroup_references", JSON.stringify(subgroupMetadata));
+    setImageProgress(null);
+    if (!staged.ok) { setSaveError(staged.message); return; } // staged work stays in the form; nothing was sent
+    formData.set("pending_row_references", JSON.stringify(rowImages.map((image) => ({ pricingType: image.pricingType, rowId: image.rowId, stagedPath: staged.paths.get(rowKey(image)) }))));
+    formData.set("pending_subgroup_references", JSON.stringify(subgroupImages.map((image) => ({ pricingType: image.pricingType, groupId: image.groupId, subgroupId: image.subgroupId, stagedPath: staged.paths.get(subgroupKey(image)) }))));
     if (smartSourcePdfMeta?.sourcePdfStoragePath) formData.set("temporary_source_pdf_path", smartSourcePdfMeta.sourcePdfStoragePath);
-    const result = await baseSubmitAction(formData);
+    let result: Awaited<ReturnType<typeof baseSubmitAction>>;
+    try { result = await baseSubmitAction(formData); }
+    catch (error) { if (isFrameworkRedirect(error)) throw error; preserveFailedSave.current = true; setSaveError(SAVE_REQUEST_FAILED_MESSAGE); return; }
     if (result && !result.ok) {
       preserveFailedSave.current = true;
       setSaveError(result.message);
@@ -790,6 +805,7 @@ export function ProductTemplateForm({
     >
       <input type="hidden" name="id" value={templateId} />
       {template ? <input type="hidden" name="expected_pricing_version" value={template.pricing_version ?? ""} /> : null}
+      {imageProgress ? <p role="status" className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-800">{imageProgress}</p> : null}
       {saveError ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">{saveError}</p> : null}
       <input type="hidden" name="return_to" value={returnTo} />
       {extraHiddenFields}
