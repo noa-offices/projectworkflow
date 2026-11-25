@@ -1,5 +1,6 @@
 "use client";
 
+import { updateConfiguration, type ProductConfigurations } from "@/lib/products/configuration-state";
 import { SupplierCoverageAction } from "./supplier-coverage-popup";
 import { ManualPriceLinesButton } from "./manual-price-lines-button";
 import { SupplierPriceLinesAction } from "./supplier-price-lines-popup";
@@ -71,7 +72,7 @@ import { MATRIX_FAMILY_MISSING_MESSAGE, mixedProductFamilies, productFamilyOptio
 import { LINKED_LOCAL_BUILDER_MESSAGE, linkedProductFamilyChange, linkedProductNeedsLocalBuilder } from "@/lib/products/linked-product-family";
 import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
 import { guidedBaseModelSelection } from "@/lib/quotations/guided-base-model-selection";
-import { requiredComponentOverrideReport, requiredCompanionItems, withRequiredOverride, withoutRequiredOverride, type RequiredComponentOverrides } from "@/lib/quotations/required-component-overrides";
+import { requiredComponentOverrideReport, requiredCompanionItems, withRequiredOverride, withoutRequiredOverride } from "@/lib/quotations/required-component-overrides";
 import { activeBaseModelPricingGroups, composeSystemAndMainSpecification, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, normalizeSystemQuantity, remapBaseModelTargetsToOwnerGroups, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
 import type { ProductTemplateSubgroupReferencePreview } from "@/lib/products/product-template-subgroup-references";
 import type { AccessoryGroupEvaluation } from "@/lib/products/accessory-conditional-configuration";
@@ -1071,25 +1072,17 @@ export function ProductLibrarySelector({
   const [subcategoryId, setSubcategoryId] = useState("");
   const [search, setSearch] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [configurations, setConfigurations] = useState<ProductConfigurations>({});
+  const changeConfiguration = (templateId: string, changes: Parameters<typeof updateConfiguration>[2]) =>
+    setConfigurations((current) => updateConfiguration(current, templateId, changes));
   const [selectedOptions, setSelectedOptions] = useState<Record<string, Record<string, string | string[]>>>({});
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({});
   const [imagePreview, setImagePreview] = useState<{ templateId: string; imageIndex: number } | null>(null);
   const [diagramPreview, setDiagramPreview] = useState<{ label: string; templateId: string; title: string; url: string } | null>(null);
-  const [additionalClusterQuantities, setAdditionalClusterQuantities] = useState<Record<string, number>>({});
-  const [accessoryQuantities, setAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
-  const [selectedDeskingSizes, setSelectedDeskingSizes] = useState<Record<string, string>>({});
-  const [selectedVariantRows, setSelectedVariantRows] = useState<Record<string, string>>({});
   // Native System / Base row per template: an independent priced Base/Model selection (Main Product stays in selectedVariantRows).
-  const [selectedSystemRows, setSelectedSystemRows] = useState<Record<string, string>>({});
   // Manual System / Base units per template (integer >= 1). No automatic Main -> System quantity relation is persisted in the saved schema.
-  const [selectedSystemQuantities, setSelectedSystemQuantities] = useState<Record<string, number>>({});
   const [loadedRowReferences, setLoadedRowReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateRowReferencePreview> }>({ templateId: "", images: {} });
   const [loadedSubgroupReferences, setLoadedSubgroupReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateSubgroupReferencePreview> }>({ templateId: "", images: {} });
-  const [selectedCategoryGroups, setSelectedCategoryGroups] = useState<Record<string, string>>({});
-  const [selectedFamilyKeys, setSelectedFamilyKeys] = useState<Record<string, string>>({});
-  const [selectedCategoryRows, setSelectedCategoryRows] = useState<Record<string, string>>({});
-  const [selectedFabricCategories, setSelectedFabricCategories] = useState<Record<string, string>>({});
-  const [selectedModularQuantities, setSelectedModularQuantities] = useState<Record<string, Record<string, number>>>({});
   const [expandedDirectModularRow, setExpandedDirectModularRow] = useState<string | null>(null);
   const [configuredDimensions, setConfiguredDimensions] = useState<Record<string, string>>({});
   const [configuredDimensionEditedByTemplate, setConfiguredDimensionEditedByTemplate] = useState<Record<string, boolean>>({});
@@ -1099,9 +1092,7 @@ export function ProductLibrarySelector({
   const [configuredSpecifications, setConfiguredSpecifications] = useState<Record<string, string>>({});
   const [finalSpecifications, setFinalSpecifications] = useState<Record<string, string>>({});
   const [finalSpecificationEditedByTemplate, setFinalSpecificationEditedByTemplate] = useState<Record<string, boolean>>({});
-  const [selectedWorkstationLayouts, setSelectedWorkstationLayouts] = useState<Record<string, string>>({});
   const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>(() => Object.fromEntries(templates.map((template) => [template.id, defaultProductAccessoryQuantities(template.accessory_pricing)])));
-  const [requiredOverrides, setRequiredOverrides] = useState<Record<string, RequiredComponentOverrides>>({});
   const [selectedAccessoryCategories, setSelectedAccessoryCategories] = useState<Record<string, string>>({});
   const [expandedAccessoryGroups, setExpandedAccessoryGroups] = useState<Record<string, boolean>>({});
   const [expandedModularGroupByTemplate, setExpandedModularGroupByTemplate] = useState<Record<string, string | null>>({});
@@ -1317,19 +1308,21 @@ export function ProductLibrarySelector({
       });
     // A saved line carries ONE pricing mode: with modular quantities above 0 the base values (a legacy variant row or matrix row) are ignored.
     const savedModularSide = Object.values(plain.modularQuantities ?? {}).some((quantity) => Number(quantity) > 0);
-    put(setSelectedVariantRows, savedModularSide ? null : plain.variantRowId);
-    put(setSelectedSystemRows, plain.systemRowId);
-    put(setSelectedSystemQuantities, plain.systemQuantity);
-    put(setSelectedCategoryGroups, plain.categoryGroupId);
-    put(setSelectedCategoryRows, savedModularSide ? null : plain.categoryRowId);
-    put(setSelectedFabricCategories, plain.fabricCategory);
-    put(setSelectedDeskingSizes, plain.workstationSizeId);
-    put(setSelectedWorkstationLayouts, plain.workstationLayout);
-    put(setAdditionalClusterQuantities, plain.additionalClusterQuantity);
-    put(setSelectedModularQuantities, plain.modularQuantities);
+    changeConfiguration(tid, {
+      variantRowId: savedModularSide ? undefined : plain.variantRowId || undefined,
+      systemRowId: plain.systemRowId || undefined,
+      systemQuantity: plain.systemQuantity ?? undefined,
+      categoryGroupId: plain.categoryGroupId || undefined,
+      categoryRowId: savedModularSide ? undefined : plain.categoryRowId || undefined,
+      fabricCategory: plain.fabricCategory || undefined,
+    });
+    changeConfiguration(tid, { workstationSizeId: plain.workstationSizeId || undefined });
+    changeConfiguration(tid, { workstationLayout: plain.workstationLayout || undefined });
+    changeConfiguration(tid, { additionalClusterQuantity: plain.additionalClusterQuantity ?? undefined });
+    changeConfiguration(tid, { modularQuantities: plain.modularQuantities });
     put(setPricingAccessoryQuantities, plain.pricingAccessoryQuantities);
-    put(setAccessoryQuantities, plain.componentAccessoryQuantities);
-    put(setRequiredOverrides, plain.requiredOverrides);
+    changeConfiguration(tid, { componentAccessoryQuantities: plain.componentAccessoryQuantities ?? undefined });
+    changeConfiguration(tid, { requiredOverrides: plain.requiredOverrides });
     put(setSelectedOptions, plain.componentOptionSelections);
     put(setSelectedFinishesByTemplate, plain.finishes as FinishSelectionEditorRow[] | undefined);
     put(setSelectedImages, plain.selectedImage);
@@ -1750,7 +1743,7 @@ export function ProductLibrarySelector({
                   const variantGroups = activeBaseModelPricingGroups<VariantPricingRow>(template.variant_pricing);
                   const categoryGroups = groupedStandardCategoryPricingRows(template.category_pricing);
                   const selectedCategoryGroup =
-                    categoryGroups.find((group) => group.id === selectedCategoryGroups[template.id]) ??
+                    categoryGroups.find((group) => group.id === configurations[template.id]?.categoryGroupId) ??
                     categoryGroups[0] ??
                     null;
                   const categoryRows = (selectedCategoryGroup?.items ?? []).filter((row) => row.is_active !== false);
@@ -1772,12 +1765,12 @@ export function ProductLibrarySelector({
                   const mixedFamilies = usesVariantPricing && !nativeSystemState(variantGroups).active && mixedProductFamilies(variantGroups, categoryGroups);
                   const usesCategoryPricing = (!usesVariantPricing || mixedFamilies) && categoryRows.length > 0;
                   const templatePricingAccessoryQuantities = pricingAccessoryQuantities[template.id] ?? {};
-                  const templateModularQuantities = selectedModularQuantities[template.id] ?? {};
+                  const templateModularQuantities = configurations[template.id]?.modularQuantities ?? {};
                   // Native System / Base: inactive (no role="system_base" rows) => everything below is unchanged.
-                  const nativeSystem = nativeSystemState(variantGroups, selectedSystemRows[template.id]);
+                  const nativeSystem = nativeSystemState(variantGroups, configurations[template.id]?.systemRowId);
                   const rawSelectedVariantRow =
                     usesVariantPricing
-                      ? variantRows.find((row) => row.id === selectedVariantRows[template.id] && !isSystemBaseRow(row) && (!nativeSystem.active || nativeSystem.eligibleGroups.some((group) => group.items.some((item) => item.id === row.id)))) ?? null
+                      ? variantRows.find((row) => row.id === configurations[template.id]?.variantRowId && !isSystemBaseRow(row) && (!nativeSystem.active || nativeSystem.eligibleGroups.some((group) => group.items.some((item) => item.id === row.id)))) ?? null
                       : null;
                   // One pricing mode per line: modular items OR a Base / Model row / Price Matrix choice (a template with only one of them is never
                   // constrained). A saved line that carries both keeps the modular side (it priced from the modular rows) and the base values are ignored.
@@ -1790,13 +1783,13 @@ export function ProductLibrarySelector({
                     modularSelected: modularQuantitySelected,
                     workstationSelected: false,
                     baseModelSelected: Boolean(rawSelectedVariantRow),
-                    priceMatrixSelected: usesCategoryPricing && categoryRows.some((row) => Boolean(row.id) && row.id === selectedCategoryRows[template.id]),
+                    priceMatrixSelected: usesCategoryPricing && categoryRows.some((row) => Boolean(row.id) && row.id === configurations[template.id]?.categoryRowId),
                   });
                   const modularModeActive = pricingModes.exclusive && pricingModes.mode === "modular";
                   const selectedVariantRow = modularModeActive ? null : rawSelectedVariantRow;
                   const selectedWorkstationVariantRow =
                     usesWorkstationFlow
-                      ? variantRows.find((row) => row.id === selectedVariantRows[template.id]) ?? null
+                      ? variantRows.find((row) => row.id === configurations[template.id]?.variantRowId) ?? null
                       : null;
                   const selectedVariantGroup = selectedVariantRow
                     ? variantGroups.find((group) => group.items.some((row) => row.id === selectedVariantRow.id)) ?? null
@@ -1806,7 +1799,7 @@ export function ProductLibrarySelector({
                   // With modular items on the same template the Price Matrix is only used when the user chose a row (no automatic first row).
                   const selectedCategoryRow =
                     usesCategoryPricing && !modularModeActive
-                      ? categoryRows.find((row) => row.id === selectedCategoryRows[template.id]) ??
+                      ? categoryRows.find((row) => row.id === configurations[template.id]?.categoryRowId) ??
                         (usesModularPricing || mixedFamilies ? null : categoryRows[0] ?? null)
                       : null;
                   // Standard Finish groups save their row pictures as "finish_category" (modular groups use "modular", not shown in this box).
@@ -1818,7 +1811,7 @@ export function ProductLibrarySelector({
                   const availableCategoryColumns = usesModularPricing && !pricingModes.usePriceMatrix
                     ? categoryPriceColumns(modularRows)
                     : (selectedCategoryGroup?.price_categories ?? categoryPriceColumns(template.category_pricing));
-                  const savedFabricCategory = selectedFabricCategories[template.id];
+                  const savedFabricCategory = configurations[template.id]?.fabricCategory;
                   const selectedFabricCategory = savedFabricCategory && availableCategoryColumns.includes(savedFabricCategory)
                     ? savedFabricCategory
                     : availableCategoryColumns[0] ?? "";
@@ -1834,17 +1827,15 @@ export function ProductLibrarySelector({
                   const baseSectionDisabled = (excludesBaseModels && selectedModularItems.length > 0) || pricingModes.baseModelDisabled;
                   const modularSectionDisabled = (excludesBaseModels && Boolean(selectedVariantRow)) || pricingModes.modularDisabled;
                   const priceMatrixSectionDisabled = pricingModes.priceMatrixDisabled;
-                  const clearModularSelection = () => setSelectedModularQuantities((current) => { const next = { ...current }; delete next[template.id]; return next; });
+                  const clearModularSelection = () => changeConfiguration(template.id, { modularQuantities: undefined });
                   // Clearing the model / size (and the Price Matrix choice) enables the modular items again.
                   const clearBaseModelSelection = () => {
-                    setSelectedVariantRows((current) => { const next = { ...current }; delete next[template.id]; return next; });
-                    setSelectedCategoryRows((current) => { const next = { ...current }; delete next[template.id]; return next; });
+                    changeConfiguration(template.id, { variantRowId: undefined, categoryRowId: undefined });
                   };
                   // The other mode's values are cleared when a mode becomes active (never both).
                   const clearBaseValuesForModular = () => {
                     if (!pricingModes.exclusive) return;
-                    setSelectedVariantRows((current) => { if (current[template.id] === undefined) return current; const next = { ...current }; delete next[template.id]; return next; });
-                    setSelectedCategoryRows((current) => { if (current[template.id] === undefined) return current; const next = { ...current }; delete next[template.id]; return next; });
+                    changeConfiguration(template.id, { variantRowId: undefined, categoryRowId: undefined });
                   };
                   const hasUnavailableSelectedPrice = (usesModularPricing && !usesDirectModularPricing && selectedModularItems.some((line) => line.row.unavailable_categories?.includes(selectedFabricCategory))) || Boolean(usesCategoryPricing && selectedCategoryRow?.unavailable_categories?.includes(selectedFabricCategory));
                   // All modular groups (Direct and Matrix alike) share the same compact accordion; for an
@@ -1888,9 +1879,8 @@ export function ProductLibrarySelector({
                     }
                     if (nextQty > 0) clearBaseValuesForModular();
                     // A single-starter group (max_starters === 1) replaces the starter instead of adding a second one.
-                    setSelectedModularQuantities((current) => ({
-                      ...current,
-                      [template.id]: applyModularRowQuantity(group, current[template.id] ?? {}, rowId, nextQty),
+                    setConfigurations((current) => updateConfiguration(current, template.id, {
+                      modularQuantities: applyModularRowQuantity(group, current[template.id]?.modularQuantities ?? {}, rowId, nextQty),
                     }));
                   };
                   const groupSelectionSummaryForAi = usesDirectModularPricing
@@ -1903,9 +1893,9 @@ export function ProductLibrarySelector({
                   const templateSelections = selectedOptions[template.id] ?? {};
                   const additionalClusterQty = Math.max(
                     0,
-                    Math.trunc(numberValue(additionalClusterQuantities[template.id], 0)),
+                    Math.trunc(numberValue(configurations[template.id]?.additionalClusterQuantity, 0)),
                   );
-                  const templateAccessoryQuantities = accessoryQuantities[template.id] ?? {};
+                  const templateAccessoryQuantities = configurations[template.id]?.componentAccessoryQuantities ?? {};
                   const isDesking = usesWorkstationFlow || (!usesVariantPricing && !usesCategoryPricing && (
                     isDeskingTemplate({
                       mainCategory,
@@ -1914,7 +1904,7 @@ export function ProductLibrarySelector({
                     })
                   ));
                   const selectedSizeRow =
-                    sizePricingRows.find((row) => row.id === selectedDeskingSizes[template.id]) ??
+                    sizePricingRows.find((row) => row.id === configurations[template.id]?.workstationSizeId) ??
                     sizePricingRows[0] ??
                     null;
                   const selectedWorkstationGroup = selectedSizeRow
@@ -1943,7 +1933,7 @@ export function ProductLibrarySelector({
                   const selectedWorkstationLayout = usesWorkstationFlow
                     ? (
                         selectedSizeRow?.layout_type === "Both"
-                          ? selectedWorkstationLayouts[template.id] ?? "Linear"
+                          ? configurations[template.id]?.workstationLayout ?? "Linear"
                           : selectedSizeRow?.layout_type ?? "Linear"
                       )
                     : "";
@@ -1989,22 +1979,21 @@ export function ProductLibrarySelector({
                   );
                   const filteredVariantGroups = filterCompatibleBaseModelGroups(nativeSystem.eligibleGroups, structuralSupportCompatibleTargets);
                   const familyOptions = mixedFamilies ? productFamilyOptions(filteredVariantGroups, categoryGroups) : [];
-                  const selectedFamily = mixedFamilies ? selectedProductFamily(familyOptions, selectedFamilyKeys[template.id], { matrixGroupId: selectedCategoryGroup?.id ?? null, matrixRowSelected: Boolean(selectedCategoryRow), baseGroupId: selectedVariantGroup?.id ?? null }) : null;
+                  const selectedFamily = mixedFamilies ? selectedProductFamily(familyOptions, configurations[template.id]?.familyKey, { matrixGroupId: selectedCategoryGroup?.id ?? null, matrixRowSelected: Boolean(selectedCategoryRow), baseGroupId: selectedVariantGroup?.id ?? null }) : null;
                   const matrixFamilySelected = selectedFamily?.kind === "price_matrix";
                   // Changing family clears both model choices (one pricing source per line) and re-evaluates the accessories for "no model yet".
                   const changeFamily = (option: ProductFamilyOption) => {
-                    setSelectedFamilyKeys((current) => ({ ...current, [template.id]: option.key }));
-                    setSelectedVariantRows((current) => { const next = { ...current }; delete next[template.id]; return next; });
-                    setSelectedCategoryRows((current) => { const next = { ...current }; delete next[template.id]; return next; });
-                    if (option.kind === "price_matrix") setSelectedCategoryGroups((current) => ({ ...current, [template.id]: option.id }));
+                    changeConfiguration(template.id, { familyKey: option.key });
+                    changeConfiguration(template.id, { variantRowId: undefined, categoryRowId: undefined });
+                    if (option.kind === "price_matrix") changeConfiguration(template.id, { categoryGroupId: option.id });
                     setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, selectedModelTarget: null, selectedQuantities: current[template.id] ?? {} }).activeQuantities }));
                   };
                   const accessoryTargetQuantities: Record<string, number> = Object.fromEntries([
                     ...selectedModularItems.map((item) => [accessoryApplicabilityTargetKey({ kind: "modular" as const, group_id: item.groupId, row_id: item.id }), item.qty]),
                     ...selectedStructuralSupportTargets.map((target) => [accessoryApplicabilityTargetKey(target), templatePricingAccessoryQuantities[target.row_id] ?? 1]),
-                    ...(nativeSystem.selected ? [[accessoryApplicabilityTargetKey({ kind: "base_model" as const, group_id: nativeSystem.selected.group.id, row_id: String(nativeSystem.selected.row.id) }), normalizeSystemQuantity(selectedSystemQuantities[template.id])]] : []),
+                    ...(nativeSystem.selected ? [[accessoryApplicabilityTargetKey({ kind: "base_model" as const, group_id: nativeSystem.selected.group.id, row_id: String(nativeSystem.selected.row.id) }), normalizeSystemQuantity(configurations[template.id]?.systemQuantity)]] : []),
                   ]);
-                  const templateRequiredOverrides = requiredOverrides[template.id] ?? {};
+                  const templateRequiredOverrides = configurations[template.id]?.requiredOverrides ?? {};
                   // Shared with the linked-product accessory popup (lib/products/accessory-rule-setup).
                   const { configuration: accessoryConfiguration, requiredComponentTrigger, optionItemRequiredTrigger, ordinaryOptionGroupIds, ordinaryOptionDependentItemIds } = evaluateAccessoryRules({
                     groups: allAccessoryGroups,
@@ -2027,7 +2016,7 @@ export function ProductLibrarySelector({
                     const nextCompatibleTargets = unionStructuralSupportCompatibleTargets(nextStructuralSupportItems.map((item) => ({ compatibleTargets: item.compatible_targets })));
                     const nextFilteredVariantGroups = filterCompatibleBaseModelGroups(nativeSystem.eligibleGroups, nextCompatibleTargets);
                     const stillCompatible = !selectedVariantRow || nextFilteredVariantGroups.some((group) => group.items.some((row) => row.id === selectedVariantRow.id));
-                    if (!stillCompatible) setSelectedVariantRows((current) => { const next = { ...current }; delete next[template.id]; return next; });
+                    if (!stillCompatible) changeConfiguration(template.id, { variantRowId: undefined });
                     setPricingAccessoryQuantities((current) => {
                       const next = { ...(current[template.id] ?? {}) };
                       if (quantity > 0) next[itemId] = quantity;
@@ -2063,7 +2052,7 @@ export function ProductLibrarySelector({
                     configuration: {
                       selectedVariantRow, selectedCategoryRow, selectedFabricCategory, selectedWorkstationVariantRow,
                       modularInUse, modularItems: selectedModularItems, accessoryConfiguration, selectedAccessoryCategories,
-                      usesWorkstationFlow, system: { row: nativeSystem.selected?.row, quantity: selectedSystemQuantities[template.id] },
+                      usesWorkstationFlow, system: { row: nativeSystem.selected?.row, quantity: configurations[template.id]?.systemQuantity },
                       workstation: isDesking && selectedSizeRow ? {
                         accessoryQuantities: templateAccessoryQuantities, additionalClusterQty, configuredDimension,
                         selectedLayoutType: selectedWorkstationLayout, selectedSize: selectedSizeRow,
@@ -3165,10 +3154,7 @@ export function ProductLibrarySelector({
                                 onChange={(event) => {
                                   const nextRowId = event.target.value;
                                   const nextGroup = activeWorkstationGroups.find((group) => group.items.some((row) => row.id === nextRowId));
-                                  setSelectedDeskingSizes((current) => ({
-                                    ...current,
-                                    [template.id]: nextRowId,
-                                  }));
+                                  changeConfiguration(template.id, { workstationSizeId: nextRowId });
                                   setPricingAccessoryQuantities((current) => ({
                                     ...current,
                                     [template.id]: evaluateProductAccessorySelection({
@@ -3221,7 +3207,7 @@ export function ProductLibrarySelector({
                                 <span className="text-[10px] font-bold uppercase text-zinc-500">Layout Type</span>
                                 <select
                                   value={selectedWorkstationLayout}
-                                  onChange={(event) => setSelectedWorkstationLayouts((current) => ({ ...current, [template.id]: event.target.value }))}
+                                  onChange={(event) => changeConfiguration(template.id, { workstationLayout: event.target.value })}
                                   className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                                 >
                                   <option value="Linear">Linear</option>
@@ -3260,13 +3246,10 @@ export function ProductLibrarySelector({
                                 step={1}
                                 value={additionalClusterQty}
                                 onChange={(event) =>
-                                  setAdditionalClusterQuantities((current) => ({
-                                    ...current,
-                                    [template.id]: Math.max(
+                                  changeConfiguration(template.id, { additionalClusterQuantity: Math.max(
                                       0,
                                       Math.trunc(Number(event.target.value) || 0),
-                                    ),
-                                  }))
+                                    ) })
                                 }
                                 className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                               />
@@ -3312,8 +3295,8 @@ export function ProductLibrarySelector({
                                   onChange={(event) => {
                                     const nextGroup = categoryGroups.find((group) => group.id === event.target.value);
                                     const nextRow = nextGroup?.items.find((row) => row.is_active !== false);
-                                    setSelectedCategoryGroups((current) => ({ ...current, [template.id]: event.target.value }));
-                                    setSelectedCategoryRows((current) => ({ ...current, [template.id]: nextRow?.id ?? "" }));
+                                    changeConfiguration(template.id, { categoryGroupId: event.target.value });
+                                    changeConfiguration(template.id, { categoryRowId: nextRow?.id ?? "" });
                                     if (pricingModes.exclusive && nextRow?.id) clearModularSelection();
                                     setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, selectedModelTarget: nextGroup?.id && nextRow?.id ? { kind: "price_matrix", group_id: nextGroup.id, row_id: nextRow.id } : null, selectedQuantities: current[template.id] ?? {} }).activeQuantities }));
                                   }}
@@ -3333,7 +3316,7 @@ export function ProductLibrarySelector({
                                 value={selectedCategoryRow?.id ?? ""}
                                 onChange={(event) => {
                                   const nextRowId = event.target.value;
-                                  setSelectedCategoryRows((current) => ({ ...current, [template.id]: nextRowId }));
+                                  changeConfiguration(template.id, { categoryRowId: nextRowId });
                                   if (pricingModes.exclusive && nextRowId) clearModularSelection();
                                   setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, selectedModelTarget: selectedCategoryGroup?.id ? { kind: "price_matrix", group_id: selectedCategoryGroup.id, row_id: nextRowId } : null, selectedQuantities: current[template.id] ?? {} }).activeQuantities }));
                                 }}
@@ -3351,7 +3334,7 @@ export function ProductLibrarySelector({
                               <span className="text-[10px] font-bold uppercase text-zinc-500">Fabric / Leather Category</span>
                               <select
                                 value={selectedFabricCategory}
-                                onChange={(event) => setSelectedFabricCategories((current) => ({ ...current, [template.id]: event.target.value }))}
+                                onChange={(event) => changeConfiguration(template.id, { fabricCategory: event.target.value })}
                                 className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                               >
                                 {availableCategoryColumns.map((category) => (
@@ -3400,7 +3383,7 @@ export function ProductLibrarySelector({
                                 <span className="text-[10px] font-bold uppercase text-zinc-500">Fabric / Category</span>
                                 <select
                                   value={selectedFabricCategory}
-                                  onChange={(event) => setSelectedFabricCategories((current) => ({ ...current, [template.id]: event.target.value }))}
+                                  onChange={(event) => changeConfiguration(template.id, { fabricCategory: event.target.value })}
                                   className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                                 >
                                   {availableCategoryColumns.map((category) => (
@@ -3484,9 +3467,9 @@ export function ProductLibrarySelector({
                                       const nextOption = nativeSystem.options.find((option) => option.row.id === event.target.value) ?? null;
                                       // A Main Product row from another System group is incompatible; clear it (never leave it hidden but selected).
                                       const keepMain = Boolean(nextOption && selectedVariantRow && nextOption.group.items.some((item) => item.id === selectedVariantRow.id));
-                                      setSelectedSystemRows((current) => { const next = { ...current }; if (nextOption?.row.id) next[template.id] = nextOption.row.id; else delete next[template.id]; return next; });
-                                      setSelectedSystemQuantities((current) => { const next = { ...current }; delete next[template.id]; return next; });
-                                      if (!keepMain) setSelectedVariantRows((current) => { const next = { ...current }; delete next[template.id]; return next; });
+                                      changeConfiguration(template.id, { systemRowId: nextOption?.row.id || undefined });
+                                      changeConfiguration(template.id, { systemQuantity: undefined });
+                                      if (!keepMain) changeConfiguration(template.id, { variantRowId: undefined });
                                       setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, baseModelGroupId: keepMain ? selectedVariantGroup?.id ?? null : null, baseModelRowId: keepMain ? selectedVariantRow?.id ?? null : null, selectedModelTargets: nativeBaseModelTargets({ mainGroupId: keepMain ? selectedVariantGroup?.id : null, mainRowId: keepMain ? selectedVariantRow?.id : null, systemGroupId: nextOption?.group.id, systemRowId: nextOption?.row.id }), selectedQuantities: current[template.id] ?? {} }).activeQuantities }));
                                     }}
                                     className="h-9 w-full border border-zinc-300 bg-white px-2 text-xs"
@@ -3520,7 +3503,7 @@ export function ProductLibrarySelector({
                                       <InternalMetaLine label="Price" value={formatMoney(systemRow.currency ?? template.currency, numberValue(systemRow.price))} />
                                       <label className="mt-1 flex items-center gap-2">
                                         <span className="font-semibold text-zinc-700">Quantity</span>
-                                        <input type="number" min={1} step={1} value={systemQuantity} aria-label="System / Base quantity" onChange={(event) => setSelectedSystemQuantities((current) => ({ ...current, [template.id]: normalizeSystemQuantity(event.target.value) }))} className="h-8 w-20 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                                        <input type="number" min={1} step={1} value={systemQuantity} aria-label="System / Base quantity" onChange={(event) => changeConfiguration(template.id, { systemQuantity: normalizeSystemQuantity(event.target.value) })} className="h-8 w-20 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
                                       </label>
                                     </div>
                                   </div>
@@ -3537,7 +3520,7 @@ export function ProductLibrarySelector({
                               </div>
                             ) : null}
                             <fieldset disabled={baseSectionDisabled} hidden={matrixFamilySelected} className={`m-0 min-w-0 border-0 p-0${baseSectionDisabled ? " opacity-60" : ""}`}>
-                            <Fragment key={mixedFamilies ? selectedFamily?.id ?? "" : ""}><BaseModelHierarchySelector key={`${nativeSystem.selected?.row.id ?? "no-system"}:${replay?.key ?? 0}`} currency={template.currency} groups={mixedFamilies && selectedFamily?.kind === "base_model" ? filteredVariantGroups.filter((group) => group.id === selectedFamily.id) : filteredVariantGroups} rowReferences={rowReferenceImages} subgroupReferences={subgroupReferenceImages} selectedRowId={selectedVariantRow?.id ?? null} onSelect={(nextRowId) => { const nextGroupId = variantGroups.find((group) => group.items.some((row) => row.id === nextRowId))?.id ?? null; if (pricingModes.exclusive) clearModularSelection(); setSelectedVariantRows((current) => ({ ...current, [template.id]: nextRowId })); setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, baseModelGroupId: nextGroupId, baseModelRowId: nextRowId, ...(nativeSystem.selected ? { selectedModelTargets: nativeBaseModelTargets({ mainGroupId: nextGroupId, mainRowId: nextRowId, systemGroupId: nativeSystem.selected.group.id, systemRowId: nativeSystem.selected.row.id }) } : {}), selectedQuantities: current[template.id] ?? {} }).activeQuantities })); }} /></Fragment>
+                            <Fragment key={mixedFamilies ? selectedFamily?.id ?? "" : ""}><BaseModelHierarchySelector key={`${nativeSystem.selected?.row.id ?? "no-system"}:${replay?.key ?? 0}`} currency={template.currency} groups={mixedFamilies && selectedFamily?.kind === "base_model" ? filteredVariantGroups.filter((group) => group.id === selectedFamily.id) : filteredVariantGroups} rowReferences={rowReferenceImages} subgroupReferences={subgroupReferenceImages} selectedRowId={selectedVariantRow?.id ?? null} onSelect={(nextRowId) => { const nextGroupId = variantGroups.find((group) => group.items.some((row) => row.id === nextRowId))?.id ?? null; if (pricingModes.exclusive) clearModularSelection(); changeConfiguration(template.id, { variantRowId: nextRowId }); setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, baseModelGroupId: nextGroupId, baseModelRowId: nextRowId, ...(nativeSystem.selected ? { selectedModelTargets: nativeBaseModelTargets({ mainGroupId: nextGroupId, mainRowId: nextRowId, systemGroupId: nativeSystem.selected.group.id, systemRowId: nativeSystem.selected.row.id }) } : {}), selectedQuantities: current[template.id] ?? {} }).activeQuantities })); }} /></Fragment>
                             </fieldset>
                             <div>
                               {selectedVariantRow ? (
@@ -3583,10 +3566,10 @@ export function ProductLibrarySelector({
                           onViewDiagram={(item, url) => setDiagramPreview({ label: "Accessory diagram", templateId: template.id, title: [item.item_name || "Accessory", item.supplier_price_list_code, item.dimension].filter(Boolean).join(" — "), url })}
                           isGroupExpanded={(groupId, defaultExpanded) => expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, groupId)] ?? defaultExpanded}
                           onGroupExpandedChange={(groupId, expanded) => setExpandedAccessoryGroups((current) => ({ ...current, [accessoryGroupExpansionKey(template.id, groupId)]: expanded }))}
-                          onResetRequired={(itemId) => setRequiredOverrides((current) => ({ ...current, [template.id]: withoutRequiredOverride(current[template.id] ?? {}, itemId) }))}
+                          onResetRequired={(itemId) => setConfigurations((current) => updateConfiguration(current, template.id, { requiredOverrides: withoutRequiredOverride(current[template.id]?.requiredOverrides ?? {}, itemId) }))}
                           onQuantityChange={(groupItemIds, itemId, quantity, replaceGroup) => {
                             if (!replaceGroup && requiredCompanionItems(accessoryConfiguration.groups).some((entry) => entry.itemId === itemId)) {
-                              setRequiredOverrides((current) => ({ ...current, [template.id]: withRequiredOverride(current[template.id] ?? {}, itemId, quantity, ordinaryOptionDependentItemIds.has(itemId) ? optionItemRequiredTrigger : requiredComponentTrigger) }));
+                              setConfigurations((current) => updateConfiguration(current, template.id, { requiredOverrides: withRequiredOverride(current[template.id]?.requiredOverrides ?? {}, itemId, quantity, ordinaryOptionDependentItemIds.has(itemId) ? optionItemRequiredTrigger : requiredComponentTrigger) }));
                               return;
                             }
                             setPricingAccessoryQuantities((current) => {
@@ -3613,10 +3596,7 @@ export function ProductLibrarySelector({
                                 <select
                                   value={selectedWorkstationVariantRow?.id ?? ""}
                                   onChange={(event) =>
-                                    setSelectedVariantRows((current) => ({
-                                      ...current,
-                                      [template.id]: event.target.value,
-                                    }))
+                                    changeConfiguration(template.id, { variantRowId: event.target.value })
                                   }
                                   className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                                 >
@@ -4187,10 +4167,9 @@ export function ProductLibrarySelector({
                                               step={1}
                                               value={templateAccessoryQuantities[option.id] ?? 0}
                                               onChange={(event) =>
-                                                setAccessoryQuantities((current) => ({
-                                                  ...current,
-                                                  [template.id]: {
-                                                    ...(current[template.id] ?? {}),
+                                                setConfigurations((current) => updateConfiguration(current, template.id, {
+                                                  componentAccessoryQuantities: {
+                                                    ...(current[template.id]?.componentAccessoryQuantities ?? {}),
                                                     [option.id]: Math.max(
                                                       0,
                                                       Math.trunc(Number(event.target.value) || 0),
@@ -4938,13 +4917,10 @@ export function ProductLibrarySelector({
                               step={1}
                               value={additionalClusterQty}
                               onChange={(event) =>
-                                setAdditionalClusterQuantities((current) => ({
-                                  ...current,
-                                  [template.id]: Math.max(
+                                changeConfiguration(template.id, { additionalClusterQuantity: Math.max(
                                     0,
                                     Math.trunc(Number(event.target.value) || 0),
-                                  ),
-                                }))
+                                  ) })
                               }
                               className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-right text-xs outline-none focus:border-emerald-800"
                             />
