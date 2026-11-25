@@ -64,19 +64,19 @@ test("golden: each screen offers the right stirrups and the result passes the se
   }
 });
 
+const without = (value: object, keys: string[]) => Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key)));
+
 test("golden: everything except the rules fields and the added items is identical before and after", () => {
   const before = workspace();
   const after = applied(run());
   const withoutRules = (value: { draft: ProductTemplateDraft; plan: ReturnType<typeof workspace>["plan"] }) => ({
     draft: { ...value.draft, optionGroups: value.draft.optionGroups.map((group) => {
       if (group.id !== FRONT_ID) return group;
-      const { label: _l, selection: _s, conditionalConfiguration: _c, items, ...rest } = group;
-      return { ...rest, items: items.slice(0, 1) };
+      return { ...without(group, ["label", "selection", "conditionalConfiguration"]), items: group.items.slice(0, 1) };
     }) },
     plan: { routes: value.plan.routes.map((route) => {
       if (route.sourceId !== FRONT_ID) return route;
-      const { groupName: _g, sourceName: _n, accessory: _a, rowCount: _r, ...rest } = route;
-      return rest;
+      return without(route, ["groupName", "sourceName", "accessory", "rowCount"]);
     }) },
   });
   assert.deepStrictEqual(withoutRules(after), withoutRules(before));
