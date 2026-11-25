@@ -1086,7 +1086,6 @@ export function ProductLibrarySelector({
   // Manual System / Base units per template (integer >= 1). No automatic Main -> System quantity relation is persisted in the saved schema.
   const [loadedRowReferences, setLoadedRowReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateRowReferencePreview> }>({ templateId: "", images: {} });
   const [loadedSubgroupReferences, setLoadedSubgroupReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateSubgroupReferencePreview> }>({ templateId: "", images: {} });
-  const [selectedModularQuantities, setSelectedModularQuantities] = useState<Record<string, Record<string, number>>>({});
   const [expandedDirectModularRow, setExpandedDirectModularRow] = useState<string | null>(null);
   const [configuredDimensions, setConfiguredDimensions] = useState<Record<string, string>>({});
   const [configuredDimensionEditedByTemplate, setConfiguredDimensionEditedByTemplate] = useState<Record<string, boolean>>({});
@@ -1325,7 +1324,7 @@ export function ProductLibrarySelector({
     put(setSelectedDeskingSizes, plain.workstationSizeId);
     put(setSelectedWorkstationLayouts, plain.workstationLayout);
     put(setAdditionalClusterQuantities, plain.additionalClusterQuantity);
-    put(setSelectedModularQuantities, plain.modularQuantities);
+    changeConfiguration(tid, { modularQuantities: plain.modularQuantities });
     put(setPricingAccessoryQuantities, plain.pricingAccessoryQuantities);
     put(setAccessoryQuantities, plain.componentAccessoryQuantities);
     put(setRequiredOverrides, plain.requiredOverrides);
@@ -1771,7 +1770,7 @@ export function ProductLibrarySelector({
                   const mixedFamilies = usesVariantPricing && !nativeSystemState(variantGroups).active && mixedProductFamilies(variantGroups, categoryGroups);
                   const usesCategoryPricing = (!usesVariantPricing || mixedFamilies) && categoryRows.length > 0;
                   const templatePricingAccessoryQuantities = pricingAccessoryQuantities[template.id] ?? {};
-                  const templateModularQuantities = selectedModularQuantities[template.id] ?? {};
+                  const templateModularQuantities = configurations[template.id]?.modularQuantities ?? {};
                   // Native System / Base: inactive (no role="system_base" rows) => everything below is unchanged.
                   const nativeSystem = nativeSystemState(variantGroups, configurations[template.id]?.systemRowId);
                   const rawSelectedVariantRow =
@@ -1833,7 +1832,7 @@ export function ProductLibrarySelector({
                   const baseSectionDisabled = (excludesBaseModels && selectedModularItems.length > 0) || pricingModes.baseModelDisabled;
                   const modularSectionDisabled = (excludesBaseModels && Boolean(selectedVariantRow)) || pricingModes.modularDisabled;
                   const priceMatrixSectionDisabled = pricingModes.priceMatrixDisabled;
-                  const clearModularSelection = () => setSelectedModularQuantities((current) => { const next = { ...current }; delete next[template.id]; return next; });
+                  const clearModularSelection = () => changeConfiguration(template.id, { modularQuantities: undefined });
                   // Clearing the model / size (and the Price Matrix choice) enables the modular items again.
                   const clearBaseModelSelection = () => {
                     changeConfiguration(template.id, { variantRowId: undefined, categoryRowId: undefined });
@@ -1885,9 +1884,8 @@ export function ProductLibrarySelector({
                     }
                     if (nextQty > 0) clearBaseValuesForModular();
                     // A single-starter group (max_starters === 1) replaces the starter instead of adding a second one.
-                    setSelectedModularQuantities((current) => ({
-                      ...current,
-                      [template.id]: applyModularRowQuantity(group, current[template.id] ?? {}, rowId, nextQty),
+                    setConfigurations((current) => updateConfiguration(current, template.id, {
+                      modularQuantities: applyModularRowQuantity(group, current[template.id]?.modularQuantities ?? {}, rowId, nextQty),
                     }));
                   };
                   const groupSelectionSummaryForAi = usesDirectModularPricing
