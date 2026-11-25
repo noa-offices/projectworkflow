@@ -11,6 +11,8 @@ type Group = Parameters<typeof evaluateLinkedAccessories>[0]["groups"][number] &
 export type LinkedAccessoryFieldsProps = {
   evaluations: AccessoryGroupEvaluation[];
   quantities: Record<string, number>;
+  categories: Record<string, string>;
+  onCategoryChange: (itemId: string, categoryId: string) => void;
   ordinaryOptionGroupIds: ReadonlySet<string>;
   lockedItemIds: ReadonlySet<string>;
   isGroupExpanded: (groupId: string, defaultExpanded: boolean) => boolean;
@@ -30,23 +32,25 @@ export function nextLinkedQuantities(current: Record<string, number>, lockedItem
   return next;
 }
 
-export function LinkedAccessoryPopup<G extends Group>({ title, groups, row, savedQuantities, money, renderFields, onApply, onClose }: {
+export function LinkedAccessoryPopup<G extends Group>({ title, groups, row, savedQuantities, savedCategories, money, renderFields, onApply, onClose }: {
   title: string;
   groups: G[];
   row: Parameters<typeof evaluateLinkedAccessories>[0]["row"];
   /** The linked selection's stored accessoryQuantities. Only copied; the popup never writes them until Apply. */
   savedQuantities: Record<string, number>;
+  savedCategories?: Record<string, string>;
   money: (amount: number) => string;
   renderFields: (props: LinkedAccessoryFieldsProps) => ReactNode;
-  onApply: (accessoryQuantities: Record<string, number>) => void;
+  onApply: (accessoryQuantities: Record<string, number>, categories: Record<string, string>) => void;
   onClose: () => void;
 }) {
   // Starts from what the rules allow for the chosen row: hidden items are dropped and required items added (shown, not saved).
   const [draft, setDraft] = useState(() => evaluateLinkedAccessories({ groups, row, quantities: savedQuantities }).savedQuantities);
+  const [categories, setCategories] = useState(() => ({ ...savedCategories }));
   const dropped = Object.keys(savedQuantities).filter((id) => (savedQuantities[id] ?? 0) > 0 && !(id in evaluateLinkedAccessories({ groups, row, quantities: savedQuantities }).savedQuantities));
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const dialogRef = useRef<HTMLDivElement>(null);
-  const result = evaluateLinkedAccessories({ groups, row, quantities: draft });
+  const result = evaluateLinkedAccessories({ groups, row, quantities: draft, categories });
   const evaluations = result.configuration.groups.filter((evaluation) => !groups.some((group) => group.id === evaluation.groupId && !result.ordinaryOptionGroupIds.has(group.id) && group.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item")));
   const states = evaluations.filter((evaluation) => evaluation.visible).map((evaluation) => ({ id: evaluation.groupId, required: evaluation.required, chooseOne: evaluation.maxSelections === 1, selectedCount: evaluation.selectedItemIds.length }));
   const total = result.priceLines.reduce((sum, line) => sum + line.qty * line.unitPrice, 0);
@@ -68,6 +72,8 @@ export function LinkedAccessoryPopup<G extends Group>({ title, groups, row, save
           {renderFields({
             evaluations,
             quantities: draft,
+            categories,
+            onCategoryChange: (id, category) => setCategories((current) => ({ ...current, [id]: category })),
             ordinaryOptionGroupIds: result.ordinaryOptionGroupIds,
             lockedItemIds: result.lockedItemIds,
             isGroupExpanded: (groupId) => expanded[groupId] ?? false,
@@ -82,7 +88,7 @@ export function LinkedAccessoryPopup<G extends Group>({ title, groups, row, save
           <AccessoryBlockedList entries={accessoryBlockedEntries(result.configuration.blockingRequirements, groups, result.configuration.groups)} onOpen={open} />
           <div className="flex flex-wrap justify-end gap-2">
             <button type="button" onClick={onClose} className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold">Cancel</button>
-            <button type="button" disabled={result.blocked} onClick={() => onApply(result.savedQuantities)} className="rounded-md bg-emerald-900 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Apply</button>
+            <button type="button" disabled={result.blocked} onClick={() => onApply(result.savedQuantities, result.savedCategories)} className="rounded-md bg-emerald-900 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Apply</button>
           </div>
         </div>
       </div>

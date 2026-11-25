@@ -64,15 +64,20 @@ type PriceGroup = { id: string; group_name: string; price_categories?: Array<{ i
 
 const numberValue = (value: unknown) => { const number = Number(value); return Number.isFinite(number) ? number : 0; };
 
+export function accessoryItemPrice(group: Pick<PriceGroup, "price_categories">, accessory: PriceItem, categoryId?: string) {
+  const availableCategories = (group.price_categories ?? []).filter((category) => accessory.prices?.[category.id] !== null && accessory.prices?.[category.id] !== undefined && !accessory.unavailable_price_categories?.includes(category.id));
+  const selectedCategory = availableCategories.find((category) => category.id === categoryId) ?? availableCategories[0] ?? null;
+  const unitPrice = selectedCategory ? numberValue(accessory.prices?.[selectedCategory.id]) : numberValue(accessory.price);
+  return { availableCategories, selectedCategory, unitPrice };
+}
+
 /** One line per selected accessory, priced by its chosen price category (else the first available one, else its price). */
 export function accessoryPriceLines<G extends PriceGroup>(groups: readonly G[], activeQuantities: Record<string, number>, chosenCategory: (groupId: string, itemId: string) => string | undefined) {
   return groups
     .flatMap((group) =>
       (group.items as G["items"][number][]).map((accessory) => {
         const id = accessory.id ?? accessory.item_name ?? "";
-        const availableCategories = (group.price_categories ?? []).filter((category) => accessory.prices?.[category.id] !== null && accessory.prices?.[category.id] !== undefined && !accessory.unavailable_price_categories?.includes(category.id));
-        const selectedCategory = availableCategories.find((category) => category.id === chosenCategory(group.id, id)) ?? availableCategories[0] ?? null;
-        const unitPrice = selectedCategory ? numberValue(accessory.prices?.[selectedCategory.id]) : numberValue(accessory.price);
+        const { selectedCategory, unitPrice } = accessoryItemPrice(group, accessory, chosenCategory(group.id, id));
         return {
           accessory,
           groupName: group.group_name,

@@ -23,6 +23,7 @@ export type SavedSetupLinkedSelection = {
   /** Configuration quantity of the linked product instance (not a line quantity). */
   quantity?: number | null;
   accessoryQuantities?: Record<string, number>;
+  accessoryCategories?: Record<string, string>;
 };
 
 /** Plain, React-free snapshot of the selector state for ONE template. */
@@ -103,6 +104,7 @@ export type SavedSetupRecipeV1 = {
         fabric_category?: string;
         instance_quantity?: number;
         accessory_quantities: Record<string, number>;
+        accessory_categories?: Record<string, string>;
       }
     >;
   };
@@ -237,6 +239,7 @@ export function buildRecipe(state: SavedSetupPlainState): BuiltSavedSetup {
       ...(text(selection.fabricCategory) ? { fabric_category: text(selection.fabricCategory) } : {}),
       ...(Number.isFinite(instanceQuantity) && instanceQuantity > 0 ? { instance_quantity: instanceQuantity } : {}),
       accessory_quantities: positiveQuantities(selection.accessoryQuantities),
+      ...(selection.accessoryCategories && Object.keys(selection.accessoryCategories).length ? { accessory_categories: { ...selection.accessoryCategories } } : {}),
     };
   }
 
@@ -299,6 +302,7 @@ export function restorePlainState(recipe: SavedSetupRecipeV1, specOverrides?: Sa
       fabricCategory: value.fabric_category ?? null,
       quantity: value.instance_quantity ?? null,
       accessoryQuantities: value.accessory_quantities,
+      ...(value.accessory_categories ? { accessoryCategories: { ...value.accessory_categories } } : {}),
     };
   }
   return {
