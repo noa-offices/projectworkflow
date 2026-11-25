@@ -18,6 +18,7 @@ import {
 import { TemplateFormShell } from "@/components/products/template-form-shell";
 import { CopyAiExtractionPrompt, CopyAiSetupPlanningPrompt } from "@/components/products/copy-ai-extraction-prompt";
 import { SmartProductJsonImport } from "@/components/products/smart-product-json-import";
+import { SMART_SAVE_INVALID_FIELDS_MESSAGE, useSmartSetupSaveFeedback } from "@/components/products/smart-setup-save-feedback";
 import type { ExtractionPromptFocus } from "@/lib/products/product-template-ai-extraction-prompt";
 import { PendingRowReferenceProvider } from "@/components/products/pending-row-reference-context";
 import { PendingSubgroupReferenceProvider } from "@/components/products/pending-subgroup-reference-context";
@@ -457,6 +458,7 @@ export function ProductTemplateForm({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [imageProgress, setImageProgress] = useState<string | null>(null);
   const stagedUploadsRef = useRef<StagedUploadCache<File>>(new Map());
+  const smartSave = useSmartSetupSaveFeedback();
   const preserveFailedSave = useRef(false);
   const templateId = useMemo(() => template?.id ?? fallbackTemplateId(), [template?.id]);
   const pricingRef = useRef<HTMLDivElement | null>(null);
@@ -631,7 +633,13 @@ export function ProductTemplateForm({
     const pending = smartSaveRef.current;
     if (!pending || pending.id !== smartSaveReady) return;
     smartSaveRef.current = null;
+    // Report only: the modal covers the form, so it must be told what the submit below does.
+    const imageCountToUpload = Object.keys(pendingRowImagesRef.current).length + Object.keys(pendingSubgroupImagesRef.current).length;
+    smartSave.step(imageCountToUpload ? `Uploading images 0 of ${imageCountToUpload}...` : "Saving template...");
     pricingRef.current?.closest("form")?.requestSubmit();
+    // The browser blocks the submit without telling the modal when a field is invalid.
+    if (pricingRef.current?.closest("form")?.matches(":invalid") !== false) smartSave.fail(SMART_SAVE_INVALID_FIELDS_MESSAGE);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [smartSaveReady]);
   const requestIncrementalSmartDraftApply = (draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = [], sourcePdfMeta?: { sourcePdfStoragePath?: string; sourcePdfFileName?: string }) => {
     void confirmed;
@@ -655,6 +663,7 @@ export function ProductTemplateForm({
     smartSaveSeq.current = id;
     const tracker = createSmartSaveTracker(lastApplyVersionsRef.current);
     smartSaveRef.current = { id, tracker };
+    smartSave.begin("Preparing changes...");
     if (tracker.readyNow()) setSmartSaveReady(id);
     return "pending" as const; // Smart Setup stays open until the submit hands off to the update action
   };
@@ -751,6 +760,7 @@ export function ProductTemplateForm({
       const finalAccessoryReferenceIssues = accessoryPricingReferenceIssues(Array.isArray(parsedAccessoryGroups) ? parsedAccessoryGroups : []);
       if (finalAccessoryReferenceIssues.length) {
         handleInvalidFieldName("accessory_pricing");
+        smartSave.fail(`Template was not saved. ${finalAccessoryReferenceIssues[0].message} Fix this, then press Save again.`);
         return;
       }
     }
@@ -766,22 +776,25 @@ export function ProductTemplateForm({
         const { error } = await createBrowserSupabase().storage.from(STAGED_IMAGE_BUCKET).upload(path, file, { contentType: file.type, cacheControl: "3600", upsert: true });
         if (error) throw new Error(error.message || "storage error");
       },
-      onProgress: (done, total) => setImageProgress(total ? `Uploading images ${done} of ${total}...` : null),
+      onProgress: (done, total) => { const progress = total ? `Uploading images ${done} of ${total}...` : null; setImageProgress(progress); if (progress) smartSave.step(progress); },
     });
     setImageProgress(null);
-    if (!staged.ok) { setSaveError(staged.message); return; } // staged work stays in the form; nothing was sent
+    if (!staged.ok) { setSaveError(staged.message); smartSave.fail(staged.message); return; } // staged work stays in the form; nothing was sent
+    smartSave.step("Saving template...");
     formData.set("pending_row_references", JSON.stringify(rowImages.map((image) => ({ pricingType: image.pricingType, rowId: image.rowId, stagedPath: staged.paths.get(rowKey(image)) }))));
     formData.set("pending_subgroup_references", JSON.stringify(subgroupImages.map((image) => ({ pricingType: image.pricingType, groupId: image.groupId, subgroupId: image.subgroupId, stagedPath: staged.paths.get(subgroupKey(image)) }))));
     if (smartSourcePdfMeta?.sourcePdfStoragePath) formData.set("temporary_source_pdf_path", smartSourcePdfMeta.sourcePdfStoragePath);
     let result: Awaited<ReturnType<typeof baseSubmitAction>>;
     try { result = await baseSubmitAction(formData); }
-    catch (error) { if (isFrameworkRedirect(error)) throw error; preserveFailedSave.current = true; setSaveError(SAVE_REQUEST_FAILED_MESSAGE); return; }
+    catch (error) { if (isFrameworkRedirect(error)) { await smartSave.redirected(error); throw error; } preserveFailedSave.current = true; setSaveError(SAVE_REQUEST_FAILED_MESSAGE); smartSave.fail(SAVE_REQUEST_FAILED_MESSAGE); return; }
     if (result && !result.ok) {
       preserveFailedSave.current = true;
       setSaveError(result.message);
+      smartSave.fail(result.message);
       return;
     }
     preserveFailedSave.current = false;
+    await smartSave.saved();
     if (smartSourcePdfMeta?.sourcePdfStoragePath) {
       const cleanup = await deleteTemporaryProductSource(smartSourcePdfMeta.sourcePdfStoragePath);
       if (cleanup.ok) setSmartSourcePdfMeta(null);
@@ -818,7 +831,7 @@ export function ProductTemplateForm({
         summary={!expandedSections.smartSetup ? "AI planning, extraction, import & update tools. 4 AI tools available." : undefined}
       >
         <div className="space-y-3 md:col-span-2 xl:col-span-3">
-          {template?.id && submitMode === "update" ? <section className="rounded-lg border-2 border-emerald-600 bg-white p-3"><h3 className="text-xs font-bold tracking-wide text-emerald-950">EDIT IN SMART SETUP</h3><p className="mt-1 text-xs text-zinc-700">Open this saved Product Template in Smart Setup to review pricing groups, accessories, and add more JSON. No PDF required.</p><div className="mt-3"><SmartProductJsonImport selectedBrandId={selectedBrandId} brands={brands.map((brand) => ({ id: brand.id, name: brand.name }))} savedBrandId={template?.brand_id} onBrandChange={setSelectedBrandId} mode="edit_existing" templateId={template.id} templateName={template.template_name} buttonLabel="Edit in Smart Setup" loadInitialWorkspace={currentSmartWorkspace} onRequestApply={requestSaveSmartChanges} /></div></section> : null}
+          {template?.id && submitMode === "update" ? <section className="rounded-lg border-2 border-emerald-600 bg-white p-3"><h3 className="text-xs font-bold tracking-wide text-emerald-950">EDIT IN SMART SETUP</h3><p className="mt-1 text-xs text-zinc-700">Open this saved Product Template in Smart Setup to review pricing groups, accessories, and add more JSON. No PDF required.</p><div className="mt-3"><SmartProductJsonImport selectedBrandId={selectedBrandId} brands={brands.map((brand) => ({ id: brand.id, name: brand.name }))} savedBrandId={template?.brand_id} onBrandChange={setSelectedBrandId} mode="edit_existing" templateId={template.id} templateName={template.template_name} buttonLabel="Edit in Smart Setup" loadInitialWorkspace={currentSmartWorkspace} onRequestApply={requestSaveSmartChanges} saveFeedback={smartSave} /></div></section> : null}
           <section className="rounded-lg border border-zinc-200 bg-white/80 p-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2"><div><h3 className="text-xs font-bold tracking-wide text-zinc-900">AI PROMPT TOOLS</h3><p className="mt-1 text-xs text-zinc-600">Prepare instructions to use with ChatGPT, Gemini, Claude, or another LLM.</p></div><span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">External AI</span></div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
