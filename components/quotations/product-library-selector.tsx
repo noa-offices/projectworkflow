@@ -871,6 +871,7 @@ function ProductThumbnail({
 }
 
 function ProductImagePreviewDialog({
+  aboveLinkedPopup = false,
   currentIndex,
   images,
   onClose,
@@ -878,6 +879,7 @@ function ProductImagePreviewDialog({
   onSelect,
   templateName,
 }: {
+  aboveLinkedPopup?: boolean;
   currentIndex: number;
   images: Array<{ label: string; path?: string; previewUrl?: string }>;
   onClose: () => void;
@@ -952,7 +954,7 @@ function ProductImagePreviewDialog({
   }
 
   return (
-    <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }} className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 px-3 py-3 sm:px-4 sm:py-6">
+    <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }} className={`fixed inset-0 ${aboveLinkedPopup ? "z-[90]" : "z-50"} flex items-center justify-center bg-zinc-950/60 px-3 py-3 sm:px-4 sm:py-6`}>
       <div role="dialog" aria-modal="true" aria-label="Product diagram preview" className="flex max-h-[94vh] w-full max-w-6xl flex-col rounded-2xl border border-zinc-200 bg-white text-zinc-900 shadow-2xl">
         <div className="flex items-start justify-between gap-4 border-b border-zinc-200 px-4 py-3 sm:px-5 sm:py-4">
           <div className="min-w-0">
@@ -1089,7 +1091,7 @@ export function ProductLibrarySelector({
   const [selectedOptions, setSelectedOptions] = useState<Record<string, Record<string, string | string[]>>>({});
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({});
   const [imagePreview, setImagePreview] = useState<{ templateId: string; imageIndex: number } | null>(null);
-  const [diagramPreview, setDiagramPreview] = useState<{ label: string; templateId: string; title: string; url: string } | null>(null);
+  const [diagramPreview, setDiagramPreview] = useState<{ label: string; templateId: string; linkedInstanceKey?: string; title: string; url: string } | null>(null);
   const [additionalClusterQuantities, setAdditionalClusterQuantities] = useState<Record<string, number>>({});
   const [accessoryQuantities, setAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [selectedDeskingSizes, setSelectedDeskingSizes] = useState<Record<string, string>>({});
@@ -1099,6 +1101,7 @@ export function ProductLibrarySelector({
   // Manual System / Base units per template (integer >= 1). No automatic Main -> System quantity relation is persisted in the saved schema.
   const [selectedSystemQuantities, setSelectedSystemQuantities] = useState<Record<string, number>>({});
   const [loadedRowReferences, setLoadedRowReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateRowReferencePreview> }>({ templateId: "", images: {} });
+  const [loadedLinkedRowReferences, setLoadedLinkedRowReferences] = useState<typeof loadedRowReferences | null>(null);
   const [loadedSubgroupReferences, setLoadedSubgroupReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateSubgroupReferencePreview> }>({ templateId: "", images: {} });
   const [selectedCategoryGroups, setSelectedCategoryGroups] = useState<Record<string, string>>({});
   const [selectedFamilyKeys, setSelectedFamilyKeys] = useState<Record<string, string>>({});
@@ -1230,6 +1233,31 @@ export function ProductLibrarySelector({
     : null;
   const rowReferenceImages = loadedRowReferences.templateId === selectedTemplateId ? loadedRowReferences.images : {};
   const subgroupReferenceImages = loadedSubgroupReferences.templateId === selectedTemplateId ? loadedSubgroupReferences.images : {};
+  const linkedAccessoryTemplateId = linkedAccessoryPopupKey && selectedTemplateId
+    ? linkedFamiliesByParent.get(selectedTemplateId)?.find((link) =>
+        linkedInstancesForLink(link).some((instance) => linkedProductInstanceKey(link.id, instance.id) === linkedAccessoryPopupKey),
+      )?.linked_template_id
+    : undefined;
+  const linkedDiagramPreviewActive = Boolean(diagramPreview?.linkedInstanceKey
+    && diagramPreview.linkedInstanceKey === linkedAccessoryPopupKey
+    && diagramPreview.templateId === linkedAccessoryTemplateId);
+  useEffect(() => {
+    if (!linkedAccessoryTemplateId) return;
+    let active = true;
+    void listProductTemplateRowReferences(linkedAccessoryTemplateId).then((references) => {
+      if (!active) return;
+      setLoadedLinkedRowReferences({
+        templateId: linkedAccessoryTemplateId,
+        images: Object.fromEntries(references.map((reference) => [
+          productTemplateRowReferenceKey(reference.pricingType, reference.groupId, reference.rowId),
+          reference,
+        ])),
+      });
+    }).catch((error) => {
+      if (active) console.error("PRODUCT LIBRARY LINKED ROW REFERENCES LOAD ERROR", error);
+    });
+    return () => { active = false; };
+  }, [linkedAccessoryTemplateId, linkedAccessoryPopupKey]);
   useEffect(() => {
     if (!selectedTemplateId) return;
     let active = true;
@@ -3997,7 +4025,11 @@ export function ProductLibrarySelector({
                                       return <>
                                         <div className="flex flex-wrap items-center justify-between gap-2">
                                           <p className="min-w-0 break-words text-xs font-bold uppercase tracking-wide text-zinc-700">{line.childTemplate.template_name} Accessories / Optional Items</p>
-                                          <button type="button" onClick={() => setLinkedAccessoryPopupKey(line.instanceKey)} className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:border-emerald-900 hover:text-emerald-900">Edit accessories</button>
+                                          <button type="button" onClick={() => {
+                                            setDiagramPreview(null);
+                                            setLoadedLinkedRowReferences(null);
+                                            setLinkedAccessoryPopupKey(line.instanceKey);
+                                          }} className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:border-emerald-900 hover:text-emerald-900">Edit accessories</button>
                                         </div>
                                         <p className="break-words text-xs text-zinc-600">{linkedAccessorySummaryText(selected)}</p>
                                         {linkedAccessoryPopupKey === line.instanceKey ? (
@@ -4010,7 +4042,19 @@ export function ProductLibrarySelector({
                                             savedQuantities={savedQuantities}
                                             savedCategories={linkedAccessoryCategories[line.instanceKey]}
                                             money={(amount) => formatMoney(line.currency, amount)}
-                                            renderFields={(props) => <AccessoryConfigurationFields {...props} groups={line.childAccessoryGroups} rowCurrency={line.currency} rowReferences={{}} onViewDiagram={() => {}} onResetRequired={() => {}} />}
+                                            renderFields={(props) => <AccessoryConfigurationFields {...props}
+                                              groups={line.childAccessoryGroups}
+                                              rowCurrency={line.currency}
+                                              rowReferences={loadedLinkedRowReferences?.templateId === line.childTemplate.id ? loadedLinkedRowReferences.images : {}}
+                                              onViewDiagram={(item, url) => setDiagramPreview({
+                                                label: "Accessory diagram",
+                                                templateId: line.childTemplate.id,
+                                                linkedInstanceKey: line.instanceKey,
+                                                title: [item.item_name || "Accessory", item.supplier_price_list_code, item.dimension].filter(Boolean).join(" — "),
+                                                url,
+                                              })}
+                                              onResetRequired={() => {}}
+                                            />}
                                             onClose={() => setLinkedAccessoryPopupKey(null)}
                                             onApply={(accessoryQuantities, categories, perScreenFixedQuantities) => {
                                               setLinkedPerScreenFixedQuantities((current) => ({ ...current, [line.instanceKey]: perScreenFixedQuantities }));
@@ -5266,7 +5310,9 @@ export function ProductLibrarySelector({
                           templateName={templateSelectionName(template)}
                         />
                       ) : null}
-                      {diagramPreview?.templateId === template.id ? <ProductImagePreviewDialog currentIndex={0} images={[{ label: diagramPreview.label, previewUrl: diagramPreview.url }]} onClose={() => setDiagramPreview(null)} onNavigate={() => {}} templateName={diagramPreview.title} /> : null}
+                      {diagramPreview && (diagramPreview.linkedInstanceKey ? linkedDiagramPreviewActive : diagramPreview.templateId === template.id) ? (
+                        <ProductImagePreviewDialog aboveLinkedPopup={linkedDiagramPreviewActive} currentIndex={0} images={[{ label: diagramPreview.label, previewUrl: diagramPreview.url }]} onClose={() => setDiagramPreview(null)} onNavigate={() => {}} templateName={diagramPreview.title} />
+                      ) : null}
                     </article>
                   );
                 }) : null}
