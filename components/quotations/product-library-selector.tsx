@@ -109,6 +109,7 @@ import {
   normalizeProductImageSnapshotPath,
   resolveQuotationImageUrl,
 } from "@/lib/quotation-image-path";
+import { LinkedAccessoryList } from "./linked-accessory-list";
 
 export type ProductLibraryBrand = {
   default_currency?: string | null;
@@ -4509,65 +4510,24 @@ export function ProductLibrarySelector({
                                 </div>
                                 {line.childAccessoryGroups.length ? (
                                   <div className="mt-3 space-y-2 border-t border-zinc-200 pt-3">
-                                    <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
-                                      {line.childTemplate.template_name} Accessories / Optional Items
-                                    </p>
-                                    {line.childAccessoryGroups.map((group) => (
-                                      <fieldset key={`${line.link.id}-${group.id}`} className="border border-zinc-200 bg-white p-2">
-                                        <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
-                                          {group.group_name}
-                                        </legend>
-                                        <div className="mt-1 space-y-2">
-                                          {group.items.map((accessory) => {
-                                            const id = accessory.id ?? accessory.item_name ?? "";
-                                            const qty = linkedAccessoryQuantities[line.instanceKey]?.[id] ?? 0;
-
-                                            return (
-                                              <label key={`${line.link.id}-${id}`} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
-                                                <span>
-                                                  <input
-                                                    type="checkbox"
-                                                    checked={qty > 0}
-                                                    onChange={(event) =>
-                                                      setLinkedAccessoryQuantities((current) => ({
-                                                        ...current,
-                                                        [line.instanceKey]: {
-                                                          ...(current[line.instanceKey] ?? {}),
-                                                          [id]: event.target.checked ? Math.max(1, qty || 1) : 0,
-                                                        },
-                                                      }))
-                                                    }
-                                                    className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle"
-                                                  />
-                                                  {accessory.item_name}
-                                                  {accessory.specification ? ` - ${accessory.specification}` : ""}
-                                                </span>
-                                                <span className="font-semibold">
-                                                  {formatMoney(accessory.currency ?? line.currency, numberValue(accessory.price))}
-                                                </span>
-                                                <input
-                                                  type="number"
-                                                  min={1}
-                                                  step={1}
-                                                  value={qty || 1}
-                                                  disabled={qty <= 0}
-                                                  onChange={(event) =>
-                                                    setLinkedAccessoryQuantities((current) => ({
-                                                      ...current,
-                                                      [line.instanceKey]: {
-                                                        ...(current[line.instanceKey] ?? {}),
-                                                        [id]: Math.max(1, Math.trunc(Number(event.target.value) || 1)),
-                                                      },
-                                                    }))
-                                                  }
-                                                  className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100"
-                                                />
-                                              </label>
-                                            );
-                                          })}
-                                        </div>
-                                      </fieldset>
-                                    ))}
+                                    <LinkedAccessoryList
+                                      key={line.instanceKey}
+                                      title={`${line.childTemplate.template_name} Accessories / Optional Items`}
+                                      groups={line.childAccessoryGroups}
+                                      quantities={linkedAccessoryQuantities[line.instanceKey] ?? {}}
+                                      selectedRow={line.childCategoryRow?.id
+                                        ? { kind: "price_matrix", rowId: line.childCategoryRow.id }
+                                        : line.childVariantRow?.id ? { kind: "base_model", rowId: line.childVariantRow.id } : null}
+                                      ownRowIds={[...line.childCategoryGroups.flatMap((group) => group.items ?? []), ...line.childVariantRows].flatMap((row) => row.id ?? [])}
+                                      priceLabel={(accessory) => formatMoney(accessory.currency ?? line.currency, numberValue(accessory.price))}
+                                      GroupHeader={AccessoryGroupHeader}
+                                      onQuantityChange={(id, quantity) =>
+                                        setLinkedAccessoryQuantities((current) => ({
+                                          ...current,
+                                          [line.instanceKey]: { ...(current[line.instanceKey] ?? {}), [id]: quantity },
+                                        }))
+                                      }
+                                    />
                                     {line.qty > 0 ? (
                                       <div className="rounded-md border border-zinc-200 bg-white p-2 text-xs leading-5 text-zinc-600">
                                         <p>Linked screen total: {formatMoney(line.currency, line.baseLineTotal)}</p>
