@@ -7,7 +7,7 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf
 const mirrored = [
   ["app/quotations/actions.ts", "const basePrice = calculationNumber(selectedSize.default_price", "const selectedOptionNames =", "a7452cb3cc9ef4ec7c578c8f8e855ff7d6cfe0f234118f8d01176202adba3c10"],
   ["app/quotations/actions.ts", "const selectedVariantPricingRow = selectedVariantPricing(formData, template.variant_pricing);", "const derivedDesking = isDesking", "c9f460f4aa0fe6f51d665509b087e6985b5c285c90ff1d3d7a21735f84edfcc2"],
-  ["app/quotations/actions.ts", "const selectedOptionPrice = money(", "const matchingLinkedProductsTotal = money(", "d209e978c92f2f98f815ff1c23d3f7ed4a28b840bc2cffdd649a8eca89d21df1"],
+  ["app/quotations/actions.ts", "const selectedOptionPrice = money(", "const matchingLinkedProductsTotal = money(", "dc864abfd50adff1ee64abcd655da94c75fab972b081242e357736043a9276ec"],
   ["app/quotations/actions.ts", "const baseUnitPrice = derivedDesking", "const nonAedCurrencies = Array.from(originalCurrencyTotals.entries())", "e37334068c9d35d7a5514ff97dce310eaaefac3b586ecb8d9b1923e7851d88e8"],
   // Accessory rules: the logic, then the selector inputs passed to it.
   ["lib/products/accessory-rule-setup.ts", "export function evaluateAccessoryRules", "/** Target quantities", "9377281eb0ea6af999c953d2d271ea24ce747a564962123215bebd2785b636ab"],
@@ -18,7 +18,7 @@ const mirrored = [
   ["components/quotations/product-library-selector.tsx", "const activeAnnouncement = template.announced_price_change", "const previousQuotedPrice =", "246a4e42df42309c06aae8df9001a8c70db3f5d497dd480dfe4f54e795931d39"],
   ["components/quotations/product-library-selector.tsx", "const effectiveSelectedIds = Array.from(groupedOptions.entries())", "const effectiveSelectedNames =", "ff9c38148ff254386fb2136a195c4b6b271cf7c7f461e8977bc4c11426de8c85"],
   // Accessory prices: the logic (with its number parsing), then the call from the price core.
-  ["lib/products/accessory-rule-setup.ts", "const numberValue = (value: unknown)", "\n}\n", "f46edcf27618a4e4de59cc5f5d84bce90290c6a6c7c3a7c387aca2fa6fb19260"],
+  ["lib/products/accessory-rule-setup.ts", "const numberValue = (value: unknown)", null, "4f1fe5d479fee9a16d491b012b0516358af9d4f340787c9642a89730b64ad937"],
   ["lib/products/configuration-price.ts", "const selectedPricingAccessories = accessoryPriceLines", "const matchingAccessoryTotal =", "4158593e78a48c882be7d310362c716eef7303f6afa0f36adbc1133ac4a1eae4"],
   // One pricing mode per line (modularInUse): the lines below decide when modular pricing applies and when a Base / Model or Price Matrix choice prices the line.
   ["app/quotations/actions.ts", "const modularInUse = usesModularPricing && modularGroups.some", "const configuredDimensionInput =", "9c8e0c52c6ae656146bd836498060b8e4ae2e5545e4ca3a9c3e08c050b3a5e5a"],
@@ -30,7 +30,7 @@ test("review the gallery price mirror when quote source pricing changes", () => 
   for (const [file, start, end, expected] of mirrored) {
     const source = read(`../../../${file}`);
     const from = source.indexOf(start);
-    const to = source.indexOf(end, from + 1);
+    const to = end === null ? source.length : source.indexOf(end, from + 1);
     const message = `${file}: ${start} - gallery-price.ts mirrors this code; update both`;
     assert.ok(from >= 0 && to > from, message);
     assert.equal(createHash("sha256").update(source.slice(from, to).trim()).digest("hex"), expected, message);
