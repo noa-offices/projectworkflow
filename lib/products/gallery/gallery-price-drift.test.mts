@@ -7,7 +7,7 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf
 const mirrored = [
   ["app/quotations/actions.ts", "const basePrice = calculationNumber(selectedSize.default_price", "const selectedOptionNames =", "a7452cb3cc9ef4ec7c578c8f8e855ff7d6cfe0f234118f8d01176202adba3c10"],
   ["app/quotations/actions.ts", "const selectedVariantPricingRow = selectedVariantPricing(formData, template.variant_pricing);", "const derivedDesking = isDesking", "c9f460f4aa0fe6f51d665509b087e6985b5c285c90ff1d3d7a21735f84edfcc2"],
-  ["app/quotations/actions.ts", "const selectedOptionPrice = money(", "const matchingLinkedProductsTotal = money(", "dc864abfd50adff1ee64abcd655da94c75fab972b081242e357736043a9276ec"],
+  ["app/quotations/actions.ts", "const selectedOptionPrice = money(", "const matchingLinkedProductsTotal = money(", "185d23fceaa945367e6c9edba6f62904e38fa0bf6248a4d245d5a101add8bd7c"],
   ["app/quotations/actions.ts", "const baseUnitPrice = derivedDesking", "const nonAedCurrencies = Array.from(originalCurrencyTotals.entries())", "e37334068c9d35d7a5514ff97dce310eaaefac3b586ecb8d9b1923e7851d88e8"],
   // Accessory rules: the logic, then the selector inputs passed to it.
   ["lib/products/accessory-rule-setup.ts", "export function evaluateAccessoryRules", "/** Target quantities", "9377281eb0ea6af999c953d2d271ea24ce747a564962123215bebd2785b636ab"],

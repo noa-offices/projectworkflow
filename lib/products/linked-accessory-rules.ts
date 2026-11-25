@@ -1,4 +1,4 @@
-import type { AccessoryApplicabilityTarget } from "./accessory-conditional-configuration";
+import type { AccessoryApplicabilityTarget, AccessoryGroupEvaluation } from "./accessory-conditional-configuration";
 import { accessoryPriceLines, evaluateAccessoryRules } from "./accessory-rule-setup";
 import { requiredCompanionItems } from "../quotations/required-component-overrides";
 
@@ -14,6 +14,31 @@ export function linkedAccessoryPopupBlockReason(groups: readonly Group[]) {
 /** The linked product's own chosen row, as the standalone page builds it (resolveMainAccessoryTargets order). */
 export function linkedAccessoryTargets(row: { kind: "base_model" | "price_matrix"; groupId: string | null | undefined; rowId: string | null | undefined } | null): AccessoryApplicabilityTarget[] {
   return row?.groupId && row.rowId ? [{ kind: row.kind, group_id: row.groupId, row_id: row.rowId }] : [];
+}
+
+export function linkedAccessoryRow({ childCategoryRow, selectedChildCategoryGroup, childVariantRow, childVariantGroups }: {
+  childCategoryRow?: { id?: string } | null;
+  selectedChildCategoryGroup?: { id?: string } | null;
+  childVariantRow?: { id?: string } | null;
+  childVariantGroups: readonly { id: string; items: readonly { id?: string }[] }[];
+}): Parameters<typeof linkedAccessoryTargets>[0] {
+  if (childCategoryRow?.id) {
+    return { kind: "price_matrix", groupId: selectedChildCategoryGroup?.id, rowId: childCategoryRow.id };
+  }
+  if (!childVariantRow?.id) return null;
+  const group = childVariantGroups.find((candidate) => candidate.items.some((item) => item.id === childVariantRow.id));
+  return { kind: "base_model", groupId: group?.id, rowId: childVariantRow.id };
+}
+
+/** Only selected items in a visible rule-fixed group scale with their linked instance. */
+export function linkedFixedItemIds(evaluations: readonly AccessoryGroupEvaluation[]): ReadonlySet<string> {
+  return new Set(evaluations.flatMap((group) =>
+    group.visible && group.fixedQuantity !== null ? group.selectedItemIds : [],
+  ));
+}
+
+export function effectiveLinkedAccessoryQuantity(quantity: number, isFixed: boolean, instanceQuantity: number): number {
+  return isFixed ? quantity * instanceQuantity : quantity;
 }
 
 export function evaluateLinkedAccessories<G extends Group>({ groups, row, quantities, categories = {} }: {

@@ -119,7 +119,7 @@ import {
 } from "@/lib/quotation-image-path";
 import { LinkedAccessoryList } from "./linked-accessory-list";
 import { LinkedAccessoryPopup } from "./linked-accessory-popup";
-import { linkedAccessoryPopupBlockReason } from "@/lib/products/linked-accessory-rules";
+import { linkedAccessoryPopupBlockReason, linkedAccessoryRow } from "@/lib/products/linked-accessory-rules";
 import { linkedAccessorySummary as linkedAccessorySummaryText, linkedAccessoryName } from "./linked-accessory-view";
 import { AccessoryBlockedList, accessoryBlockedEntries, AccessoryGroupCounts, AccessoryGroupsToolbar, revealAccessoryGroup } from "./accessory-group-status";
 
@@ -1126,6 +1126,7 @@ export function ProductLibrarySelector({
   const [linkedAccessoryQuantities, setLinkedAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   // The linked instance whose "Edit accessories" popup is open.
   const [linkedAccessoryCategories, setLinkedAccessoryCategories] = useState<Record<string, Record<string, string>>>({});
+  const [linkedPerScreenFixedQuantities, setLinkedPerScreenFixedQuantities] = useState<Record<string, true | undefined>>({});
   const [linkedAccessoryPopupKey, setLinkedAccessoryPopupKey] = useState<string | null>(null);
   const [selectedLinkedVariants, setSelectedLinkedVariants] = useState<Record<string, string>>({});
   const [selectedLinkedCategoryGroups, setSelectedLinkedCategoryGroups] = useState<Record<string, string>>({});
@@ -1378,6 +1379,7 @@ export function ProductLibrarySelector({
         putKeyed(setLinkedProductQuantities, key, selection?.quantity);
         putKeyed(setLinkedAccessoryQuantities, key, selection?.accessoryQuantities);
         putKeyed(setLinkedAccessoryCategories, key, selection?.accessoryCategories);
+        putKeyed<true | undefined>(setLinkedPerScreenFixedQuantities, key, selection?.perScreenFixedQuantities);
       }
     }
     setReplay({ key: Date.now(), problems: evaluation.validation.problems, setupName: setup.setupName, specOverrides: setup.specOverrides, templateId: tid });
@@ -2097,6 +2099,7 @@ export function ProductLibrarySelector({
                           return {
                             instance, quantity: linkedProductQuantities[instanceKey], accessoryQuantities: linkedAccessoryQuantities[instanceKey],
                             accessoryCategories: linkedAccessoryCategories[instanceKey],
+                            perScreenFixedQuantities: linkedPerScreenFixedQuantities[instanceKey],
                             selection: { variantRowId: selectedLinkedVariants[instanceKey], categoryGroupId: selectedLinkedCategoryGroups[instanceKey],
                               categoryId: selectedLinkedCategories[instanceKey], fabricCategory: selectedLinkedFabricCategories[instanceKey] },
                           };
@@ -2721,6 +2724,7 @@ export function ProductLibrarySelector({
                             fabricCategory: selectedLinkedFabricCategories[instanceKey] ?? null,
                             quantity: linkedProductQuantities[instanceKey] ?? null,
                             accessoryQuantities: linkedAccessoryQuantities[instanceKey] ?? {},
+                            perScreenFixedQuantities: linkedPerScreenFixedQuantities[instanceKey],
                             accessoryCategories: linkedAccessoryCategories[instanceKey],
                           }] as const;
                         }),
@@ -3989,10 +3993,7 @@ export function ProductLibrarySelector({
                                   <div className="mt-3 space-y-2 border-t border-zinc-200 pt-3">
                                     {!linkedAccessoryPopupBlockReason(line.childAccessoryGroups) ? (() => {
                                       const savedQuantities = linkedAccessoryQuantities[line.instanceKey] ?? {};
-                                      const row = line.childCategoryRow?.id
-                                        ? { kind: "price_matrix" as const, groupId: line.selectedChildCategoryGroup?.id, rowId: line.childCategoryRow.id }
-                                        : line.childVariantRow?.id ? { kind: "base_model" as const, groupId: line.childVariantGroups.find((group) => group.items.some((item) => item.id === line.childVariantRow?.id))?.id, rowId: line.childVariantRow.id } : null;
-                                      const selected = line.childAccessoryGroups.flatMap((group) => group.items.flatMap((item) => (savedQuantities[item.id ?? ""] ?? 0) > 0 ? [{ name: linkedAccessoryName(item), quantity: savedQuantities[item.id ?? ""]! }] : []));
+                                      const selected = line.selectedAccessories.map(({ accessory, qty }) => ({ name: linkedAccessoryName(accessory), quantity: qty }));
                                       return <>
                                         <div className="flex flex-wrap items-center justify-between gap-2">
                                           <p className="min-w-0 break-words text-xs font-bold uppercase tracking-wide text-zinc-700">{line.childTemplate.template_name} Accessories / Optional Items</p>
@@ -4003,13 +4004,16 @@ export function ProductLibrarySelector({
                                           <LinkedAccessoryPopup
                                             title={line.instance.label.trim() || line.link.label || line.childTemplate.template_name}
                                             groups={line.childAccessoryGroups}
-                                            row={row}
+                                            row={linkedAccessoryRow(line)}
+                                            instanceQuantity={line.qty}
+                                            perScreenFixedQuantities={linkedPerScreenFixedQuantities[line.instanceKey]}
                                             savedQuantities={savedQuantities}
                                             savedCategories={linkedAccessoryCategories[line.instanceKey]}
                                             money={(amount) => formatMoney(line.currency, amount)}
                                             renderFields={(props) => <AccessoryConfigurationFields {...props} groups={line.childAccessoryGroups} rowCurrency={line.currency} rowReferences={{}} onViewDiagram={() => {}} onResetRequired={() => {}} />}
                                             onClose={() => setLinkedAccessoryPopupKey(null)}
-                                            onApply={(accessoryQuantities, categories) => {
+                                            onApply={(accessoryQuantities, categories, perScreenFixedQuantities) => {
+                                              setLinkedPerScreenFixedQuantities((current) => ({ ...current, [line.instanceKey]: perScreenFixedQuantities }));
                                               setLinkedAccessoryCategories((current) => ({ ...current, [line.instanceKey]: categories }));
                                               setLinkedAccessoryQuantities((current) => ({ ...current, [line.instanceKey]: accessoryQuantities }));
                                               setLinkedAccessoryPopupKey(null);
@@ -4079,6 +4083,11 @@ export function ProductLibrarySelector({
                                           [line.link.id]: linkedInstancesForLink(line.link).filter((instance) => instance.id !== line.instance.id),
                                         }));
                                         setLinkedProductQuantities((current) => {
+                                          const next = { ...current };
+                                          delete next[line.instanceKey];
+                                          return next;
+                                        });
+                                        setLinkedPerScreenFixedQuantities((current) => {
                                           const next = { ...current };
                                           delete next[line.instanceKey];
                                           return next;

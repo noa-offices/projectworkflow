@@ -7,6 +7,7 @@ import { accessoryItemPrice, accessoryPriceLines } from "./accessory-rule-setup"
 import { flattenBaseModelPricingRows } from "./base-model-pricing-groups";
 import { groupedStandardCategoryPricingRows, standardCategoryPriceColumns as groupedCategoryPriceColumns } from "./category-pricing-groups";
 import { resolveLinkedProductFamily, type LinkedFamilyStored } from "./linked-product-family";
+import { effectiveLinkedAccessoryQuantity, evaluateLinkedAccessories, linkedAccessoryRow, linkedFixedItemIds } from "./linked-accessory-rules";
 import { isDirectModularPricingGroup, modularItemPricingRows, modularRowRole } from "./modular-pricing";
 import { announcedQuotationDelta, announcedTotals } from "./price-announcements";
 export type DeskingSizePricingRow = {
@@ -147,6 +148,7 @@ type LinkedInstanceChoice = {
   quantity?: number;
   accessoryQuantities?: Record<string, number>;
   accessoryCategories?: Record<string, string>;
+  perScreenFixedQuantities?: true;
 };
 
 type LinkedFamilyInput<Child, Link> = {
@@ -405,7 +407,7 @@ export function priceModularItems(modularGroups: readonly ModularGroup[], templa
 }
 
 function priceLegacyLinked<Child extends ConfigurationPriceTemplate, Link extends ConfigurationPriceLink>(
-  link: Link, childTemplate: Child, { instance, selection, quantity, accessoryQuantities, accessoryCategories }: LinkedInstanceChoice,
+  link: Link, childTemplate: Child, { instance, selection, quantity, accessoryQuantities, accessoryCategories, perScreenFixedQuantities }: LinkedInstanceChoice,
 ) {
   const instanceKey = `${link.id}:${instance.id}`;
   const childCategoryGroups = groupedStandardCategoryPricingRows(childTemplate.category_pricing);
@@ -440,6 +442,13 @@ function priceLegacyLinked<Child extends ConfigurationPriceTemplate, Link extend
     quantity,
     numberValue(link.default_qty),
   )));
+  const fixedItemIds = perScreenFixedQuantities === true && qty !== 1
+    ? linkedFixedItemIds(evaluateLinkedAccessories({
+        groups: childAccessoryGroups,
+        row: linkedAccessoryRow({ childCategoryRow, selectedChildCategoryGroup, childVariantRow, childVariantGroups }),
+        quantities: childAccessoryQuantities,
+      }).configuration.groups)
+    : undefined;
   const selectedAccessories = childAccessoryGroups
     .flatMap((group) =>
       group.items.map((accessory) => {
@@ -452,7 +461,7 @@ function priceLegacyLinked<Child extends ConfigurationPriceTemplate, Link extend
             : accessory,
           groupName: group.group_name,
           id,
-          qty: accessoryQty,
+          qty: effectiveLinkedAccessoryQuantity(accessoryQty, fixedItemIds?.has(id) === true, qty),
         };
       }),
     )
