@@ -135,12 +135,14 @@ test("the selector shows every chooser again and disables the other mode with th
 });
 
 test("the selector clears the other mode when one becomes active, and prices modular only when a modular item has a quantity", () => {
+  const pricing = read("../products/configuration-price.ts");
   assert.match(selector, /if \(nextQty > 0\) clearBaseValuesForModular\(\);/);
   assert.match(selector, /if \(pricingModes\.exclusive\) clearModularSelection\(\); setSelectedVariantRows/);
   assert.match(selector, /if \(pricingModes\.exclusive && nextRowId\) clearModularSelection\(\);/);
   assert.match(selector, /const modularInUse = usesModularPricing && selectedModularItems\.length > 0;/);
-  assert.match(selector, /const previewUnitPrice =\s*\(modularInUse\s*\? selectedModularItems\.reduce/);
-  assert.match(selector, /const baseProductPrice =\s*modularInUse\s*\? selectedModularItems\.reduce/);
+  assert.match(selector, /modularInUse, modularItems: selectedModularItems,/);
+  assert.match(pricing, /const previewUnitPrice = baseProductPrice \+ selectedWorkstationVariantPrice \+ matchingSystemTotal \+ matchingAccessoryTotal;/);
+  assert.match(pricing, /const baseProductPrice =\s*modularInUse\s*\? selectedModularItems\.reduce/);
   assert.match(selector, /const missingRequiredModularSelection = usesModularPricing && \(selectedModularItems\.length > 0 \? Boolean\(modularCompositionIssue\) : !baseModeChosen\);/);
   assert.match(selector, /const savedModularSide = Object\.values\(plain\.modularQuantities \?\? \{\}\)\.some/, "a saved line with both modes keeps the modular side");
   assert.match(selector, /put\(setSelectedVariantRows, savedModularSide \? null : plain\.variantRowId\);/);

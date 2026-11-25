@@ -96,7 +96,8 @@ test("an old saved choice is not changed by opening or cancelling; only Apply wr
   const selector = readFileSync("components/quotations/product-library-selector.tsx", "utf8").replace(/\r\n/g, "\n");
   assert.ok(selector.includes("setLinkedAccessoryQuantities((current) => ({ ...current, [line.instanceKey]: accessoryQuantities }));"));
   assert.ok(selector.includes("onClose={() => setLinkedAccessoryPopupKey(null)}"));
-  assert.ok(selector.includes(".reduce((total, line) => total + line.qty * numberValue(line.accessory.price), 0);"), "parent linked totals are unchanged");
+  const pricing = readFileSync(new URL("./configuration-price.ts", import.meta.url), "utf8");
+  assert.ok(pricing.includes(".reduce((total, line) => total + line.qty * numberValue(line.accessory.price), 0);"), "parent linked totals are unchanged");
 });
 
 test("Apply stores the existing format: the saved setup is identical to what the old panel stored for the same choice", () => {
@@ -116,5 +117,7 @@ test("category-priced, structural-support and id-less accessories keep the class
 
 test("the popup reuses the standalone accessory section and the selector wiring", () => {
   const selector = readFileSync("components/quotations/product-library-selector.tsx", "utf8").replace(/\r\n/g, "\n");
-  ["renderFields={(props) => <AccessoryConfigurationFields {...props}", "evaluateAccessoryRules({", "accessoryPriceLines(allAccessoryGroups, accessoryConfiguration.activeQuantities", "!linkedAccessoryPopupBlockReason(line.childAccessoryGroups)", "<LinkedAccessoryList"].forEach((expected) => assert.ok(selector.includes(expected), expected));
+  const pricing = readFileSync(new URL("./configuration-price.ts", import.meta.url), "utf8");
+  ["renderFields={(props) => <AccessoryConfigurationFields {...props}", "evaluateAccessoryRules({", "!linkedAccessoryPopupBlockReason(line.childAccessoryGroups)", "<LinkedAccessoryList"].forEach((expected) => assert.ok(selector.includes(expected), expected));
+  assert.ok(pricing.includes("accessoryPriceLines(allAccessoryGroups, accessoryConfiguration.activeQuantities"));
 });

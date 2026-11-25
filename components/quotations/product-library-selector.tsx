@@ -52,13 +52,11 @@ import { friendlyPriceHealth, productTemplatePriceCheckState } from "@/lib/produ
 import { keepSupplierStatus, newRecordSupplierStatus, withSupplierStatus } from "@/lib/products/supplier-status-record";
 import {
   groupedStandardCategoryPricingRows,
-  standardCategoryPriceColumns as groupedCategoryPriceColumns,
 } from "@/lib/products/category-pricing-groups";
 import {
   isDirectModularPricingGroup,
   isSingleStarterModularGroup,
   modularItemPricingGroups,
-  modularItemPricingRows,
   modularPricingDefaultsFromRows,
   modularRowRole,
   modularSelectionFamily,
@@ -66,32 +64,41 @@ import {
 import { configuratorModes } from "@/lib/quotations/configurator-choosers";
 import { applyModularRowQuantity, BASE_MODEL_DISABLED_NOTE, MODULAR_DISABLED_NOTE, modularGroupsExcludeBaseModels, SINGLE_STARTER_HINT, validateModularCompositionGroups } from "@/lib/products/modular-composition";
 import { resolveMainAccessoryTargets } from "@/lib/products/main-accessory-targets";
-import { accessoryPriceLines, evaluateAccessoryRules } from "@/lib/products/accessory-rule-setup";
+import { evaluateAccessoryRules } from "@/lib/products/accessory-rule-setup";
 import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
 import { flattenBaseModelPricingRows, type BaseModelPricingGroup } from "@/lib/products/base-model-pricing-groups";
 import { MATRIX_FAMILY_MISSING_MESSAGE, mixedProductFamilies, productFamilyOptions, selectedProductFamily, type ProductFamilyOption } from "@/lib/products/product-family-options";
-import { LINKED_LOCAL_BUILDER_MESSAGE, linkedProductFamilyChange, linkedProductNeedsLocalBuilder, resolveLinkedProductFamily } from "@/lib/products/linked-product-family";
+import { LINKED_LOCAL_BUILDER_MESSAGE, linkedProductFamilyChange, linkedProductNeedsLocalBuilder } from "@/lib/products/linked-product-family";
 import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
 import { guidedBaseModelSelection } from "@/lib/quotations/guided-base-model-selection";
 import { requiredComponentOverrideReport, requiredCompanionItems, withRequiredOverride, withoutRequiredOverride, type RequiredComponentOverrides } from "@/lib/quotations/required-component-overrides";
-import { activeBaseModelPricingGroups, composeSystemAndMainSpecification, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, normalizeSystemQuantity, remapBaseModelTargetsToOwnerGroups, systemPriceContribution, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
+import { activeBaseModelPricingGroups, composeSystemAndMainSpecification, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, normalizeSystemQuantity, remapBaseModelTargetsToOwnerGroups, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
 import type { ProductTemplateSubgroupReferencePreview } from "@/lib/products/product-template-subgroup-references";
-import {
-  type AccessoryConditionalConfiguration,
-  type AccessoryGroupEvaluation,
-  type StructuralSupportCompatibleTarget,
-} from "@/lib/products/accessory-conditional-configuration";
+import type { AccessoryGroupEvaluation } from "@/lib/products/accessory-conditional-configuration";
 import { filterCompatibleBaseModelGroups, unionStructuralSupportCompatibleTargets } from "@/lib/products/structural-support-compatibility";
 import { defaultProductAccessoryQuantities, evaluateProductAccessorySelection } from "@/lib/quotations/product-accessory-configuration";
 import { accessoryOptionLabel } from "@/lib/quotations/accessory-option-label";
 import { flattenWorkstationPricingRows, workstationPricingGroups } from "@/lib/products/workstation-pricing-groups";
 import { variantOptionLabel } from "@/lib/products/variant-option-label";
 import { productTemplateRowReferenceKey, selectedRowReferencePreview, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
-import { formatRuleMoney, quotationLinePricing, ruleConvertedPrice, ruleExactAmount, type PricingRule } from "@/lib/quotation-pricing";
+import { formatRuleMoney, quotationLinePricing, ruleExactAmount, type PricingRule } from "@/lib/quotation-pricing";
+import {
+  activeAccessoryRows,
+  activeVariantRows,
+  categoryPriceColumns,
+  priceConfiguration,
+  priceModularItems,
+  toQuotePrice,
+  type AccessoryPricingItem,
+  type AccessoryPricingRow,
+  type CategoryPricingRow,
+  type DeskingSizePricingRow,
+  type VariantPricingRow,
+} from "@/lib/products/configuration-price";
 import { configuratorHeaderTotal } from "./configurator-header-total";
 import { configurationFingerprint, formatReconfiguredMoney, reconfigurationDraft, reconfigureUnitPrice, reconfigureWarnings, snapshotObject, type ReconfigureChanges, type ReconfigureTarget } from "./local-reconfigure";
-import { missingExchangeRateCurrencies, roundSourceAmount } from "@/lib/quotations/source-price-components";
-import { announcedQuotationDelta, announcedSnapshot, announcedTotals, type AnnouncementView } from "@/lib/products/price-announcements";
+import { roundSourceAmount } from "@/lib/quotations/source-price-components";
+import { announcedSnapshot, type AnnouncementView } from "@/lib/products/price-announcements";
 import { AnnouncedPriceBadge } from "@/components/products/announced-price-badge";
 import { AnnouncedPriceTick } from "@/components/quotations/announced-price-tick";
 import { keepDimensionLine } from "@/lib/quotations/final-specification-ai-check";
@@ -201,110 +208,6 @@ export type ProductLibraryTemplate = {
   supplier_family_price_loading?: boolean;
   // The Brand's open price change notice. Information only until someone ticks it for one quotation item.
   announced_price_change?: AnnouncementView | null;
-};
-
-type DeskingSizePricingRow = {
-  id?: string;
-  label?: string;
-  supplier_price_list_code?: string;
-  base_supplier_price_list_code?: string;
-  length?: number;
-  depth?: number;
-  height?: number;
-  dimension_unit?: string;
-  layout_type?: string;
-  default_price?: number;
-  additional_price?: number;
-  additional_supplier_price_list_code?: string;
-  currency?: string;
-  specification?: string;
-  importantRequirements?: string[];
-  default_dimension?: string;
-  sort_order?: number;
-  is_active?: boolean;
-};
-
-type VariantPricingRow = {
-  id?: string;
-  /** Native System / Base row (Phase B); omitted for Main Product rows. */
-  role?: "system_base";
-  variant_name?: string;
-  display_name?: string;
-  supplier_price_list_code?: string;
-  dimension?: string;
-  price?: number;
-  currency?: string;
-  specification?: string;
-  importantRequirements?: string[];
-  is_active?: boolean;
-  sort_order?: number;
-};
-
-type CategoryPricingRow = {
-  id?: string;
-  group_id?: string;
-  group_name?: string;
-  items?: CategoryPricingRow[];
-  price_categories?: string[];
-  pricing_type?: string | null;
-  pricing_category_id?: string | null;
-  pricing_category_name?: string | null;
-  variant_name?: string;
-  display_name?: string;
-  supplier_price_list_code?: string;
-  dimension?: string;
-  currency?: string;
-  prices?: Record<string, number | null>;
-  /** Direct-priced modular rows carry one scalar price instead of category cells. */
-  price?: number | null;
-  unavailable_categories?: string[];
-  specification?: string;
-  importantRequirements?: string[];
-  modular_default_dimension?: string | null;
-  modular_default_specification?: string | null;
-  modular_pricing_mode?: string | null;
-  modular_composition?: { min_starters?: number | null; max_starters?: number | null } | null;
-  modular_role?: string | null;
-  /** Opt-in one-way-only marker: the modular way and the Base Size / Main Price way cannot be selected together. */
-  modular_excludes_base_models?: boolean | null;
-  is_active?: boolean;
-  sort_order?: number;
-};
-
-type AccessoryPricingRow = {
-  id?: string;
-  group_name?: string;
-  group_is_required?: boolean;
-  default_item_ids?: string[];
-  price_categories?: Array<{ id: string; label: string }>;
-  items?: AccessoryPricingItem[];
-  item_name?: string;
-  supplier_price_list_code?: string;
-  price?: number | null;
-  currency?: string;
-  dimension?: string;
-  specification?: string;
-  is_active?: boolean;
-  sort_order?: number;
-  conditional_configuration?: AccessoryConditionalConfiguration;
-  subgroups?: Array<{ id: string; subgroup_name: string; sort_order: number; is_active: boolean; row_ids: string[] }>;
-};
-
-type AccessoryPricingItem = {
-  id?: string;
-  item_name?: string;
-  supplier_price_list_code?: string;
-  price?: number | null;
-  prices?: Record<string, number | null>;
-  unavailable_price_categories?: string[];
-  currency?: string;
-  dimension?: string;
-  specification?: string;
-  importantRequirements?: string[];
-  is_active?: boolean;
-  sort_order?: number;
-  role?: "normal" | "companion" | "structural_support";
-  compatible_targets?: StructuralSupportCompatibleTarget[];
 };
 
 type LinkedProductInstance = {
@@ -567,13 +470,6 @@ function activeWorkstationPricingGroups(rows: unknown) {
     }));
 }
 
-function activeVariantRows(rows: unknown) {
-  return flattenBaseModelPricingRows<VariantPricingRow>(Array.isArray(rows) ? rows : [], { activeGroupsOnly: true })
-    .filter((row) => row.is_active !== false)
-    .filter((row) => row.variant_name || row.display_name || row.dimension || numberValue(row.price) > 0)
-    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
-}
-
 /* Private signed thumbnails intentionally use native image elements. */
 /* eslint-disable @next/next/no-img-element */
 function BaseModelBrowseAll({ currency, groups, onSelect, rowReferences, selectedRowId, subgroupReferences }: { currency: string; groups: BaseModelPricingGroup<VariantPricingRow>[]; onSelect: (rowId: string) => void; rowReferences: Readonly<Record<string, ProductTemplateRowReferencePreview>>; selectedRowId: string | null; subgroupReferences: Readonly<Record<string, ProductTemplateSubgroupReferencePreview>> }) {
@@ -592,13 +488,6 @@ function BaseModelHierarchySelector({ currency, groups, onSelect, rowReferences,
   const [subgroupId, setSubgroupId] = useState(() => baseModelPlacement(groups, selectedRowId)?.subgroupId ?? "");
   const { group, rows, subgroups, ungrouped, resolvedSubgroupId: fixedSubgroup } = guidedBaseModelSelection(groups, groupId, subgroupId);
   return <div className="mt-2 grid gap-3"><div className="grid gap-3 sm:grid-cols-2">{groups.length > 1 ? <label><span className="text-[10px] font-bold uppercase text-zinc-500">Choose Product Family</span><select value={group?.id ?? ""} onChange={(event) => { setGroupId(event.target.value); setSubgroupId(""); onSelect(""); }} className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 text-xs">{groups.map((item) => <option key={item.id} value={item.id}>{item.group_name}</option>)}</select></label> : null}{subgroups.length ? <label><span className="text-[10px] font-bold uppercase text-zinc-500">Choose Configuration</span>{subgroups.length === 1 && !ungrouped.length ? <p className="mt-1 h-9 rounded border border-zinc-200 bg-zinc-50 px-2 py-2 text-xs">{subgroups[0].subgroup_name}</p> : <select value={fixedSubgroup} onChange={(event) => { setSubgroupId(event.target.value); onSelect(""); }} className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 text-xs"><option value="">Choose configuration</option>{subgroups.map((item) => <option key={item.id} value={item.id}>{item.subgroup_name}</option>)}{ungrouped.length ? <option value="__ungrouped__">Other Models</option> : null}</select>}</label> : null}</div><label><span className="text-[10px] font-bold uppercase text-zinc-500">Choose Model / Size</span><select value={selectedRowId ?? ""} disabled={!rows.length} onChange={(event) => onSelect(event.target.value)} className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 text-xs"><option value="">{rows.length ? "Choose model" : subgroups.length ? "Choose configuration first" : "No models available"}</option>{rows.map((row) => <option key={row.id} value={row.id}>{pricingOptionLabel({ currency: row.currency ?? currency, dimension: row.dimension, displayName: pricingDisplayName(row), price: numberValue(row.price), supplierCode: row.supplier_price_list_code })}</option>)}</select></label><details><summary className="cursor-pointer text-xs font-semibold text-emerald-900">Browse all models</summary><BaseModelBrowseAll currency={currency} groups={groups} onSelect={onSelect} rowReferences={rowReferences} selectedRowId={selectedRowId} subgroupReferences={subgroupReferences} /></details></div>;
-}
-
-function activeModularRows(rows?: CategoryPricingRow[] | null) {
-  return modularItemPricingRows(rows)
-    .filter((row) => row.is_active !== false)
-    .filter((row) => row.variant_name || row.display_name || row.dimension || numberValue(row.price) > 0 || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
-    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
 }
 
 function activeModularGroups(rows?: CategoryPricingRow[] | null) {
@@ -837,61 +726,6 @@ function StructuralSupportFields({ groups, evaluations, quantities, rowCurrency,
   return <div className="mt-3 space-y-3"><div><p className="text-xs font-bold uppercase tracking-wide text-zinc-700">Structural Support</p><div className="mt-2 space-y-2">{supports.map(({ group, item }) => { const id = item.id ?? ""; const quantity = quantities[id] ?? 0; return <label key={`${group.id}:${id}`} className="grid gap-2 rounded border border-zinc-200 bg-zinc-50 p-2 text-xs sm:grid-cols-[1fr_auto] sm:items-center"><span><input type="checkbox" checked={quantity > 0} onChange={(event) => onQuantityChange(group.id, id, event.target.checked ? Math.max(1, quantity || 1) : 0)} className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle" /><span className="font-medium text-zinc-900">{item.item_name}</span>{item.supplier_price_list_code ? <span className="mt-1 block text-[11px] text-zinc-500">Supplier Code: {item.supplier_price_list_code}</span> : null}{item.dimension ? <span className="mt-1 block text-[11px] text-zinc-500">{item.dimension}</span> : null}</span><span className="font-semibold">{formatMoney(item.currency ?? rowCurrency, numberValue(item.price))}</span></label>; })}</div></div>{companionGroups.length ? <div><p className="text-xs font-bold uppercase tracking-wide text-zinc-700">Required With Selected Support</p><div className="mt-2 space-y-2">{companionGroups.flatMap(({ evaluation, group, items }) => items.map((item) => <div key={`${group.id}:${item.id}`} className="grid gap-2 rounded border border-zinc-200 bg-zinc-50 p-2 text-xs sm:grid-cols-[1fr_auto] sm:items-center"><span><span className="font-medium text-zinc-900">✓ {item.item_name}</span>{item.supplier_price_list_code ? <span className="mt-1 block text-[11px] text-zinc-500">Supplier Code: {item.supplier_price_list_code}</span> : null}<span className="mt-1 block text-[11px] font-semibold text-zinc-700">Qty: {evaluation.fixedQuantity ?? quantities[item.id ?? ""] ?? 0} · Required</span></span><span className="font-semibold">{formatMoney(item.currency ?? rowCurrency, numberValue(item.price))}</span></div>))}</div></div> : null}</div>;
 }
 
-function categoryPriceColumns(rows?: CategoryPricingRow[] | null) {
-  return Array.from(new Set([
-    ...groupedCategoryPriceColumns(rows),
-    ...activeModularRows(rows).flatMap((row) => Object.keys(row.prices ?? {})),
-  ]));
-}
-
-function activeAccessoryRows(rows?: AccessoryPricingRow[] | null): Array<AccessoryPricingRow & { id: string; group_name: string; group_is_required: boolean; is_active: boolean; sort_order: number; items: AccessoryPricingItem[]; subgroups: NonNullable<AccessoryPricingRow["subgroups"]> }> {
-  const sourceRows = Array.isArray(rows) ? rows : [];
-  const groups = sourceRows
-    .filter((row) => row.group_name || row.items)
-    .map((group, groupIndex) => {
-      const activeItems = (group.items ?? [])
-        .filter((item) => item.is_active !== false)
-        .filter((item) => item.item_name || item.supplier_price_list_code || item.price !== null && item.price !== undefined || item.specification)
-        .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
-      const subgroups = [...(group.subgroups ?? [])].filter((subgroup) => subgroup.is_active).sort((left, right) => left.sort_order - right.sort_order);
-      const groupedIds = new Set(subgroups.flatMap((subgroup) => subgroup.row_ids));
-      return ({
-      id: group.id ?? `add-on-group-${groupIndex}`,
-      group_name: group.group_name?.trim() || "Accessories",
-      group_is_required: group.group_is_required === true,
-      default_item_ids: (group.default_item_ids ?? []).filter((id) => activeItems.some((item) => item.id === id)),
-      price_categories: group.price_categories,
-      conditional_configuration: group.conditional_configuration,
-      is_active: group.is_active !== false,
-      sort_order: numberValue(group.sort_order, groupIndex),
-      subgroups,
-      items: [...subgroups.flatMap((subgroup) => subgroup.row_ids.flatMap((id) => activeItems.find((item) => item.id === id) ?? [])), ...activeItems.filter((item) => !item.id || !groupedIds.has(item.id))],
-    }); })
-    .filter((group) => group.is_active && group.items.length)
-    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
-  const flatRows = sourceRows
-    .filter((row) => !row.group_name && !row.items)
-    .filter((row) => row.is_active !== false)
-    .filter((row) => row.item_name || row.supplier_price_list_code || row.price !== null && row.price !== undefined || row.specification)
-    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
-
-  return flatRows.length
-    ? [
-        ...groups,
-        {
-          id: "accessories",
-          group_name: "Accessories",
-          group_is_required: false,
-          conditional_configuration: undefined,
-          is_active: true,
-          sort_order: groups.length,
-          subgroups: [],
-          items: flatRows,
-        },
-      ]
-    : groups;
-}
-
 function matchesTemplateSearch({
   brandNameById,
   categoryNameById,
@@ -960,91 +794,6 @@ function isDeskingTemplate({
     /workstation|desking/.test(subCategory?.toLowerCase() ?? "") ||
     templateComponents.some((component) => Boolean(deskingRole(component)))
   );
-}
-
-function deskingSizePricingCalculation({
-  accessoryQuantities,
-  additionalClusterQty,
-  configuredDimension,
-  selectedLayoutType,
-  selectedSize,
-  template,
-  templateComponents,
-}: {
-  accessoryQuantities: Record<string, number>;
-  additionalClusterQty: number;
-  configuredDimension?: string | null;
-  selectedLayoutType?: string | null;
-  selectedSize: DeskingSizePricingRow;
-  template: ProductLibraryTemplate;
-  templateComponents: ProductLibraryComponent[];
-}) {
-  const accessoryLines = templateComponents
-    .filter((component) => component.option_type === "linked_addon" || deskingRole(component) === "accessory")
-    .map((component) => ({
-      component,
-      qty: Math.max(0, Math.trunc(numberValue(accessoryQuantities[component.id], 0))),
-    }))
-    .filter((line) => line.qty > 0);
-  const baseSeats = 2;
-  const seatsPerCluster = 2;
-  const modulesPerCluster = 1;
-  const additionalSeats = additionalClusterQty * seatsPerCluster;
-  const totalSeats = baseSeats + additionalSeats;
-  const baseModules = 1;
-  const additionalModules = additionalClusterQty * modulesPerCluster;
-  const totalModules = baseModules + additionalModules;
-  const moduleLength = numberValue(selectedSize.length, 0);
-  const depth = numberValue(selectedSize.depth, 0);
-  const height = numberValue(selectedSize.height, 0);
-  const dimensionUnit = selectedSize.dimension_unit ?? "cm";
-  const calculatedDimension =
-    moduleLength && depth && height && totalModules
-      ? `${moduleLength * totalModules} x ${depth} x ${height} ${dimensionUnit}`
-      : "";
-  const dimension = configuredDimension?.trim() || selectedSize.default_dimension?.trim() || calculatedDimension;
-  const clusterName = "CL2";
-  const clusterLabel =
-    additionalClusterQty > 0
-      ? `${clusterName} + ${additionalClusterQty} additional / Cluster of ${totalSeats}`
-      : `Cluster of ${totalSeats}`;
-  const basePrice = numberValue(selectedSize.default_price, numberValue(template.default_unit_price));
-  const additionalPrice = numberValue(selectedSize.additional_price, basePrice);
-  const accessoryPrice = accessoryLines.reduce(
-    (total, line) => total + line.qty * numberValue(line.component.unit_price),
-    0,
-  );
-  const unitPrice = basePrice + additionalPrice * additionalClusterQty + accessoryPrice;
-  const selectedOptionNames = [
-    selectedSize.label || `${moduleLength} x ${depth} x ${height}`,
-    clusterName,
-    ...accessoryLines.map((line) => `${line.component.component_name} x${line.qty}`),
-  ];
-
-  return {
-    accessoryLines,
-    accessoryPrice,
-    additionalClusterQty,
-    additionalPrice,
-    additionalSupplierPriceListCode: selectedSize.additional_supplier_price_list_code ?? null,
-    basePrice,
-    baseSupplierPriceListCode: selectedSize.base_supplier_price_list_code ?? selectedSize.supplier_price_list_code ?? null,
-    clusterLabel,
-    clusterName,
-    dimension,
-    layoutType: selectedLayoutType || selectedSize.layout_type || "Linear",
-    mainCurrency: selectedSize.currency ?? template.currency,
-    formula:
-      additionalClusterQty > 0
-        ? `${formatMoney(selectedSize.currency ?? template.currency, basePrice)} + (${formatMoney(selectedSize.currency ?? template.currency, additionalPrice)} x ${additionalClusterQty}) = ${formatMoney(selectedSize.currency ?? template.currency, unitPrice)}`
-        : `${formatMoney(selectedSize.currency ?? template.currency, basePrice)} x 1 = ${formatMoney(selectedSize.currency ?? template.currency, unitPrice)}`,
-    finishNames: [] as string[],
-    selectedOptionNames,
-    sizeLabel: selectedSize.label ?? `${moduleLength}x${depth}x${height}`,
-    totalModules,
-    totalSeats,
-    unitPrice: unitPrice || numberValue(template.default_unit_price),
-  };
 }
 
 function ProductThumbnail({
@@ -2073,30 +1822,7 @@ export function ProductLibrarySelector({
                   const selectedFabricCategory = savedFabricCategory && availableCategoryColumns.includes(savedFabricCategory)
                     ? savedFabricCategory
                     : availableCategoryColumns[0] ?? "";
-                  const selectedCategoryPrice = selectedCategoryRow
-                    ? numberValue(selectedCategoryRow.prices?.[selectedFabricCategory])
-                    : 0;
-                  const selectedModularItems = modularGroups
-                    .flatMap((group) => group.items.map((row) => {
-                      const id = row.id ?? row.variant_name ?? row.display_name ?? "";
-                      const qty = Math.max(0, Math.trunc(numberValue(templateModularQuantities[id])));
-                      // Direct-priced modules carry one authoritative scalar price; matrix modules stay category-priced.
-                      const price = isDirectModularPricingGroup(group)
-                        ? numberValue(row.price)
-                        : numberValue(row.prices?.[selectedFabricCategory]);
-
-                      return {
-                        groupId: group.id,
-                        groupName: group.group_name,
-                        id,
-                        qty,
-                        role: modularRowRole(row),
-                        row,
-                        total: qty * price,
-                        unitPrice: price,
-                      };
-                    }))
-                    .filter((line) => line.qty > 0);
+                  const selectedModularItems = priceModularItems(modularGroups, templateModularQuantities, selectedFabricCategory);
                   // Modular pricing, snapshots and the modular specification apply only when a modular item has a quantity above 0.
                   const modularInUse = usesModularPricing && selectedModularItems.length > 0;
                   const modularCompositionIssue = validateModularCompositionGroups(
@@ -2332,233 +2058,46 @@ export function ProductLibrarySelector({
                     // after the group has opened
                     window.setTimeout(() => revealAccessoryGroup(document, groupId), 0);
                   };
-                  const derivedDesking = isDesking && selectedSizeRow
-                    ? deskingSizePricingCalculation({
-                        accessoryQuantities: templateAccessoryQuantities,
-                        additionalClusterQty,
-                        configuredDimension,
-                        selectedLayoutType: selectedWorkstationLayout,
-                        selectedSize: selectedSizeRow,
-                        template,
-                        templateComponents,
-                      })
-                    : null;
-                  const rowCurrency = derivedDesking?.mainCurrency ??
-                    selectedModularItems[0]?.row.currency ??
-                    selectedCategoryRow?.currency ??
-                    selectedVariantRow?.currency ??
-                    template.currency;
-                  const selectedWorkstationVariantPrice = selectedWorkstationVariantRow
-                    ? numberValue(selectedWorkstationVariantRow.price)
-                    : 0;
-                  const selectedPricingAccessories = accessoryPriceLines(allAccessoryGroups, accessoryConfiguration.activeQuantities, (groupId, id) => selectedAccessoryCategories[`${template.id}:${groupId}:${id}`]);
-                  const matchingAccessoryTotal = selectedPricingAccessories
-                    .filter((line) => normalizeCurrency(line.accessory.currency ?? rowCurrency) === normalizeCurrency(rowCurrency))
-                    .reduce((total, line) => total + line.qty * line.unitPrice, 0);
-                  const hasMixedAccessoryCurrencies = selectedPricingAccessories.some(
-                    (line) => normalizeCurrency(line.accessory.currency ?? rowCurrency) !== normalizeCurrency(rowCurrency),
-                  );
-                  // Native System / Base: its own priced selection, added once (never through accessory totals).
-                  const systemQuantity = normalizeSystemQuantity(selectedSystemQuantities[template.id]);
-                  const systemContribution = systemPriceContribution(nativeSystem.selected?.row, normalizeCurrency(rowCurrency), systemQuantity);
-                  const selectedSystemPrice = systemContribution.amount;
-                  const matchingSystemTotal = systemContribution.matching;
-                  const previewUnitPrice =
-                    (modularInUse
-                      ? selectedModularItems.reduce((total, line) => total + line.total, 0)
-                      : derivedDesking?.unitPrice ??
-                      (selectedCategoryRow ? selectedCategoryPrice : undefined) ??
-                      selectedVariantRow?.price ??
-                      template.default_unit_price) +
-                    selectedWorkstationVariantPrice +
-                    matchingSystemTotal +
-                    matchingAccessoryTotal;
-                  const selectedLinkedProducts = templateLinkedFamilies
-                    .flatMap((link) => {
-                      const childTemplate = templateById.get(link.linked_template_id);
-                      if (!childTemplate) return [];
-
-                      return linkedInstancesForLink(link).map((instance) => {
-                        const instanceKey = linkedProductInstanceKey(link.id, instance.id);
-                        const childCategoryGroups = groupedStandardCategoryPricingRows(childTemplate.category_pricing);
-                        const childAllVariantRows = activeVariantRows(childTemplate.variant_pricing);
-                        const childVariantGroups = activeBaseModelPricingGroups<VariantPricingRow>(childTemplate.variant_pricing);
-                        const family = resolveLinkedProductFamily({
-                          variantGroups: childVariantGroups,
-                          categoryGroups: childCategoryGroups,
-                          variantRows: childAllVariantRows,
-                          nativeSystemActive: nativeSystemState(childVariantGroups).active,
-                          stored: { variantRowId: selectedLinkedVariants[instanceKey], categoryGroupId: selectedLinkedCategoryGroups[instanceKey], categoryId: selectedLinkedCategories[instanceKey] },
-                        });
-                        const selectedChildCategoryGroup = family.categoryGroup;
-                        const childCategoryRows = family.categoryRows;
-                        const childVariantRows = family.variantRows;
-                        const childAccessoryGroups = activeAccessoryRows(childTemplate.accessory_pricing);
-                        const childAccessoryQuantities = linkedAccessoryQuantities[instanceKey] ?? {};
-                        const childCategoryRow = family.categoryRow;
-                        const childVariantRow = family.variantRow;
-                        const childCategoryColumns = selectedChildCategoryGroup?.price_categories ?? categoryPriceColumns(childTemplate.category_pricing);
-                        const savedChildCategory = selectedLinkedFabricCategories[instanceKey];
-                        const childCategory = savedChildCategory && childCategoryColumns.includes(savedChildCategory)
-                          ? savedChildCategory
-                          : childCategoryColumns[0] ?? "";
-                        const unitPrice = childCategoryRow
-                          ? numberValue(childCategoryRow.prices?.[childCategory])
-                          : childVariantRow
-                            ? numberValue(childVariantRow.price)
-                            : numberValue(childTemplate.default_unit_price);
-                        const currency = childCategoryRow?.currency ?? childVariantRow?.currency ?? childTemplate.currency;
-                        const qty = Math.max(0, Math.trunc(numberValue(
-                          linkedProductQuantities[instanceKey],
-                          numberValue(link.default_qty),
-                        )));
-                        const selectedAccessories = childAccessoryGroups
-                          .flatMap((group) =>
-                            group.items.map((accessory) => {
-                              const id = accessory.id ?? accessory.item_name ?? "";
-                              const accessoryQty = Math.max(0, Math.trunc(numberValue(childAccessoryQuantities[id])));
-
-                              return {
-                                accessory,
-                                groupName: group.group_name,
-                                id,
-                                qty: accessoryQty,
-                              };
-                            }),
-                          )
-                          .filter((line) => line.qty > 0);
-                        const baseLineTotal = qty * unitPrice;
-                        const matchingAccessoryTotal = selectedAccessories
-                          .filter((line) => normalizeCurrency(line.accessory.currency ?? currency) === normalizeCurrency(currency))
-                          .reduce((total, line) => total + line.qty * numberValue(line.accessory.price), 0);
-                        const accessoryTotal = selectedAccessories.reduce(
-                          (total, line) => total + line.qty * numberValue(line.accessory.price),
-                          0,
-                        );
-                        const hasMixedAccessoryCurrencies = selectedAccessories.some(
-                          (line) => normalizeCurrency(line.accessory.currency ?? currency) !== normalizeCurrency(currency),
-                        );
-
-                        return {
-                          accessoryTotal,
-                          baseLineTotal,
-                          childCategory,
-                          childCategoryColumns,
-                          childCategoryGroups,
-                          childCategoryRow,
-                          childCategoryRows,
-                          childAccessoryGroups,
-                          childAllVariantRows,
-                          childTemplate,
-                          childVariantGroups,
-                          family,
-                          childVariantRow,
-                          childVariantRows,
-                          currency,
-                          hasMixedAccessoryCurrencies,
-                          instance,
-                          instanceKey,
-                          link,
-                          matchingAccessoryTotal,
-                          qty,
-                          selectedAccessories,
-                          selectedChildCategoryGroup,
-                          unitPrice,
-                        };
-                      });
-                    })
-                    .filter((line): line is NonNullable<typeof line> => Boolean(line));
-                  const matchingLinkedProductTotal = selectedLinkedProducts
-                    .filter((line) => line.qty > 0 && line.link.add_to_parent_price)
-                    .filter((line) => normalizeCurrency(line.currency) === normalizeCurrency(rowCurrency))
-                    .reduce((total, line) => total + line.baseLineTotal + line.matchingAccessoryTotal, 0);
-                  const hasMixedLinkedProductCurrencies = selectedLinkedProducts
-                    .filter((line) => line.qty > 0 && line.link.add_to_parent_price)
-                    .some((line) =>
-                      normalizeCurrency(line.currency) !== normalizeCurrency(rowCurrency) ||
-                      line.selectedAccessories.some(
-                        (accessoryLine) =>
-                          normalizeCurrency(accessoryLine.accessory.currency ?? line.currency) !== normalizeCurrency(rowCurrency),
-                      ),
-                    );
-                  const totalPreviewUnitPrice = previewUnitPrice + matchingLinkedProductTotal;
-                  const baseProductPrice =
-                    modularInUse
-                      ? selectedModularItems.reduce((total, line) => total + line.total, 0)
-                      : derivedDesking?.unitPrice ??
-                        (selectedCategoryRow ? selectedCategoryPrice : undefined) ??
-                        selectedVariantRow?.price ??
-                        template.default_unit_price;
-                  const originalCurrencyTotals = new Map<string, number>();
-                  const addCurrencyTotal = (currency: string | undefined, amount: number) => {
-                    const normalizedCurrency = normalizeCurrency(currency ?? "AED");
-                    originalCurrencyTotals.set(
-                      normalizedCurrency,
-                      (originalCurrencyTotals.get(normalizedCurrency) ?? 0) + amount,
-                    );
-                  };
-
-                  addCurrencyTotal(rowCurrency, baseProductPrice);
-                  if (nativeSystem.selected) addCurrencyTotal(nativeSystem.selected.row.currency ?? rowCurrency, selectedSystemPrice);
-                  if (selectedWorkstationVariantRow) {
-                    addCurrencyTotal(
-                      selectedWorkstationVariantRow.currency ?? rowCurrency,
-                      selectedWorkstationVariantPrice,
-                    );
-                  }
-                  for (const line of selectedPricingAccessories) {
-                    addCurrencyTotal(line.accessory.currency ?? rowCurrency, line.qty * line.unitPrice);
-                  }
-                  const otherBrandTotals: Record<string, number> = {};
-                  const addOtherBrandTotal = (currency: string | undefined, amount: number) => {
-                    const normalizedCurrency = normalizeCurrency(currency ?? "AED");
-                    otherBrandTotals[normalizedCurrency] = (otherBrandTotals[normalizedCurrency] ?? 0) + amount;
-                  };
-                  for (const line of selectedLinkedProducts) {
-                    if (line.qty > 0 && line.link.add_to_parent_price) {
-                      const otherBrand = line.childTemplate.brand_id !== template.brand_id;
-                      addCurrencyTotal(line.currency, line.baseLineTotal);
-                      if (otherBrand) addOtherBrandTotal(line.currency, line.baseLineTotal);
-                      for (const accessoryLine of line.selectedAccessories) {
-                        addCurrencyTotal(
-                          accessoryLine.accessory.currency ?? line.currency,
-                          accessoryLine.qty * numberValue(accessoryLine.accessory.price),
-                        );
-                        if (otherBrand) addOtherBrandTotal(accessoryLine.accessory.currency ?? line.currency, accessoryLine.qty * numberValue(accessoryLine.accessory.price));
-                      }
-                    }
-                  }
-
-                  // Announced price change: added to the supplier totals, before conversion, rounding and discount. A fixed quote price (override) is left alone.
+                  const price = priceConfiguration({
+                    template,
+                    configuration: {
+                      selectedVariantRow, selectedCategoryRow, selectedFabricCategory, selectedWorkstationVariantRow,
+                      modularInUse, modularItems: selectedModularItems, accessoryConfiguration, selectedAccessoryCategories,
+                      usesWorkstationFlow, system: { row: nativeSystem.selected?.row, quantity: selectedSystemQuantities[template.id] },
+                      workstation: isDesking && selectedSizeRow ? {
+                        accessoryQuantities: templateAccessoryQuantities, additionalClusterQty, configuredDimension,
+                        selectedLayoutType: selectedWorkstationLayout, selectedSize: selectedSizeRow,
+                      } : undefined,
+                      needs: { missingRequiredWorkstationSelection, missingRequiredSystemSelection, missingRequiredModularSelection,
+                        missingRequiredAccessorySelection, hasUnavailableSelectedPrice },
+                    },
+                    context: {
+                      accessoryGroups: allAccessoryGroups, components: templateComponents, linkedMode: "legacy",
+                      linked: templateLinkedFamilies.map((link) => ({
+                        link, childTemplate: templateById.get(link.linked_template_id),
+                        instances: linkedInstancesForLink(link).map((instance) => {
+                          const instanceKey = linkedProductInstanceKey(link.id, instance.id);
+                          return {
+                            instance, quantity: linkedProductQuantities[instanceKey], accessoryQuantities: linkedAccessoryQuantities[instanceKey],
+                            selection: { variantRowId: selectedLinkedVariants[instanceKey], categoryGroupId: selectedLinkedCategoryGroups[instanceKey],
+                              categoryId: selectedLinkedCategories[instanceKey], fabricCategory: selectedLinkedFabricCategories[instanceKey] },
+                          };
+                        }),
+                      })),
+                    },
+                  });
+                  const { linked: selectedLinkedProducts, derivedDesking, selectedCategoryPrice, systemQuantity, matchingAccessoryTotal, matchingLinkedProductTotal,
+                    hasMixedAccessoryCurrencies, hasMixedLinkedProductCurrencies } = price;
+                  const { mainItemCurrency, mainItemUnitPrice, mainItemLabel, additionalClusterLine, workstationOptionalLine,
+                    pricingAccessorySummary, modularSummary, linkedProductSummary, linkedAccessorySummary, systemContribution, selectedPricingAccessories } = price.lines;
+                  const { originalCurrencyTotals, rowCurrency } = price.buckets;
                   const activeAnnouncement = template.announced_price_change?.state === "active" ? template.announced_price_change : null;
-                  const announcedBlocked = Boolean(activeAnnouncement) && templatePriceOverrides[template.id] !== undefined;
-                  const announcedChange = activeAnnouncement && announcedTicks[template.id] && !announcedBlocked
-                    ? announcedTotals({ totals: Object.fromEntries(originalCurrencyTotals), excluded: otherBrandTotals, percent: activeAnnouncement.percent })
-                    : null;
-
                   const templateExchangeRates = exchangeRates[template.id] ?? {};
-                  const nonAedCurrencies = Array.from(originalCurrencyTotals.keys())
-                    .filter((currency) => currency !== "AED" && (originalCurrencyTotals.get(currency) ?? 0) > 0);
-                  const missingExchangeRateCurrencyList = missingExchangeRateCurrencies(originalCurrencyTotals, templateExchangeRates);
-                  const missingExchangeRate = missingExchangeRateCurrencyList.length > 0;
-                  const convertedPreviewTotal = Array.from(originalCurrencyTotals.entries()).reduce(
-                    (total, [currency, amount]) =>
-                      currency === "AED"
-                        ? total + amount
-                        : total + amount * numberValue(templateExchangeRates[currency]),
-                    announcedChange ? announcedQuotationDelta(announcedChange.delta, templateExchangeRates) : 0,
-                  );
-                  const previewCurrency = nonAedCurrencies.length ? "AED" : rowCurrency;
-                  const previewBeforeAnnounced = nonAedCurrencies.length
-                    ? convertedPreviewTotal
-                    : totalPreviewUnitPrice + (announcedChange ? announcedQuotationDelta(announcedChange.delta, templateExchangeRates) : 0);
-                  // The ticked amount is rounded to 2 decimals first, so a binary fraction cannot push the round-up-to-5 one step too far.
-                  const rawPreviewUnitPriceWithConversion = announcedChange ? roundSourceAmount(previewBeforeAnnounced) : previewBeforeAnnounced;
-                  const previewUnitPriceWithConversion = ruleConvertedPrice(pricingRule, rawPreviewUnitPriceWithConversion);
-                  const effectiveQuoteUnitPrice = ruleExactAmount(
-                    pricingRule,
-                    templatePriceOverrides[template.id] ?? previewUnitPriceWithConversion,
-                  );
+                  const { announcedBlocked, announcedChange, nonAedCurrencies, missingExchangeRateCurrencyList, missingExchangeRate,
+                    convertedPreviewTotal, previewCurrency, rawPreviewUnitPriceWithConversion, previewUnitPriceWithConversion, effectiveQuoteUnitPrice } = toQuotePrice({
+                    buckets: price.buckets, rates: templateExchangeRates, rule: pricingRule, override: templatePriceOverrides[template.id],
+                    announced: activeAnnouncement && { percent: activeAnnouncement.percent, checked: Boolean(announcedTicks[template.id]) },
+                  });
                   const previousQuotedPrice =
                     pendingPriceUpdateChoice?.templateId === template.id
                       ? pendingPriceUpdateChoice.previousUnitPrice
@@ -3251,109 +2790,18 @@ export function ProductLibrarySelector({
                     : formatRuleMoney(pricingRule, previewCurrency, amount);
                   const hasReconfigurationChanges = Object.values(changes).some(Boolean);
                   const linkedNeedsLocalBuilder = !isLocalMode && !reconfigure && linkedProductNeedsLocalBuilder(selectedLinkedProducts);
-                  const existingAddBlocked = missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice;
+                  const existingAddBlocked = missingExchangeRate || price.status === "needs" || needsUpdatedPriceDecision;
                   const reconfigureBlocked = !reconfigureBaseline || (hasReconfigurationChanges && (
                     existingAddBlocked || wouldChangeDiscount || (requiresCurrentPrice && !applyCurrentPrice) ||
                     (fixedCurrencyDecision && confirmFixedDiscount !== reconfiguredCurrency) ||
                     (applyCurrentPrice && staleProblems.length > 0 && !configurationChanged) ||
                     (staleProblems.length > 0 && (configurationChanged || applyCurrentPrice) && !acceptStaleChoices)
                   ));
-                  const mainItemCurrency = normalizeCurrency(
-                    usesWorkstationFlow
-                      ? selectedSizeRow?.currency ?? rowCurrency
-                      : rowCurrency,
-                  );
-                  const mainItemUnitPrice = roundSourceAmount(
-                    usesWorkstationFlow
-                      ? numberValue(selectedSizeRow?.default_price)
-                      : baseProductPrice,
-                  );
-                  const mainItemLabel = usesWorkstationFlow
-                    ? selectedSizeRow?.label ?? selectedSizeRow?.id ?? template.template_name
-                    : modularInUse
-                      ? template.template_name
-                    : selectedCategoryRow
-                      ? `${pricingDisplayName(selectedCategoryRow)} / ${selectedFabricCategory}`
-                      : pricingDisplayName(selectedVariantRow) || template.template_name;
                   const mainItemDimension = usesWorkstationFlow
                     ? selectedSizeRow?.label ?? derivedDesking?.dimension ?? null
                     : modularInUse
                       ? localDimension
                     : selectedCategoryRow?.dimension ?? selectedVariantRow?.dimension ?? localDimension;
-                  const additionalClusterLine =
-                    usesWorkstationFlow && selectedSizeRow && additionalClusterQty > 0
-                      ? {
-                          currency: normalizeCurrency(selectedSizeRow.currency ?? rowCurrency),
-                          label: `Additional ${derivedDesking?.clusterName ?? "CL2"}`,
-                          qty: additionalClusterQty,
-                          total: roundSourceAmount(numberValue(selectedSizeRow.additional_price) * additionalClusterQty),
-                          unitPrice: roundSourceAmount(numberValue(selectedSizeRow.additional_price)),
-                        }
-                      : null;
-                  const workstationOptionalLine = selectedWorkstationVariantRow
-                    ? {
-                        currency: normalizeCurrency(selectedWorkstationVariantRow.currency ?? rowCurrency),
-                        detail: selectedWorkstationVariantRow.dimension ?? selectedWorkstationVariantRow.specification ?? null,
-                        label: pricingDisplayName(selectedWorkstationVariantRow) || selectedWorkstationVariantRow.variant_name || "Optional item",
-                        supplierCode: selectedWorkstationVariantRow.supplier_price_list_code ?? null,
-                        qty: 1,
-                        total: roundSourceAmount(selectedWorkstationVariantPrice),
-                        unitPrice: roundSourceAmount(selectedWorkstationVariantPrice),
-                      }
-                    : null;
-                  const pricingAccessorySummary = selectedPricingAccessories.map((line) => ({
-                    currency: normalizeCurrency(line.accessory.currency ?? rowCurrency),
-                    dimension: line.accessory.dimension ?? null,
-                    label: line.accessory.item_name || "Accessory",
-                    required: accessoryConfiguration.groups.some((group) => group.groupId === line.groupId && group.role === "companion"),
-                    supplierCode: line.accessory.supplier_price_list_code ?? null,
-                    qty: line.qty,
-                    detail: [line.selectedCategory?.label ? `Category: ${line.selectedCategory.label}` : null, line.accessory.specification ?? line.groupName].filter(Boolean).join(" / "),
-                    total: roundSourceAmount(line.qty * line.unitPrice),
-                    unitPrice: roundSourceAmount(line.unitPrice),
-                  }));
-                  const modularSummary = selectedModularItems.map((line) => ({
-                    currency: normalizeCurrency(line.row.currency ?? rowCurrency),
-                    detail: [line.groupName, line.row.supplier_price_list_code, line.row.dimension].filter(Boolean).join(" / ") || null,
-                    label: pricingDisplayName(line.row) || line.row.variant_name || "Modular item",
-                    supplierCode: line.row.supplier_price_list_code ?? null,
-                    qty: line.qty,
-                    total: roundSourceAmount(line.total),
-                    unitPrice: roundSourceAmount(line.unitPrice),
-                  }));
-                  const linkedProductSummary = selectedLinkedProducts
-                    .filter((line) => line.qty > 0)
-                    .map((line) => ({
-                      currency: normalizeCurrency(line.currency),
-                      detail: [
-                        pricingDisplayName(line.childVariantRow) ||
-                          (line.childCategoryRow ? `${pricingDisplayName(line.childCategoryRow)} / ${line.childCategory}` : null),
-                        line.childCategoryRow?.dimension ?? line.childVariantRow?.dimension ?? null,
-                      ]
-                        .filter(Boolean)
-                        .join(" - "),
-                      label: line.instance.label.trim() || line.link.label || line.childTemplate.template_name,
-                      supplierCode:
-                        line.childCategoryRow?.supplier_price_list_code ??
-                        line.childVariantRow?.supplier_price_list_code ??
-                        null,
-                      qty: line.qty,
-                      total: roundSourceAmount(line.baseLineTotal),
-                      unitPrice: roundSourceAmount(line.unitPrice),
-                    }));
-                  const linkedAccessorySummary = selectedLinkedProducts.flatMap((line) =>
-                    line.qty > 0
-                      ? line.selectedAccessories.map((accessoryLine) => ({
-                          currency: normalizeCurrency(accessoryLine.accessory.currency ?? line.currency),
-                          detail: line.childTemplate.template_name,
-                          label: accessoryLine.accessory.item_name || "Accessory",
-                          supplierCode: accessoryLine.accessory.supplier_price_list_code ?? null,
-                          qty: accessoryLine.qty,
-                          total: roundSourceAmount(accessoryLine.qty * numberValue(accessoryLine.accessory.price)),
-                          unitPrice: roundSourceAmount(numberValue(accessoryLine.accessory.price)),
-                        }))
-                      : [],
-                  );
                   const selectedFinishSummary = selectedFinishes
                     .filter((finish) => Boolean(
                       finish.finish_code ||

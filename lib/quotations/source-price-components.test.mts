@@ -6,6 +6,7 @@ import { currentSystemPricing, systemPriceContribution, systemSelectedOptionSnap
 import { baseModelPriceOrDefault, missingExchangeRateCurrencies, rawSourceLine, roundSourceAmount, sameCurrencyUnitSum, sumSourceLines } from "./source-price-components.js";
 
 const selector = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+const pricing = readFileSync("lib/products/configuration-price.ts", "utf8").replace(/\r\n/g, "\n");
 const actions = readFileSync("app/quotations/actions.ts", "utf8");
 const builder = readFileSync("app/quotations/[id]/builder/page.tsx", "utf8");
 
@@ -36,7 +37,7 @@ test("6-8: a priced Main row replaces the template default; null falls back to t
   assert.equal(baseModelPriceOrDefault(undefined, 1), 1);
   assert.equal(baseModelPriceOrDefault(0, 1), 0);
   // client and server use the same replacement semantics
-  assert.ok(selector.includes("selectedVariantRow?.price ??"));
+  assert.ok(pricing.includes("selectedVariantRow?.price ??"));
   assert.ok(actions.includes("baseModelPriceOrDefault(selectedVariantPricingRow.price ?? null, template.default_unit_price)"));
 });
 
@@ -50,12 +51,16 @@ test("9-10: System 377 x 2 + Main 334 = 1088, and the full acceptance case is 12
 
 // ---- rounding ----
 test("11-13: component lines never call quotationMoneyValue; the final quotation still does; the policy is unchanged", () => {
-  const start = selector.indexOf("const mainItemUnitPrice = ");
-  const end = selector.indexOf("const sourceTotalsList");
-  const componentRegion = selector.slice(start, end);
+  const start = pricing.indexOf("const mainItemUnitPrice = ");
+  const end = pricing.indexOf("const reasons:", start);
+  const selectorStart = selector.indexOf("const mainItemDimension = ");
+  const selectorEnd = selector.indexOf("const sourceTotalsList", selectorStart);
+  assert.ok(start >= 0 && end > start && selectorStart >= 0 && selectorEnd > selectorStart);
+  const componentRegion = pricing.slice(start, end);
   assert.equal(componentRegion.includes("quotationMoneyValue("), false, "component summaries use raw source amounts");
+  assert.equal(selector.slice(selectorStart, selectorEnd).includes("quotationMoneyValue("), false, "selector summaries use raw source amounts");
   assert.ok(componentRegion.includes("roundSourceAmount("));
-  assert.ok(selector.includes("const previewUnitPriceWithConversion = ruleConvertedPrice(pricingRule, rawPreviewUnitPriceWithConversion);"));
+  assert.ok(pricing.includes("const previewUnitPriceWithConversion = ruleConvertedPrice(pricingRule, rawPreviewUnitPriceWithConversion);"));
   assert.ok(actions.includes("const unitPrice = ruleConvertedPrice(pricingRule, rawUnitPrice);"));
   assert.equal(QUOTE_ROUNDING_STEP, 5);
   assert.equal(quotationMoneyValue(334), 335);
@@ -103,10 +108,10 @@ test("20-22: snapshots keep raw component prices; recompute sums raw amounts, th
 
 // ---- regression ----
 test("23-27: ordinary Base/Model, Matrix, Modular and Workstation base formulas and System quantity behavior are unchanged", () => {
-  assert.ok(selector.includes("selectedVariantRow?.price ??\n                        template.default_unit_price;") || selector.includes("selectedVariantRow?.price ??"));
-  assert.ok(selector.includes("(selectedCategoryRow ? selectedCategoryPrice : undefined) ??"), "Matrix replacement branch");
-  assert.ok(selector.includes("selectedModularItems.reduce((total, line) => total + line.total, 0)"), "Modular sum branch");
-  assert.ok(selector.includes("derivedDesking?.unitPrice ??"), "Workstation replacement branch");
+  assert.ok(pricing.includes("selectedVariantRow?.price ??\n        template.default_unit_price;"));
+  assert.ok(pricing.includes("(selectedCategoryRow ? selectedCategoryPrice : undefined) ??"), "Matrix replacement branch");
+  assert.ok(pricing.includes("selectedModularItems.reduce((total, line) => total + line.total, 0)"), "Modular sum branch");
+  assert.ok(pricing.includes("derivedDesking?.unitPrice ??"), "Workstation replacement branch");
   assert.equal(systemPriceContribution(systemRow, "EUR", 2).amount, 754);
   assert.equal(systemPriceContribution(null, "EUR", 2).amount, 0);
 });
