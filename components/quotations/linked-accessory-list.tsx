@@ -14,8 +14,9 @@ import {
   type LinkedAccessoryViewGroup,
   type LinkedAccessoryViewItem,
 } from "./linked-accessory-view";
+import { AccessoryGroupsToolbar } from "./accessory-group-status";
 
-type GroupHeaderProps = { expanded: boolean; groupName: string; itemCount: number; required: boolean; selectedCount: number; onToggle: () => void };
+type GroupHeaderProps = { expanded: boolean; groupName: string; itemCount: number; required: boolean; chooseOne: boolean; selectedCount: number; onToggle: () => void };
 
 export function LinkedAccessoryRow({ id, name, details, detailsId, detailsOpen, onToggleDetails, price, quantity, onQuantityChange }: {
   id: string;
@@ -64,6 +65,7 @@ export function LinkedAccessoryList<Item extends LinkedAccessoryViewItem>({ titl
   return (
     <div className="min-w-0 space-y-2">
       <p className="break-words text-xs font-bold uppercase tracking-wide text-zinc-700">{title}</p>
+      <AccessoryGroupsToolbar groups={view.groups} allExpanded={view.groups.every(({ group }) => expandedGroups[group.id])} onSetAll={(expanded) => setExpandedGroups(Object.fromEntries(view.groups.map(({ group }) => [group.id, expanded])))} />
       <p aria-live="polite" className="break-words text-xs text-zinc-600">{linkedAccessorySummary(view.selected)}</p>
       {view.hiddenCount ? (
         <p className="text-[11px] text-zinc-500">
@@ -71,11 +73,11 @@ export function LinkedAccessoryList<Item extends LinkedAccessoryViewItem>({ titl
           <button type="button" aria-pressed={showAll} onClick={() => setShowAll((current) => !current)} className="ml-2 font-semibold text-emerald-900 hover:text-emerald-700">Show all</button>
         </p>
       ) : null}
-      {view.groups.map(({ group, items, selectedCount, defaultExpanded }) => {
-        const expanded = expandedGroups[group.id] ?? defaultExpanded;
+      {view.groups.map(({ group, items, selectedCount, required, chooseOne }) => {
+        const expanded = expandedGroups[group.id] ?? false;
         return (
           <fieldset key={group.id} aria-label={group.group_name} className="min-w-0 border border-zinc-200 bg-white p-2">
-            <GroupHeader expanded={expanded} groupName={group.group_name} itemCount={items.length} required={group.group_is_required} selectedCount={selectedCount} onToggle={() => setExpandedGroups((current) => ({ ...current, [group.id]: !expanded }))} />
+            <GroupHeader expanded={expanded} groupName={group.group_name} itemCount={items.length} required={required} chooseOne={chooseOne} selectedCount={selectedCount} onToggle={() => setExpandedGroups((current) => ({ ...current, [group.id]: !expanded }))} />
             {expanded ? (
               <div className="mt-2 space-y-2">
                 {items.map((item, index) => {

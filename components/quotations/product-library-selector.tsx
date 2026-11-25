@@ -70,6 +70,7 @@ import { deriveOptionItemTargets, hasOrdinaryOptionItemRules, ordinaryOptionItem
 import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
 import { flattenBaseModelPricingRows, type BaseModelPricingGroup } from "@/lib/products/base-model-pricing-groups";
 import { MATRIX_FAMILY_MISSING_MESSAGE, mixedProductFamilies, productFamilyOptions, selectedProductFamily, type ProductFamilyOption } from "@/lib/products/product-family-options";
+import { LINKED_LOCAL_BUILDER_MESSAGE, linkedProductFamilyChange, linkedProductNeedsLocalBuilder, resolveLinkedProductFamily } from "@/lib/products/linked-product-family";
 import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
 import { guidedBaseModelSelection } from "@/lib/quotations/guided-base-model-selection";
 import { effectiveRequiredQuantities, requiredComponentOverrideReport, requiredComponentTriggerKey, requiredCompanionItems, withRequiredOverride, withoutRequiredOverride, type RequiredComponentOverrides } from "@/lib/quotations/required-component-overrides";
@@ -110,6 +111,7 @@ import {
   resolveQuotationImageUrl,
 } from "@/lib/quotation-image-path";
 import { LinkedAccessoryList } from "./linked-accessory-list";
+import { AccessoryBlockedList, accessoryBlockedEntries, AccessoryGroupCounts, AccessoryGroupsToolbar, revealAccessoryGroup } from "./accessory-group-status";
 
 export type ProductLibraryBrand = {
   default_currency?: string | null;
@@ -690,10 +692,10 @@ function accessoryDisplayPrice(group: ReturnType<typeof activeAccessoryRows>[num
   return category ? numberValue(item.prices?.[category.id]) : numberValue(item.price);
 }
 
-function AccessoryGroupHeader({ expanded, groupName, itemCount, required, selectedCount, onToggle }: { expanded: boolean; groupName: string; itemCount: number; required: boolean; selectedCount: number; onToggle: () => void }) {
+function AccessoryGroupHeader({ expanded, groupName, itemCount, required, chooseOne = false, selectedCount, onToggle }: { expanded: boolean; groupName: string; itemCount: number; required: boolean; chooseOne?: boolean; selectedCount: number; onToggle: () => void }) {
   return <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex w-full items-center justify-between gap-3 text-left">
     <span className="min-w-0 text-xs font-semibold text-zinc-900"><span aria-hidden="true" className="mr-1.5 text-zinc-500">{expanded ? "▾" : "▸"}</span>{groupName}</span>
-    <span className="shrink-0 text-[10px] font-medium text-zinc-500">{itemCount} {itemCount === 1 ? "item" : "items"} · {required && selectedCount === 0 ? "Required" : `${selectedCount} selected`}</span>
+    <AccessoryGroupCounts itemCount={itemCount} selectedCount={selectedCount} required={required} chooseOne={chooseOne} />
   </button>;
 }
 
@@ -760,13 +762,13 @@ function AccessoryConfigurationFields({
               ? `Select one ${group.group_name}.`
               : evaluation.validationMessage
             : null;
-          const selectedCount = items.filter((item) => (quantities[item.id ?? ""] ?? 0) > 0).length;
+          const selectedCount = evaluation.selectedItemIds.length;
           const requiredItemId = evaluation.role === "companion" && evaluation.required && items.length === 1 && evaluation.requiredQuantity !== null ? items[0]?.id ?? "" : "";
-          const expanded = isGroupExpanded(group.id, evaluation.required || selectedCount > 0 || Boolean(validationMessage));
+          const expanded = isGroupExpanded(group.id, false);
 
           return (
-            <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
-              <AccessoryGroupHeader expanded={expanded} groupName={group.group_name} itemCount={items.length} required={evaluation.required} selectedCount={selectedCount} onToggle={() => onGroupExpandedChange(group.id, !expanded)} />
+            <fieldset key={group.id} data-accessory-group={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
+              <AccessoryGroupHeader expanded={expanded} groupName={group.group_name} itemCount={items.length} required={evaluation.required} chooseOne={evaluation.maxSelections === 1} selectedCount={selectedCount} onToggle={() => onGroupExpandedChange(group.id, !expanded)} />
               {expanded && exactlyOne ? (<>
                 <select
                   value={selectedId}
@@ -2333,6 +2335,19 @@ export function ProductLibrarySelector({
                   };
                   const missingConditionalModelSelection = accessoryConfiguration.hasConditionalConfiguration && selectedAccessoryModelTargets.length === 0;
                   const missingRequiredAccessorySelection = !accessoryConfiguration.valid || missingConditionalModelSelection;
+                  const conditionalFieldEvaluations = accessoryConfiguration.groups.filter((evaluation) =>
+                    allAccessoryGroups.some((group) => group.id === evaluation.groupId && Boolean(group.conditional_configuration) && (ordinaryOptionGroupIds.has(group.id) || !group.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item"))),
+                  );
+                  const ownAccessoryGroupStates = [
+                    ...conditionalFieldEvaluations.filter((evaluation) => evaluation.visible).map((evaluation) => ({ id: evaluation.groupId, required: evaluation.required, chooseOne: evaluation.maxSelections === 1, selectedCount: evaluation.selectedItemIds.length })),
+                    ...accessoryGroups.map((group) => ({ id: group.id, required: group.group_is_required, chooseOne: false, selectedCount: group.items.filter((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) > 0).length })),
+                  ];
+                  const setAllOwnAccessoryGroups = (expanded: boolean) => setExpandedAccessoryGroups((current) => ({ ...current, ...Object.fromEntries(ownAccessoryGroupStates.map((group) => [accessoryGroupExpansionKey(template.id, group.id), expanded])) }));
+                  const openBlockedAccessoryGroup = (groupId: string) => {
+                    setExpandedAccessoryGroups((current) => ({ ...current, [accessoryGroupExpansionKey(template.id, groupId)]: true }));
+                    // after the group has opened
+                    window.setTimeout(() => revealAccessoryGroup(document, groupId), 0);
+                  };
                   const derivedDesking = isDesking && selectedSizeRow
                     ? deskingSizePricingCalculation({
                         accessoryQuantities: templateAccessoryQuantities,
@@ -2401,24 +2416,22 @@ export function ProductLibrarySelector({
                       return linkedInstancesForLink(link).map((instance) => {
                         const instanceKey = linkedProductInstanceKey(link.id, instance.id);
                         const childCategoryGroups = groupedStandardCategoryPricingRows(childTemplate.category_pricing);
-                        const selectedChildCategoryGroup =
-                          childCategoryGroups.find((group) => group.id === selectedLinkedCategoryGroups[instanceKey]) ??
-                          childCategoryGroups[0] ??
-                          null;
-                        const childCategoryRows = (selectedChildCategoryGroup?.items ?? []).filter((row) => row.is_active !== false);
-                        const childVariantRows = activeVariantRows(childTemplate.variant_pricing);
+                        const childAllVariantRows = activeVariantRows(childTemplate.variant_pricing);
+                        const childVariantGroups = activeBaseModelPricingGroups<VariantPricingRow>(childTemplate.variant_pricing);
+                        const family = resolveLinkedProductFamily({
+                          variantGroups: childVariantGroups,
+                          categoryGroups: childCategoryGroups,
+                          variantRows: childAllVariantRows,
+                          nativeSystemActive: nativeSystemState(childVariantGroups).active,
+                          stored: { variantRowId: selectedLinkedVariants[instanceKey], categoryGroupId: selectedLinkedCategoryGroups[instanceKey], categoryId: selectedLinkedCategories[instanceKey] },
+                        });
+                        const selectedChildCategoryGroup = family.categoryGroup;
+                        const childCategoryRows = family.categoryRows;
+                        const childVariantRows = family.variantRows;
                         const childAccessoryGroups = activeAccessoryRows(childTemplate.accessory_pricing);
                         const childAccessoryQuantities = linkedAccessoryQuantities[instanceKey] ?? {};
-                        const childCategoryRow =
-                          childCategoryRows.find((row) => row.id === selectedLinkedCategories[instanceKey]) ??
-                          childCategoryRows[0] ??
-                          null;
-                        const childVariantRow =
-                          !childCategoryRow
-                            ? childVariantRows.find((row) => row.id === selectedLinkedVariants[instanceKey]) ??
-                              childVariantRows[0] ??
-                              null
-                            : null;
+                        const childCategoryRow = family.categoryRow;
+                        const childVariantRow = family.variantRow;
                         const childCategoryColumns = selectedChildCategoryGroup?.price_categories ?? categoryPriceColumns(childTemplate.category_pricing);
                         const savedChildCategory = selectedLinkedFabricCategories[instanceKey];
                         const childCategory = savedChildCategory && childCategoryColumns.includes(savedChildCategory)
@@ -2470,7 +2483,10 @@ export function ProductLibrarySelector({
                           childCategoryRow,
                           childCategoryRows,
                           childAccessoryGroups,
+                          childAllVariantRows,
                           childTemplate,
+                          childVariantGroups,
+                          family,
                           childVariantRow,
                           childVariantRows,
                           currency,
@@ -3269,6 +3285,7 @@ export function ProductLibrarySelector({
                     ? formatReconfiguredMoney(pricingRule, reconfiguredCurrency, amount)
                     : formatRuleMoney(pricingRule, previewCurrency, amount);
                   const hasReconfigurationChanges = Object.values(changes).some(Boolean);
+                  const linkedNeedsLocalBuilder = !isLocalMode && !reconfigure && linkedProductNeedsLocalBuilder(selectedLinkedProducts);
                   const existingAddBlocked = missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice;
                   const reconfigureBlocked = !reconfigureBaseline || (hasReconfigurationChanges && (
                     existingAddBlocked || wouldChangeDiscount || (requiresCurrentPrice && !applyCurrentPrice) ||
@@ -4138,10 +4155,13 @@ export function ProductLibrarySelector({
                             </div>
                           </div>
                         ) : null}
+                        {ownAccessoryGroupStates.length ? (
+                          <div className="mt-4">
+                            <AccessoryGroupsToolbar groups={ownAccessoryGroupStates} allExpanded={ownAccessoryGroupStates.every((group) => expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, group.id)])} onSetAll={setAllOwnAccessoryGroups} />
+                          </div>
+                        ) : null}
                         <AccessoryConfigurationFields
-                          evaluations={accessoryConfiguration.groups.filter((evaluation) =>
-                            allAccessoryGroups.some((group) => group.id === evaluation.groupId && Boolean(group.conditional_configuration) && (ordinaryOptionGroupIds.has(group.id) || !group.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item"))),
-                          )}
+                          evaluations={conditionalFieldEvaluations}
                           ordinaryOptionGroupIds={ordinaryOptionGroupIds}
                           groups={allAccessoryGroups}
                           quantities={templatePricingAccessoryQuantities}
@@ -4228,10 +4248,10 @@ export function ProductLibrarySelector({
                                   const groupHasNoSelection = group.group_is_required === true &&
                                     group.items.every((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) === 0);
                                   const selectedCount = group.items.filter((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) > 0).length;
-                                  const expanded = expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, group.id)] ?? (groupHasNoSelection || selectedCount > 0);
+                                  const expanded = expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, group.id)] ?? false;
 
                                   return (
-                                  <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
+                                  <fieldset key={group.id} data-accessory-group={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
                                     <AccessoryGroupHeader expanded={expanded} groupName={group.group_name} itemCount={group.items.length} required={group.group_is_required} selectedCount={selectedCount} onToggle={() => setExpandedAccessoryGroups((current) => ({ ...current, [accessoryGroupExpansionKey(template.id, group.id)]: !expanded }))} />
                                     {expanded ? <div className="mt-1 space-y-2">
                                       {group.items.map((accessory, accessoryIndex) => {
@@ -4312,10 +4332,10 @@ export function ProductLibrarySelector({
                               const groupHasNoSelection = group.group_is_required === true &&
                                 group.items.every((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) === 0);
                               const selectedCount = group.items.filter((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) > 0).length;
-                              const expanded = expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, group.id)] ?? (groupHasNoSelection || selectedCount > 0);
+                              const expanded = expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, group.id)] ?? false;
 
                               return (
-                              <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
+                              <fieldset key={group.id} data-accessory-group={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
                                 <AccessoryGroupHeader expanded={expanded} groupName={group.group_name} itemCount={group.items.length} required={group.group_is_required} selectedCount={selectedCount} onToggle={() => setExpandedAccessoryGroups((current) => ({ ...current, [accessoryGroupExpansionKey(template.id, group.id)]: !expanded }))} />
                                 {expanded ? <div className="mt-1 space-y-2">
                                   {group.items.map((accessory, accessoryIndex) => {
@@ -4416,9 +4436,34 @@ export function ProductLibrarySelector({
                                     />
                                   </label>
                                 ) : null}
+                                {line.family.mixed ? (
+                                  <label className="mt-2 block">
+                                    <span className="text-[10px] font-bold uppercase text-zinc-500">Choose Product Family</span>
+                                    <select
+                                      value={line.family.selected?.key ?? ""}
+                                      onChange={(event) => {
+                                        const option = line.family.options.find((candidate) => candidate.key === event.target.value);
+                                        if (!option) return;
+                                        const next = linkedProductFamilyChange(option, { variantGroups: line.childVariantGroups, categoryGroups: line.childCategoryGroups, variantRows: line.childAllVariantRows });
+                                        const replace = (value: string | undefined) => (current: Record<string, string>) => {
+                                          const copy = { ...current };
+                                          if (value) copy[line.instanceKey] = value; else delete copy[line.instanceKey];
+                                          return copy;
+                                        };
+                                        setSelectedLinkedVariants(replace(next.variantRowId));
+                                        setSelectedLinkedCategoryGroups(replace(next.categoryGroupId));
+                                        setSelectedLinkedCategories(replace(next.categoryId));
+                                        setSelectedLinkedFabricCategories(replace(next.fabricCategory));
+                                      }}
+                                      className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                    >
+                                      {line.family.options.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+                                    </select>
+                                  </label>
+                                ) : null}
                                 {line.childCategoryRow ? (
                                   <div className="mt-2 grid gap-2 md:grid-cols-2">
-                                    {line.selectedChildCategoryGroup && line.childCategoryGroups.length > 1 ? (
+                                    {!line.family.mixed && line.selectedChildCategoryGroup && line.childCategoryGroups.length > 1 ? (
                                       <label className="block md:col-span-2">
                                         <span className="text-[10px] font-bold uppercase text-zinc-500">Finish Pricing Group</span>
                                         <select
@@ -4518,7 +4563,7 @@ export function ProductLibrarySelector({
                                       selectedRow={line.childCategoryRow?.id
                                         ? { kind: "price_matrix", rowId: line.childCategoryRow.id }
                                         : line.childVariantRow?.id ? { kind: "base_model", rowId: line.childVariantRow.id } : null}
-                                      ownRowIds={[...line.childCategoryGroups.flatMap((group) => group.items ?? []), ...line.childVariantRows].flatMap((row) => row.id ?? [])}
+                                      ownRowIds={[...line.childCategoryGroups.flatMap((group) => group.items ?? []), ...line.childAllVariantRows].flatMap((row) => row.id ?? [])}
                                       priceLabel={(accessory) => formatMoney(accessory.currency ?? line.currency, numberValue(accessory.price))}
                                       GroupHeader={AccessoryGroupHeader}
                                       onQuantityChange={(id, quantity) =>
@@ -5471,6 +5516,8 @@ export function ProductLibrarySelector({
                             {modularCompositionIssue?.message ?? "Select at least one modular item to add this product."}
                           </p>
                         ) : null}
+                        {!accessoryConfiguration.valid ? <AccessoryBlockedList entries={accessoryBlockedEntries(accessoryConfiguration.blockingRequirements, allAccessoryGroups, accessoryConfiguration.groups)} onOpen={openBlockedAccessoryGroup} /> : null}
+                        {linkedNeedsLocalBuilder ? <p className="text-xs leading-5 text-amber-700">{LINKED_LOCAL_BUILDER_MESSAGE}</p> : null}
                         {hasUnavailableSelectedPrice ? <p className="text-xs leading-5 text-amber-700">The selected category is unavailable for one or more selected modular items.</p> : null}
                         {missingConditionalModelSelection ? (
                           <p className="text-xs leading-5 text-amber-700">
@@ -5519,7 +5566,7 @@ export function ProductLibrarySelector({
                               ) : (
                                 <button
                                   type="submit"
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice || linkedNeedsLocalBuilder}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add

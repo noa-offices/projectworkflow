@@ -43,7 +43,7 @@ test("selected Base/Model, Matrix, and Modular summaries render separate non-emp
 
 test("accessory groups use independent visual collapse state without changing selection or pricing controls", () => {
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
-  ["expandedAccessoryGroups", "function AccessoryGroupHeader", 'type="button" aria-expanded={expanded}', "itemCount={group.items.length}", "selectedCount={selectedCount}", "groupHasNoSelection || selectedCount > 0", "evaluation.required || selectedCount > 0 || Boolean(validationMessage)", "{expanded ? <div", "AccessoryItemMetadata", "templatePricingAccessoryQuantities"].forEach((expected) => assert.ok(source.includes(expected)));
+  ["expandedAccessoryGroups", "function AccessoryGroupHeader", 'type="button" aria-expanded={expanded}', "itemCount={group.items.length}", "selectedCount={selectedCount}", "?? false;", "isGroupExpanded(group.id, false)", "{expanded ? <div", "AccessoryItemMetadata", "templatePricingAccessoryQuantities"].forEach((expected) => assert.ok(source.includes(expected)));
 });
 
 test("category-priced accessories use independent accessory category state and selected prices", () => {

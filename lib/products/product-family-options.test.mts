@@ -4,12 +4,7 @@ import { groupedStandardCategoryPricingRows } from "./category-pricing-groups";
 import { resolveMainAccessoryTargets } from "./main-accessory-targets";
 import { familyKey, MATRIX_FAMILY_MISSING_MESSAGE, mixedProductFamilies, productFamilyOptions, selectedProductFamily } from "./product-family-options";
 
-// Universal Screen (LAS MOBILI): 11 Base/Model groups + 15 Category / Matrix groups, interleaved by saved sort_order.
-const CATEGORIES = ["B", "C", "D", "E", "F", "G", "I"];
-const baseNames = ["S1 Melamine Front", "S1 Melamine Lateral", "S4 Sound-Proofing 30 mm Front", "S4 Sound-Proofing 30 mm Lateral", "S5a Felt Front", "S5a Felt Lateral and Angular", "S5b Felt Modesty", "S6 Glass", "S1 Freestanding Melamine", "S4 Freestanding Sound-Proofing 30 mm", "S5 Freestanding Felt"];
-const matrixNames = ["S2 Fabric Front 25 mm", "S2 Fabric Lateral 25 mm", "S3 Sound-Proofing Front 38 mm", "S3 Sound-Proofing Lateral 38 mm", "S7a Upholstered Front (plain)", "S7a Upholstered Front (1 bar)", "S7a Upholstered Front (2 bars)", "S7a Upholstered Lateral", "S7b Upholstered Modesty (plain)", "S7b Upholstered Modesty (1 bar)", "S2 Freestanding", "S3 Freestanding", "S7 Freestanding", "D1 Dividing Panel", "D2 Dividing Panel"];
-const baseGroups = baseNames.map((name, i) => ({ id: `b${i}`, pricing_type: "base_model_group", group_name: name, is_active: true, sort_order: i * 2, items: [{ id: `br${i}`, variant_name: name, price: 100 + i, is_active: true }] }));
-const matrixGroups = matrixNames.map((name, i) => ({ id: `m${i}`, pricing_type: "category_group", group_name: name, is_active: true, sort_order: i * 2 + 1, price_categories: CATEGORIES, items: [{ id: `mr${i}`, variant_name: `${name} 1200`, is_active: true, prices: Object.fromEntries(CATEGORIES.map((c, k) => [c, 100 * (i + 1) + k * 10])) }] }));
+import { baseGroups, CATEGORIES, matrixGroups } from "./testing/universal-screen-fixture";
 
 test("Universal Screen: the family list holds all 11 Base/Model and all 15 matrix groups, in saved order", () => {
   assert.equal(mixedProductFamilies(baseGroups, matrixGroups), true);
