@@ -72,7 +72,7 @@ import { MATRIX_FAMILY_MISSING_MESSAGE, mixedProductFamilies, productFamilyOptio
 import { LINKED_LOCAL_BUILDER_MESSAGE, linkedProductFamilyChange, linkedProductNeedsLocalBuilder } from "@/lib/products/linked-product-family";
 import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
 import { guidedBaseModelSelection } from "@/lib/quotations/guided-base-model-selection";
-import { requiredComponentOverrideReport, requiredCompanionItems, withRequiredOverride, withoutRequiredOverride, type RequiredComponentOverrides } from "@/lib/quotations/required-component-overrides";
+import { requiredComponentOverrideReport, requiredCompanionItems, withRequiredOverride, withoutRequiredOverride } from "@/lib/quotations/required-component-overrides";
 import { activeBaseModelPricingGroups, composeSystemAndMainSpecification, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, normalizeSystemQuantity, remapBaseModelTargetsToOwnerGroups, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
 import type { ProductTemplateSubgroupReferencePreview } from "@/lib/products/product-template-subgroup-references";
 import type { AccessoryGroupEvaluation } from "@/lib/products/accessory-conditional-configuration";
@@ -1093,7 +1093,6 @@ export function ProductLibrarySelector({
   const [finalSpecifications, setFinalSpecifications] = useState<Record<string, string>>({});
   const [finalSpecificationEditedByTemplate, setFinalSpecificationEditedByTemplate] = useState<Record<string, boolean>>({});
   const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>(() => Object.fromEntries(templates.map((template) => [template.id, defaultProductAccessoryQuantities(template.accessory_pricing)])));
-  const [requiredOverrides, setRequiredOverrides] = useState<Record<string, RequiredComponentOverrides>>({});
   const [selectedAccessoryCategories, setSelectedAccessoryCategories] = useState<Record<string, string>>({});
   const [expandedAccessoryGroups, setExpandedAccessoryGroups] = useState<Record<string, boolean>>({});
   const [expandedModularGroupByTemplate, setExpandedModularGroupByTemplate] = useState<Record<string, string | null>>({});
@@ -1323,7 +1322,7 @@ export function ProductLibrarySelector({
     changeConfiguration(tid, { modularQuantities: plain.modularQuantities });
     put(setPricingAccessoryQuantities, plain.pricingAccessoryQuantities);
     changeConfiguration(tid, { componentAccessoryQuantities: plain.componentAccessoryQuantities ?? undefined });
-    put(setRequiredOverrides, plain.requiredOverrides);
+    changeConfiguration(tid, { requiredOverrides: plain.requiredOverrides });
     put(setSelectedOptions, plain.componentOptionSelections);
     put(setSelectedFinishesByTemplate, plain.finishes as FinishSelectionEditorRow[] | undefined);
     put(setSelectedImages, plain.selectedImage);
@@ -1994,7 +1993,7 @@ export function ProductLibrarySelector({
                     ...selectedStructuralSupportTargets.map((target) => [accessoryApplicabilityTargetKey(target), templatePricingAccessoryQuantities[target.row_id] ?? 1]),
                     ...(nativeSystem.selected ? [[accessoryApplicabilityTargetKey({ kind: "base_model" as const, group_id: nativeSystem.selected.group.id, row_id: String(nativeSystem.selected.row.id) }), normalizeSystemQuantity(configurations[template.id]?.systemQuantity)]] : []),
                   ]);
-                  const templateRequiredOverrides = requiredOverrides[template.id] ?? {};
+                  const templateRequiredOverrides = configurations[template.id]?.requiredOverrides ?? {};
                   // Shared with the linked-product accessory popup (lib/products/accessory-rule-setup).
                   const { configuration: accessoryConfiguration, requiredComponentTrigger, optionItemRequiredTrigger, ordinaryOptionGroupIds, ordinaryOptionDependentItemIds } = evaluateAccessoryRules({
                     groups: allAccessoryGroups,
@@ -3567,10 +3566,10 @@ export function ProductLibrarySelector({
                           onViewDiagram={(item, url) => setDiagramPreview({ label: "Accessory diagram", templateId: template.id, title: [item.item_name || "Accessory", item.supplier_price_list_code, item.dimension].filter(Boolean).join(" — "), url })}
                           isGroupExpanded={(groupId, defaultExpanded) => expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, groupId)] ?? defaultExpanded}
                           onGroupExpandedChange={(groupId, expanded) => setExpandedAccessoryGroups((current) => ({ ...current, [accessoryGroupExpansionKey(template.id, groupId)]: expanded }))}
-                          onResetRequired={(itemId) => setRequiredOverrides((current) => ({ ...current, [template.id]: withoutRequiredOverride(current[template.id] ?? {}, itemId) }))}
+                          onResetRequired={(itemId) => setConfigurations((current) => updateConfiguration(current, template.id, { requiredOverrides: withoutRequiredOverride(current[template.id]?.requiredOverrides ?? {}, itemId) }))}
                           onQuantityChange={(groupItemIds, itemId, quantity, replaceGroup) => {
                             if (!replaceGroup && requiredCompanionItems(accessoryConfiguration.groups).some((entry) => entry.itemId === itemId)) {
-                              setRequiredOverrides((current) => ({ ...current, [template.id]: withRequiredOverride(current[template.id] ?? {}, itemId, quantity, ordinaryOptionDependentItemIds.has(itemId) ? optionItemRequiredTrigger : requiredComponentTrigger) }));
+                              setConfigurations((current) => updateConfiguration(current, template.id, { requiredOverrides: withRequiredOverride(current[template.id]?.requiredOverrides ?? {}, itemId, quantity, ordinaryOptionDependentItemIds.has(itemId) ? optionItemRequiredTrigger : requiredComponentTrigger) }));
                               return;
                             }
                             setPricingAccessoryQuantities((current) => {
