@@ -2,6 +2,7 @@ import { draftModularColumns, draftModularRows, isDirectModularGroup, type Produ
 import { baseModelGroupRouteKey, draftBaseModelGroupLabel, draftBaseModelGroupRows, draftUngroupedBaseModelRows, replaceDraftBaseModelScopeRows } from "./base-model-draft-groups";
 import { fillNullPricedRowCurrenciesFromDefault } from "./smart-product-review";
 import { createSmartSetupReviewRouting, type SmartReviewDestination, type SmartReviewRoute, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
+import { applySmartGroupRulesUpdate, smartReusedItemIdErrors, smartRulesUpdateValidationErrors, smartUnnamedItemCount, type SmartRulesUpdatePreview } from "./smart-additional-rules-update";
 
 export type SmartAdditionalGroupAction = "add" | "merge" | "skip";
 export type SmartAdditionalGroupClassification = "EXACT_DUPLICATE" | "LIKELY_EXISTING_GROUP" | "POSSIBLE_MATCH" | "NEW_GROUP";
@@ -10,6 +11,8 @@ export type SmartAdditionalGroupDecision = {
   destination: SmartReviewDestination;
   targetKey: string | null;
   duplicateChoices: Record<string, "existing" | "incoming">;
+  /** Option groups merged into an existing group only: also take the incoming label and rules. Off unless ticked. */
+  updateRules?: boolean;
 };
 export type SmartAdditionalGroupEvidence = { matchingItems: number; incomingItems: number; newItems: number; differences: number; text: string };
 export type SmartAdditionalGroupMatch = { classification: SmartAdditionalGroupClassification; recommendedAction: SmartAdditionalGroupAction; bestMatch: SmartReviewRoute | null; evidence: SmartAdditionalGroupEvidence };
@@ -126,13 +129,15 @@ function mergedAccessoryReviewMetadata<T extends ReviewRow>(existing: T, incomin
 function mergeRows<T extends ReviewRow>(existing: T[], incoming: T[], choices: Record<string, "existing" | "incoming">) {
   const result = [...existing];
   const addedIds: string[] = [];
+  const finalIds: Record<string, string> = {};
   incoming.forEach((row) => {
     const current = duplicateRow(result, row);
+    finalIds[row.id] = current?.id ?? row.id;
     if (!current) { result.push(row); addedIds.push(row.id); }
     else if (choices[row.id] === "incoming") result[result.indexOf(current)] = mergedAccessoryReviewMetadata({ ...row, id: current.id } as T, current);
     else result[result.indexOf(current)] = mergedAccessoryReviewMetadata(current, row);
   });
-  return { rows: result, addedIds };
+  return { rows: result, addedIds, finalIds };
 }
 
 /**
@@ -178,7 +183,10 @@ function mergeSupplemental<T extends { id: string; supplierCodes?: string[]; ref
   return [...current, ...additions];
 }
 
-export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, currentPlan: SmartSetupReviewRoutingPlan, incomingDraft: ProductTemplateDraft, decisions: Record<string, SmartAdditionalGroupDecision>) {
+function mergeSmartAdditionalJson(currentDraft: ProductTemplateDraft, currentPlan: SmartSetupReviewRoutingPlan, incomingDraft: ProductTemplateDraft, decisions: Record<string, SmartAdditionalGroupDecision>) {
+  const rulesErrors: string[] = [];
+  const previews: Record<string, SmartRulesUpdatePreview> = {};
+  const updatedTargets = new Set<string>();
   const draft = structuredClone(currentDraft);
   const plan = structuredClone(currentPlan);
   const preparedIncomingDraft = fillNullPricedRowCurrenciesFromDefault(incomingDraft);
@@ -214,7 +222,17 @@ export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, cur
       } else {
         const existing = draft.optionGroups.find((group) => group.id === target.sourceId);
         const incoming = preparedIncomingDraft.optionGroups.find((group) => group.id === incomingRoute.sourceId);
-        if (existing && incoming) { const merged = mergeRows(existing.items, incoming.items, decision.duplicateChoices); existing.items = merged.rows; recordAdded(target.key, merged.addedIds); }
+        if (existing && incoming) {
+          const merged = mergeRows(existing.items, incoming.items, decision.duplicateChoices); existing.items = merged.rows; recordAdded(target.key, merged.addedIds);
+          if (decision.updateRules) {
+            if (updatedTargets.has(target.key)) rulesErrors.push(`Two incoming groups would update the rules of "${target.groupName}". Tick the rules update for one of them only.`);
+            updatedTargets.add(target.key);
+            const before = target.accessory?.rules.length ?? 0;
+            const update = applySmartGroupRulesUpdate({ group: existing, route: target, incoming, incomingRoute, finalIds: merged.finalIds });
+            rulesErrors.push(...update.errors, ...smartReusedItemIdErrors(draft, existing, merged.addedIds));
+            previews[incomingRoute.key] = { before, after: update.errors.length ? before : target.accessory?.rules.length ?? 0, added: merged.addedIds.length, unnamedExisting: update.errors.length ? 0 : smartUnnamedItemCount(existing) };
+          }
+        }
       }
       target.rowCount = routeRows(draft, target).length;
       return;
@@ -255,5 +273,27 @@ export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, cur
   draft.linkedFamilySuggestions = mergeSupplemental(draft.linkedFamilySuggestions, preparedIncomingDraft.linkedFamilySuggestions);
   draft.extractionWarnings = [...new Set([...draft.extractionWarnings, ...preparedIncomingDraft.extractionWarnings])];
   draft.sources = mergeSupplemental(draft.sources, preparedIncomingDraft.sources);
+  return { draft, plan, addedRowsByTarget, previews, rulesErrors };
+}
+
+function checkedSmartAdditionalMerge(currentDraft: ProductTemplateDraft, currentPlan: SmartSetupReviewRoutingPlan, incomingDraft: ProductTemplateDraft, decisions: Record<string, SmartAdditionalGroupDecision>) {
+  const result = mergeSmartAdditionalJson(currentDraft, currentPlan, incomingDraft, decisions);
+  if (!Object.keys(result.previews).length || result.rulesErrors.length) return result;
+  const plain = mergeSmartAdditionalJson(currentDraft, currentPlan, incomingDraft, Object.fromEntries(Object.entries(decisions).map(([key, decision]) => [key, { ...decision, updateRules: false }])));
+  result.rulesErrors.push(...smartRulesUpdateValidationErrors(result, plain));
+  return result;
+}
+
+/** Dry run for the review screen: what each ticked rules update would change, and why it cannot be applied. Changes nothing. */
+export function smartAdditionalRulesReport(currentDraft: ProductTemplateDraft, currentPlan: SmartSetupReviewRoutingPlan, incomingDraft: ProductTemplateDraft, decisions: Record<string, SmartAdditionalGroupDecision>) {
+  if (!Object.values(decisions).some((decision) => decision.action === "merge" && decision.updateRules)) return { errors: [] as string[], previews: {} as Record<string, SmartRulesUpdatePreview> };
+  const { previews, rulesErrors } = checkedSmartAdditionalMerge(currentDraft, currentPlan, incomingDraft, decisions);
+  return { errors: rulesErrors, previews };
+}
+
+/** Works on copies. An invalid rules update throws, so nothing at all is applied. */
+export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, currentPlan: SmartSetupReviewRoutingPlan, incomingDraft: ProductTemplateDraft, decisions: Record<string, SmartAdditionalGroupDecision>) {
+  const { draft, plan, addedRowsByTarget, rulesErrors } = checkedSmartAdditionalMerge(currentDraft, currentPlan, incomingDraft, decisions);
+  if (rulesErrors.length) throw new Error(`Rules were not updated: ${rulesErrors.join(" ")}`);
   return { draft, plan, addedRowsByTarget };
 }
