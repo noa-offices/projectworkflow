@@ -108,9 +108,9 @@ test("Apply stores the existing format: the saved setup is identical to what the
   assert.deepStrictEqual(Object.keys(applied).sort(), Object.keys(oldPanel).sort());
 });
 
-test("category-priced, structural-support and id-less accessories keep the classic panel", () => {
+test("category-priced accessories use the popup; structural-support and id-less items keep the classic panel", () => {
   assert.equal(linkedAccessoryPopupBlockReason(groups), null);
-  assert.match(linkedAccessoryPopupBlockReason([{ ...groups[2]!, price_categories: [{ id: "a", label: "A" }] }])!, /priced by category/);
+  assert.equal(linkedAccessoryPopupBlockReason([{ ...groups[2]!, price_categories: [{ id: "a", label: "A" }] }]), null);
   assert.match(linkedAccessoryPopupBlockReason([{ ...groups[2]!, items: [{ ...item("s", 1), role: "structural_support" }] }])!, /structural support/);
   assert.match(linkedAccessoryPopupBlockReason([{ ...groups[2]!, items: [{ item_name: "x", price: 1 }] }])!, /no id/);
 });

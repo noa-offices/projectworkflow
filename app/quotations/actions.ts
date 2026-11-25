@@ -6976,6 +6976,9 @@ export async function addProductTemplateToQuotation(formData: FormData) {
             const id = accessory.id ?? accessory.item_name ?? "";
             const selectedAccessory = linkedAccessorySelections.find((item) => item.accessoryId === id);
             const qty = selectedAccessory?.qty ?? 0;
+            if (qty > 0 && accessory.price == null && group.price_categories?.some(({ id }) => accessory.prices?.[id] != null)) {
+              redirectWithMessage(redirectPath, `Use the local quotation builder to add ${accessory.item_name || "this linked accessory"}. Its price depends on the accessory category.`);
+            }
 
             return {
               type: "linked_product_add_on",

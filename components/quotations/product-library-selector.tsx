@@ -64,7 +64,7 @@ import {
 import { configuratorModes } from "@/lib/quotations/configurator-choosers";
 import { applyModularRowQuantity, BASE_MODEL_DISABLED_NOTE, MODULAR_DISABLED_NOTE, modularGroupsExcludeBaseModels, SINGLE_STARTER_HINT, validateModularCompositionGroups } from "@/lib/products/modular-composition";
 import { resolveMainAccessoryTargets } from "@/lib/products/main-accessory-targets";
-import { evaluateAccessoryRules } from "@/lib/products/accessory-rule-setup";
+import { accessoryItemPrice, evaluateAccessoryRules } from "@/lib/products/accessory-rule-setup";
 import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
 import { flattenBaseModelPricingRows, type BaseModelPricingGroup } from "@/lib/products/base-model-pricing-groups";
 import { MATRIX_FAMILY_MISSING_MESSAGE, mixedProductFamilies, productFamilyOptions, selectedProductFamily, type ProductFamilyOption } from "@/lib/products/product-family-options";
@@ -611,9 +611,13 @@ function AccessoryConfigurationFields({
   onResetRequired,
   ordinaryOptionGroupIds,
   lockedItemIds,
+  categories,
+  onCategoryChange,
 }: {
   /** Linked-product popup only: required items that cannot be removed. Absent = unchanged standalone display. */
   lockedItemIds?: ReadonlySet<string>;
+  categories?: Record<string, string>;
+  onCategoryChange?: (itemId: string, categoryId: string) => void;
   /** Groups whose option_item rules are triggered by an ordinary accessory item (for example a Stirrup Kit). Empty/absent = unchanged display. */
   ordinaryOptionGroupIds?: ReadonlySet<string>;
   onResetRequired: (itemId: string) => void;
@@ -649,6 +653,13 @@ function AccessoryConfigurationFields({
       <div key={section.role} className="mt-4 space-y-2">
         <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">{section.title}</p>
         {sectionGroups.map(({ evaluation, group, items }) => {
+          const priceFor = (item: AccessoryPricingItem) => categories
+            ? accessoryItemPrice(group, item, categories[item.id ?? ""]).unitPrice
+            : numberValue(item.price);
+          const categoryPicker = (item: AccessoryPricingItem) => item.id && onCategoryChange
+            ? <AccessoryCategoryPriceSelector key={item.id} group={group} item={item} currency={rowCurrency}
+                value={categories?.[item.id] ?? ""} onChange={(value) => onCategoryChange(item.id!, value)} />
+            : null;
           const exactlyOne = evaluation.maxSelections === 1;
           const groupItemIds = group.items.map((item) => item.id ?? "").filter(Boolean);
           const selectedId = evaluation.selectedItemIds[0] ?? "";
@@ -672,9 +683,10 @@ function AccessoryConfigurationFields({
                 >
                   <option value="">{evaluation.required ? `Select ${group.group_name}` : `No ${group.group_name}`}</option>
                   {items.map((item) => (
-                    <option key={item.id} value={item.id}>{accessoryOptionLabel(item, formatMoney(item.currency ?? rowCurrency, numberValue(item.price)))}</option>
+                    <option key={item.id} value={item.id}>{accessoryOptionLabel(item, formatMoney(item.currency ?? rowCurrency, priceFor(item)))}</option>
                   ))}
                 </select>
+                {items.filter((item) => item.id === selectedId).map(categoryPicker)}
                 {items.filter((item) => item.id === selectedId).map((item) => <AccessoryItemMetadata key={item.id} groupId={group.id} item={item} rowReferences={rowReferences} onViewDiagram={onViewDiagram} />)}</>
               ) : expanded ? (
                 <div className="mt-1 space-y-2">
@@ -684,15 +696,18 @@ function AccessoryConfigurationFields({
                     const locked = Boolean(lockedItemIds?.has(itemId));
                     const quantity = isRequired ? evaluation.selectedQuantity : quantities[itemId] ?? 0;
                     return (
-                      <label key={itemId} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
+                      <Fragment key={itemId}>
+                      <label className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
                         <span className="min-w-0">
                           <input type="checkbox" checked={quantity > 0} onChange={(event) => onQuantityChange(groupItemIds, itemId, event.target.checked ? (isRequired ? evaluation.requiredQuantity ?? 1 : ordinaryOptionGroupIds?.has(group.id) && evaluation.fixedQuantity !== null ? evaluation.fixedQuantity : Math.max(1, quantity || 1)) : 0, false)} disabled={locked || undefined} className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle" />
                           <span className="font-medium text-zinc-900">{item.item_name}</span>{locked ? <span className="ml-1 text-[10px] font-semibold text-zinc-500">(required, locked)</span> : null}
                           {item.supplier_price_list_code ? <span className="mt-1 block text-[11px] text-zinc-500"><span className="font-semibold text-zinc-700">Supplier Code:</span> {item.supplier_price_list_code}</span> : null}<AccessoryItemMetadata groupId={group.id} item={item} rowReferences={rowReferences} onViewDiagram={onViewDiagram} />
                         </span>
-                        <span className="font-semibold">{formatMoney(item.currency ?? rowCurrency, numberValue(item.price))}</span>
+                        <span className="font-semibold">{formatMoney(item.currency ?? rowCurrency, priceFor(item))}</span>
                         <input type="number" min={1} step={1} value={quantity || (isRequired ? evaluation.requiredQuantity : null) || 1} disabled={quantity <= 0 || (!isRequired && evaluation.fixedQuantity !== null)} readOnly={locked || undefined} onChange={(event) => onQuantityChange(groupItemIds, itemId, Math.max(1, Math.trunc(Number(event.target.value) || 1)), false)} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100" />
                       </label>
+                      {categoryPicker(item)}
+                      </Fragment>
                     );
                   })}
                 </div>
@@ -1110,6 +1125,7 @@ export function ProductLibrarySelector({
   const [linkedProductQuantities, setLinkedProductQuantities] = useState<Record<string, number>>({});
   const [linkedAccessoryQuantities, setLinkedAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   // The linked instance whose "Edit accessories" popup is open.
+  const [linkedAccessoryCategories, setLinkedAccessoryCategories] = useState<Record<string, Record<string, string>>>({});
   const [linkedAccessoryPopupKey, setLinkedAccessoryPopupKey] = useState<string | null>(null);
   const [selectedLinkedVariants, setSelectedLinkedVariants] = useState<Record<string, string>>({});
   const [selectedLinkedCategoryGroups, setSelectedLinkedCategoryGroups] = useState<Record<string, string>>({});
@@ -1361,6 +1377,7 @@ export function ProductLibrarySelector({
         putKeyed(setSelectedLinkedFabricCategories, key, selection?.fabricCategory);
         putKeyed(setLinkedProductQuantities, key, selection?.quantity);
         putKeyed(setLinkedAccessoryQuantities, key, selection?.accessoryQuantities);
+        putKeyed(setLinkedAccessoryCategories, key, selection?.accessoryCategories);
       }
     }
     setReplay({ key: Date.now(), problems: evaluation.validation.problems, setupName: setup.setupName, specOverrides: setup.specOverrides, templateId: tid });
@@ -2079,6 +2096,7 @@ export function ProductLibrarySelector({
                           const instanceKey = linkedProductInstanceKey(link.id, instance.id);
                           return {
                             instance, quantity: linkedProductQuantities[instanceKey], accessoryQuantities: linkedAccessoryQuantities[instanceKey],
+                            accessoryCategories: linkedAccessoryCategories[instanceKey],
                             selection: { variantRowId: selectedLinkedVariants[instanceKey], categoryGroupId: selectedLinkedCategoryGroups[instanceKey],
                               categoryId: selectedLinkedCategories[instanceKey], fabricCategory: selectedLinkedFabricCategories[instanceKey] },
                           };
@@ -2703,6 +2721,7 @@ export function ProductLibrarySelector({
                             fabricCategory: selectedLinkedFabricCategories[instanceKey] ?? null,
                             quantity: linkedProductQuantities[instanceKey] ?? null,
                             accessoryQuantities: linkedAccessoryQuantities[instanceKey] ?? {},
+                            accessoryCategories: linkedAccessoryCategories[instanceKey],
                           }] as const;
                         }),
                       ),
@@ -3986,10 +4005,12 @@ export function ProductLibrarySelector({
                                             groups={line.childAccessoryGroups}
                                             row={row}
                                             savedQuantities={savedQuantities}
+                                            savedCategories={linkedAccessoryCategories[line.instanceKey]}
                                             money={(amount) => formatMoney(line.currency, amount)}
                                             renderFields={(props) => <AccessoryConfigurationFields {...props} groups={line.childAccessoryGroups} rowCurrency={line.currency} rowReferences={{}} onViewDiagram={() => {}} onResetRequired={() => {}} />}
                                             onClose={() => setLinkedAccessoryPopupKey(null)}
-                                            onApply={(accessoryQuantities) => {
+                                            onApply={(accessoryQuantities, categories) => {
+                                              setLinkedAccessoryCategories((current) => ({ ...current, [line.instanceKey]: categories }));
                                               setLinkedAccessoryQuantities((current) => ({ ...current, [line.instanceKey]: accessoryQuantities }));
                                               setLinkedAccessoryPopupKey(null);
                                             }}
@@ -4058,6 +4079,11 @@ export function ProductLibrarySelector({
                                           [line.link.id]: linkedInstancesForLink(line.link).filter((instance) => instance.id !== line.instance.id),
                                         }));
                                         setLinkedProductQuantities((current) => {
+                                          const next = { ...current };
+                                          delete next[line.instanceKey];
+                                          return next;
+                                        });
+                                        setLinkedAccessoryCategories((current) => {
                                           const next = { ...current };
                                           delete next[line.instanceKey];
                                           return next;

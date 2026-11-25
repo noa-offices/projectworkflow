@@ -3,7 +3,7 @@ import { ruleConvertedPrice, ruleExactAmount, type PricingRule } from "@/lib/quo
 import { activeBaseModelPricingGroups, nativeSystemState, normalizeSystemQuantity, systemPriceContribution } from "@/lib/quotations/native-system-base";
 import { missingExchangeRateCurrencies, roundSourceAmount } from "@/lib/quotations/source-price-components";
 import type { AccessoryConditionalConfiguration, StructuralSupportCompatibleTarget } from "./accessory-conditional-configuration";
-import { accessoryPriceLines } from "./accessory-rule-setup";
+import { accessoryItemPrice, accessoryPriceLines } from "./accessory-rule-setup";
 import { flattenBaseModelPricingRows } from "./base-model-pricing-groups";
 import { groupedStandardCategoryPricingRows, standardCategoryPriceColumns as groupedCategoryPriceColumns } from "./category-pricing-groups";
 import { resolveLinkedProductFamily, type LinkedFamilyStored } from "./linked-product-family";
@@ -146,6 +146,7 @@ type LinkedInstanceChoice = {
   selection: LinkedFamilyStored;
   quantity?: number;
   accessoryQuantities?: Record<string, number>;
+  accessoryCategories?: Record<string, string>;
 };
 
 type LinkedFamilyInput<Child, Link> = {
@@ -404,7 +405,7 @@ export function priceModularItems(modularGroups: readonly ModularGroup[], templa
 }
 
 function priceLegacyLinked<Child extends ConfigurationPriceTemplate, Link extends ConfigurationPriceLink>(
-  link: Link, childTemplate: Child, { instance, selection, quantity, accessoryQuantities }: LinkedInstanceChoice,
+  link: Link, childTemplate: Child, { instance, selection, quantity, accessoryQuantities, accessoryCategories }: LinkedInstanceChoice,
 ) {
   const instanceKey = `${link.id}:${instance.id}`;
   const childCategoryGroups = groupedStandardCategoryPricingRows(childTemplate.category_pricing);
@@ -446,7 +447,9 @@ function priceLegacyLinked<Child extends ConfigurationPriceTemplate, Link extend
         const accessoryQty = Math.max(0, Math.trunc(numberValue(childAccessoryQuantities[id])));
 
         return {
-          accessory,
+          accessory: accessoryCategories?.[id]
+            ? { ...accessory, price: accessoryItemPrice(group, accessory, accessoryCategories[id]).unitPrice }
+            : accessory,
           groupName: group.group_name,
           id,
           qty: accessoryQty,
