@@ -66,14 +66,14 @@ import {
 import { configuratorModes } from "@/lib/quotations/configurator-choosers";
 import { applyModularRowQuantity, BASE_MODEL_DISABLED_NOTE, MODULAR_DISABLED_NOTE, modularGroupsExcludeBaseModels, SINGLE_STARTER_HINT, validateModularCompositionGroups } from "@/lib/products/modular-composition";
 import { resolveMainAccessoryTargets } from "@/lib/products/main-accessory-targets";
-import { deriveOptionItemTargets, hasOrdinaryOptionItemRules, ordinaryOptionItemDependentItemIds, ordinaryOptionItemGroupIds, withoutOrdinaryOptionItemDependentQuantities, type OptionItemExtraTargets, type OptionItemPassGroup } from "@/lib/products/option-item-targets";
+import { accessoryPriceLines, evaluateAccessoryRules } from "@/lib/products/accessory-rule-setup";
 import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
 import { flattenBaseModelPricingRows, type BaseModelPricingGroup } from "@/lib/products/base-model-pricing-groups";
 import { MATRIX_FAMILY_MISSING_MESSAGE, mixedProductFamilies, productFamilyOptions, selectedProductFamily, type ProductFamilyOption } from "@/lib/products/product-family-options";
 import { LINKED_LOCAL_BUILDER_MESSAGE, linkedProductFamilyChange, linkedProductNeedsLocalBuilder, resolveLinkedProductFamily } from "@/lib/products/linked-product-family";
 import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
 import { guidedBaseModelSelection } from "@/lib/quotations/guided-base-model-selection";
-import { effectiveRequiredQuantities, requiredComponentOverrideReport, requiredComponentTriggerKey, requiredCompanionItems, withRequiredOverride, withoutRequiredOverride, type RequiredComponentOverrides } from "@/lib/quotations/required-component-overrides";
+import { requiredComponentOverrideReport, requiredCompanionItems, withRequiredOverride, withoutRequiredOverride, type RequiredComponentOverrides } from "@/lib/quotations/required-component-overrides";
 import { activeBaseModelPricingGroups, composeSystemAndMainSpecification, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, normalizeSystemQuantity, remapBaseModelTargetsToOwnerGroups, systemPriceContribution, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
 import type { ProductTemplateSubgroupReferencePreview } from "@/lib/products/product-template-subgroup-references";
 import {
@@ -111,6 +111,9 @@ import {
   resolveQuotationImageUrl,
 } from "@/lib/quotation-image-path";
 import { LinkedAccessoryList } from "./linked-accessory-list";
+import { LinkedAccessoryPopup } from "./linked-accessory-popup";
+import { linkedAccessoryPopupBlockReason } from "@/lib/products/linked-accessory-rules";
+import { linkedAccessorySummary as linkedAccessorySummaryText, linkedAccessoryName } from "./linked-accessory-view";
 import { AccessoryBlockedList, accessoryBlockedEntries, AccessoryGroupCounts, AccessoryGroupsToolbar, revealAccessoryGroup } from "./accessory-group-status";
 
 export type ProductLibraryBrand = {
@@ -718,7 +721,10 @@ function AccessoryConfigurationFields({
   onGroupExpandedChange,
   onResetRequired,
   ordinaryOptionGroupIds,
+  lockedItemIds,
 }: {
+  /** Linked-product popup only: required items that cannot be removed. Absent = unchanged standalone display. */
+  lockedItemIds?: ReadonlySet<string>;
   /** Groups whose option_item rules are triggered by an ordinary accessory item (for example a Stirrup Kit). Empty/absent = unchanged display. */
   ordinaryOptionGroupIds?: ReadonlySet<string>;
   onResetRequired: (itemId: string) => void;
@@ -786,16 +792,17 @@ function AccessoryConfigurationFields({
                   {items.map((item) => {
                     const itemId = item.id ?? "";
                     const isRequired = itemId === requiredItemId;
+                    const locked = Boolean(lockedItemIds?.has(itemId));
                     const quantity = isRequired ? evaluation.selectedQuantity : quantities[itemId] ?? 0;
                     return (
                       <label key={itemId} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
                         <span className="min-w-0">
-                          <input type="checkbox" checked={quantity > 0} onChange={(event) => onQuantityChange(groupItemIds, itemId, event.target.checked ? (isRequired ? evaluation.requiredQuantity ?? 1 : ordinaryOptionGroupIds?.has(group.id) && evaluation.fixedQuantity !== null ? evaluation.fixedQuantity : Math.max(1, quantity || 1)) : 0, false)} className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle" />
-                          <span className="font-medium text-zinc-900">{item.item_name}</span>
+                          <input type="checkbox" checked={quantity > 0} onChange={(event) => onQuantityChange(groupItemIds, itemId, event.target.checked ? (isRequired ? evaluation.requiredQuantity ?? 1 : ordinaryOptionGroupIds?.has(group.id) && evaluation.fixedQuantity !== null ? evaluation.fixedQuantity : Math.max(1, quantity || 1)) : 0, false)} disabled={locked || undefined} className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle" />
+                          <span className="font-medium text-zinc-900">{item.item_name}</span>{locked ? <span className="ml-1 text-[10px] font-semibold text-zinc-500">(required, locked)</span> : null}
                           {item.supplier_price_list_code ? <span className="mt-1 block text-[11px] text-zinc-500"><span className="font-semibold text-zinc-700">Supplier Code:</span> {item.supplier_price_list_code}</span> : null}<AccessoryItemMetadata groupId={group.id} item={item} rowReferences={rowReferences} onViewDiagram={onViewDiagram} />
                         </span>
                         <span className="font-semibold">{formatMoney(item.currency ?? rowCurrency, numberValue(item.price))}</span>
-                        <input type="number" min={1} step={1} value={quantity || (isRequired ? evaluation.requiredQuantity : null) || 1} disabled={quantity <= 0 || (!isRequired && evaluation.fixedQuantity !== null)} onChange={(event) => onQuantityChange(groupItemIds, itemId, Math.max(1, Math.trunc(Number(event.target.value) || 1)), false)} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100" />
+                        <input type="number" min={1} step={1} value={quantity || (isRequired ? evaluation.requiredQuantity : null) || 1} disabled={quantity <= 0 || (!isRequired && evaluation.fixedQuantity !== null)} readOnly={locked || undefined} onChange={(event) => onQuantityChange(groupItemIds, itemId, Math.max(1, Math.trunc(Number(event.target.value) || 1)), false)} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100" />
                       </label>
                     );
                   })}
@@ -1353,6 +1360,8 @@ export function ProductLibrarySelector({
   const [linkedProductInstancesByLinkId, setLinkedProductInstancesByLinkId] = useState<Record<string, LinkedProductInstance[]>>({});
   const [linkedProductQuantities, setLinkedProductQuantities] = useState<Record<string, number>>({});
   const [linkedAccessoryQuantities, setLinkedAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
+  // The linked instance whose "Edit accessories" popup is open.
+  const [linkedAccessoryPopupKey, setLinkedAccessoryPopupKey] = useState<string | null>(null);
   const [selectedLinkedVariants, setSelectedLinkedVariants] = useState<Record<string, string>>({});
   const [selectedLinkedCategoryGroups, setSelectedLinkedCategoryGroups] = useState<Record<string, string>>({});
   const [selectedLinkedCategories, setSelectedLinkedCategories] = useState<Record<string, string>>({});
@@ -2243,7 +2252,6 @@ export function ProductLibrarySelector({
                       .flatMap((item) => item.id ? [{ kind: "option_item" as const, group_id: group.id, row_id: item.id }] : []),
                   );
                   const selectedAccessoryModelTargets = [...selectedMainAccessoryTargets, ...selectedStructuralSupportTargets];
-                  const selectedAccessoryModelTarget = selectedAccessoryModelTargets[0] ?? null;
                   // Structural Support -> Compatible Main Product filtering: no selected support, or a selected
                   // support with no compatibleTargets, leaves variantGroups unchanged (filterCompatibleBaseModelGroups
                   // is a no-op for both). Multiple selected supports use the UNION of their valid targets.
@@ -2270,41 +2278,17 @@ export function ProductLibrarySelector({
                     ...selectedStructuralSupportTargets.map((target) => [accessoryApplicabilityTargetKey(target), templatePricingAccessoryQuantities[target.row_id] ?? 1]),
                     ...(nativeSystem.selected ? [[accessoryApplicabilityTargetKey({ kind: "base_model" as const, group_id: nativeSystem.selected.group.id, row_id: String(nativeSystem.selected.row.id) }), normalizeSystemQuantity(selectedSystemQuantities[template.id])]] : []),
                   ]);
-                  const requiredComponentTrigger = requiredComponentTriggerKey(selectedAccessoryModelTargets, accessoryTargetQuantities);
                   const templateRequiredOverrides = requiredOverrides[template.id] ?? {};
-                  // option_item rules whose trigger is an ordinary accessory item (for example a Stirrup Kit following each
-                  // Modesty Panel). The gate is off for every template without such rules, which keeps the old evaluation exactly.
-                  const optionItemGroups = allAccessoryGroups as unknown as OptionItemPassGroup[];
-                  const optionItemPassEnabled = hasOrdinaryOptionItemRules(optionItemGroups);
-                  const ordinaryOptionGroupIds = ordinaryOptionItemGroupIds(optionItemGroups);
-                  const ordinaryOptionDependentItemIds = ordinaryOptionItemDependentItemIds(optionItemGroups);
-                  const evaluateAccessoriesWith = (selectedQuantities: Record<string, number>, extra: OptionItemExtraTargets | null) => evaluateProductAccessorySelection({
-                    accessoryGroups: allAccessoryGroups,
+                  // Shared with the linked-product accessory popup (lib/products/accessory-rule-setup).
+                  const { configuration: accessoryConfiguration, requiredComponentTrigger, optionItemRequiredTrigger, ordinaryOptionGroupIds, ordinaryOptionDependentItemIds } = evaluateAccessoryRules({
+                    groups: allAccessoryGroups,
                     baseModelGroupId: usesVariantPricing ? selectedVariantGroup?.id : null,
                     baseModelRowId: usesVariantPricing ? selectedVariantRow?.id : null,
-                    selectedModelTarget: selectedAccessoryModelTarget,
-                    selectedModelTargets: [...selectedAccessoryModelTargets, ...(extra?.targets ?? [])],
-                    selectedModelTargetQuantities: { ...accessoryTargetQuantities, ...(extra?.quantities ?? {}) },
-                    selectedQuantities,
-                    allowRequiredCompanionOverrides: true,
+                    targets: selectedAccessoryModelTargets,
+                    targetQuantities: accessoryTargetQuantities,
+                    quantities: templatePricingAccessoryQuantities,
+                    overrides: templateRequiredOverrides,
                   });
-                  const evaluateAccessories = (selectedQuantities: Record<string, number>) => evaluateAccessoriesWith(selectedQuantities, null);
-                  // First pass cannot show dependent groups, so their stale quantities are left out of it.
-                  const firstPassQuantities = optionItemPassEnabled ? withoutOrdinaryOptionItemDependentQuantities(optionItemGroups, templatePricingAccessoryQuantities) : templatePricingAccessoryQuantities;
-                  // Required companions auto-select at the derived quantity; a manual override made under the current trigger wins.
-                  const requiredEffectiveQuantities = effectiveRequiredQuantities(evaluateAccessories(firstPassQuantities).groups.filter((group) => !allAccessoryGroups.some((candidate) => candidate.id === group.groupId && candidate.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item"))), templateRequiredOverrides, requiredComponentTrigger);
-                  const firstPassAccessoryConfiguration = evaluateAccessories({ ...firstPassQuantities, ...requiredEffectiveQuantities });
-                  // Second pass: a selected, eligible trigger item (for example a Modesty Panel) makes its dependent group visible.
-                  const optionItemExtra = optionItemPassEnabled ? deriveOptionItemTargets({ groups: optionItemGroups, activeQuantities: firstPassAccessoryConfiguration.activeQuantities }) : null;
-                  const optionItemPassActive = Boolean(optionItemExtra?.targets.length);
-                  // Its own trigger key, so a panel change only resets overrides of the companions that follow panels.
-                  const optionItemRequiredTrigger = optionItemExtra ? requiredComponentTriggerKey(optionItemExtra.targets, optionItemExtra.quantities) : requiredComponentTrigger;
-                  const optionItemRequiredEffectiveQuantities = optionItemPassActive
-                    ? effectiveRequiredQuantities(evaluateAccessoriesWith({ ...templatePricingAccessoryQuantities, ...requiredEffectiveQuantities }, optionItemExtra).groups.filter((group) => ordinaryOptionGroupIds.has(group.groupId)), templateRequiredOverrides, optionItemRequiredTrigger)
-                    : {};
-                  const accessoryConfiguration = optionItemPassActive
-                    ? evaluateAccessoriesWith({ ...templatePricingAccessoryQuantities, ...requiredEffectiveQuantities, ...optionItemRequiredEffectiveQuantities }, optionItemExtra)
-                    : firstPassAccessoryConfiguration;
                   const overriddenRequiredComponents = requiredComponentOverrideReport(accessoryConfiguration.groups);
                   const updateStructuralSupportQuantity = (groupId: string, itemId: string, quantity: number) => {
                     // Switching structural support can make the currently selected Base/Model row
@@ -2367,26 +2351,7 @@ export function ProductLibrarySelector({
                   const selectedWorkstationVariantPrice = selectedWorkstationVariantRow
                     ? numberValue(selectedWorkstationVariantRow.price)
                     : 0;
-                  const selectedPricingAccessories = allAccessoryGroups
-                    .flatMap((group) =>
-                      group.items.map((accessory) => {
-                        const id = accessory.id ?? accessory.item_name ?? "";
-                        const categoryKey = `${template.id}:${group.id}:${id}`;
-                        const availableCategories = (group.price_categories ?? []).filter((category) => accessory.prices?.[category.id] !== null && accessory.prices?.[category.id] !== undefined && !accessory.unavailable_price_categories?.includes(category.id));
-                        const selectedCategory = availableCategories.find((category) => category.id === selectedAccessoryCategories[categoryKey]) ?? availableCategories[0] ?? null;
-                        const unitPrice = selectedCategory ? numberValue(accessory.prices?.[selectedCategory.id]) : numberValue(accessory.price);
-
-                        return {
-                          accessory,
-                          groupName: group.group_name,
-                          groupId: group.id,
-                          selectedCategory,
-                          unitPrice,
-                          qty: Math.max(0, Math.trunc(numberValue(accessoryConfiguration.activeQuantities[id]))),
-                        };
-                      }),
-                    )
-                    .filter((line) => line.qty > 0);
+                  const selectedPricingAccessories = accessoryPriceLines(allAccessoryGroups, accessoryConfiguration.activeQuantities, (groupId, id) => selectedAccessoryCategories[`${template.id}:${groupId}:${id}`]);
                   const matchingAccessoryTotal = selectedPricingAccessories
                     .filter((line) => normalizeCurrency(line.accessory.currency ?? rowCurrency) === normalizeCurrency(rowCurrency))
                     .reduce((total, line) => total + line.qty * line.unitPrice, 0);
@@ -4555,6 +4520,36 @@ export function ProductLibrarySelector({
                                 </div>
                                 {line.childAccessoryGroups.length ? (
                                   <div className="mt-3 space-y-2 border-t border-zinc-200 pt-3">
+                                    {!linkedAccessoryPopupBlockReason(line.childAccessoryGroups) ? (() => {
+                                      const savedQuantities = linkedAccessoryQuantities[line.instanceKey] ?? {};
+                                      const row = line.childCategoryRow?.id
+                                        ? { kind: "price_matrix" as const, groupId: line.selectedChildCategoryGroup?.id, rowId: line.childCategoryRow.id }
+                                        : line.childVariantRow?.id ? { kind: "base_model" as const, groupId: line.childVariantGroups.find((group) => group.items.some((item) => item.id === line.childVariantRow?.id))?.id, rowId: line.childVariantRow.id } : null;
+                                      const selected = line.childAccessoryGroups.flatMap((group) => group.items.flatMap((item) => (savedQuantities[item.id ?? ""] ?? 0) > 0 ? [{ name: linkedAccessoryName(item), quantity: savedQuantities[item.id ?? ""]! }] : []));
+                                      return <>
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <p className="min-w-0 break-words text-xs font-bold uppercase tracking-wide text-zinc-700">{line.childTemplate.template_name} Accessories / Optional Items</p>
+                                          <button type="button" onClick={() => setLinkedAccessoryPopupKey(line.instanceKey)} className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:border-emerald-900 hover:text-emerald-900">Edit accessories</button>
+                                        </div>
+                                        <p className="break-words text-xs text-zinc-600">{linkedAccessorySummaryText(selected)}</p>
+                                        {linkedAccessoryPopupKey === line.instanceKey ? (
+                                          <LinkedAccessoryPopup
+                                            title={line.instance.label.trim() || line.link.label || line.childTemplate.template_name}
+                                            groups={line.childAccessoryGroups}
+                                            row={row}
+                                            savedQuantities={savedQuantities}
+                                            money={(amount) => formatMoney(line.currency, amount)}
+                                            renderFields={(props) => <AccessoryConfigurationFields {...props} groups={line.childAccessoryGroups} rowCurrency={line.currency} rowReferences={{}} onViewDiagram={() => {}} onResetRequired={() => {}} />}
+                                            onClose={() => setLinkedAccessoryPopupKey(null)}
+                                            onApply={(accessoryQuantities) => {
+                                              setLinkedAccessoryQuantities((current) => ({ ...current, [line.instanceKey]: accessoryQuantities }));
+                                              setLinkedAccessoryPopupKey(null);
+                                            }}
+                                          />
+                                        ) : null}
+                                      </>;
+                                    })() : <>
+                                    <p className="text-[11px] text-zinc-500">Classic accessory list: {linkedAccessoryPopupBlockReason(line.childAccessoryGroups)}</p>
                                     <LinkedAccessoryList
                                       key={line.instanceKey}
                                       title={`${line.childTemplate.template_name} Accessories / Optional Items`}
@@ -4573,6 +4568,7 @@ export function ProductLibrarySelector({
                                         }))
                                       }
                                     />
+                                    </>}
                                     {line.qty > 0 ? (
                                       <div className="rounded-md border border-zinc-200 bg-white p-2 text-xs leading-5 text-zinc-600">
                                         <p>Linked screen total: {formatMoney(line.currency, line.baseLineTotal)}</p>

@@ -324,12 +324,19 @@ test("display: the option_item group appears once, in the normal list, and not i
 
 test("wiring: the selector second pass uses the shared helper and its own override trigger", () => {
   const client = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
-  assert.ok(client.includes('from "@/lib/products/option-item-targets"'));
-  assert.ok(client.includes("hasOrdinaryOptionItemRules(optionItemGroups)"));
-  assert.ok(client.includes("deriveOptionItemTargets({ groups: optionItemGroups, activeQuantities: firstPassAccessoryConfiguration.activeQuantities })"));
+  // The second pass lives in the shared rule setup, which the selector calls.
+  const shared = readFileSync("lib/products/accessory-rule-setup.ts", "utf8");
+  assert.ok(client.includes('from "@/lib/products/accessory-rule-setup"'));
+  assert.ok(client.includes("evaluateAccessoryRules({"));
+  assert.ok(shared.includes('from "./option-item-targets"'));
+  assert.ok(shared.includes("hasOrdinaryOptionItemRules(optionItemGroups)"));
+  assert.ok(shared.includes("deriveOptionItemTargets({ groups: optionItemGroups, activeQuantities: firstPass.activeQuantities })"));
   assert.ok(client.includes("ordinaryOptionDependentItemIds.has(itemId) ? optionItemRequiredTrigger : requiredComponentTrigger"));
   // With the gate off the first pass is the old one: same quantities object, same targets.
-  assert.ok(client.includes("optionItemPassEnabled ? withoutOrdinaryOptionItemDependentQuantities(optionItemGroups, templatePricingAccessoryQuantities) : templatePricingAccessoryQuantities"));
+  assert.ok(shared.includes("optionItemPassEnabled ? withoutOrdinaryOptionItemDependentQuantities(optionItemGroups, quantities) : quantities"));
+  assert.ok(client.includes("quantities: templatePricingAccessoryQuantities,"));
+  assert.ok(client.includes("targets: selectedAccessoryModelTargets,"));
+  assert.ok(shared.includes("selectedModelTargets: [...targets, ...(extra?.targets ?? [])],"));
 });
 
 test("wiring: the server runs the same helper before validating and pricing", () => {
