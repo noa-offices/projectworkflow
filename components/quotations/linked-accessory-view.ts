@@ -101,9 +101,8 @@ export function buildLinkedAccessoryView<Item extends LinkedAccessoryViewItem, G
     });
     const shown = showAll ? items : compatible;
     const selectedCount = items.filter((item) => quantityOf(item) > 0).length;
-    return shown.length
-      ? [{ group, items: shown, selectedCount, defaultExpanded: group.group_is_required || selectedCount > 0 }]
-      : [];
+    const chooseOne = group.conditional_configuration?.selection === "exactly_one";
+    return shown.length ? [{ group, items: shown, selectedCount, required: group.group_is_required, chooseOne }] : [];
   });
 
   return { groups: entries, hiddenCount, selected };

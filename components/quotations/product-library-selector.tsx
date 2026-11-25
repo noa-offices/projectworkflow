@@ -111,6 +111,7 @@ import {
   resolveQuotationImageUrl,
 } from "@/lib/quotation-image-path";
 import { LinkedAccessoryList } from "./linked-accessory-list";
+import { AccessoryBlockedList, accessoryBlockedEntries, AccessoryGroupCounts, AccessoryGroupsToolbar, revealAccessoryGroup } from "./accessory-group-status";
 
 export type ProductLibraryBrand = {
   default_currency?: string | null;
@@ -691,10 +692,10 @@ function accessoryDisplayPrice(group: ReturnType<typeof activeAccessoryRows>[num
   return category ? numberValue(item.prices?.[category.id]) : numberValue(item.price);
 }
 
-function AccessoryGroupHeader({ expanded, groupName, itemCount, required, selectedCount, onToggle }: { expanded: boolean; groupName: string; itemCount: number; required: boolean; selectedCount: number; onToggle: () => void }) {
+function AccessoryGroupHeader({ expanded, groupName, itemCount, required, chooseOne = false, selectedCount, onToggle }: { expanded: boolean; groupName: string; itemCount: number; required: boolean; chooseOne?: boolean; selectedCount: number; onToggle: () => void }) {
   return <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex w-full items-center justify-between gap-3 text-left">
     <span className="min-w-0 text-xs font-semibold text-zinc-900"><span aria-hidden="true" className="mr-1.5 text-zinc-500">{expanded ? "▾" : "▸"}</span>{groupName}</span>
-    <span className="shrink-0 text-[10px] font-medium text-zinc-500">{itemCount} {itemCount === 1 ? "item" : "items"} · {required && selectedCount === 0 ? "Required" : `${selectedCount} selected`}</span>
+    <AccessoryGroupCounts itemCount={itemCount} selectedCount={selectedCount} required={required} chooseOne={chooseOne} />
   </button>;
 }
 
@@ -761,13 +762,13 @@ function AccessoryConfigurationFields({
               ? `Select one ${group.group_name}.`
               : evaluation.validationMessage
             : null;
-          const selectedCount = items.filter((item) => (quantities[item.id ?? ""] ?? 0) > 0).length;
+          const selectedCount = evaluation.selectedItemIds.length;
           const requiredItemId = evaluation.role === "companion" && evaluation.required && items.length === 1 && evaluation.requiredQuantity !== null ? items[0]?.id ?? "" : "";
-          const expanded = isGroupExpanded(group.id, evaluation.required || selectedCount > 0 || Boolean(validationMessage));
+          const expanded = isGroupExpanded(group.id, false);
 
           return (
-            <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
-              <AccessoryGroupHeader expanded={expanded} groupName={group.group_name} itemCount={items.length} required={evaluation.required} selectedCount={selectedCount} onToggle={() => onGroupExpandedChange(group.id, !expanded)} />
+            <fieldset key={group.id} data-accessory-group={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
+              <AccessoryGroupHeader expanded={expanded} groupName={group.group_name} itemCount={items.length} required={evaluation.required} chooseOne={evaluation.maxSelections === 1} selectedCount={selectedCount} onToggle={() => onGroupExpandedChange(group.id, !expanded)} />
               {expanded && exactlyOne ? (<>
                 <select
                   value={selectedId}
@@ -2334,6 +2335,19 @@ export function ProductLibrarySelector({
                   };
                   const missingConditionalModelSelection = accessoryConfiguration.hasConditionalConfiguration && selectedAccessoryModelTargets.length === 0;
                   const missingRequiredAccessorySelection = !accessoryConfiguration.valid || missingConditionalModelSelection;
+                  const conditionalFieldEvaluations = accessoryConfiguration.groups.filter((evaluation) =>
+                    allAccessoryGroups.some((group) => group.id === evaluation.groupId && Boolean(group.conditional_configuration) && (ordinaryOptionGroupIds.has(group.id) || !group.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item"))),
+                  );
+                  const ownAccessoryGroupStates = [
+                    ...conditionalFieldEvaluations.filter((evaluation) => evaluation.visible).map((evaluation) => ({ id: evaluation.groupId, required: evaluation.required, chooseOne: evaluation.maxSelections === 1, selectedCount: evaluation.selectedItemIds.length })),
+                    ...accessoryGroups.map((group) => ({ id: group.id, required: group.group_is_required, chooseOne: false, selectedCount: group.items.filter((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) > 0).length })),
+                  ];
+                  const setAllOwnAccessoryGroups = (expanded: boolean) => setExpandedAccessoryGroups((current) => ({ ...current, ...Object.fromEntries(ownAccessoryGroupStates.map((group) => [accessoryGroupExpansionKey(template.id, group.id), expanded])) }));
+                  const openBlockedAccessoryGroup = (groupId: string) => {
+                    setExpandedAccessoryGroups((current) => ({ ...current, [accessoryGroupExpansionKey(template.id, groupId)]: true }));
+                    // after the group has opened
+                    window.setTimeout(() => revealAccessoryGroup(document, groupId), 0);
+                  };
                   const derivedDesking = isDesking && selectedSizeRow
                     ? deskingSizePricingCalculation({
                         accessoryQuantities: templateAccessoryQuantities,
@@ -4141,10 +4155,13 @@ export function ProductLibrarySelector({
                             </div>
                           </div>
                         ) : null}
+                        {ownAccessoryGroupStates.length ? (
+                          <div className="mt-4">
+                            <AccessoryGroupsToolbar groups={ownAccessoryGroupStates} allExpanded={ownAccessoryGroupStates.every((group) => expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, group.id)])} onSetAll={setAllOwnAccessoryGroups} />
+                          </div>
+                        ) : null}
                         <AccessoryConfigurationFields
-                          evaluations={accessoryConfiguration.groups.filter((evaluation) =>
-                            allAccessoryGroups.some((group) => group.id === evaluation.groupId && Boolean(group.conditional_configuration) && (ordinaryOptionGroupIds.has(group.id) || !group.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item"))),
-                          )}
+                          evaluations={conditionalFieldEvaluations}
                           ordinaryOptionGroupIds={ordinaryOptionGroupIds}
                           groups={allAccessoryGroups}
                           quantities={templatePricingAccessoryQuantities}
@@ -4231,10 +4248,10 @@ export function ProductLibrarySelector({
                                   const groupHasNoSelection = group.group_is_required === true &&
                                     group.items.every((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) === 0);
                                   const selectedCount = group.items.filter((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) > 0).length;
-                                  const expanded = expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, group.id)] ?? (groupHasNoSelection || selectedCount > 0);
+                                  const expanded = expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, group.id)] ?? false;
 
                                   return (
-                                  <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
+                                  <fieldset key={group.id} data-accessory-group={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
                                     <AccessoryGroupHeader expanded={expanded} groupName={group.group_name} itemCount={group.items.length} required={group.group_is_required} selectedCount={selectedCount} onToggle={() => setExpandedAccessoryGroups((current) => ({ ...current, [accessoryGroupExpansionKey(template.id, group.id)]: !expanded }))} />
                                     {expanded ? <div className="mt-1 space-y-2">
                                       {group.items.map((accessory, accessoryIndex) => {
@@ -4315,10 +4332,10 @@ export function ProductLibrarySelector({
                               const groupHasNoSelection = group.group_is_required === true &&
                                 group.items.every((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) === 0);
                               const selectedCount = group.items.filter((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) > 0).length;
-                              const expanded = expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, group.id)] ?? (groupHasNoSelection || selectedCount > 0);
+                              const expanded = expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, group.id)] ?? false;
 
                               return (
-                              <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
+                              <fieldset key={group.id} data-accessory-group={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
                                 <AccessoryGroupHeader expanded={expanded} groupName={group.group_name} itemCount={group.items.length} required={group.group_is_required} selectedCount={selectedCount} onToggle={() => setExpandedAccessoryGroups((current) => ({ ...current, [accessoryGroupExpansionKey(template.id, group.id)]: !expanded }))} />
                                 {expanded ? <div className="mt-1 space-y-2">
                                   {group.items.map((accessory, accessoryIndex) => {
@@ -5499,6 +5516,7 @@ export function ProductLibrarySelector({
                             {modularCompositionIssue?.message ?? "Select at least one modular item to add this product."}
                           </p>
                         ) : null}
+                        {!accessoryConfiguration.valid ? <AccessoryBlockedList entries={accessoryBlockedEntries(accessoryConfiguration.blockingRequirements, allAccessoryGroups, accessoryConfiguration.groups)} onOpen={openBlockedAccessoryGroup} /> : null}
                         {linkedNeedsLocalBuilder ? <p className="text-xs leading-5 text-amber-700">{LINKED_LOCAL_BUILDER_MESSAGE}</p> : null}
                         {hasUnavailableSelectedPrice ? <p className="text-xs leading-5 text-amber-700">The selected category is unavailable for one or more selected modular items.</p> : null}
                         {missingConditionalModelSelection ? (

@@ -37,32 +37,35 @@ const render = (groups: LinkedAccessoryViewGroup<Item>[], quantities: Record<str
 test("groups keep their order with item and selected counts, closed until opened", () => {
   const groups = [group("a", [item("a1"), item("a2")]), group("b", [item("b1")])];
   const result = view(groups, { a2: 3 });
-  assert.deepEqual(result.groups.map((entry) => [entry.items.length, entry.selectedCount, entry.defaultExpanded]), [[2, 1, true], [1, 0, false]]);
+  assert.deepEqual(result.groups.map((entry) => [entry.items.length, entry.selectedCount]), [[2, 1], [1, 0]]);
   const html = render(groups);
   assert.match(html, /Group a \| 2 items \| 0 selected/);
   assert.equal((html.match(/aria-expanded="false"/g) ?? []).length, 2);
   assert.ok(!html.includes("Item a1"));
 });
 
-test("required groups and groups with a selection start open", () => {
+test("every group starts closed, so no row is shown until it is opened", () => {
   const html = render([group("req", [item("r1")], { group_is_required: true }), group("sel", [item("s1")]), group("other", [item("o1")])], { s1: 1 });
-  assert.ok(html.includes("Item r1"));
-  assert.ok(html.includes("Item s1"));
-  assert.ok(!html.includes("Item o1"));
+  assert.equal((html.match(/aria-expanded="false"/g) ?? []).length, 3);
+  assert.ok(!html.includes('type="checkbox"'));
 });
 
-test("quantity box appears only on a checked row and defaults to the stored quantity", () => {
-  const html = render([group("sel", [item("s1"), item("s2")])], { s1: 4 });
-  assert.equal((html.match(/type="number"/g) ?? []).length, 1);
-  assert.match(html, /aria-label="Quantity for Item s1"/);
-  assert.match(html, /value="4"/);
-  assert.equal((html.match(/type="checkbox"/g) ?? []).length, 2);
+const rowMarkup = (row: Item, quantity: number, name = linkedAccessoryName(row)) => renderToStaticMarkup(
+  <LinkedAccessoryRow id={row.id!} name={name} details={linkedAccessoryDetails(row)} detailsId="d" detailsOpen={false} onToggleDetails={() => {}} price={`AED ${row.price}`} quantity={quantity} onQuantityChange={() => {}} />,
+);
+
+test("quantity box appears only on a checked row and shows the stored quantity", () => {
+  assert.ok(!rowMarkup(item("s2"), 0).includes('type="number"'));
+  const checked = rowMarkup(item("s1"), 4);
+  assert.match(checked, /aria-label="Quantity for Item s1"/);
+  assert.match(checked, /value="4"/);
+  assert.match(checked, /type="checkbox"/);
 });
 
 test("row shows code, title and price; long text stays behind a closed details button", () => {
   const long = "Set of 2 lateral stirrups for desks or bench, desk depth 60-70.";
   const kit = item("k", { item_name: "Lateral Stirrups Kit Art.881 (set of 2)", supplier_price_list_code: "881", specification: long, importantRequirements: ["Needs a bracket"] });
-  const html = render([group("kits", [kit], { group_is_required: true })]);
+  const html = rowMarkup(kit, 0);
   assert.ok(html.includes("Lateral Stirrups Kit Art.881 (set of 2)"));
   assert.ok(html.includes("AED 10"));
   assert.ok(!html.includes(long));
