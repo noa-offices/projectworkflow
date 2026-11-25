@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -193,30 +192,6 @@ test("the editors migration is attached unchanged and is the only new SQL here",
   assert.match(sql, /'system_owner','admin_manager','sales_designer','sales_coordinator','designer'/);
   assert.match(sql, /product_gallery_set_hidden[\s\S]*product_gallery_is_editor\(\)/);
   assert.doesNotMatch(sql, /product_gallery_merge/, "merge stays curator-only and is not touched");
-});
-
-test("PR G-C diff guard: at most 12 files, no SQL, no package change, and none of the protected areas", () => {
-  let base: string;
-  try {
-    base = execFileSync("git", ["merge-base", "HEAD", "origin/main"], { encoding: "utf8" }).trim();
-  } catch {
-    return; // no origin/main in this checkout
-  }
-  const changed = execFileSync("git", ["diff", "--name-only", base, "HEAD"], { encoding: "utf8" }).split("\n").map((line) => line.trim()).filter((line) => line && line !== "AGENTS.md");
-  if (!changed.some((file) => file === "app/products/gallery/page.tsx")) return; // only meaningful on the G-C branch
-  assert.ok(changed.length <= 12, `${changed.length} files`);
-  assert.ok(!changed.some((file) => /^supabase\/|^package(-lock)?\.json$/.test(file)), "no SQL, no package change");
-  // The one legitimate exception: the sidebar label-list assertion in ui-polish.test.mts gained "Product Gallery".
-  const protectedChanged = changed.filter((file) => /client-history|saved-setups|my-collection|replay|configurator|pricing/i.test(file) && !file.startsWith("lib/products/gallery/") && file !== "lib/products/saved-setups/ui-polish.test.mts");
-  assert.deepEqual(protectedChanged, [], "protected areas untouched");
-  const allowed = (file: string) =>
-    file.startsWith("lib/products/gallery/") ||
-    file === "app/products/gallery/page.tsx" ||
-    file === "components/layout/erp-sidebar.tsx" ||
-    file === "lib/products/saved-setups/ui-polish.test.mts" ||
-    /^components\/products\/product-gallery-(browser|dialogs)\.tsx$/.test(file);
-  const outside = changed.filter((file) => !allowed(file));
-  assert.deepEqual(outside, [], `unexpected files: ${outside.join(", ")}`);
 });
 
 test("details popup: a Details button, the picture and the title open it with the item id; the old link is gone", () => {

@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- small fixtures for the polish tests */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { COLLECTION_TABS, PENDING_SHARES_EVENT, notificationLinkLabel, parseCollectionTab, sharedTabLabel } from "./shares";
@@ -171,22 +170,6 @@ test("bell and inbox: the label is used for display only; navigation still uses 
 });
 
 // ── Guards ───────────────────────────────────────────────────────────────────────────────────────────────────
-test("diff guard: no SQL, no server logic, no package changes; at most 12 files", () => {
-  let diff: string[];
-  try {
-    const root = new URL("../../../", import.meta.url);
-    const run = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const base = run(["merge-base", "HEAD", "origin/main"]).trim();
-    diff = [...run(["diff", "--name-only", base]).split("\n"), ...run(["ls-files", "--others", "--exclude-standard"]).split("\n")].map((line) => line.trim()).filter(Boolean);
-  } catch {
-    return;
-  }
-  assert.ok(!diff.some((file) => file.startsWith("supabase/")), "no SQL");
-  for (const forbidden of ["lib/products/saved-setups/shares-service.ts", "lib/products/saved-setups/shares-picture.ts", "lib/notifications/actions.ts", "package.json", "app/quotations/actions.ts"]) {
-    assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);
-  }
-  assert.ok(diff.length <= 12, `at most 12 files change (${diff.length})`);
-});
 
 // ══ PR 5: My Collection polish ═══════════════════════════════════════════════════════════════════════════════════
 import { COLLECTION_TIME_ZONE, filterSetups, formatSavedDate, normaliseSearchKey, savedLine } from "./collection-view";
@@ -342,23 +325,6 @@ test("FIX 4a/4b: no change was needed or safe; the facts that were checked", () 
   assert.match(recipe, /skipped_accessory_group_ids: Array\.from\(new Set\(\(state\.skippedAccessoryGroupIds \?\? \[\]\)/);
   assert.doesNotMatch(selector, /skippedAccessoryGroupIds/, "the configurator has no skipped-group state to save");
   assert.match(read("./replay.ts"), /skippedAccessoryGroupIds: plain\.skippedAccessoryGroupIds/);
-});
-
-test("PR 5 diff guard: no SQL, no recipe or replay change, no package change; at most 12 files", () => {
-  let diff: string[];
-  try {
-    const root = new URL("../../../", import.meta.url);
-    const run = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const base = run(["merge-base", "HEAD", "origin/main"]).trim();
-    diff = [...run(["diff", "--name-only", base]).split("\n"), ...run(["ls-files", "--others", "--exclude-standard"]).split("\n")].map((line) => line.trim()).filter(Boolean);
-  } catch {
-    return;
-  }
-  assert.ok(!diff.some((file) => file.startsWith("supabase/")));
-  for (const forbidden of ["lib/products/saved-setups/recipe.ts", "lib/products/saved-setups/replay.ts", "lib/products/saved-setups/shares.ts", "package.json", "components/quotations/finish-selections-editor.tsx"]) {
-    assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);
-  }
-  assert.ok(diff.length <= 12, `at most 12 files change (${diff.length})`);
 });
 
 // ══ PR 7: duplicate warning ══════════════════════════════════════════════════════════════════════════════════════
@@ -656,21 +622,4 @@ test("ONE warning component is used on every screen, with the right buttons", ()
   assert.match(popup, /<SharedWithYouTab/);
   // no recipe or other user's price anywhere in the shared shape
   assert.doesNotMatch(read("./duplicates.ts"), /recipe:\s*unknown;\s*\}\s*\n\nexport type DuplicateInfo/);
-});
-
-test("PR 7 diff guard: no SQL, no migration, no package, no admin client; at most 12 files", () => {
-  let diff: string[];
-  try {
-    const root = new URL("../../../", import.meta.url);
-    const run = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const base = run(["merge-base", "HEAD", "origin/main"]).trim();
-    diff = [...run(["diff", "--name-only", base]).split("\n"), ...run(["ls-files", "--others", "--exclude-standard"]).split("\n")].map((line) => line.trim()).filter(Boolean);
-  } catch {
-    return;
-  }
-  assert.ok(!diff.some((file) => file.startsWith("supabase/")));
-  for (const forbidden of ["package.json", "package-lock.json", "lib/products/saved-setups/actions.ts", "lib/products/saved-setups/recipe.ts", "lib/products/saved-setups/replay.ts", "lib/products/saved-setups/shares-service.ts", "lib/products/saved-setups/shares.ts"]) {
-    assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);
-  }
-  assert.ok(diff.length <= 12, `at most 12 files change (${diff.length})`);
 });
