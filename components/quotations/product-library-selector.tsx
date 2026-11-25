@@ -1079,9 +1079,6 @@ export function ProductLibrarySelector({
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({});
   const [imagePreview, setImagePreview] = useState<{ templateId: string; imageIndex: number } | null>(null);
   const [diagramPreview, setDiagramPreview] = useState<{ label: string; templateId: string; title: string; url: string } | null>(null);
-  const [additionalClusterQuantities, setAdditionalClusterQuantities] = useState<Record<string, number>>({});
-  const [accessoryQuantities, setAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
-  const [selectedDeskingSizes, setSelectedDeskingSizes] = useState<Record<string, string>>({});
   // Native System / Base row per template: an independent priced Base/Model selection (Main Product stays in selectedVariantRows).
   // Manual System / Base units per template (integer >= 1). No automatic Main -> System quantity relation is persisted in the saved schema.
   const [loadedRowReferences, setLoadedRowReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateRowReferencePreview> }>({ templateId: "", images: {} });
@@ -1095,7 +1092,6 @@ export function ProductLibrarySelector({
   const [configuredSpecifications, setConfiguredSpecifications] = useState<Record<string, string>>({});
   const [finalSpecifications, setFinalSpecifications] = useState<Record<string, string>>({});
   const [finalSpecificationEditedByTemplate, setFinalSpecificationEditedByTemplate] = useState<Record<string, boolean>>({});
-  const [selectedWorkstationLayouts, setSelectedWorkstationLayouts] = useState<Record<string, string>>({});
   const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>(() => Object.fromEntries(templates.map((template) => [template.id, defaultProductAccessoryQuantities(template.accessory_pricing)])));
   const [requiredOverrides, setRequiredOverrides] = useState<Record<string, RequiredComponentOverrides>>({});
   const [selectedAccessoryCategories, setSelectedAccessoryCategories] = useState<Record<string, string>>({});
@@ -1321,12 +1317,12 @@ export function ProductLibrarySelector({
       categoryRowId: savedModularSide ? undefined : plain.categoryRowId || undefined,
       fabricCategory: plain.fabricCategory || undefined,
     });
-    put(setSelectedDeskingSizes, plain.workstationSizeId);
-    put(setSelectedWorkstationLayouts, plain.workstationLayout);
-    put(setAdditionalClusterQuantities, plain.additionalClusterQuantity);
+    changeConfiguration(tid, { workstationSizeId: plain.workstationSizeId || undefined });
+    changeConfiguration(tid, { workstationLayout: plain.workstationLayout || undefined });
+    changeConfiguration(tid, { additionalClusterQuantity: plain.additionalClusterQuantity ?? undefined });
     changeConfiguration(tid, { modularQuantities: plain.modularQuantities });
     put(setPricingAccessoryQuantities, plain.pricingAccessoryQuantities);
-    put(setAccessoryQuantities, plain.componentAccessoryQuantities);
+    changeConfiguration(tid, { componentAccessoryQuantities: plain.componentAccessoryQuantities ?? undefined });
     put(setRequiredOverrides, plain.requiredOverrides);
     put(setSelectedOptions, plain.componentOptionSelections);
     put(setSelectedFinishesByTemplate, plain.finishes as FinishSelectionEditorRow[] | undefined);
@@ -1898,9 +1894,9 @@ export function ProductLibrarySelector({
                   const templateSelections = selectedOptions[template.id] ?? {};
                   const additionalClusterQty = Math.max(
                     0,
-                    Math.trunc(numberValue(additionalClusterQuantities[template.id], 0)),
+                    Math.trunc(numberValue(configurations[template.id]?.additionalClusterQuantity, 0)),
                   );
-                  const templateAccessoryQuantities = accessoryQuantities[template.id] ?? {};
+                  const templateAccessoryQuantities = configurations[template.id]?.componentAccessoryQuantities ?? {};
                   const isDesking = usesWorkstationFlow || (!usesVariantPricing && !usesCategoryPricing && (
                     isDeskingTemplate({
                       mainCategory,
@@ -1909,7 +1905,7 @@ export function ProductLibrarySelector({
                     })
                   ));
                   const selectedSizeRow =
-                    sizePricingRows.find((row) => row.id === selectedDeskingSizes[template.id]) ??
+                    sizePricingRows.find((row) => row.id === configurations[template.id]?.workstationSizeId) ??
                     sizePricingRows[0] ??
                     null;
                   const selectedWorkstationGroup = selectedSizeRow
@@ -1938,7 +1934,7 @@ export function ProductLibrarySelector({
                   const selectedWorkstationLayout = usesWorkstationFlow
                     ? (
                         selectedSizeRow?.layout_type === "Both"
-                          ? selectedWorkstationLayouts[template.id] ?? "Linear"
+                          ? configurations[template.id]?.workstationLayout ?? "Linear"
                           : selectedSizeRow?.layout_type ?? "Linear"
                       )
                     : "";
@@ -3159,10 +3155,7 @@ export function ProductLibrarySelector({
                                 onChange={(event) => {
                                   const nextRowId = event.target.value;
                                   const nextGroup = activeWorkstationGroups.find((group) => group.items.some((row) => row.id === nextRowId));
-                                  setSelectedDeskingSizes((current) => ({
-                                    ...current,
-                                    [template.id]: nextRowId,
-                                  }));
+                                  changeConfiguration(template.id, { workstationSizeId: nextRowId });
                                   setPricingAccessoryQuantities((current) => ({
                                     ...current,
                                     [template.id]: evaluateProductAccessorySelection({
@@ -3215,7 +3208,7 @@ export function ProductLibrarySelector({
                                 <span className="text-[10px] font-bold uppercase text-zinc-500">Layout Type</span>
                                 <select
                                   value={selectedWorkstationLayout}
-                                  onChange={(event) => setSelectedWorkstationLayouts((current) => ({ ...current, [template.id]: event.target.value }))}
+                                  onChange={(event) => changeConfiguration(template.id, { workstationLayout: event.target.value })}
                                   className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                                 >
                                   <option value="Linear">Linear</option>
@@ -3254,13 +3247,10 @@ export function ProductLibrarySelector({
                                 step={1}
                                 value={additionalClusterQty}
                                 onChange={(event) =>
-                                  setAdditionalClusterQuantities((current) => ({
-                                    ...current,
-                                    [template.id]: Math.max(
+                                  changeConfiguration(template.id, { additionalClusterQuantity: Math.max(
                                       0,
                                       Math.trunc(Number(event.target.value) || 0),
-                                    ),
-                                  }))
+                                    ) })
                                 }
                                 className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                               />
@@ -4178,10 +4168,9 @@ export function ProductLibrarySelector({
                                               step={1}
                                               value={templateAccessoryQuantities[option.id] ?? 0}
                                               onChange={(event) =>
-                                                setAccessoryQuantities((current) => ({
-                                                  ...current,
-                                                  [template.id]: {
-                                                    ...(current[template.id] ?? {}),
+                                                setConfigurations((current) => updateConfiguration(current, template.id, {
+                                                  componentAccessoryQuantities: {
+                                                    ...(current[template.id]?.componentAccessoryQuantities ?? {}),
                                                     [option.id]: Math.max(
                                                       0,
                                                       Math.trunc(Number(event.target.value) || 0),
@@ -4929,13 +4918,10 @@ export function ProductLibrarySelector({
                               step={1}
                               value={additionalClusterQty}
                               onChange={(event) =>
-                                setAdditionalClusterQuantities((current) => ({
-                                  ...current,
-                                  [template.id]: Math.max(
+                                changeConfiguration(template.id, { additionalClusterQuantity: Math.max(
                                     0,
                                     Math.trunc(Number(event.target.value) || 0),
-                                  ),
-                                }))
+                                  ) })
                               }
                               className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-right text-xs outline-none focus:border-emerald-800"
                             />
