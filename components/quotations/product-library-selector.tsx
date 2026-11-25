@@ -69,6 +69,7 @@ import { resolveMainAccessoryTargets } from "@/lib/products/main-accessory-targe
 import { deriveOptionItemTargets, hasOrdinaryOptionItemRules, ordinaryOptionItemDependentItemIds, ordinaryOptionItemGroupIds, withoutOrdinaryOptionItemDependentQuantities, type OptionItemExtraTargets, type OptionItemPassGroup } from "@/lib/products/option-item-targets";
 import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
 import { flattenBaseModelPricingRows, type BaseModelPricingGroup } from "@/lib/products/base-model-pricing-groups";
+import { MATRIX_FAMILY_MISSING_MESSAGE, mixedProductFamilies, productFamilyOptions, selectedProductFamily, type ProductFamilyOption } from "@/lib/products/product-family-options";
 import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
 import { guidedBaseModelSelection } from "@/lib/quotations/guided-base-model-selection";
 import { effectiveRequiredQuantities, requiredComponentOverrideReport, requiredComponentTriggerKey, requiredCompanionItems, withRequiredOverride, withoutRequiredOverride, type RequiredComponentOverrides } from "@/lib/quotations/required-component-overrides";
@@ -1326,6 +1327,7 @@ export function ProductLibrarySelector({
   const [loadedRowReferences, setLoadedRowReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateRowReferencePreview> }>({ templateId: "", images: {} });
   const [loadedSubgroupReferences, setLoadedSubgroupReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateSubgroupReferencePreview> }>({ templateId: "", images: {} });
   const [selectedCategoryGroups, setSelectedCategoryGroups] = useState<Record<string, string>>({});
+  const [selectedFamilyKeys, setSelectedFamilyKeys] = useState<Record<string, string>>({});
   const [selectedCategoryRows, setSelectedCategoryRows] = useState<Record<string, string>>({});
   const [selectedFabricCategories, setSelectedFabricCategories] = useState<Record<string, string>>({});
   const [selectedModularQuantities, setSelectedModularQuantities] = useState<Record<string, Record<string, number>>>({});
@@ -2005,7 +2007,9 @@ export function ProductLibrarySelector({
                   const usesModularPricing = modularRows.length > 0;
                   const usesDirectModularPricing = usesModularPricing && modularGroups.some((group) => isDirectModularPricingGroup(group));
                   // A template may offer modular items AND a Price Matrix: the matrix chooser is then shown too (one pricing mode per line, see pricingModes below).
-                  const usesCategoryPricing = !usesVariantPricing && categoryRows.length > 0;
+                  // Base / Model groups AND Category / Matrix groups on one template: one "Choose Product Family" list offers both (no automatic matrix row).
+                  const mixedFamilies = usesVariantPricing && !nativeSystemState(variantGroups).active && mixedProductFamilies(variantGroups, categoryGroups);
+                  const usesCategoryPricing = (!usesVariantPricing || mixedFamilies) && categoryRows.length > 0;
                   const templatePricingAccessoryQuantities = pricingAccessoryQuantities[template.id] ?? {};
                   const templateModularQuantities = selectedModularQuantities[template.id] ?? {};
                   // Native System / Base: inactive (no role="system_base" rows) => everything below is unchanged.
@@ -2042,7 +2046,7 @@ export function ProductLibrarySelector({
                   const selectedCategoryRow =
                     usesCategoryPricing && !modularModeActive
                       ? categoryRows.find((row) => row.id === selectedCategoryRows[template.id]) ??
-                        (usesModularPricing ? null : categoryRows[0] ?? null)
+                        (usesModularPricing || mixedFamilies ? null : categoryRows[0] ?? null)
                       : null;
                   // Standard Finish groups save their row pictures as "finish_category" (modular groups use "modular", not shown in this box).
                   const selectedCategoryReference = selectedRowReferencePreview(rowReferenceImages, "finish_category", selectedCategoryGroup?.id, selectedCategoryRow?.id);
@@ -2247,6 +2251,17 @@ export function ProductLibrarySelector({
                     selectedStructuralSupportItems.map((item) => ({ compatibleTargets: item.compatible_targets })),
                   );
                   const filteredVariantGroups = filterCompatibleBaseModelGroups(nativeSystem.eligibleGroups, structuralSupportCompatibleTargets);
+                  const familyOptions = mixedFamilies ? productFamilyOptions(filteredVariantGroups, categoryGroups) : [];
+                  const selectedFamily = mixedFamilies ? selectedProductFamily(familyOptions, selectedFamilyKeys[template.id], { matrixGroupId: selectedCategoryGroup?.id ?? null, matrixRowSelected: Boolean(selectedCategoryRow), baseGroupId: selectedVariantGroup?.id ?? null }) : null;
+                  const matrixFamilySelected = selectedFamily?.kind === "price_matrix";
+                  // Changing family clears both model choices (one pricing source per line) and re-evaluates the accessories for "no model yet".
+                  const changeFamily = (option: ProductFamilyOption) => {
+                    setSelectedFamilyKeys((current) => ({ ...current, [template.id]: option.key }));
+                    setSelectedVariantRows((current) => { const next = { ...current }; delete next[template.id]; return next; });
+                    setSelectedCategoryRows((current) => { const next = { ...current }; delete next[template.id]; return next; });
+                    if (option.kind === "price_matrix") setSelectedCategoryGroups((current) => ({ ...current, [template.id]: option.id }));
+                    setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, selectedModelTarget: null, selectedQuantities: current[template.id] ?? {} }).activeQuantities }));
+                  };
                   const accessoryTargetQuantities: Record<string, number> = Object.fromEntries([
                     ...selectedModularItems.map((item) => [accessoryApplicabilityTargetKey({ kind: "modular" as const, group_id: item.groupId, row_id: item.id }), item.qty]),
                     ...selectedStructuralSupportTargets.map((target) => [accessoryApplicabilityTargetKey(target), templatePricingAccessoryQuantities[target.row_id] ?? 1]),
@@ -3837,6 +3852,18 @@ export function ProductLibrarySelector({
                             ) : null}
                           </div>
                         ) : null}
+                        {mixedFamilies ? (
+                          <label className="mt-3 block">
+                            <span className="text-[10px] font-bold uppercase text-zinc-500">Choose Product Family</span>
+                            <select
+                              value={selectedFamily?.key ?? ""}
+                              onChange={(event) => { const option = familyOptions.find((candidate) => candidate.key === event.target.value); if (option) changeFamily(option); }}
+                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                            >
+                              {familyOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+                            </select>
+                          </label>
+                        ) : null}
                         {usesCategoryPricing ? (
                           <>
                           {priceMatrixSectionDisabled ? (
@@ -3845,8 +3872,8 @@ export function ProductLibrarySelector({
                               <button type="button" onClick={clearModularSelection} className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-100">Clear selection</button>
                             </div>
                           ) : null}
-                          <fieldset disabled={priceMatrixSectionDisabled} className={`m-0 mt-3 grid min-w-0 gap-2 border-0 p-0 md:grid-cols-2${priceMatrixSectionDisabled ? " opacity-60" : ""}`}>
-                            {selectedCategoryGroup && categoryGroups.length > 1 ? (
+                          <fieldset disabled={priceMatrixSectionDisabled} className={`m-0 mt-3 grid min-w-0 gap-2 border-0 p-0 md:grid-cols-2${priceMatrixSectionDisabled ? " opacity-60" : ""}`} hidden={mixedFamilies && !matrixFamilySelected}>
+                            {selectedCategoryGroup && categoryGroups.length > 1 && !mixedFamilies ? (
                               <label className="block md:col-span-2">
                                 <span className="text-[10px] font-bold uppercase text-zinc-500">Finish Pricing Group</span>
                                 <select
@@ -4069,7 +4096,7 @@ export function ProductLibrarySelector({
                                 </div>
                               );
                             })() : null}
-                            <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                            <p hidden={matrixFamilySelected} className="text-xs font-bold uppercase tracking-wide text-zinc-700">
                               {nativeSystem.active ? "Main Product" : "Base Size / Main Price"}
                             </p>
                             {baseSectionDisabled ? (
@@ -4078,8 +4105,8 @@ export function ProductLibrarySelector({
                                 <button type="button" onClick={clearModularSelection} className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-100">Clear selection</button>
                               </div>
                             ) : null}
-                            <fieldset disabled={baseSectionDisabled} className={`m-0 min-w-0 border-0 p-0${baseSectionDisabled ? " opacity-60" : ""}`}>
-                            <BaseModelHierarchySelector key={`${nativeSystem.selected?.row.id ?? "no-system"}:${replay?.key ?? 0}`} currency={template.currency} groups={filteredVariantGroups} rowReferences={rowReferenceImages} subgroupReferences={subgroupReferenceImages} selectedRowId={selectedVariantRow?.id ?? null} onSelect={(nextRowId) => { const nextGroupId = variantGroups.find((group) => group.items.some((row) => row.id === nextRowId))?.id ?? null; if (pricingModes.exclusive) clearModularSelection(); setSelectedVariantRows((current) => ({ ...current, [template.id]: nextRowId })); setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, baseModelGroupId: nextGroupId, baseModelRowId: nextRowId, ...(nativeSystem.selected ? { selectedModelTargets: nativeBaseModelTargets({ mainGroupId: nextGroupId, mainRowId: nextRowId, systemGroupId: nativeSystem.selected.group.id, systemRowId: nativeSystem.selected.row.id }) } : {}), selectedQuantities: current[template.id] ?? {} }).activeQuantities })); }} />
+                            <fieldset disabled={baseSectionDisabled} hidden={matrixFamilySelected} className={`m-0 min-w-0 border-0 p-0${baseSectionDisabled ? " opacity-60" : ""}`}>
+                            <Fragment key={mixedFamilies ? selectedFamily?.id ?? "" : ""}><BaseModelHierarchySelector key={`${nativeSystem.selected?.row.id ?? "no-system"}:${replay?.key ?? 0}`} currency={template.currency} groups={mixedFamilies && selectedFamily?.kind === "base_model" ? filteredVariantGroups.filter((group) => group.id === selectedFamily.id) : filteredVariantGroups} rowReferences={rowReferenceImages} subgroupReferences={subgroupReferenceImages} selectedRowId={selectedVariantRow?.id ?? null} onSelect={(nextRowId) => { const nextGroupId = variantGroups.find((group) => group.items.some((row) => row.id === nextRowId))?.id ?? null; if (pricingModes.exclusive) clearModularSelection(); setSelectedVariantRows((current) => ({ ...current, [template.id]: nextRowId })); setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, baseModelGroupId: nextGroupId, baseModelRowId: nextRowId, ...(nativeSystem.selected ? { selectedModelTargets: nativeBaseModelTargets({ mainGroupId: nextGroupId, mainRowId: nextRowId, systemGroupId: nativeSystem.selected.group.id, systemRowId: nativeSystem.selected.row.id }) } : {}), selectedQuantities: current[template.id] ?? {} }).activeQuantities })); }} /></Fragment>
                             </fieldset>
                             <div>
                               {selectedVariantRow ? (
@@ -5487,7 +5514,7 @@ export function ProductLibrarySelector({
                         {hasUnavailableSelectedPrice ? <p className="text-xs leading-5 text-amber-700">The selected category is unavailable for one or more selected modular items.</p> : null}
                         {missingConditionalModelSelection ? (
                           <p className="text-xs leading-5 text-amber-700">
-                            {usesModularPricing ? "Select a modular item to configure required components and options." : usesWorkstationFlow ? "Select a workstation configuration to configure required components and options." : usesCategoryPricing ? "Select a valid Category / Matrix row to configure required components and options." : "Select a valid Base/Model to configure required components and options."}
+                            {usesModularPricing ? "Select a modular item to configure required components and options." : usesWorkstationFlow ? "Select a workstation configuration to configure required components and options." : mixedFamilies ? (matrixFamilySelected ? MATRIX_FAMILY_MISSING_MESSAGE : "Select a valid Base/Model to configure required components and options.") : usesCategoryPricing ? "Select a valid Category / Matrix row to configure required components and options." : "Select a valid Base/Model to configure required components and options."}
                           </p>
                         ) : null}
                         {hasMixedOptionCurrencies ? (
