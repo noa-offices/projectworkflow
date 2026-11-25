@@ -79,8 +79,11 @@ test("11-13: accessories add after System + Main; the System appears once; curre
 });
 
 test("14: the server multiplies by the validated quantity exactly as the client contribution does", () => {
+  const pricing = readFileSync("lib/products/configuration-price.ts", "utf8");
   assert.ok(actions.includes("money(calculationNumber(nativeSystemOption.row.price) * systemQuantity)"));
-  assert.ok(selector.includes("systemPriceContribution(nativeSystem.selected?.row, normalizeCurrency(rowCurrency), systemQuantity)"));
+  assert.ok(selector.includes("system: { row: nativeSystem.selected?.row, quantity: selectedSystemQuantities[template.id] }"));
+  assert.ok(pricing.includes("const systemQuantity = normalizeSystemQuantity(system?.quantity);"));
+  assert.ok(pricing.includes("systemPriceContribution(system?.row, normalizeCurrency(rowCurrency), systemQuantity)"));
   assert.equal(systemPriceContribution(system, "EUR", 2).amount, 377 * 2);
 });
 

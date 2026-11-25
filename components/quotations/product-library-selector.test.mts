@@ -373,13 +373,15 @@ test("regression documentation: the old template-wide fallback this fix removes 
 
 test("5/16: Matrix Modular price resolution still reads the selected Fabric/Category column, unaffected by the compact-UI and category-source changes", () => {
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  const pricing = readFileSync("lib/products/configuration-price.ts", "utf8").replace(/\r\n/g, "\n");
+  assert.ok(source.includes("const rowUnitPrice = directModularGroupCard ? numberValue(row.price) : numberValue(row.prices?.[selectedFabricCategory]);"));
+  assert.ok(source.includes("const selectedModularItems = priceModularItems(modularGroups, templateModularQuantities, selectedFabricCategory);"));
   [
-    "const rowUnitPrice = directModularGroupCard ? numberValue(row.price) : numberValue(row.prices?.[selectedFabricCategory]);",
-    "const selectedModularItems = modularGroups",
+    "return modularGroups\n    .flatMap",
     "const price = isDirectModularPricingGroup(group)",
     "? numberValue(row.price)",
     ": numberValue(row.prices?.[selectedFabricCategory]);",
-  ].forEach((expected) => assert.ok(source.includes(expected), `Expected unchanged Matrix Modular price resolution: ${expected}`));
+  ].forEach((expected) => assert.ok(pricing.includes(expected), `Expected unchanged Matrix Modular price resolution: ${expected}`));
 });
 
 test("9: a role-less Matrix Modular group (no modular_role on any row) still renders under a neutral Modules heading instead of assuming Starter", () => {

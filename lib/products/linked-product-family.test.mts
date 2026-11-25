@@ -93,24 +93,25 @@ test("the server builder is blocked only for a linked Base / Model pick on a mix
 });
 
 test("builder wiring: the resolver picks the rows and the existing price, total and snapshot code is untouched", () => {
-  const source = readFileSync(new URL("../../components/quotations/product-library-selector.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const selector = readFileSync(new URL("../../components/quotations/product-library-selector.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const pricing = readFileSync(new URL("./configuration-price.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   [
     "resolveLinkedProductFamily({",
-    "linkedProductFamilyChange(option, {",
-    // unit price, currency, line total
     `const unitPrice = childCategoryRow
-                          ? numberValue(childCategoryRow.prices?.[childCategory])
-                          : childVariantRow
-                            ? numberValue(childVariantRow.price)
-                            : numberValue(childTemplate.default_unit_price);`,
+    ? numberValue(childCategoryRow.prices?.[childCategory])
+    : childVariantRow
+      ? numberValue(childVariantRow.price)
+      : numberValue(childTemplate.default_unit_price);`,
     "const currency = childCategoryRow?.currency ?? childVariantRow?.currency ?? childTemplate.currency;",
     "const baseLineTotal = qty * unitPrice;",
-    // parent total and quote snapshot
     ".reduce((total, line) => total + line.baseLineTotal + line.matchingAccessoryTotal, 0);",
+  ].forEach((expected) => assert.ok(pricing.includes(expected), `Expected linked family pricing: ${expected}`));
+  [
+    "linkedProductFamilyChange(option, {",
     "selected_category: line.childCategoryRow ? line.childCategory : null,",
     "unit_price: line.unitPrice,",
     'categoryRowId: line.childCategoryRow?.id ?? "",',
     'variantRowId: line.childVariantRow?.id ?? "",',
     "!isLocalMode && !reconfigure && linkedProductNeedsLocalBuilder(",
-  ].forEach((expected) => assert.ok(source.includes(expected), `Expected linked family wiring: ${expected}`));
+  ].forEach((expected) => assert.ok(selector.includes(expected), `Expected linked family wiring: ${expected}`));
 });

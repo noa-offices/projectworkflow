@@ -12,16 +12,18 @@ const mirrored = [
   // Accessory rules: the logic, then the selector inputs passed to it.
   ["lib/products/accessory-rule-setup.ts", "export function evaluateAccessoryRules", "/** Target quantities", "9377281eb0ea6af999c953d2d271ea24ce747a564962123215bebd2785b636ab"],
   ["components/quotations/product-library-selector.tsx", "const templateRequiredOverrides = requiredOverrides", "const overriddenRequiredComponents = requiredComponentOverrideReport", "93decc8cbe878fdc543f44fcd5ed061aa88cb2261b79420a4db659e96b0ded71"],
-  ["components/quotations/product-library-selector.tsx", "const baseProductPrice =", "const nonAedCurrencies = Array.from(originalCurrencyTotals.keys())", "189a179b953432cec57964c2ee0fce8e04e783ee5b6edf60ff0b2fdd7edd7a0e"],
+  // Base price, same-currency preview, source buckets and announcements now span the core and its selector call.
+  ["lib/products/configuration-price.ts", "const baseProductPrice =", "const mainItemCurrency =", "a2d42f40b4f072427dd729fe7666e98f188318ac4a96b094b6a5e6c7274621c6"],
+  ["lib/products/configuration-price.ts", "const announcedBlocked =", "const nonAedCurrencies = Array.from(originalCurrencyTotals.keys())", "98dfbd0b39e0cf7617f63a34d149aab5156d691bcf12a62c706a832e520b435e"],
+  ["components/quotations/product-library-selector.tsx", "const activeAnnouncement = template.announced_price_change", "const previousQuotedPrice =", "246a4e42df42309c06aae8df9001a8c70db3f5d497dd480dfe4f54e795931d39"],
   ["components/quotations/product-library-selector.tsx", "const effectiveSelectedIds = Array.from(groupedOptions.entries())", "const effectiveSelectedNames =", "ff9c38148ff254386fb2136a195c4b6b271cf7c7f461e8977bc4c11426de8c85"],
-  // Accessory prices: the logic (with its number parsing), then the selector call.
+  // Accessory prices: the logic (with its number parsing), then the call from the price core.
   ["lib/products/accessory-rule-setup.ts", "const numberValue = (value: unknown)", "\n}\n", "f46edcf27618a4e4de59cc5f5d84bce90290c6a6c7c3a7c387aca2fa6fb19260"],
-  ["components/quotations/product-library-selector.tsx", "const selectedPricingAccessories = accessoryPriceLines", "const matchingAccessoryTotal =", "4158593e78a48c882be7d310362c716eef7303f6afa0f36adbc1133ac4a1eae4"],
+  ["lib/products/configuration-price.ts", "const selectedPricingAccessories = accessoryPriceLines", "const matchingAccessoryTotal =", "4158593e78a48c882be7d310362c716eef7303f6afa0f36adbc1133ac4a1eae4"],
   // One pricing mode per line (modularInUse): the lines below decide when modular pricing applies and when a Base / Model or Price Matrix choice prices the line.
   ["app/quotations/actions.ts", "const modularInUse = usesModularPricing && modularGroups.some", "const configuredDimensionInput =", "9c8e0c52c6ae656146bd836498060b8e4ae2e5545e4ca3a9c3e08c050b3a5e5a"],
   ["app/quotations/actions.ts", "// Neither mode used: a modular template needs a modular item", "// Opt-in one-way-only (modular_excludes_base_models)", "527e28a1cca61fa5902ed6991cf528a07557e922d72fe6e4ceafca37e6fbfeaa"],
   ["components/quotations/product-library-selector.tsx", "const modularInUse = usesModularPricing && selectedModularItems.length > 0;", "const modularCompositionIssue = validateModularCompositionGroups(", "547be78a59490706e338b1e75fda3455c9057c6dfbe0aac02057c7d92121b645"],
-  ["components/quotations/product-library-selector.tsx", "const previewUnitPrice =", "const selectedLinkedProducts = templateLinkedFamilies", "69255097dbc58a67575655c211047b8f771767de4251c774ef64f83fb7282379"],
 ] as const;
 
 test("review the gallery price mirror when quote source pricing changes", () => {
