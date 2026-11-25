@@ -70,6 +70,7 @@ import { deriveOptionItemTargets, hasOrdinaryOptionItemRules, ordinaryOptionItem
 import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
 import { flattenBaseModelPricingRows, type BaseModelPricingGroup } from "@/lib/products/base-model-pricing-groups";
 import { MATRIX_FAMILY_MISSING_MESSAGE, mixedProductFamilies, productFamilyOptions, selectedProductFamily, type ProductFamilyOption } from "@/lib/products/product-family-options";
+import { LINKED_LOCAL_BUILDER_MESSAGE, linkedProductFamilyChange, linkedProductNeedsLocalBuilder, resolveLinkedProductFamily } from "@/lib/products/linked-product-family";
 import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
 import { guidedBaseModelSelection } from "@/lib/quotations/guided-base-model-selection";
 import { effectiveRequiredQuantities, requiredComponentOverrideReport, requiredComponentTriggerKey, requiredCompanionItems, withRequiredOverride, withoutRequiredOverride, type RequiredComponentOverrides } from "@/lib/quotations/required-component-overrides";
@@ -2401,24 +2402,22 @@ export function ProductLibrarySelector({
                       return linkedInstancesForLink(link).map((instance) => {
                         const instanceKey = linkedProductInstanceKey(link.id, instance.id);
                         const childCategoryGroups = groupedStandardCategoryPricingRows(childTemplate.category_pricing);
-                        const selectedChildCategoryGroup =
-                          childCategoryGroups.find((group) => group.id === selectedLinkedCategoryGroups[instanceKey]) ??
-                          childCategoryGroups[0] ??
-                          null;
-                        const childCategoryRows = (selectedChildCategoryGroup?.items ?? []).filter((row) => row.is_active !== false);
-                        const childVariantRows = activeVariantRows(childTemplate.variant_pricing);
+                        const childAllVariantRows = activeVariantRows(childTemplate.variant_pricing);
+                        const childVariantGroups = activeBaseModelPricingGroups<VariantPricingRow>(childTemplate.variant_pricing);
+                        const family = resolveLinkedProductFamily({
+                          variantGroups: childVariantGroups,
+                          categoryGroups: childCategoryGroups,
+                          variantRows: childAllVariantRows,
+                          nativeSystemActive: nativeSystemState(childVariantGroups).active,
+                          stored: { variantRowId: selectedLinkedVariants[instanceKey], categoryGroupId: selectedLinkedCategoryGroups[instanceKey], categoryId: selectedLinkedCategories[instanceKey] },
+                        });
+                        const selectedChildCategoryGroup = family.categoryGroup;
+                        const childCategoryRows = family.categoryRows;
+                        const childVariantRows = family.variantRows;
                         const childAccessoryGroups = activeAccessoryRows(childTemplate.accessory_pricing);
                         const childAccessoryQuantities = linkedAccessoryQuantities[instanceKey] ?? {};
-                        const childCategoryRow =
-                          childCategoryRows.find((row) => row.id === selectedLinkedCategories[instanceKey]) ??
-                          childCategoryRows[0] ??
-                          null;
-                        const childVariantRow =
-                          !childCategoryRow
-                            ? childVariantRows.find((row) => row.id === selectedLinkedVariants[instanceKey]) ??
-                              childVariantRows[0] ??
-                              null
-                            : null;
+                        const childCategoryRow = family.categoryRow;
+                        const childVariantRow = family.variantRow;
                         const childCategoryColumns = selectedChildCategoryGroup?.price_categories ?? categoryPriceColumns(childTemplate.category_pricing);
                         const savedChildCategory = selectedLinkedFabricCategories[instanceKey];
                         const childCategory = savedChildCategory && childCategoryColumns.includes(savedChildCategory)
@@ -2470,7 +2469,10 @@ export function ProductLibrarySelector({
                           childCategoryRow,
                           childCategoryRows,
                           childAccessoryGroups,
+                          childAllVariantRows,
                           childTemplate,
+                          childVariantGroups,
+                          family,
                           childVariantRow,
                           childVariantRows,
                           currency,
@@ -3269,6 +3271,7 @@ export function ProductLibrarySelector({
                     ? formatReconfiguredMoney(pricingRule, reconfiguredCurrency, amount)
                     : formatRuleMoney(pricingRule, previewCurrency, amount);
                   const hasReconfigurationChanges = Object.values(changes).some(Boolean);
+                  const linkedNeedsLocalBuilder = !isLocalMode && !reconfigure && linkedProductNeedsLocalBuilder(selectedLinkedProducts);
                   const existingAddBlocked = missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice;
                   const reconfigureBlocked = !reconfigureBaseline || (hasReconfigurationChanges && (
                     existingAddBlocked || wouldChangeDiscount || (requiresCurrentPrice && !applyCurrentPrice) ||
@@ -4416,9 +4419,34 @@ export function ProductLibrarySelector({
                                     />
                                   </label>
                                 ) : null}
+                                {line.family.mixed ? (
+                                  <label className="mt-2 block">
+                                    <span className="text-[10px] font-bold uppercase text-zinc-500">Choose Product Family</span>
+                                    <select
+                                      value={line.family.selected?.key ?? ""}
+                                      onChange={(event) => {
+                                        const option = line.family.options.find((candidate) => candidate.key === event.target.value);
+                                        if (!option) return;
+                                        const next = linkedProductFamilyChange(option, { variantGroups: line.childVariantGroups, categoryGroups: line.childCategoryGroups, variantRows: line.childAllVariantRows });
+                                        const replace = (value: string | undefined) => (current: Record<string, string>) => {
+                                          const copy = { ...current };
+                                          if (value) copy[line.instanceKey] = value; else delete copy[line.instanceKey];
+                                          return copy;
+                                        };
+                                        setSelectedLinkedVariants(replace(next.variantRowId));
+                                        setSelectedLinkedCategoryGroups(replace(next.categoryGroupId));
+                                        setSelectedLinkedCategories(replace(next.categoryId));
+                                        setSelectedLinkedFabricCategories(replace(next.fabricCategory));
+                                      }}
+                                      className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                    >
+                                      {line.family.options.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+                                    </select>
+                                  </label>
+                                ) : null}
                                 {line.childCategoryRow ? (
                                   <div className="mt-2 grid gap-2 md:grid-cols-2">
-                                    {line.selectedChildCategoryGroup && line.childCategoryGroups.length > 1 ? (
+                                    {!line.family.mixed && line.selectedChildCategoryGroup && line.childCategoryGroups.length > 1 ? (
                                       <label className="block md:col-span-2">
                                         <span className="text-[10px] font-bold uppercase text-zinc-500">Finish Pricing Group</span>
                                         <select
@@ -4518,7 +4546,7 @@ export function ProductLibrarySelector({
                                       selectedRow={line.childCategoryRow?.id
                                         ? { kind: "price_matrix", rowId: line.childCategoryRow.id }
                                         : line.childVariantRow?.id ? { kind: "base_model", rowId: line.childVariantRow.id } : null}
-                                      ownRowIds={[...line.childCategoryGroups.flatMap((group) => group.items ?? []), ...line.childVariantRows].flatMap((row) => row.id ?? [])}
+                                      ownRowIds={[...line.childCategoryGroups.flatMap((group) => group.items ?? []), ...line.childAllVariantRows].flatMap((row) => row.id ?? [])}
                                       priceLabel={(accessory) => formatMoney(accessory.currency ?? line.currency, numberValue(accessory.price))}
                                       GroupHeader={AccessoryGroupHeader}
                                       onQuantityChange={(id, quantity) =>
@@ -5471,6 +5499,7 @@ export function ProductLibrarySelector({
                             {modularCompositionIssue?.message ?? "Select at least one modular item to add this product."}
                           </p>
                         ) : null}
+                        {linkedNeedsLocalBuilder ? <p className="text-xs leading-5 text-amber-700">{LINKED_LOCAL_BUILDER_MESSAGE}</p> : null}
                         {hasUnavailableSelectedPrice ? <p className="text-xs leading-5 text-amber-700">The selected category is unavailable for one or more selected modular items.</p> : null}
                         {missingConditionalModelSelection ? (
                           <p className="text-xs leading-5 text-amber-700">
@@ -5519,7 +5548,7 @@ export function ProductLibrarySelector({
                               ) : (
                                 <button
                                   type="submit"
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice || linkedNeedsLocalBuilder}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add
