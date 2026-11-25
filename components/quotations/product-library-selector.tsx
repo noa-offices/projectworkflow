@@ -802,7 +802,7 @@ function AccessoryConfigurationFields({
                           {item.supplier_price_list_code ? <span className="mt-1 block text-[11px] text-zinc-500"><span className="font-semibold text-zinc-700">Supplier Code:</span> {item.supplier_price_list_code}</span> : null}<AccessoryItemMetadata groupId={group.id} item={item} rowReferences={rowReferences} onViewDiagram={onViewDiagram} />
                         </span>
                         <span className="font-semibold">{formatMoney(item.currency ?? rowCurrency, numberValue(item.price))}</span>
-                        <input type="number" min={1} step={1} value={quantity || (isRequired ? evaluation.requiredQuantity : null) || 1} disabled={locked || quantity <= 0 || (!isRequired && evaluation.fixedQuantity !== null)} onChange={(event) => onQuantityChange(groupItemIds, itemId, Math.max(1, Math.trunc(Number(event.target.value) || 1)), false)} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100" />
+                        <input type="number" min={1} step={1} value={quantity || (isRequired ? evaluation.requiredQuantity : null) || 1} disabled={quantity <= 0 || (!isRequired && evaluation.fixedQuantity !== null)} readOnly={locked || undefined} onChange={(event) => onQuantityChange(groupItemIds, itemId, Math.max(1, Math.trunc(Number(event.target.value) || 1)), false)} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100" />
                       </label>
                     );
                   })}
