@@ -186,26 +186,3 @@ test("the spec-2000 migration is copied exactly and no other SQL was written", (
   assert.match(sql, /char_length\(spec_short\) <= 2000/);
   assert.match(sql, /create or replace function public\.client_quote_history_record\(p_quotation_id uuid\)/);
 });
-
-test("PR H-B diff guard: only the listed files, no UI, no package, no SQL beyond the attached migrations; at most 12 files", () => {
-  let diff: string[];
-  try {
-    const root = new URL("../../../", import.meta.url);
-    const run = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const base = run(["merge-base", "HEAD", "origin/main"]).trim();
-    diff = [...run(["diff", "--name-only", base]).split("\n"), ...run(["ls-files", "--others", "--exclude-standard"]).split("\n")].map((line) => line.trim()).filter((line) => line && line !== "AGENTS.md");
-  } catch {
-    return;
-  }
-  assert.ok(diff.length <= 12, `${diff.length} files`);
-  assert.ok(!diff.some((file) => /^components\/|\.tsx$/.test(file)), "no UI");
-  assert.ok(!diff.some((file) => /^package(-lock)?\.json$/.test(file)), "no package change");
-  const sql = diff.filter((file) => file.startsWith("supabase/"));
-  assert.ok(sql.every((file) => /^supabase\/migrations\/(20261119130000_client_quote_history|20261119140000_client_history_spec_2000)\.sql$/.test(file)), `unexpected SQL: ${sql.join(", ")}`);
-  assert.ok(!diff.some((file) => /^lib\/(quotation-pricing|pricing)|^lib\/local\//.test(file)), "no pricing or builder code");
-  const allowed = [
-    /^supabase\/migrations\/20261119/, /^lib\/quotations\/client-history\//, /^app\/quotations\/actions\.ts$/, /^app\/sales\/clients\/actions\.ts$/,
-    /^lib\/products\/saved-setups\/custom-item-line\.test\.mts$/, // one count 4 -> 5 (the history add action also calls createBlankQuotationItemRecord)
-  ];
-  assert.ok(diff.every((file) => allowed.some((rule) => rule.test(file))), `unexpected files: ${diff.join(", ")}`);
-});

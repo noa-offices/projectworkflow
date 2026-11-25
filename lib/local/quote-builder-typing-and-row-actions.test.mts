@@ -269,24 +269,6 @@ test("nothing else in the builder was touched: pricing, totals, Save to Software
   assert.ok(touched.length < 10, `unexpected removed lines: ${touched.slice(0, 5).join(" | ")}`);
 });
 
-test("PR 6a diff guard: only the builder, this test and one old guard; no SQL, no package, no server code; at most 6 files", () => {
-  let diff: string[];
-  try {
-    const root = new URL("../../", import.meta.url);
-    const run = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const base = run(["merge-base", "HEAD", "origin/main"]).trim();
-    diff = [...run(["diff", "--name-only", base]).split("\n"), ...run(["ls-files", "--others", "--exclude-standard"]).split("\n")].map((line) => line.trim()).filter((line) => line && line !== "AGENTS.md");
-  } catch {
-    return;
-  }
-  assert.ok(!diff.some((file) => file.startsWith("supabase/")), "no SQL");
-  assert.ok(!diff.some((file) => /^package(-lock)?\.json$/.test(file)), "no package change");
-  assert.ok(!diff.some((file) => /^app\/.*actions\.ts$|^lib\/(quotation-pricing|pricing)|^lib\/products\/(?!saved-setups\/my-collection-popup\.test\.mts$)/.test(file)), "no server code, pricing or Product Library");
-  // The one old guard that listed the builder as "must be untouched" is updated; nothing else may change.
-  assert.ok(diff.every((file) => [BUILDER_PATH, "lib/local/quote-builder-typing-and-row-actions.test.mts", "lib/products/saved-setups/my-collection-popup.test.mts"].includes(file)), `unexpected files: ${diff.join(", ")}`);
-  assert.ok(diff.length <= 6);
-});
-
 // ── PR 6b: focus-local textarea draft, container-based panel layout, non-modal side-by-side panel ─────────────
 const detailsStart = builder.indexOf("  function renderRowDetailsModalContent(");
 const detailsContent = builder.slice(detailsStart, builder.indexOf("\n  }\n", detailsStart));

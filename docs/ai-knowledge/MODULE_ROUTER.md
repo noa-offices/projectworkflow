@@ -23,6 +23,7 @@ The routes and source entry points listed above are implemented in this branch; 
 
 ## Maintenance
 
+- Check branch scope in code review. Keep automated tests focused on behaviour and content.
 - New feature: update the relevant guide when architecture or contracts change; update this router only if entry points change.
 - New database contract: update [architecture contracts](ARCHITECTURE_CONTRACTS.md) and impacted guides.
 - Minor styling or bug fix: no knowledge update unless behavior or contracts change.

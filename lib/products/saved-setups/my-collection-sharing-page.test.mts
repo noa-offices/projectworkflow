@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- source-text checks, small fixtures and a mocked client */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test, { mock } from "node:test";
 
@@ -260,22 +259,4 @@ test("no admin client in any new UI or action file; no email; new files are clie
   assert.match(send, /^"use client";/);
   assert.match(shared, /^"use client";/);
   assert.equal(world.adminCalls, 0);
-});
-
-test("diff guard: popup, sidebar, notifications and the bell are untouched; no other SQL; at most 12 files", () => {
-  let diff: string[];
-  try {
-    const root = new URL("../../../", import.meta.url);
-    const run = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const base = run(["merge-base", "HEAD", "origin/main"]).trim();
-    diff = [...run(["diff", "--name-only", base]).split("\n"), ...run(["ls-files", "--others", "--exclude-standard"]).split("\n")].map((line) => line.trim()).filter(Boolean);
-  } catch {
-    return;
-  }
-  for (const forbidden of ["lib/notifications/actions.ts", "package.json"]) {
-    assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);
-  }
-  const migrations = diff.filter((file) => file.startsWith("supabase/migrations/"));
-  assert.ok(migrations.every((file) => file.endsWith("20261119120000_my_collection_share_recipient_name.sql")), "only the supplied migration");
-  assert.ok(diff.length <= 12, `at most 12 files change (${diff.length})`);
 });

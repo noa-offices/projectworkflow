@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
@@ -241,24 +240,4 @@ test("actions: only the existing ones, plus one read-only list for Removed produ
   const imported = (source: string) => Array.from(source.matchAll(/import \{([^}]*)\} from "@\/lib\/products\/saved-setups\/(actions|saved-custom-items-actions|saved-custom-brands-actions|saved-setups-list-actions)"/g)).flatMap((match) => match[1].split(",").map((name) => name.trim()).filter(Boolean));
   const allowed = new Set(["renameSetup", "deleteSetup", "clearRemovedSetups", "listPickerSetups", "loadSetupForReplay", "markSetupUsed", "listRemovedSetups", "createCustomItem", "updateCustomItem", "deleteCustomItem", "renameCustomBrand", "listCustomItems", "markCustomItemUsed"]);
   for (const name of [...imported(popup), ...imported(pane), ...imported(list), ...imported(custom)]) assert.ok(allowed.has(name), name);
-});
-
-test("diff guard: replay, recipe, the selector, pricing, migrations, package files and picture code are untouched; at most 12 files", () => {
-  let diff: string[];
-  try {
-    const root = new URL("../../../", import.meta.url);
-    const run = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const base = run(["merge-base", "HEAD", "origin/main"]).trim();
-    diff = [...run(["diff", "--name-only", base]).split("\n"), ...run(["ls-files", "--others", "--exclude-standard"]).split("\n")].map((line) => line.trim()).filter(Boolean);
-  } catch {
-    return;
-  }
-  for (const forbidden of [
-    "lib/products/saved-setups/replay.ts", "lib/products/saved-setups/recipe.ts", "lib/products/saved-setups/actions.ts",
-    "package.json", "package-lock.json",
-    "lib/products/saved-setups/custom-item-image.ts", "lib/products/saved-setups/custom-item-image-sharp.ts", "lib/images/compress-custom-item-image.ts", "lib/products/saved-setups/saved-custom-images-actions.ts",
-    "app/quotations/actions.ts",
-  ]) assert.ok(!diff.includes(forbidden), `${forbidden} must have an empty diff`);
-  assert.ok(!diff.some((file) => /^lib\/(quotations|pricing|noa)\//.test(file)));
-  assert.ok(diff.length <= 12, `at most 12 files change (${diff.length})`);
 });
