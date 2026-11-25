@@ -1126,7 +1126,7 @@ export function ProductLibrarySelector({
   const [linkedAccessoryQuantities, setLinkedAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   // The linked instance whose "Edit accessories" popup is open.
   const [linkedAccessoryCategories, setLinkedAccessoryCategories] = useState<Record<string, Record<string, string>>>({});
-  const [linkedPerScreenFixedQuantities, setLinkedPerScreenFixedQuantities] = useState<Partial<Record<string, true>>>({});
+  const [linkedPerScreenFixedQuantities, setLinkedPerScreenFixedQuantities] = useState<Record<string, true | undefined>>({});
   const [linkedAccessoryPopupKey, setLinkedAccessoryPopupKey] = useState<string | null>(null);
   const [selectedLinkedVariants, setSelectedLinkedVariants] = useState<Record<string, string>>({});
   const [selectedLinkedCategoryGroups, setSelectedLinkedCategoryGroups] = useState<Record<string, string>>({});
@@ -1379,7 +1379,7 @@ export function ProductLibrarySelector({
         putKeyed(setLinkedProductQuantities, key, selection?.quantity);
         putKeyed(setLinkedAccessoryQuantities, key, selection?.accessoryQuantities);
         putKeyed(setLinkedAccessoryCategories, key, selection?.accessoryCategories);
-        putKeyed(setLinkedPerScreenFixedQuantities, key, selection?.perScreenFixedQuantities);
+        putKeyed<true | undefined>(setLinkedPerScreenFixedQuantities, key, selection?.perScreenFixedQuantities);
       }
     }
     setReplay({ key: Date.now(), problems: evaluation.validation.problems, setupName: setup.setupName, specOverrides: setup.specOverrides, templateId: tid });

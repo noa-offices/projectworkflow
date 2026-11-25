@@ -90,6 +90,7 @@ test("the optional flag and per-screen quantities survive quotation and My Colle
     assert.ok(reopened.ok);
     const fromCollection = evaluateSetup(built.recipe, built.specOverrides, parent, { linkedFamilyIds: ["screen"] });
     for (const restored of [reopened.state, fromCollection.state]) {
+      assert.ok(restored);
       const linked = restored.linkedSelections?.["screen:a"];
       assert.deepEqual(linked?.accessoryQuantities, stored);
       assert.equal(linked?.perScreenFixedQuantities, flag);
