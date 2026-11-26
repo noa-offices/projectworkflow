@@ -1,3 +1,4 @@
+import { documentFinishRows } from "@/lib/quotations/linked-finish-snapshot";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getCompanyProfile, isRemoteOrAppLogo, type CompanyProfile } from "@/lib/company-profile";
@@ -249,12 +250,12 @@ export async function loadQuotationPresentationData(
         .returns<PresentationSection[]>(),
       supabase
         .from("quotation_items")
-        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,sort_order,is_optional,is_rate_only,line_style,is_active,cell_layout")
+        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,linked_finish_snapshot:source_component_data->linked_finish_snapshot,finish_selections_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,sort_order,is_optional,is_rate_only,line_style,is_active,cell_layout")
         .eq("quotation_id", quotationId)
         .eq("is_active", true)
         .order("sort_order", { ascending: true })
         .order("id", { ascending: true })
-        .returns<PresentationItem[]>(),
+        .returns<(PresentationItem & { linked_finish_snapshot?: unknown })[]>(),
       supabase
         .from("quotation_presentations")
         .select("settings_json,updated_at")
@@ -263,7 +264,11 @@ export async function loadQuotationPresentationData(
       getCompanyProfile(),
     ]);
 
-  const activeItems = (items ?? []).filter((item) => item.is_active !== false);
+  const documentItems = (items ?? []).map(({ linked_finish_snapshot, ...item }) => ({
+    ...item,
+    finish_selections_snapshot: documentFinishRows(item.finish_selections_snapshot, linked_finish_snapshot, finishSelections),
+  }));
+  const activeItems = documentItems.filter((item) => item.is_active !== false);
   const initialSettings = migratedMainSectionOverridesFromLegacy(normalizePresentationSettings(presentationSettings?.settings_json, {
     updatedAt: presentationSettings?.updated_at ?? null,
   }), sections ?? []);
@@ -322,7 +327,7 @@ export async function loadQuotationPresentationData(
     finishImageUrlByItemAndFinishId: Object.fromEntries(finishImageEntries),
     imageUrlByItemId: Object.fromEntries(imageEntries),
     initialSettings,
-    items: items ?? [],
+    items: documentItems,
     mainLayoutImageUrlById: Object.fromEntries(mainLayoutImageEntries),
     presentationOverrideImageUrlByItemId: Object.fromEntries(presentationOverrideImageEntries),
     project: project ?? null,
