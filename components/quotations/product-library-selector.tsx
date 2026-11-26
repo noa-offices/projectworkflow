@@ -1,5 +1,6 @@
 "use client";
 
+import { blockLinkedFinishServerAdd, buildLinkedFinishSnapshot } from "@/lib/quotations/linked-finish-snapshot";
 import { SupplierCoverageAction } from "./supplier-coverage-popup";
 import { ManualPriceLinesButton } from "./manual-price-lines-button";
 import { SupplierPriceLinesAction } from "./supplier-price-lines-popup";
@@ -1398,7 +1399,7 @@ export function ProductLibrarySelector({
     setHistoryNote(historyDiscount ? { templateId: tid, text: historyDiscountNote(historyDiscount), type: historyDiscount.discountType, value: String(historyDiscount.discountValue) } : null);
   };
 
-  const openSetupFromCollection = (setup: SetupForUse): string | null => {
+  const openSetupFromCollection = (setup: SetupForUse, savedLinkedItems?: unknown): string | null => {
     const template = templateById.get(setup.templateId);
     if (!template) return "This product is not available in this Product Library.";
     const evaluation = evaluateSetup(setup.recipe, setup.specOverrides, template, {
@@ -1451,11 +1452,19 @@ export function ProductLibrarySelector({
       ...Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${tid}:`))),
       ...(plain.accessoryCategoryChoices ?? {}),
     }));
+    const savedLabels = Array.isArray(savedLinkedItems) ? savedLinkedItems.map(snapshotObject) : [];
     for (const link of linkedFamiliesByParent.get(tid) ?? []) {
       const ids = plain.linkedInstances?.[link.id];
+      const child = templateById.get(link.linked_template_id);
+      const instances = ids?.map((id) => {
+        const index = savedLabels.findIndex((item) => child && item.template_code === child.template_code && item.template_name === child.template_name);
+        const saved = index >= 0 ? savedLabels.splice(index, 1)[0] : undefined;
+        const hasFinishes = plain.linkedSelections?.[linkedProductInstanceKey(link.id, id)]?.finishes?.length;
+        return { id, label: hasFinishes && typeof saved?.label === "string" ? saved.label : "" };
+      });
       setLinkedProductInstancesByLinkId((current) => {
         const next = { ...current };
-        if (ids?.length) next[link.id] = ids.map((id) => ({ id, label: "" })); else delete next[link.id];
+        if (instances?.length) next[link.id] = instances; else delete next[link.id];
         return next;
       });
       for (const id of ids ?? [`${link.id}-default`]) {
@@ -1501,7 +1510,7 @@ export function ProductLibrarySelector({
     const problem = openSetupFromCollection({
       id: line.id, templateId: setup.templateId, setupName: setup.defaultName,
       recipe: setup.recipe, specOverrides: setup.specOverrides,
-    });
+    }, snapshotObject(snapshotObject(line.source_component_data).linked_products).items);
     if (problem) {
       setReconfigureError(problem);
       setIsOpen(true);
@@ -2575,6 +2584,7 @@ export function ProductLibrarySelector({
                     total: ruleExactAmount(pricingRule, line.total),
                     currency: normalizeCurrency(line.row.currency ?? rowCurrency),
                   }));
+                  const linkedFinishSnapshot = buildLinkedFinishSnapshot(selectedLinkedProducts, linkedFinishesByInstance, templateMaterialGroups, materialGroups, finishMaterialsById);
                   const localProductItem: LocalQuotationItem = {
                     id: createLocalId("item"),
                     quotation_id: quotationId,
@@ -2582,6 +2592,7 @@ export function ProductLibrarySelector({
                     item_type: "product",
                     source_template_id: template.id,
                     source_component_data: {
+                      ...(linkedFinishSnapshot && { linked_finish_snapshot: linkedFinishSnapshot }),
                       template_code: template.template_code,
                       template_name: template.template_name,
                       brand_name: brandNameById.get(template.brand_id) ?? null,
@@ -2886,6 +2897,7 @@ export function ProductLibrarySelector({
                   ));
                   const changes: ReconfigureChanges = {
                     configuration: configurationChanged,
+                    linkedFinishes: Boolean(savedLine && JSON.stringify(snapshotObject(savedLine.source_component_data).linked_finish_snapshot) !== JSON.stringify(linkedFinishSnapshot)),
                     price: priceChanged,
                     specification: Boolean(savedLine && (configurationChanged || useGeneratedSpec || (reconfigureBaseline && savedFinalSpecification !== reconfigureBaseline.displayedSpec))),
                     dimension: Boolean(savedLine && (configurationChanged || resetDimension || (reconfigureBaseline && quotationDimension !== reconfigureBaseline.displayedDimension))),
@@ -2903,9 +2915,10 @@ export function ProductLibrarySelector({
                     ? formatReconfiguredMoney(pricingRule, reconfiguredCurrency, amount)
                     : formatRuleMoney(pricingRule, previewCurrency, amount);
                   const hasReconfigurationChanges = Object.values(changes).some(Boolean);
+                  const blockServerFinishAdd = blockLinkedFinishServerAdd(isLocalMode, Boolean(reconfigure), selectedLinkedProducts, linkedFinishesByInstance);
                   const linkedNeedsLocalBuilder = !isLocalMode && !reconfigure && linkedProductNeedsLocalBuilder(selectedLinkedProducts);
                   const existingAddBlocked = missingExchangeRate || price.status === "needs" || needsUpdatedPriceDecision;
-                  const reconfigureBlocked = !reconfigureBaseline || (hasReconfigurationChanges && (
+                  const reconfigureBlocked = !reconfigureBaseline || ((changes.configuration || changes.price || changes.specification || changes.dimension || changes.image) && (
                     existingAddBlocked || wouldChangeDiscount || (requiresCurrentPrice && !applyCurrentPrice) ||
                     (fixedCurrencyDecision && confirmFixedDiscount !== reconfiguredCurrency) ||
                     (applyCurrentPrice && staleProblems.length > 0 && !configurationChanged) ||
@@ -3140,7 +3153,7 @@ export function ProductLibrarySelector({
                       ) : null}
                       <form
                         action={reconfigure ? undefined : addProductTemplateToQuotation}
-                        onSubmit={reconfigure ? (event) => event.preventDefault() : undefined}
+                        onSubmit={reconfigure || blockServerFinishAdd ? (event) => event.preventDefault() : undefined}
                         className="grid gap-4 p-4 lg:p-6 xl:grid-cols-[minmax(0,1fr)_320px]"
                       >
                         <div className="min-w-0 space-y-4">
@@ -5160,6 +5173,7 @@ export function ProductLibrarySelector({
                           </p>
                         ) : null}
                         {!accessoryConfiguration.valid ? <AccessoryBlockedList entries={accessoryBlockedEntries(accessoryConfiguration.blockingRequirements, allAccessoryGroups, accessoryConfiguration.groups)} onOpen={openBlockedAccessoryGroup} /> : null}
+                        {blockServerFinishAdd ? <p className="text-xs leading-5 text-amber-700">Use the local quotation builder to add linked screens with finishes.</p> : null}
                         {linkedNeedsLocalBuilder ? <p className="text-xs leading-5 text-amber-700">{LINKED_LOCAL_BUILDER_MESSAGE}</p> : null}
                         {hasUnavailableSelectedPrice ? <p className="text-xs leading-5 text-amber-700">The selected category is unavailable for one or more selected modular items.</p> : null}
                         {missingConditionalModelSelection ? (
@@ -5209,7 +5223,7 @@ export function ProductLibrarySelector({
                               ) : (
                                 <button
                                   type="submit"
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice || linkedNeedsLocalBuilder}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice || linkedNeedsLocalBuilder || blockServerFinishAdd}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add

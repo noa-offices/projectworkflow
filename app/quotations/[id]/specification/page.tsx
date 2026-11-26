@@ -1,3 +1,4 @@
+import { documentFinishRows } from "@/lib/quotations/linked-finish-snapshot";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
@@ -1206,12 +1207,12 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         .returns<QuotationSection[]>(),
       supabase
         .from("quotation_items")
-        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,sort_order,is_optional,is_rate_only,line_style,is_active,cell_layout,notes")
+        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,linked_finish_snapshot:source_component_data->linked_finish_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,sort_order,is_optional,is_rate_only,line_style,is_active,cell_layout,notes")
         .eq("quotation_id", id)
         .eq("is_active", true)
         .order("sort_order", { ascending: true })
         .order("id", { ascending: true })
-        .returns<QuotationItem[]>(),
+        .returns<(QuotationItem & { linked_finish_snapshot?: unknown })[]>(),
       supabase
         .from("product_template_material_groups")
         .select("id,sort_order")
@@ -1232,7 +1233,10 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
     console.error("SPECIFICATION MATERIAL GROUP ORDER ERROR", materialGroupOrdersError.message);
   }
 
-  const activeItems = (items ?? []).filter((item) => item.is_active);
+  const activeItems = (items ?? []).map(({ linked_finish_snapshot, ...item }) => ({
+    ...item,
+    finish_selections_snapshot: documentFinishRows(item.finish_selections_snapshot, linked_finish_snapshot, finishSelections),
+  })).filter((item) => item.is_active);
   const savedDocumentSetup = documentSetupRecord(quotation.layout_settings);
   const savedVisibility = isRecord(savedDocumentSetup.visibility) ? savedDocumentSetup.visibility : {};
   const savedSpecification = isRecord(savedVisibility.specification) ? savedVisibility.specification : {};

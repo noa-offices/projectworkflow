@@ -7,7 +7,7 @@ import { isQuotationLocked } from "@/lib/quotations/quotation-lock";
 import { roundSourceAmount } from "@/lib/quotations/source-price-components";
 
 export type ReconfigureTarget = { line: LocalQuotationItem; setup: Extract<RecipeFromLine, { ok: true }> };
-export type ReconfigureChanges = { configuration: boolean; price: boolean; specification: boolean; dimension: boolean; image: boolean };
+export type ReconfigureChanges = { linkedFinishes?: boolean; configuration: boolean; price: boolean; specification: boolean; dimension: boolean; image: boolean };
 
 export function canReconfigureLocalQuotation(role: AppRole | null | undefined) {
   return role === "system_owner" || role === "admin_manager" || role === "procurement_manager" ||
@@ -87,6 +87,13 @@ export function reconfigureLocalRows(
     if (row.id !== target.id || row.updated_at !== target.updated_at || row.source_template_id !== draft.source_template_id || row.is_active === false) return row;
     const source = { ...snapshotObject(row.source_component_data) };
     const nextSource = snapshotObject(draft.source_component_data);
+    if (changes.linkedFinishes || changes.configuration) {
+      if (Object.hasOwn(nextSource, "linked_finish_snapshot")) source.linked_finish_snapshot = nextSource.linked_finish_snapshot;
+      else delete source.linked_finish_snapshot;
+    }
+    if (changes.linkedFinishes && !changes.configuration && !changes.price && !changes.specification && !changes.dimension && !changes.image) {
+      return { ...row, source_component_data: source };
+    }
     const keys = [
       ...(changes.configuration ? configurationSourceKeys : []),
       ...(changes.price ? pricedSourceKeys : []),
