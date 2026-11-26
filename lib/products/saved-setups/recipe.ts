@@ -15,6 +15,8 @@ export const SAVED_SETUP_NAME_MAX = 120;
 
 export type SavedSetupRequiredOverrides = Record<string, { quantity: number; trigger: string }>;
 
+export type LinkedFinishChoice = [groupLinkId: string, materialId: string];
+
 export type SavedSetupLinkedSelection = {
   variantRowId?: string | null;
   categoryGroupId?: string | null;
@@ -25,6 +27,7 @@ export type SavedSetupLinkedSelection = {
   accessoryQuantities?: Record<string, number>;
   accessoryCategories?: Record<string, string>;
   perScreenFixedQuantities?: true;
+  finishes?: LinkedFinishChoice[];
 };
 
 /** Plain, React-free snapshot of the selector state for ONE template. */
@@ -107,6 +110,7 @@ export type SavedSetupRecipeV1 = {
         accessory_quantities: Record<string, number>;
         accessory_categories?: Record<string, string>;
         per_screen_fixed_quantities?: true;
+        finishes?: LinkedFinishChoice[];
       }
     >;
   };
@@ -188,6 +192,17 @@ function plainObjects(value: Array<Record<string, unknown>> | undefined) {
   return (value ?? []).filter((row) => row && typeof row === "object" && !Array.isArray(row));
 }
 
+function linkedFinishChoices(value: unknown): LinkedFinishChoice[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((choice): LinkedFinishChoice[] => {
+    if (!Array.isArray(choice) || choice.length !== 2) return [];
+    const [groupLinkId, materialId] = choice;
+    return typeof groupLinkId === "string" && groupLinkId && typeof materialId === "string" && materialId
+      ? [[groupLinkId, materialId]]
+      : [];
+  });
+}
+
 /** Small deterministic hash (FNV-1a 32-bit) of whitespace-normalised text. A drift hint, not security. */
 export function hashSpecificationText(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
@@ -234,6 +249,7 @@ export function buildRecipe(state: SavedSetupPlainState): BuiltSavedSetup {
   for (const [instanceKey, selection] of Object.entries(state.linkedSelections ?? {})) {
     if (!instanceKey || !selection) continue;
     const instanceQuantity = Math.trunc(Number(selection.quantity));
+    const finishes = linkedFinishChoices(selection.finishes);
     linkedSelections[instanceKey] = {
       ...(text(selection.variantRowId) ? { variant_row_id: text(selection.variantRowId) } : {}),
       ...(text(selection.categoryGroupId) ? { category_group_id: text(selection.categoryGroupId) } : {}),
@@ -241,6 +257,7 @@ export function buildRecipe(state: SavedSetupPlainState): BuiltSavedSetup {
       ...(text(selection.fabricCategory) ? { fabric_category: text(selection.fabricCategory) } : {}),
       ...(Number.isFinite(instanceQuantity) && instanceQuantity > 0 ? { instance_quantity: instanceQuantity } : {}),
       accessory_quantities: positiveQuantities(selection.accessoryQuantities),
+      ...(finishes.length ? { finishes } : {}),
       ...(selection.perScreenFixedQuantities === true ? { per_screen_fixed_quantities: true } : {}),
       ...(selection.accessoryCategories && Object.keys(selection.accessoryCategories).length ? { accessory_categories: { ...selection.accessoryCategories } } : {}),
     };
@@ -298,6 +315,7 @@ export function restorePlainState(recipe: SavedSetupRecipeV1, specOverrides?: Sa
   const s: Partial<SavedSetupRecipeV1["selections"]> = recipe.selections ?? {};
   const linkedSelections: Record<string, SavedSetupLinkedSelection> = {};
   for (const [key, value] of Object.entries(recipe.linked?.selections ?? {})) {
+    const finishes = linkedFinishChoices(value.finishes);
     linkedSelections[key] = {
       variantRowId: value.variant_row_id ?? null,
       categoryGroupId: value.category_group_id ?? null,
@@ -305,6 +323,7 @@ export function restorePlainState(recipe: SavedSetupRecipeV1, specOverrides?: Sa
       fabricCategory: value.fabric_category ?? null,
       quantity: value.instance_quantity ?? null,
       accessoryQuantities: value.accessory_quantities,
+      ...(finishes.length ? { finishes } : {}),
       ...(value.per_screen_fixed_quantities === true ? { perScreenFixedQuantities: true } : {}),
       ...(value.accessory_categories ? { accessoryCategories: { ...value.accessory_categories } } : {}),
     };

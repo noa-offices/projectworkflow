@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ClipboardEvent, ChangeEvent } from "react";
+import type { ClipboardEvent, ChangeEvent, ComponentProps } from "react";
 import { FinishImagePreview } from "@/components/quotations/finish-image-uploader";
+import type { LinkedFinishChoice } from "@/lib/products/saved-setups/recipe";
 import { materialDisplayCategory } from "@/lib/products/material-classification";
 import { clearSection, formatSelectionSummary, groupMaterialsByGroup, groupMaterialsIntoSections, selectAllInSection, selectionSummary } from "@/lib/quotations/finish-material-groups";
 import { uploadQuotationFinishImage } from "@/lib/quotation-image-upload";
@@ -556,11 +557,62 @@ function SwatchEditor({
   );
 }
 
+function materialFinishRow({ link, material, rowIndex, sourceScope, group, brand }: {
+  link?: ProductTemplateMaterialGroupLink;
+  material: FinishMaterial;
+  rowIndex: number;
+  sourceScope: "linked" | "library";
+  group?: FinishMaterialGroup;
+  brand?: FinishMaterialBrand;
+}): DraftFinish {
+  const groupLabel = link?.label_override?.trim() || group?.group_name || "Finish";
+
+  return {
+    id: `selected-${sourceScope}-${material.id}-${rowIndex}`,
+    source_type: "brand_material",
+    source_scope: sourceScope,
+    brand_material_id: material.id,
+    material_group_id: material.material_group_id,
+    product_template_material_group_id: link?.id ?? "",
+    brand_name: brand?.name ?? "",
+    group_label: groupLabel,
+    group_sort_order: link?.sort_order,
+    material_category: materialCategoryKey(material),
+    finish_code: material.material_code ?? "",
+    finish_name: material.material_name,
+    finish_description: material.description ?? "",
+    finish_image_url: material.image_url ?? "",
+    show_in_specification: link ? link.show_in_specification : true,
+    show_in_quotation: link ? link.show_in_quotation : false,
+    sort_order: rowIndex,
+  };
+}
+
+export function LinkedFinishSelectionsEditor({ choices, ...props }: Omit<ComponentProps<typeof FinishSelectionsEditor>, "initialFinishes" | "linkedOnly"> & {
+  choices: LinkedFinishChoice[];
+}) {
+  const [initialFinishes] = useState(() => choices.map(([linkId, materialId], rowIndex) => {
+    const link = props.templateMaterialGroups?.find((candidate) => candidate.id === linkId);
+    const material = props.materials?.find((candidate) => candidate.id === materialId);
+    if (!material || !link) {
+      return normalizeFinish({
+        source_type: "brand_material", source_scope: "linked", product_template_material_group_id: linkId,
+        brand_material_id: materialId, finish_name: material?.material_name ?? "Unavailable finish",
+      }, rowIndex);
+    }
+    return materialFinishRow({ link, material, rowIndex, sourceScope: "linked",
+      group: props.materialGroups?.find((candidate) => candidate.id === material.material_group_id),
+      brand: props.brands?.find((candidate) => candidate.id === material.brand_id) });
+  }));
+  return <FinishSelectionsEditor {...props} initialFinishes={initialFinishes} linkedOnly />;
+}
+
 export function FinishSelectionsEditor({
   allowMaterialContinuationPage = false,
   brands,
   initialBrandId,
   initialFinishes,
+  linkedOnly = false,
   itemId,
   materialGroups,
   materials,
@@ -573,6 +625,7 @@ export function FinishSelectionsEditor({
   brands?: FinishMaterialBrand[];
   initialBrandId?: string | null;
   initialFinishes: FinishSelectionEditorRow[];
+  linkedOnly?: boolean;
   itemId?: string | null;
   materialGroups?: FinishMaterialGroup[];
   materials?: FinishMaterial[];
@@ -634,7 +687,7 @@ export function FinishSelectionsEditor({
   const linkedGroupForMaterial = (materialGroupId: string) =>
     linkedGroups.find((link) => link.material_group_id === materialGroupId);
   const missingRequiredLinkedGroups = linkedGroups.filter((link) => {
-    if (!link.is_required) return false;
+    if (linkedOnly || !link.is_required) return false;
 
     return !finishes.some((finish) => finishMatchesLink(finish, link));
   });
@@ -715,39 +768,10 @@ export function FinishSelectionsEditor({
   }
 
   function materialDraft({
-    link,
-    material,
-    rowIndex,
-    sourceScope,
-  }: {
-    link?: ProductTemplateMaterialGroupLink;
-    material: FinishMaterial;
-    rowIndex: number;
-    sourceScope: "linked" | "library";
-  }): DraftFinish {
-    const group = groupsById.get(material.material_group_id);
-    const brand = brandsById.get(material.brand_id);
-    const groupLabel = link?.label_override?.trim() || group?.group_name || "Finish";
-
-    return {
-      id: `selected-${sourceScope}-${material.id}-${rowIndex}`,
-      source_type: "brand_material",
-      source_scope: sourceScope,
-      brand_material_id: material.id,
-      material_group_id: material.material_group_id,
-      product_template_material_group_id: link?.id ?? "",
-      brand_name: brand?.name ?? "",
-      group_label: groupLabel,
-      group_sort_order: link?.sort_order,
-      material_category: materialCategoryKey(material),
-      finish_code: material.material_code ?? "",
-      finish_name: material.material_name,
-      finish_description: material.description ?? "",
-      finish_image_url: material.image_url ?? "",
-      show_in_specification: link ? link.show_in_specification : true,
-      show_in_quotation: link ? link.show_in_quotation : false,
-      sort_order: rowIndex,
-    };
+    link, material, rowIndex, sourceScope,
+  }: Pick<Parameters<typeof materialFinishRow>[0], "link" | "material" | "rowIndex" | "sourceScope">): DraftFinish {
+    return materialFinishRow({ link, material, rowIndex, sourceScope,
+      group: groupsById.get(material.material_group_id), brand: brandsById.get(material.brand_id) });
   }
 
   function toggleMaterialSelection({
@@ -832,6 +856,7 @@ export function FinishSelectionsEditor({
         <span className="text-[11px] font-semibold text-zinc-500">{selectedCountLabel(finishes.length)}</span>
       </div>
 
+      {!linkedOnly ? <>
       <input
         ref={validationInputRef}
         aria-hidden="true"
@@ -878,6 +903,8 @@ export function FinishSelectionsEditor({
         ) : null}
       </div>
 
+      </> : null}
+
       <div className="mt-3 grid gap-2">
         {!finishes.length ? (
           <div className="border border-dashed border-zinc-300 bg-zinc-50 px-3 py-4 text-center">
@@ -910,17 +937,19 @@ export function FinishSelectionsEditor({
                       {finish.finish_description ? <p className="mt-0.5 line-clamp-1 text-[11px] text-zinc-500">{finish.finish_description}</p> : null}
                       <div className="mt-1 flex flex-wrap gap-1 text-[10px] font-bold uppercase">
                         <span className="border border-zinc-200 bg-zinc-50 px-1 py-0.5 text-zinc-500">{sourceLabel(finish)}</span>
+                        {!linkedOnly ? <>
                         <span className={finish.show_in_specification ? "border border-emerald-200 bg-emerald-50 px-1 py-0.5 text-emerald-800" : "border border-zinc-200 bg-white px-1 py-0.5 text-zinc-400"}>
                           Spec {finish.show_in_specification ? "Yes" : "No"}
                         </span>
                         <span className={finish.show_in_quotation ? "border border-emerald-200 bg-emerald-50 px-1 py-0.5 text-emerald-800" : "border border-zinc-200 bg-white px-1 py-0.5 text-zinc-400"}>
                           Quote {finish.show_in_quotation ? "Yes" : "No"}
                         </span>
+                        </> : null}
                       </div>
                       <div className="mt-1.5 flex items-center gap-2">
-                        <button type="button" onClick={() => startEdit(index)} className="text-[11px] font-semibold text-emerald-900 hover:text-emerald-700">
+                        {!linkedOnly ? <button type="button" onClick={() => startEdit(index)} className="text-[11px] font-semibold text-emerald-900 hover:text-emerald-700">
                           Edit
-                        </button>
+                        </button> : null}
                         <button type="button" onClick={() => removeFinish(index)} className="text-[11px] font-semibold text-red-700 hover:text-red-600">
                           Remove
                         </button>
@@ -934,7 +963,7 @@ export function FinishSelectionsEditor({
         ))}
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-1 border-b border-zinc-200">
+      {!linkedOnly ? <div className="mt-3 flex flex-wrap gap-1 border-b border-zinc-200">
         {tabLabels.map(([value, label]) => (
           <button
             key={value}
@@ -952,7 +981,7 @@ export function FinishSelectionsEditor({
             {label}
           </button>
         ))}
-      </div>
+      </div> : null}
 
       {activeTab === "linked" ? (
         <div className="mt-3 grid gap-3">
@@ -993,9 +1022,11 @@ export function FinishSelectionsEditor({
                       <span className="border border-zinc-200 bg-white px-1.5 py-0.5 font-bold uppercase text-zinc-600">
                         MULTIPLE SELECTION
                       </span>
-                      <span>{link.is_required ? "Required" : "Optional"}</span>
-                      <span>Spec {link.show_in_specification ? "Yes" : "No"}</span>
-                      <span>Quote {link.show_in_quotation ? "Yes" : "No"}</span>
+                      <span>{!linkedOnly && link.is_required ? "Required" : "Optional"}</span>
+                      {!linkedOnly ? <>
+                        <span>Spec {link.show_in_specification ? "Yes" : "No"}</span>
+                        <span>Quote {link.show_in_quotation ? "Yes" : "No"}</span>
+                      </> : null}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">

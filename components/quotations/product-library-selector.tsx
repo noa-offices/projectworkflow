@@ -3,10 +3,10 @@
 import { SupplierCoverageAction } from "./supplier-coverage-popup";
 import { ManualPriceLinesButton } from "./manual-price-lines-button";
 import { SupplierPriceLinesAction } from "./supplier-price-lines-popup";
-import { Fragment, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useTransition, type Dispatch, type SetStateAction } from "react";
+import { Fragment, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useTransition, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import { SaveToMyCollectionButton } from "./save-to-my-collection-button";
-import type { SavedSetupPlainState } from "@/lib/products/saved-setups/recipe";
+import type { LinkedFinishChoice, SavedSetupPlainState } from "@/lib/products/saved-setups/recipe";
 import { defaultSetupName } from "@/lib/products/saved-setups/default-name";
 import { LINE_RECIPE_FORM_FIELD, buildLineConfigurationRecipe, withConfigurationRecipe } from "@/lib/products/saved-setups/line-recipe";
 import { baseModelPlacement } from "@/lib/products/saved-setups/base-model-placement";
@@ -32,6 +32,7 @@ import { FinalSpecificationAiControl } from "@/components/quotations/final-speci
 import { normalizeManufacturerFinishGuidance } from "@/lib/products/manufacturer-finish-guidance";
 import {
   FinishSelectionsEditor,
+  LinkedFinishSelectionsEditor,
   type FinishSelectionEditorRow,
   type FinishMaterial,
   type FinishMaterialBrand,
@@ -870,6 +871,19 @@ function ProductThumbnail({
   );
 }
 
+function LinkedFinishSection({ summary, children }: { summary: string; children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="mt-3 border-t border-zinc-200 pt-2">
+      <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)} className="flex w-full flex-wrap items-baseline gap-x-2 text-left text-xs">
+        <span className="font-semibold text-emerald-900">Finishes (optional)</span>
+        {summary ? <span className="min-w-0 break-words text-zinc-600">{summary}</span> : null}
+      </button>
+      {expanded ? <div className="mt-2 max-h-[32rem] overflow-auto">{children}</div> : null}
+    </div>
+  );
+}
+
 function LinkedScreenDiagram({ row, references, onView }: {
   row: ReturnType<typeof linkedAccessoryRow>;
   references: Record<string, ProductTemplateRowReferencePreview> | undefined;
@@ -1162,6 +1176,7 @@ export function ProductLibrarySelector({
   const [discountTypes, setDiscountTypes] = useState<Record<string, string>>({});
   const [discountValues, setDiscountValues] = useState<Record<string, string>>({});
   const [selectedFinishesByTemplate, setSelectedFinishesByTemplate] = useState<Record<string, FinishSelectionEditorRow[]>>({});
+  const [linkedFinishesByInstance, setLinkedFinishesByInstance] = useState<Record<string, LinkedFinishChoice[]>>({});
   const [templatePriceOverrides, setTemplatePriceOverrides] = useState<Record<string, number | undefined>>({});
   const [announcedTicks, setAnnouncedTicks] = useState<Record<string, boolean>>({});
   const [templateEditor, setTemplateEditor] = useState<
@@ -1312,6 +1327,7 @@ export function ProductLibrarySelector({
     return () => { active = false; };
   }, [selectedTemplateId]);
   const finishBrands: FinishMaterialBrand[] = brands;
+  const finishMaterialsById = useMemo(() => new Map(materials.map((material) => [material.id, material])), [materials]);
   const productCountByBrand = useMemo(() => {
     const map = new Map<string, number>();
 
@@ -1452,6 +1468,7 @@ export function ProductLibrarySelector({
         putKeyed(setLinkedProductQuantities, key, selection?.quantity);
         putKeyed(setLinkedAccessoryQuantities, key, selection?.accessoryQuantities);
         putKeyed(setLinkedAccessoryCategories, key, selection?.accessoryCategories);
+        putKeyed(setLinkedFinishesByInstance, key, selection?.finishes);
         putKeyed<true | undefined>(setLinkedPerScreenFixedQuantities, key, selection?.perScreenFixedQuantities);
       }
     }
@@ -2799,6 +2816,7 @@ export function ProductLibrarySelector({
                             accessoryQuantities: linkedAccessoryQuantities[instanceKey] ?? {},
                             perScreenFixedQuantities: linkedPerScreenFixedQuantities[instanceKey],
                             accessoryCategories: linkedAccessoryCategories[instanceKey],
+                            finishes: linkedFinishesByInstance[instanceKey],
                           }] as const;
                         }),
                       ),
@@ -4081,6 +4099,39 @@ export function ProductLibrarySelector({
                                     />
                                   </label>
                                 </div>
+                                {(() => {
+                                  const links = templateMaterialGroups.filter((link) => link.product_template_id === line.childTemplate.id);
+                                  if (!links.length) return null;
+                                  const linkIds = new Set(links.map((link) => link.id));
+                                  const choices = linkedFinishesByInstance[line.instanceKey] ?? [];
+                                  const names = choices.slice(0, 2).map(([, id]) => {
+                                    const material = finishMaterialsById.get(id);
+                                    return material ? [material.material_code, material.material_name].filter(Boolean).join(" ") : "Unavailable finish";
+                                  });
+                                  if (choices.length > 2) names.push(`+${choices.length - 2} more`);
+                                  return (
+                                    <LinkedFinishSection key={replay?.key ?? 0} summary={names.join(", ")}>
+                                      <LinkedFinishSelectionsEditor
+                                        brands={finishBrands}
+                                        initialBrandId={line.childTemplate.brand_id}
+                                        choices={choices}
+                                        materialGroups={materialGroups}
+                                        materials={materials}
+                                        quotationId={quotationId}
+                                        templateMaterialGroups={links}
+                                        templateMaterialGroupItems={templateMaterialGroupItems.filter((item) => linkIds.has(item.product_template_material_group_id))}
+                                        onChange={(rows) => {
+                                          const next = rows.flatMap((row): LinkedFinishChoice[] =>
+                                            row.product_template_material_group_id && row.brand_material_id
+                                              ? [[row.product_template_material_group_id, row.brand_material_id]]
+                                              : [],
+                                          );
+                                          setLinkedFinishesByInstance((current) => ({ ...current, [line.instanceKey]: next }));
+                                        }}
+                                      />
+                                    </LinkedFinishSection>
+                                  );
+                                })()}
                                 {line.childAccessoryGroups.length ? (
                                   <div className="mt-3 space-y-2 border-t border-zinc-200 pt-3">
                                     {!linkedAccessoryPopupBlockReason(line.childAccessoryGroups) ? (() => {
@@ -4201,6 +4252,11 @@ export function ProductLibrarySelector({
                                           return next;
                                         });
                                         setLinkedAccessoryCategories((current) => {
+                                          const next = { ...current };
+                                          delete next[line.instanceKey];
+                                          return next;
+                                        });
+                                        setLinkedFinishesByInstance((current) => {
                                           const next = { ...current };
                                           delete next[line.instanceKey];
                                           return next;
