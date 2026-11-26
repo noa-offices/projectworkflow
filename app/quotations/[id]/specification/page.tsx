@@ -29,6 +29,7 @@ import {
   type SpecificationSettings,
 } from "@/components/quotations/specification-preview";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { planProductFinishes, type FinishCardSegment, type FinishGroup } from "@/lib/quotations/specification-finish-layout";
 
 export const dynamic = "force-dynamic";
 
@@ -140,7 +141,8 @@ type SpecDocumentPage =
       pageNumber: number;
       description: string | null;
       descriptionContinues: boolean;
-      showMaterials: boolean;
+      finishSegments: FinishSegment[];
+      hiddenFinishCount: number;
     }
   | {
       type: "text";
@@ -161,15 +163,22 @@ type SpecDocumentPage =
     }
   | {
       type: "materials_continuation";
-      chartId?: string;
-      chartStart?: number;
       item: QuotationItem;
       mainSection: QuotationSection | null;
       pageNumber: number;
       section: QuotationSection;
-      selectedStart?: number;
+      segments: FinishSegment[];
       serial: number;
     };
+
+type FinishSwatch = {
+  key: string;
+  code: string | null;
+  name: string | null;
+  imageUrl: string | null;
+};
+
+type FinishSegment = FinishCardSegment<FinishSwatch>;
 
 type SelectedFinish = {
   id: string;
@@ -215,11 +224,6 @@ type SelectedFinishGroup = {
   firstIndex: number;
   sortOrder: number;
 };
-
-type SelectedFinishLayoutMode = "few" | "compact" | "dense";
-
-const selectedFinishesPerProductPage = 6;
-const chartSwatchesPerProductPage = 15;
 
 function hasUsableCompanyLogo(logoUrl: string | null) {
   if (!logoUrl) return false;
@@ -363,11 +367,6 @@ function materialEntries(item: QuotationItem) {
     .filter((finish) => booleanFromRecord(finish, "show_in_specification", true));
 }
 
-function selectedFinishEntries(item: QuotationItem) {
-  return materialEntries(item)
-    .filter((finish) => stringFromRecord(finish, ["type"]) !== "material_group_chart");
-}
-
 function swatchRecords(finish: Record<string, unknown>) {
   const swatches = finish.swatches;
   return Array.isArray(swatches) ? swatches.filter(isRecord) : [];
@@ -435,16 +434,19 @@ function materialContent(
   return { charts, selectedFinishes };
 }
 
-function DetailLine({ compact, label, value }: { compact?: boolean; label: string; value?: string | null }) {
+function SidebarField({ label, value }: { label: string; value?: string | null }) {
   if (!value) return null;
 
   return (
-    <div>
-      <dt className="text-[9px] font-bold uppercase tracking-wide text-zinc-500">{label}</dt>
-      <dd className={`spec-detail-value mt-[3px] whitespace-pre-wrap text-zinc-800 ${compact ? "text-[9.5px] leading-[13px]" : "text-[10.5px] leading-[15px]"}`}>{value}</dd>
+    <div className="min-w-0">
+      <dt className="text-[8.5px] font-semibold uppercase leading-[11px] tracking-[0.12em] text-[#5b6168]">{label}</dt>
+      <dd className="spec-detail-value mt-[3px] whitespace-pre-wrap text-[10px] leading-[14px] text-[#15171a] [overflow-wrap:anywhere]">{value}</dd>
     </div>
   );
 }
+
+// The preview's image size control uses the same percentages (components/quotations/specification-preview.tsx).
+const mainImageHeights = { small: "74%", medium: "89%", current: "100%" } as const;
 
 function SpecImage({
   imageSettings,
@@ -471,26 +473,25 @@ function SpecImage({
     ),
   }, 0.5);
   const resolvedMainImageSize = specificationOverride?.size ?? mainImageSize;
-  const heightClass = resolvedMainImageSize === "small"
-    ? "h-[260px]"
-    : resolvedMainImageSize === "medium"
-      ? "h-[310px]"
-      : resolvedMainImageSize === "current"
-        ? "h-[350px]"
-        : "h-28";
 
   return (
-    <div>
-      <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">{label}</p>
-      <div data-spec-main-image={mainImageSize ? "" : undefined} className={`flex items-center justify-center overflow-hidden bg-white ${heightClass}`}>
-        <QuotationImageFrame
-          alt={label}
-          className="h-full w-full overflow-hidden"
-          emptyContent={<span data-spec-image-empty className="text-xs text-zinc-400">No image</span>}
-          imageUrl={src}
-          minimumZoom={0.5}
-          settings={settings}
-        />
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[9px]">
+      <p className={sheetLabelClass}>{label}</p>
+      <div className="relative min-h-0 flex-1">
+        <div
+          data-spec-main-image={mainImageSize ? "" : undefined}
+          className="absolute inset-x-0 top-0 flex items-center justify-center overflow-hidden rounded-[6px] bg-white"
+          style={{ height: mainImageHeights[resolvedMainImageSize ?? "current"] }}
+        >
+          <QuotationImageFrame
+            alt={label}
+            className="h-full w-full overflow-hidden"
+            emptyContent={<span data-spec-image-empty className="text-xs text-zinc-400">No image</span>}
+            imageUrl={src}
+            minimumZoom={0.5}
+            settings={settings}
+          />
+        </div>
       </div>
     </div>
   );
@@ -541,7 +542,7 @@ function descriptionChunks(value: string, compact: boolean) {
   // Conservative character budgets for the fixed Specification product and continuation layouts.
   const firstPageBudget = compact ? 900 : 700;
   const continuationBudget = compact ? 6000 : 4500;
-  const firstPageLines = compact ? 18 : 14;
+  const firstPageLines = compact ? 12 : 10;
   const continuationLines = compact ? 52 : 45;
   const chunks: string[] = [];
   let remaining = value.replace(/\r\n?/g, "\n").trim();
@@ -620,6 +621,97 @@ function ProductPageHeader({
         <MetaLine label="Page" value={`${pageNumber} / ${totalPages}`} />
       </dl>
     </header>
+  );
+}
+
+const sheetLabelClass = "shrink-0 text-[8.5px] font-semibold uppercase leading-[11px] tracking-[0.14em] text-[#5b6168]";
+const sheetPageClass = "spec-page flex h-[297mm] flex-col overflow-hidden bg-white px-12 pb-8 pt-10 shadow-sm ring-1 ring-zinc-200";
+
+function SpecSheetHeader({
+  companyProfile,
+  hasLogo,
+  pageNumber,
+  projectReferenceDisplay,
+  quotation,
+  totalPages,
+}: Parameters<typeof ProductPageHeader>[0]) {
+  const columns = [
+    ["Ref No.", quotation.quotation_no ?? "Draft"],
+    ["Date", quotation.quotation_date],
+    ["Project", projectReferenceDisplay],
+    ["Page", `${pageNumber} / ${totalPages}`],
+  ];
+
+  return (
+    <header className="mb-5 flex shrink-0 items-end justify-between gap-6 border-b-2 border-[#15171a] pb-[14px]">
+      <div className="shrink-0">
+        {hasLogo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={companyProfile.logoPath ?? ""} alt={companyProfile.displayName} className="h-[26px] w-auto max-w-[170px] object-contain object-left" />
+        ) : (
+          <div className="text-[18px] font-black leading-[26px] tracking-tight text-[#15171a]">{companyProfile.displayName}</div>
+        )}
+        <p className="mt-2 text-[9.5px] font-semibold uppercase leading-[12px] tracking-[0.16em] text-[#5b6168]">Specification Sheet</p>
+      </div>
+      <dl className="spec-client-reference flex min-w-0 items-end gap-[22px]">
+        {columns.map(([label, value]) => (
+          <div key={label} className="min-w-0">
+            <dt className={sheetLabelClass}>{label}</dt>
+            <dd className="mt-[3px] line-clamp-2 max-w-[170px] text-[10.5px] font-medium leading-[14px] text-[#15171a] [overflow-wrap:anywhere]">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </header>
+  );
+}
+
+function SheetFooter({ companyName, pageNumber, totalPages }: { companyName: string; pageNumber: number; totalPages: number }) {
+  return (
+    <footer className="mt-auto flex shrink-0 items-center justify-between gap-4 border-t border-[#dfe2e5] pt-3 text-[9px] uppercase leading-[12px] tracking-[0.12em] text-[#5b6168]">
+      <span>{companyName}</span>
+      <span className="whitespace-nowrap">Page {pageNumber} of {totalPages}</span>
+    </footer>
+  );
+}
+
+function MaterialsHeading({ continued }: { continued?: boolean }) {
+  return (
+    <div className="mb-3 flex items-center gap-3">
+      <h3 className="text-[11px] font-bold uppercase leading-[14px] tracking-[0.16em] text-[#15171a]">{continued ? "Materials & Finishes (continued)" : "Materials & Finishes"}</h3>
+      <span className="h-px flex-1 bg-[#dfe2e5]" />
+    </div>
+  );
+}
+
+// Sizes here must match lib/quotations/specification-finish-layout.ts, which plans the pages.
+function FinishCards({ segments }: { segments: FinishSegment[] }) {
+  return (
+    <div className="grid gap-3">
+      {segments.map((segment) => (
+        <div key={segment.key} data-spec-finish-card="" className="overflow-hidden rounded-[6px] border border-[#dfe2e5]">
+          <div className="flex items-start justify-between gap-3 border-b border-[#dfe2e5] bg-[#f6f7f8] px-4 py-2 text-[9.5px] leading-[14px]">
+            <h4 className="min-w-0 font-bold uppercase tracking-[0.14em] text-[#15171a]">{segment.continued ? `${segment.title} (continued)` : segment.title}</h4>
+            <span className="whitespace-nowrap text-[#5b6168]">{`${segment.total} ${segment.total === 1 ? "finish" : "finishes"}`}</span>
+          </div>
+          <div className="grid grid-cols-[repeat(8,minmax(0,1fr))] items-start gap-[10px] px-4 py-[10px]">
+            {segment.swatches.map((swatch) => (
+              <div key={swatch.key} className="min-w-0 [overflow-wrap:anywhere]">
+                <div className="flex h-8 w-[60px] max-w-full items-center justify-center overflow-hidden rounded-[4px] border border-black/[0.14] bg-white">
+                  {swatch.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={swatch.imageUrl} alt={[swatch.code, swatch.name].filter(Boolean).join(" | ") || segment.title} className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-[8px] uppercase text-zinc-400">Finish</span>
+                  )}
+                </div>
+                {swatch.code ? <p className="mt-1 text-[10px] font-bold leading-[13px] text-[#15171a]">{swatch.code}</p> : null}
+                {swatch.name ? <p className={`text-[9.5px] leading-[12px] text-[#5b6168] ${swatch.code ? "" : "mt-1"}`}>{swatch.name}</p> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -705,50 +797,6 @@ function TextBlockPage({
   );
 }
 
-function SelectedFinishCard({
-  finish,
-  mode,
-}: {
-  finish: SelectedFinish;
-  mode: SelectedFinishLayoutMode;
-}) {
-  const codeName = [finish.code, finish.value].filter(Boolean).join(" | ") || finish.description || "Finish";
-  const swatchClass = mode === "few"
-    ? "flex h-[52px] w-[52px] items-center justify-center bg-white"
-    : mode === "dense"
-      ? "mx-auto flex h-8 w-8 items-center justify-center bg-white"
-      : "flex h-9 w-9 items-center justify-center bg-white";
-  const cardClass = mode === "few"
-    ? "grid min-w-0 grid-cols-[52px_minmax(0,1fr)] items-center gap-3"
-    : mode === "dense"
-      ? "min-w-0 bg-white text-center"
-      : "grid min-w-0 grid-cols-[36px_minmax(0,1fr)] items-center gap-2 bg-white";
-  const titleClass = mode === "few"
-    ? "text-[12px] font-semibold leading-4 text-zinc-950"
-    : mode === "dense"
-      ? "mt-1 line-clamp-2 text-[8.5px] font-semibold leading-3 text-zinc-900"
-      : "truncate text-[9px] font-semibold leading-3 text-zinc-900";
-
-  return (
-    <div className={cardClass}>
-      <div className={swatchClass}>
-        {finish.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={finish.imageUrl} alt={finish.value || finish.label} className="max-h-full max-w-full object-contain" />
-        ) : (
-          <span className="text-[9px] uppercase text-zinc-400">Finish</span>
-        )}
-      </div>
-      <div className={mode === "dense" ? "min-w-0 px-0.5" : "min-w-0"}>
-        <p className={titleClass}>{codeName}</p>
-        {mode !== "dense" && finish.description && (finish.code || finish.value) ? (
-          <p className={mode === "few" ? "mt-1 line-clamp-2 whitespace-pre-wrap text-[10px] leading-4 text-zinc-500" : "mt-0.5 line-clamp-1 whitespace-pre-wrap text-[8px] leading-3 text-zinc-500"}>{finish.description}</p>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
 function selectedFinishGroups(finishes: SelectedFinish[]): SelectedFinishGroup[] {
   const groups: SelectedFinishGroup[] = [];
   const groupByLabel = new Map<string, SelectedFinishGroup>();
@@ -792,189 +840,56 @@ function selectedFinishGroups(finishes: SelectedFinish[]): SelectedFinishGroup[]
     );
 }
 
-function selectedFinishLayoutMode(groups: SelectedFinishGroup[], totalCount: number): SelectedFinishLayoutMode {
-  const largestGroupCount = Math.max(0, ...groups.map((group) => group.finishes.length));
-  const fewFinishes = totalCount <= 4 || (groups.length <= 2 && groups.every((group) => group.finishes.length <= 2));
+// One card per finish group, in the order the page has always used: selected groups, then material charts.
+function finishCardGroups(
+  item: QuotationItem,
+  finishImageUrlById: Map<string, string | null>,
+  materialGroupSortOrderByLinkId: Map<string, number>,
+): FinishGroup<FinishSwatch>[] {
+  const { charts, selectedFinishes } = materialContent(item, finishImageUrlById, materialGroupSortOrderByLinkId);
 
-  if (totalCount > 12 || largestGroupCount > 8) return "dense";
-  if (fewFinishes) return "few";
-  return "compact";
-}
-
-function SelectedFinishGroups({ finishes }: { finishes: SelectedFinish[] }) {
-  const groups = selectedFinishGroups(finishes);
-  const totalCount = groups.reduce((total, group) => total + group.finishes.length, 0);
-  const mode = selectedFinishLayoutMode(groups, totalCount);
-
-  if (mode === "few") {
-    return (
-      <div className="mt-3 grid gap-3 md:grid-cols-2">
-        {groups.map((group) => (
-          <div key={group.label} className="min-w-0 border border-zinc-200 bg-white p-3">
-            <h4 className="mb-3 text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-700">{group.label}</h4>
-            <div className="grid gap-3">
-              {group.finishes.map((finish) => (
-                <SelectedFinishCard key={finish.id} finish={finish} mode={mode} />
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  return (
-    <div className={mode === "dense" ? "mt-2 grid gap-2" : "mt-3 grid gap-3"}>
-      {groups.map((group) => (
-        <div key={group.label} className={mode === "dense" ? "border-t border-zinc-200 pt-1.5 first:border-t-0 first:pt-0" : "border border-zinc-200 bg-white p-2.5"}>
-          <h4 className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-700">{group.label}</h4>
-          <div className={mode === "dense" ? "mt-1.5 grid grid-cols-5 gap-x-2 gap-y-2 md:grid-cols-7" : "mt-2 grid grid-cols-3 gap-2 md:grid-cols-5"}>
-            {group.finishes.map((finish) => (
-              <SelectedFinishCard key={finish.id} finish={finish} mode={mode} />
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function MaterialChartBlock({
-  chart,
-  hasMore,
-  limitSwatches = true,
-  start = 0,
-}: {
-  chart: MaterialChart;
-  hasMore?: boolean;
-  limitSwatches?: boolean;
-  start?: number;
-}) {
-  const swatches = limitSwatches ? chart.swatches.slice(start, start + chartSwatchesPerProductPage) : chart.swatches.slice(start);
-
-  if (!swatches.length) return null;
-
-  return (
-    <div className="mt-4">
-      <div className="flex items-end justify-between gap-3">
-        <h4 className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-700">{chart.title}</h4>
-        {hasMore ? <p className="text-[10px] font-semibold text-zinc-500">More options continued on next page</p> : null}
-      </div>
-      <div className="mt-2 grid grid-cols-5 gap-2">
-        {swatches.map((swatch, index) => (
-          <div key={`${chart.id}-${start + index}`} className="bg-white p-1.5">
-            <div className="flex h-14 items-center justify-center bg-white">
-              {swatch.imageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={swatch.imageUrl} alt={swatch.name || swatch.code || chart.groupLabel} className="max-h-full max-w-full object-contain" />
-              ) : (
-                <span className="text-[9px] uppercase text-zinc-400">Swatch</span>
-              )}
-            </div>
-            {swatch.code ? <p className="mt-1 text-[10px] font-bold text-zinc-950">{swatch.code}</p> : null}
-            {swatch.name ? <p className="truncate text-[10px] text-zinc-600">{swatch.name}</p> : null}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function MaterialsFinishesArea({
-  allowContinuation,
-  charts,
-  selectedFinishes,
-}: {
-  allowContinuation: boolean;
-  charts: MaterialChart[];
-  selectedFinishes: SelectedFinish[];
-}) {
-  const visibleSelected = allowContinuation ? selectedFinishes.slice(0, selectedFinishesPerProductPage) : selectedFinishes;
-  const hasMoreSelected = allowContinuation && selectedFinishes.length > selectedFinishesPerProductPage;
-  const visibleCharts = charts.filter((chart) => chart.swatches.length);
-  const hasContent = visibleSelected.length || visibleCharts.length;
-
-  return (
-    <section className="spec-material-details mt-4 border-t border-zinc-300 pt-3">
-      <div className="flex items-end justify-between gap-3">
-        <h3 className="text-[10px] font-bold uppercase tracking-[0.22em] text-zinc-800">Materials & Finishes</h3>
-        {hasMoreSelected ? <p className="text-[10px] font-semibold text-zinc-500">Additional finishes continued on next page</p> : null}
-      </div>
-
-      {hasContent ? (
-        <>
-          {visibleSelected.length ? (
-            <SelectedFinishGroups finishes={visibleSelected} />
-          ) : null}
-
-          {visibleCharts.map((chart) => (
-            <MaterialChartBlock
-              key={chart.id}
-              chart={chart}
-              hasMore={allowContinuation && chart.swatches.length > chartSwatchesPerProductPage}
-              limitSwatches={allowContinuation}
-            />
-          ))}
-        </>
-      ) : null}
-    </section>
-  );
+  return [
+    ...selectedFinishGroups(selectedFinishes).map((group) => ({
+      key: `selected:${group.label}`,
+      title: group.label,
+      swatches: group.finishes.map((finish, index) => ({
+        key: `${finish.id}:${index}`,
+        code: finish.code,
+        name: finish.value && finish.value !== finish.code ? finish.value : finish.code ? null : finish.description,
+        imageUrl: finish.imageUrl,
+      })),
+    })),
+    ...charts.map((chart) => ({
+      key: `chart:${chart.id}`,
+      title: chart.title,
+      swatches: chart.swatches.map((swatch, index) => ({ ...swatch, key: `${chart.id}:${index}` })),
+    })),
+  ];
 }
 
 function MaterialsContinuationPage({
   companyProfile,
-  finishImageUrlById,
   hasLogo,
-  materialGroupSortOrderByLinkId,
   page,
   projectReferenceDisplay,
   quotation,
   totalPages,
 }: {
   companyProfile: Awaited<ReturnType<typeof getCompanyProfile>>;
-  finishImageUrlById: Map<string, string | null>;
   hasLogo: boolean;
-  materialGroupSortOrderByLinkId: Map<string, number>;
   page: Extract<SpecDocumentPage, { type: "materials_continuation" }>;
   projectReferenceDisplay: string;
   quotation: Quotation;
   totalPages: number;
 }) {
-  const title = page.item.item_name_snapshot || page.item.model_snapshot || page.item.item_code_snapshot || "Product";
-  const { charts, selectedFinishes } = materialContent(page.item, finishImageUrlById, materialGroupSortOrderByLinkId);
-  const selectedSlice = typeof page.selectedStart === "number"
-    ? selectedFinishes.slice(page.selectedStart, page.selectedStart + selectedFinishesPerProductPage)
-    : [];
-  const chart = page.chartId ? charts.find((candidate) => candidate.id === page.chartId) ?? null : null;
-
   return (
-    <section className="spec-page flex min-h-[277mm] flex-col bg-white p-10 shadow-sm ring-1 ring-zinc-200">
-      <ProductPageHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={page.pageNumber} projectReferenceDisplay={projectReferenceDisplay} quotation={quotation} totalPages={totalPages} />
-      <div className="mt-8 border-b border-zinc-200 pb-4">
-        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">
-          {[page.mainSection?.section_title, page.section.section_title].filter(Boolean).join(" / ") || "Specification"}
-        </p>
-        <h2 className="mt-2 text-3xl font-bold leading-tight text-zinc-950">{title}</h2>
-        <div className="mt-1 flex items-center justify-between gap-4">
-          <p className="text-sm text-zinc-500">Materials & Finishes continuation</p>
-          <p className="text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">Item No. {page.serial || "-"}</p>
-        </div>
-      </div>
-
-      <section className="mt-6">
-        <h3 className="text-xs font-bold uppercase tracking-[0.22em] text-zinc-800">Materials & Finishes</h3>
-        {selectedSlice.length ? (
-          <SelectedFinishGroups finishes={selectedSlice} />
-        ) : null}
-        {chart ? (
-          <MaterialChartBlock
-            chart={chart}
-            start={page.chartStart ?? chartSwatchesPerProductPage}
-            hasMore={(page.chartStart ?? 0) + chartSwatchesPerProductPage < chart.swatches.length}
-          />
-        ) : null}
+    <section className={sheetPageClass}>
+      <SpecSheetHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={page.pageNumber} projectReferenceDisplay={projectReferenceDisplay} quotation={quotation} totalPages={totalPages} />
+      <section className="spec-material-details mb-4 min-h-0 flex-1 overflow-hidden">
+        <MaterialsHeading continued />
+        <FinishCards segments={page.segments} />
       </section>
-      <PageFooter companyName={companyProfile.companyName} pageNumber={page.pageNumber} totalPages={totalPages} />
+      <SheetFooter companyName={companyProfile.companyName} pageNumber={page.pageNumber} totalPages={totalPages} />
     </section>
   );
 }
@@ -1026,18 +941,17 @@ function ProductSpecPage({
   companyProfile,
   description,
   descriptionContinues,
+  finishSegments,
   hasLogo,
+  hiddenFinishCount,
   item,
   layout,
-  finishImageUrlById,
   mainSection,
-  materialGroupSortOrderByLinkId,
   pageNumber,
   projectReferenceDisplay,
   proposedImage,
   quotation,
   section,
-  showMaterials,
   specificationImageOverride,
   specifiedImage,
   serial,
@@ -1047,18 +961,17 @@ function ProductSpecPage({
   companyProfile: Awaited<ReturnType<typeof getCompanyProfile>>;
   description: string | null;
   descriptionContinues: boolean;
+  finishSegments: FinishSegment[];
   hasLogo: boolean;
+  hiddenFinishCount: number;
   item: QuotationItem;
   layout: SpecificationLayoutSettings;
-  finishImageUrlById: Map<string, string | null>;
   mainSection: QuotationSection | null;
-  materialGroupSortOrderByLinkId: Map<string, number>;
   pageNumber: number;
   projectReferenceDisplay: string;
   proposedImage: string | null;
   quotation: Quotation;
   section: QuotationSection;
-  showMaterials: boolean;
   specificationImageOverride?: SpecificationItemImageOverride;
   specifiedImage: string | null;
   serial: number;
@@ -1076,87 +989,90 @@ function ProductSpecPage({
     originSupplierDisplay.primaryLine,
     originSupplierDisplay.supplier ? `Supplier: ${originSupplierDisplay.supplier}` : null,
   ].filter(Boolean).join("\n");
-  const { charts, selectedFinishes } = materialContent(item, finishImageUrlById, materialGroupSortOrderByLinkId);
   const productEyebrow =
     (visibility.showBrand ? item.brand_name_snapshot : null) ||
     (visibility.showCategory ? item.category_name_snapshot : null) ||
     "Product";
+  // Very long dimensions: tighten the sidebar gaps so the whole value stays inside the 400px block.
+  const sidebarGap = (item.size_snapshot?.length ?? 0) > 180 ? "gap-[7px]" : "gap-[13px]";
+  const sectionTrail = [mainSection?.section_title, section.section_title].filter(Boolean).join(" / ") || "Specification";
 
   return (
-    <section data-spec-item-id={item.id} className="spec-page flex min-h-[277mm] flex-col bg-white p-10 shadow-sm ring-1 ring-zinc-200">
-      <ProductPageHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={pageNumber} projectReferenceDisplay={projectReferenceDisplay} quotation={quotation} totalPages={totalPages} />
+    <section data-spec-item-id={item.id} className={sheetPageClass}>
+      <SpecSheetHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={pageNumber} projectReferenceDisplay={projectReferenceDisplay} quotation={quotation} totalPages={totalPages} />
 
-      <div className="mt-6 flex items-center justify-between gap-6 border-b border-zinc-200 pb-4">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">
-            {[mainSection?.section_title, section.section_title].filter(Boolean).join(" / ") || "Specification"}
-          </p>
-          <p className="mt-1 text-sm text-zinc-600">{item.room_name_snapshot || section.section_notes || "Product detail"}</p>
-        </div>
-        <div className="text-right">
-          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">Item No.</p>
-          <p className="mt-1 text-xl font-bold text-zinc-950">{serial || "-"}</p>
-        </div>
-      </div>
+      <div className="flex h-[400px] shrink-0 gap-6">
+        <aside className={`flex w-[200px] shrink-0 flex-col ${sidebarGap} overflow-hidden rounded-[6px] bg-[#f4f5f6] p-[18px]`}>
+          <div>
+            <p className={sheetLabelClass}>Item No.</p>
+            <p className="mt-1 text-[44px] font-bold leading-none text-[#15171a]">{serial || "-"}</p>
+          </div>
+          <div className="h-px shrink-0 bg-[#d8dbdf]" />
+          <dl className={`flex flex-col ${sidebarGap}`}>
+            {visibility.showBrand ? <SidebarField label="Brand" value={item.brand_name_snapshot} /> : null}
+            {visibility.showModel ? <SidebarField label="Model" value={item.model_snapshot} /> : null}
+            {visibility.showCategory ? <SidebarField label="Category" value={item.category_name_snapshot} /> : null}
+            {visibility.showOriginSupplier ? <SidebarField label="Origin / Supplier" value={originSupplier} /> : null}
+            {visibility.showDimensions ? <div className="spec-dimensions">
+              <SidebarField label="Dimensions" value={item.size_snapshot} />
+            </div> : null}
+            {visibility.showCode ? <SidebarField label="Code" value={item.item_code_snapshot} /> : null}
+            <SidebarField label="Warranty" value={item.warranty_snapshot} />
+          </dl>
+        </aside>
 
-      <div className={`spec-product-layout mt-5 grid gap-7 ${visibility.showItemImages ? "md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]" : "grid-cols-1"}`}>
-        {visibility.showItemImages ? <div className="spec-item-images space-y-4">
-          <SpecImage
-            src={proposedImage}
-            label="Proposed image"
-            fallbackFit={layout.productImageFit}
-            mainImageSize={layout.productImageSize}
-            specificationOverride={specificationImageOverride}
-          />
-          {specifiedImage ? (
-            <div className="max-w-[260px]">
-              <SpecImage
-                imageSettings={item.cell_layout?.images?.specified_image_url_snapshot}
-                src={specifiedImage}
-                label="Specified / reference image"
-                fallbackFit={layout.productImageFit}
-              />
-            </div>
-          ) : null}
-        </div> : null}
-
-        <div className="min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">{productEyebrow}</p>
-          <h2 className="mt-2 text-3xl font-bold leading-tight text-zinc-950">
+        <div className="flex min-w-0 flex-1 flex-col gap-[9px] overflow-hidden">
+          <div className="flex shrink-0 items-start justify-between gap-4">
+            <p className="text-[9.5px] font-semibold uppercase leading-[12px] tracking-[0.14em] text-[#5b6168]">{productEyebrow}</p>
+            <p className="text-right text-[8.5px] uppercase leading-[12px] tracking-[0.14em] text-[#5b6168]">{`${sectionTrail} · ${item.room_name_snapshot || section.section_notes || "Product detail"}`}</p>
+          </div>
+          <h2 className="shrink-0 text-[38px] font-bold leading-none text-[#15171a] [overflow-wrap:anywhere]">
             {title}
             {item.is_optional ? <span className="ml-2 border border-red-300 bg-red-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
             {item.is_rate_only ? <span className="ml-2 border border-sky-300 bg-sky-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
           </h2>
-          <dl className="mt-4 grid gap-x-6 gap-y-3 md:grid-cols-2">
-            {visibility.showBrand ? <DetailLine compact={compactText} label="Brand" value={item.brand_name_snapshot} /> : null}
-            {visibility.showModel ? <DetailLine compact={compactText} label="Model" value={item.model_snapshot} /> : null}
-            {visibility.showCode ? <DetailLine compact={compactText} label="Code" value={item.item_code_snapshot} /> : null}
-            {visibility.showCategory ? <DetailLine compact={compactText} label="Category" value={item.category_name_snapshot} /> : null}
-            {visibility.showDimensions ? <div className="spec-dimensions">
-              <DetailLine compact={compactText} label="Dimensions" value={item.size_snapshot} />
-            </div> : null}
-            {visibility.showOriginSupplier ? <DetailLine compact={compactText} label="Origin / Supplier" value={originSupplier} /> : null}
-            <DetailLine compact={compactText} label="Warranty" value={item.warranty_snapshot} />
-          </dl>
-
+          {visibility.showItemImages ? <div className="spec-item-images flex min-h-[120px] flex-1 gap-3">
+            <SpecImage
+              src={proposedImage}
+              label="Proposed image"
+              fallbackFit={layout.productImageFit}
+              mainImageSize={layout.productImageSize}
+              specificationOverride={specificationImageOverride}
+            />
+            {specifiedImage ? (
+              <div className="flex w-[120px] shrink-0 flex-col">
+                <SpecImage
+                  imageSettings={item.cell_layout?.images?.specified_image_url_snapshot}
+                  src={specifiedImage}
+                  label="Reference image"
+                  fallbackFit={layout.productImageFit}
+                />
+              </div>
+            ) : null}
+          </div> : null}
           {visibility.showDescriptionSpecification && description ? (
-            <div className="mt-4 border-t border-zinc-200 pt-3">
-              <h3 className="text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-500">Description / Specification</h3>
-              <p className={`spec-description-body mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] text-zinc-700 ${compactText ? "text-[9.5px] leading-[13px]" : "text-[10.5px] leading-[15px]"}`}>{description}</p>
-              {descriptionContinues ? <p className="mt-2 text-[10px] font-medium text-zinc-500">Description continues on the next page.</p> : null}
+            <div className="flex shrink-0 flex-col gap-[9px]">
+              <h3 className={sheetLabelClass}>Description / Specification</h3>
+              <p className={`spec-description-body whitespace-pre-wrap text-[#33383d] [overflow-wrap:anywhere] ${compactText ? "text-[9px] leading-[1.4]" : "text-[9.5px] leading-[1.5]"}`}>{description}</p>
+              {descriptionContinues ? <p className="text-[9px] font-medium leading-[11px] text-[#5b6168]">Description continues on the next page.</p> : null}
             </div>
           ) : null}
-
         </div>
       </div>
-      {visibility.showMaterialDetails && showMaterials ? (
-        <MaterialsFinishesArea
-          allowContinuation={item.allow_material_continuation_page}
-          charts={charts}
-          selectedFinishes={selectedFinishes}
-        />
+
+      {visibility.showMaterialDetails && (finishSegments.length || hiddenFinishCount) ? (
+        <section className="spec-material-details mb-4 mt-[22px] min-h-0 flex-1 overflow-hidden">
+          <MaterialsHeading />
+          <FinishCards segments={finishSegments} />
+          {hiddenFinishCount ? (
+            <p className="mt-2 text-[9.5px] leading-[12px] text-[#5b6168]">
+              {`+${hiddenFinishCount} more ${hiddenFinishCount === 1 ? "finish" : "finishes"}`}
+              <span className="no-print ml-2 text-amber-700">Turn on continuation page to show all finishes</span>
+            </p>
+          ) : null}
+        </section>
       ) : null}
-      <PageFooter companyName={companyProfile.companyName} pageNumber={pageNumber} totalPages={totalPages} />
+      <SheetFooter companyName={companyProfile.companyName} pageNumber={pageNumber} totalPages={totalPages} />
     </section>
   );
 }
@@ -1308,6 +1224,16 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
   const materialGroupSortOrderByLinkId = new Map(
     (materialGroupOrders ?? []).map((row) => [row.id, row.sort_order] as const),
   );
+  const itemFinishImageUrlById = (item: QuotationItem) => new Map(
+    materialEntries(item).flatMap((finish, index) => {
+      const finishId = stringFromRecord(finish, ["id"]) || `finish-${index + 1}`;
+      const keys = stringFromRecord(finish, ["type"]) === "material_group_chart"
+        ? swatchRecords(finish).map((_, swatchIndex) => `${finishId}:${swatchIndex}`)
+        : [finishId];
+
+      return keys.map((key) => [key, finishImageUrlByItemAndFinishId.get(`${item.id}:${key}`) ?? null] as const);
+    }),
+  );
   const itemsBySection = new Map<string, QuotationItem[]>();
 
   for (const item of activeItems) {
@@ -1407,16 +1333,23 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         ? descriptionChunks(cleanedDescription, specificationLayout.textDensity === "compact")
         : [];
       const descriptionContinues = chunks.length > 1;
+      const finishPlan = planProductFinishes(
+        specificationVisibility.showMaterialDetails
+          ? finishCardGroups(item, itemFinishImageUrlById(item), materialGroupSortOrderByLinkId)
+          : [],
+        { allowContinuation: item.allow_material_continuation_page, descriptionContinues },
+      );
       documentPages.push({
         type: "product",
         description: chunks[0] ?? null,
         descriptionContinues,
+        finishSegments: finishPlan.productPage,
+        hiddenFinishCount: finishPlan.hiddenCount,
         item,
         mainSection,
         pageNumber: nextPageNumber,
         section,
         serial: rowSerial,
-        showMaterials: !descriptionContinues,
       });
       nextPageNumber += 1;
 
@@ -1434,49 +1367,17 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         nextPageNumber += 1;
       }
 
-      if (specificationVisibility.showMaterialDetails && (descriptionContinues || item.allow_material_continuation_page)) {
-        const selectedCount = selectedFinishEntries(item).length;
-        for (
-          let selectedStart = descriptionContinues ? 0 : selectedFinishesPerProductPage;
-          selectedStart < selectedCount;
-          selectedStart += selectedFinishesPerProductPage
-        ) {
-          documentPages.push({
-            type: "materials_continuation",
-            item,
-            mainSection,
-            pageNumber: nextPageNumber,
-            section,
-            selectedStart,
-            serial: rowSerial,
-          });
-          nextPageNumber += 1;
-        }
-
-        for (const [chartIndex, chart] of materialEntries(item).entries()) {
-          if (stringFromRecord(chart, ["type"]) !== "material_group_chart") continue;
-
-          const chartId = stringFromRecord(chart, ["id"]) || `finish-${chartIndex + 1}`;
-          const swatchCount = swatchRecords(chart).length;
-
-          for (
-            let chartStart = descriptionContinues ? 0 : chartSwatchesPerProductPage;
-            chartStart < swatchCount;
-            chartStart += chartSwatchesPerProductPage
-          ) {
-            documentPages.push({
-              type: "materials_continuation",
-              chartId,
-              chartStart,
-              item,
-              mainSection,
-              pageNumber: nextPageNumber,
-              section,
-              serial: rowSerial,
-            });
-            nextPageNumber += 1;
-          }
-        }
+      for (const segments of finishPlan.continuationPages) {
+        documentPages.push({
+          type: "materials_continuation",
+          item,
+          mainSection,
+          pageNumber: nextPageNumber,
+          section,
+          segments,
+          serial: rowSerial,
+        });
+        nextPageNumber += 1;
       }
     }
   }
@@ -1544,19 +1445,17 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         .spec-page + .spec-page { margin-top: 24px; }
         @media screen and (max-width: 767px) {
           .spec-sheet .md\\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-          .spec-sheet .md\\:grid-cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-          .spec-sheet .md\\:grid-cols-7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
-          .spec-sheet .spec-product-layout { grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); }
         }
         .spec-hide-client-reference .spec-client-reference { display: none !important; }
         .spec-hide-item-images .spec-item-images { display: none !important; }
-        .spec-hide-item-images .spec-product-layout { grid-template-columns: minmax(0, 1fr) !important; }
         .spec-hide-dimensions .spec-dimensions { display: none !important; }
         .spec-hide-material-details .spec-material-details { display: none !important; }
-        .spec-draft-density-standard .spec-detail-value,
-        .spec-draft-density-standard .spec-description-body { font-size: 10.5px !important; line-height: 15px !important; }
+        .spec-draft-density-standard .spec-detail-value { font-size: 10px !important; line-height: 14px !important; }
+        .spec-draft-density-standard .spec-dimensions .spec-detail-value { font-size: 9.5px !important; line-height: 1.45 !important; }
+        .spec-draft-density-standard .spec-description-body { font-size: 9.5px !important; line-height: 1.5 !important; }
         .spec-draft-density-compact .spec-detail-value,
-        .spec-draft-density-compact .spec-description-body { font-size: 9.5px !important; line-height: 13px !important; }
+        .spec-draft-density-compact .spec-description-body { font-size: 9px !important; line-height: 1.4 !important; }
+        .spec-dimensions .spec-detail-value { font-size: 9.5px; line-height: 1.45; }
         @media print {
           html, body { margin: 0 !important; padding: 0 !important; width: 210mm !important; background: #fff !important; print-color-adjust: exact !important; -webkit-print-color-adjust: exact !important; }
           img { break-inside: avoid; page-break-inside: avoid; }
@@ -1700,21 +1599,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
               <MaterialsContinuationPage
                 companyProfile={COMPANY_PROFILE}
                 key={`materials-${page.item.id}-${page.pageNumber}`}
-                finishImageUrlById={new Map(
-                  materialEntries(page.item).flatMap((finish, index) => {
-                    const finishId = stringFromRecord(finish, ["id"]) || `finish-${index + 1}`;
-                    if (stringFromRecord(finish, ["type"]) === "material_group_chart") {
-                      return swatchRecords(finish).map((_, swatchIndex) => [
-                        `${finishId}:${swatchIndex}`,
-                        finishImageUrlByItemAndFinishId.get(`${page.item.id}:${finishId}:${swatchIndex}`) ?? null,
-                      ] as const);
-                    }
-
-                    return [[finishId, finishImageUrlByItemAndFinishId.get(`${page.item.id}:${finishId}`) ?? null] as const];
-                  }),
-                )}
                 hasLogo={hasLogo}
-                materialGroupSortOrderByLinkId={materialGroupSortOrderByLinkId}
                 page={page}
                 projectReferenceDisplay={projectReferenceDisplay}
                 quotation={quotation}
@@ -1744,31 +1629,18 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
               description={page.description}
               descriptionContinues={page.descriptionContinues}
               key={`product-${page.item.id}`}
-              finishImageUrlById={new Map(
-                materialEntries(page.item).flatMap((finish, index) => {
-                    const finishId = stringFromRecord(finish, ["id"]) || `finish-${index + 1}`;
-                    if (stringFromRecord(finish, ["type"]) === "material_group_chart") {
-                      return swatchRecords(finish).map((_, swatchIndex) => [
-                        `${finishId}:${swatchIndex}`,
-                        finishImageUrlByItemAndFinishId.get(`${page.item.id}:${finishId}:${swatchIndex}`) ?? null,
-                      ] as const);
-                    }
-
-                    return [[finishId, finishImageUrlByItemAndFinishId.get(`${page.item.id}:${finishId}`) ?? null] as const];
-                  }),
-              )}
+              finishSegments={page.finishSegments}
               hasLogo={hasLogo}
+              hiddenFinishCount={page.hiddenFinishCount}
               item={page.item}
               layout={specificationLayout}
               mainSection={page.mainSection}
-              materialGroupSortOrderByLinkId={materialGroupSortOrderByLinkId}
               pageNumber={page.pageNumber}
               projectReferenceDisplay={projectReferenceDisplay}
               proposedImage={itemImageOverrides[page.item.id]?.replacementPreviewUrl ?? proposedImageUrlByItemId.get(page.item.id) ?? null}
               quotation={quotation}
               section={page.section}
               serial={page.serial}
-              showMaterials={page.showMaterials}
               specificationImageOverride={itemImageOverrides[page.item.id]}
               specifiedImage={specifiedImageUrlByItemId.get(page.item.id) ?? null}
               totalPages={totalPages}

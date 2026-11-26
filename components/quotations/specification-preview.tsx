@@ -155,7 +155,8 @@ export function SpecificationPreview({
     const content = contentRef.current;
     if (!content) return;
 
-    const heights = { small: "260px", medium: "310px", current: "350px" } as const;
+    // Same percentages as mainImageHeights on the Specification page: the image fills the space left in the top block.
+    const heights = { small: "74%", medium: "89%", current: "100%" } as const;
     content.querySelectorAll<HTMLElement>("[data-spec-item-id]").forEach((itemPage) => {
       const itemId = itemPage.dataset.specItemId;
       if (!itemId) return;
