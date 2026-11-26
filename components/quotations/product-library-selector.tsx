@@ -1,6 +1,6 @@
 "use client";
 
-import { blockLinkedFinishServerAdd, buildLinkedFinishSnapshot } from "@/lib/quotations/linked-finish-snapshot";
+import { blockLinkedFinishServerAdd, buildLinkedFinishSnapshot, linkedFinishQtyWarning } from "@/lib/quotations/linked-finish-snapshot";
 import { SupplierCoverageAction } from "./supplier-coverage-popup";
 import { ManualPriceLinesButton } from "./manual-price-lines-button";
 import { SupplierPriceLinesAction } from "./supplier-price-lines-popup";
@@ -4112,6 +4112,10 @@ export function ProductLibrarySelector({
                                     />
                                   </label>
                                 </div>
+                                {(() => {
+                                  const warning = linkedFinishQtyWarning(line.qty, linkedFinishesByInstance[line.instanceKey]?.length ?? 0);
+                                  return warning ? <p role="status" className="mt-2 text-xs font-semibold text-amber-700">{warning}</p> : null;
+                                })()}
                                 {(() => {
                                   const links = templateMaterialGroups.filter((link) => link.product_template_id === line.childTemplate.id);
                                   if (!links.length) return null;

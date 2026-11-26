@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import * as snapshotModule from "./linked-finish-snapshot";
 import { buildLinkedFinishSnapshot, documentFinishRows } from "./linked-finish-snapshot";
 import { reconfigurationDraft, reconfigureLocalRows, type ReconfigureChanges, type ReconfigureTarget } from "../../components/quotations/local-reconfigure";
 import { buildRecipe, restorePlainState, type SavedSetupRecipeV1 } from "../products/saved-setups/recipe";
@@ -103,4 +105,63 @@ test("Update item with no linked finishes adds no snapshot", () => {
   assert.equal(snapshot, undefined);
   assert.equal(changes.linkedFinishes, false);
   assert.equal(Object.hasOwn(publishedSource(items[0]), "linked_finish_snapshot"), false);
+});
+
+// Real Oxi_L shape: 7 finishes, no saved instance_quantity, and the link's default quantity is 0.
+const oxiL = {
+  linkId: "8920a932-b058-4fca-81f6-99e6dbae0af3",
+  materialIds: ["e7b72439-e453-4901-83bd-03fd4b9f82e5", "9b08dde6-3ad3-47ae-bedc-39f48b5cfa14", "198f1072-8389-4719-aff2-d2c90bb0e420",
+    "cf9dc0cb-994f-4749-8e2c-ed1813e53585", "1a7e1d26-7c2d-46a9-80ac-e481aeaff871", "7f54dbbf-35e1-4681-9b4c-734641377bbd",
+    "b9f47fd2-3743-4c30-b9af-3785839a9fc5"],
+};
+
+function oxiLSnapshot(quantity: number | undefined) {
+  const key = `${oxiL.linkId}:${oxiL.linkId}-default`;
+  const state = restorePlainState(buildRecipe({
+    templateId: "ebfe75d0-264f-4365-bed5-06acc47c85dc",
+    linkedInstances: { [oxiL.linkId]: [`${oxiL.linkId}-default`] },
+    linkedSelections: { [key]: { categoryId: "us-m-fabric-front-821", quantity, accessoryQuantities: { "us-stirrup-883": 1 },
+      perScreenFixedQuantities: true, finishes: oxiL.materialIds.map((id): [string, string] => [groupLinkId, id]) } },
+  }).recipe);
+  const selection = state.linkedSelections![key];
+  const child = { id: "7d7c46a1-986f-40e0-8ec5-e06115161f12", template_name: "universal Screen", brand_id: "brand", currency: "EUR",
+    default_unit_price: 176, variant_pricing: [], category_pricing: [], accessory_pricing: [] };
+  const price = priceConfiguration({
+    template: { id: "ebfe75d0-264f-4365-bed5-06acc47c85dc", template_name: "Oxi_L", brand_id: "brand", currency: "EUR", default_unit_price: 500 },
+    configuration: { modularInUse: false, modularItems: [], usesWorkstationFlow: false,
+      accessoryConfiguration: { activeQuantities: {} }, selectedAccessoryCategories: {} },
+    context: { accessoryGroups: [], linked: [{
+      link: { id: oxiL.linkId, label: "universal Screen", default_qty: 0, add_to_parent_price: true }, childTemplate: child,
+      instances: [{ instance: { id: `${oxiL.linkId}-default`, label: "" }, quantity: selection.quantity ?? undefined,
+        accessoryQuantities: selection.accessoryQuantities, perScreenFixedQuantities: true, selection }],
+    }] },
+  } as unknown as Parameters<typeof priceConfiguration>[0]);
+  const lines = price.linked as unknown as Parameters<typeof buildLinkedFinishSnapshot>[0];
+  return { qty: lines[0].qty, chosen: selection.finishes!.length, snapshot: buildLinkedFinishSnapshot(
+    lines, { [key]: selection.finishes! },
+    [{ id: groupLinkId, product_template_id: child.id, material_group_id: "fabric", label_override: null, sort_order: 0,
+      show_in_specification: true, show_in_quotation: false }] as unknown as Parameters<typeof buildLinkedFinishSnapshot>[2],
+    [],
+    new Map(oxiL.materialIds.map((id) => [id, { id, material_group_id: "fabric", material_code: id.slice(0, 4), material_name: id, image_url: null }])) as unknown as Parameters<typeof buildLinkedFinishSnapshot>[4],
+  ) };
+}
+
+test("Oxi_L shape: a Qty 0 screen stays out of the snapshot and the card warns about it", () => {
+  const { qty, chosen, snapshot } = oxiLSnapshot(undefined);
+  assert.equal(qty, 0);
+  assert.equal(chosen, 7);
+  assert.equal(snapshot, undefined);
+  assert.equal(snapshotModule.linkedFinishQtyWarning(qty, chosen), "Set Qty above 0 to include these finishes in documents.");
+});
+
+test("Oxi_L shape: setting Qty above 0 writes all 7 finishes and removes the warning", () => {
+  const { qty, chosen, snapshot } = oxiLSnapshot(2);
+  assert.equal(snapshot![1][0][2][0][3].length, 7);
+  assert.equal(snapshotModule.linkedFinishQtyWarning(qty, chosen), null);
+  assert.equal(snapshotModule.linkedFinishQtyWarning(0, 0), null);
+});
+
+test("the selector shows the Qty 0 warning on the linked screen card", () => {
+  assert.match(readFileSync("components/quotations/product-library-selector.tsx", "utf8"),
+    /linkedFinishQtyWarning\(line\.qty, linkedFinishesByInstance\[line\.instanceKey\]\?\.length \?\? 0\)/);
 });

@@ -17,6 +17,11 @@ export function blockLinkedFinishServerAdd(local: boolean, reconfiguring: boolea
   return !local && !reconfiguring && screens.some((screen) => choices[screen.instanceKey]?.length);
 }
 
+// A screen with Qty 0 is not ordered, so the snapshot below skips it. Say so where its finishes are picked.
+export function linkedFinishQtyWarning(qty: number, choiceCount: number) {
+  return qty <= 0 && choiceCount > 0 ? "Set Qty above 0 to include these finishes in documents." : null;
+}
+
 // The arrays preserve display order, including after a JSONB round trip.
 // A swatch shared by several screens is stored once.
 export function buildLinkedFinishSnapshot(
