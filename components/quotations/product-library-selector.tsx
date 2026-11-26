@@ -3,7 +3,7 @@
 import { SupplierCoverageAction } from "./supplier-coverage-popup";
 import { ManualPriceLinesButton } from "./manual-price-lines-button";
 import { SupplierPriceLinesAction } from "./supplier-price-lines-popup";
-import { Fragment, useCallback, useEffect, useEffectEvent, useMemo, useState, useTransition, type Dispatch, type SetStateAction } from "react";
+import { Fragment, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useTransition, type Dispatch, type SetStateAction } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import { SaveToMyCollectionButton } from "./save-to-my-collection-button";
 import type { SavedSetupPlainState } from "@/lib/products/saved-setups/recipe";
@@ -870,6 +870,28 @@ function ProductThumbnail({
   );
 }
 
+function LinkedScreenDiagram({ row, references, onView }: {
+  row: ReturnType<typeof linkedAccessoryRow>;
+  references: Record<string, ProductTemplateRowReferencePreview> | undefined;
+  onView: (url: string) => void;
+}) {
+  if (!row || !references) return null;
+  const previewUrl = selectedRowReferencePreview(
+    references, row.kind === "base_model" ? "base_model" : "finish_category", row.groupId, row.rowId,
+  )?.previewUrl;
+  if (!previewUrl) return null;
+
+  return (
+    <div className="mt-2 shrink-0">
+      <button type="button" onClick={() => onView(previewUrl)} className="block cursor-zoom-in rounded-md transition hover:opacity-80" aria-label="View larger product diagram">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={previewUrl} alt="Model reference" className="h-16 w-16 rounded-md border border-zinc-200 bg-white object-contain" loading="lazy" />
+      </button>
+      <button type="button" onClick={() => onView(previewUrl)} className="mt-1 text-[10px] font-semibold text-emerald-900 hover:text-emerald-700">View larger</button>
+    </div>
+  );
+}
+
 function ProductImagePreviewDialog({
   aboveLinkedPopup = false,
   currentIndex,
@@ -1091,7 +1113,7 @@ export function ProductLibrarySelector({
   const [selectedOptions, setSelectedOptions] = useState<Record<string, Record<string, string | string[]>>>({});
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({});
   const [imagePreview, setImagePreview] = useState<{ templateId: string; imageIndex: number } | null>(null);
-  const [diagramPreview, setDiagramPreview] = useState<{ label: string; templateId: string; linkedInstanceKey?: string; title: string; url: string } | null>(null);
+  const [diagramPreview, setDiagramPreview] = useState<{ label: string; templateId: string; linkedInstanceKey?: string; linkedPanel?: true; title: string; url: string } | null>(null);
   const [additionalClusterQuantities, setAdditionalClusterQuantities] = useState<Record<string, number>>({});
   const [accessoryQuantities, setAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [selectedDeskingSizes, setSelectedDeskingSizes] = useState<Record<string, string>>({});
@@ -1101,7 +1123,8 @@ export function ProductLibrarySelector({
   // Manual System / Base units per template (integer >= 1). No automatic Main -> System quantity relation is persisted in the saved schema.
   const [selectedSystemQuantities, setSelectedSystemQuantities] = useState<Record<string, number>>({});
   const [loadedRowReferences, setLoadedRowReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateRowReferencePreview> }>({ templateId: "", images: {} });
-  const [loadedLinkedRowReferences, setLoadedLinkedRowReferences] = useState<typeof loadedRowReferences | null>(null);
+  const [linkedRowReferencesByTemplate, setLinkedRowReferencesByTemplate] = useState<Partial<Record<string, typeof loadedRowReferences>>>({});
+  const linkedRowReferenceRequests = useRef(new Map<string, Promise<typeof loadedRowReferences>>());
   const [loadedSubgroupReferences, setLoadedSubgroupReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateSubgroupReferencePreview> }>({ templateId: "", images: {} });
   const [selectedCategoryGroups, setSelectedCategoryGroups] = useState<Record<string, string>>({});
   const [selectedFamilyKeys, setSelectedFamilyKeys] = useState<Record<string, string>>({});
@@ -1238,26 +1261,48 @@ export function ProductLibrarySelector({
         linkedInstancesForLink(link).some((instance) => linkedProductInstanceKey(link.id, instance.id) === linkedAccessoryPopupKey),
       )?.linked_template_id
     : undefined;
-  const linkedDiagramPreviewActive = Boolean(diagramPreview?.linkedInstanceKey
-    && diagramPreview.linkedInstanceKey === linkedAccessoryPopupKey
-    && diagramPreview.templateId === linkedAccessoryTemplateId);
+  const linkedDiagramPreviewActive = Boolean(diagramPreview?.linkedInstanceKey && (
+    diagramPreview.linkedPanel
+      ? selectedTemplateId && linkedFamiliesByParent.get(selectedTemplateId)?.some((link) =>
+          link.linked_template_id === diagramPreview.templateId && linkedInstancesForLink(link).some((instance) =>
+            linkedProductInstanceKey(link.id, instance.id) === diagramPreview.linkedInstanceKey,
+          ),
+        )
+      : diagramPreview.linkedInstanceKey === linkedAccessoryPopupKey
+        && diagramPreview.templateId === linkedAccessoryTemplateId
+  ));
   useEffect(() => {
-    if (!linkedAccessoryTemplateId) return;
+    if (!isOpen || !selectedTemplateId || !templateById.has(selectedTemplateId)) return;
     let active = true;
-    void listProductTemplateRowReferences(linkedAccessoryTemplateId).then((references) => {
-      if (!active) return;
-      setLoadedLinkedRowReferences({
-        templateId: linkedAccessoryTemplateId,
-        images: Object.fromEntries(references.map((reference) => [
-          productTemplateRowReferenceKey(reference.pricingType, reference.groupId, reference.rowId),
-          reference,
-        ])),
+    const requests = linkedRowReferenceRequests.current;
+    const childIds = new Set((linkedFamiliesByParent.get(selectedTemplateId) ?? []).map((link) => link.linked_template_id));
+    for (const linkedAccessoryTemplateId of childIds) {
+      if (!templateById.has(linkedAccessoryTemplateId)) continue;
+      let request = requests.get(linkedAccessoryTemplateId);
+      if (!request) {
+        request = listProductTemplateRowReferences(linkedAccessoryTemplateId).then((references) => ({
+          templateId: linkedAccessoryTemplateId,
+          images: Object.fromEntries(references.map((reference) => [
+            productTemplateRowReferenceKey(reference.pricingType, reference.groupId, reference.rowId),
+            reference,
+          ])),
+        })).catch((error) => {
+          requests.delete(linkedAccessoryTemplateId);
+          throw error;
+        });
+        requests.set(linkedAccessoryTemplateId, request);
+      }
+      void request.then((loaded) => {
+        if (!active) return;
+        setLinkedRowReferencesByTemplate((current) => current[loaded.templateId] === loaded
+          ? current
+          : { ...current, [loaded.templateId]: loaded });
+      }).catch((error) => {
+        if (active) console.error("PRODUCT LIBRARY LINKED ROW REFERENCES LOAD ERROR", error);
       });
-    }).catch((error) => {
-      if (active) console.error("PRODUCT LIBRARY LINKED ROW REFERENCES LOAD ERROR", error);
-    });
+    }
     return () => { active = false; };
-  }, [linkedAccessoryTemplateId, linkedAccessoryPopupKey]);
+  }, [isOpen, selectedTemplateId, linkedFamiliesByParent, templateById]);
   useEffect(() => {
     if (!selectedTemplateId) return;
     let active = true;
@@ -3925,6 +3970,23 @@ export function ProductLibrarySelector({
                                     </select>
                                   </label>
                                 ) : null}
+                                <div className="flex min-w-0 items-start gap-3">
+                                  <LinkedScreenDiagram
+                                    row={linkedAccessoryRow(line)}
+                                    references={linkedRowReferencesByTemplate[line.childTemplate.id]?.images}
+                                    onView={(url) => {
+                                      const row = line.childCategoryRow ?? line.childVariantRow;
+                                      setDiagramPreview({
+                                        label: "Product diagram",
+                                        templateId: line.childTemplate.id,
+                                        linkedInstanceKey: line.instanceKey,
+                                        linkedPanel: true,
+                                        title: pricingDisplayName(row) || row?.variant_name || templateSelectionName(line.childTemplate),
+                                        url,
+                                      });
+                                    }}
+                                  />
+                                  <div className="min-w-0 flex-1">
                                 {line.childCategoryRow ? (
                                   <div className="mt-2 grid gap-2 md:grid-cols-2">
                                     {!line.family.mixed && line.selectedChildCategoryGroup && line.childCategoryGroups.length > 1 ? (
@@ -4001,6 +4063,8 @@ export function ProductLibrarySelector({
                                     </select>
                                   </label>
                                 ) : null}
+                                  </div>
+                                </div>
                                 <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_90px] sm:items-end">
                                   <p className="text-xs text-zinc-600">
                                     Price: {formatMoney(line.currency, line.unitPrice)}
@@ -4021,13 +4085,13 @@ export function ProductLibrarySelector({
                                   <div className="mt-3 space-y-2 border-t border-zinc-200 pt-3">
                                     {!linkedAccessoryPopupBlockReason(line.childAccessoryGroups) ? (() => {
                                       const savedQuantities = linkedAccessoryQuantities[line.instanceKey] ?? {};
+                                      const loadedLinkedRowReferences = linkedRowReferencesByTemplate[line.childTemplate.id];
                                       const selected = line.selectedAccessories.map(({ accessory, qty }) => ({ name: linkedAccessoryName(accessory), quantity: qty }));
                                       return <>
                                         <div className="flex flex-wrap items-center justify-between gap-2">
                                           <p className="min-w-0 break-words text-xs font-bold uppercase tracking-wide text-zinc-700">{line.childTemplate.template_name} Accessories / Optional Items</p>
                                           <button type="button" onClick={() => {
                                             setDiagramPreview(null);
-                                            setLoadedLinkedRowReferences(null);
                                             setLinkedAccessoryPopupKey(line.instanceKey);
                                           }} className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:border-emerald-900 hover:text-emerald-900">Edit accessories</button>
                                         </div>
