@@ -32,6 +32,7 @@ import { persistedProductTemplateSubgroupKeys, reconcileStaleProductTemplateSubg
 import { bulkDeleteResultMessage, bulkLifecycleResultMessage } from "@/lib/products/product-management-bulk-lifecycle";
 import { brandPriceBaselineDate, latestBrandPriceListUpdate, scheduledBrandPriceListUpdate } from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
+import { saveTemplateMaterialGroupLink, type TemplateMaterialGroupLinkInput, type TemplateMaterialGroupLinkResult } from "@/lib/products/template-material-group-link";
 import { PRODUCT_SOURCE_BUCKET, temporaryProductSourcePath } from "@/lib/products/temporary-product-source";
 
 const allowedOptionTypes = new Set([
@@ -2310,137 +2311,42 @@ export async function permanentlyDeleteLinkedProductFamily(formData: FormData) {
   redirectWithMessage("Linked product family permanently deleted.");
 }
 
+function materialGroupLinkInput(formData: FormData): TemplateMaterialGroupLinkInput {
+  return {
+    productTemplateId: textValue(formData, "product_template_id"),
+    materialGroupId: textValue(formData, "material_group_id"),
+    selectionMode: selectionModeValue(formData),
+    selectedMaterialIds: selectedMaterialIdsValue(formData),
+    selectedMaterialCategories: selectedMaterialCategoriesValue(formData),
+    labelOverride: optionalTextValue(formData, "label_override"),
+    isRequired: boolValue(formData, "is_required"),
+    showInSpecification: boolValue(formData, "show_in_specification"),
+    showInQuotation: boolValue(formData, "show_in_quotation"),
+    sortOrder: Math.trunc(numberValue(formData, "sort_order", 0)),
+  };
+}
+
 export async function createProductTemplateMaterialGroup(formData: FormData) {
   await requireProductLibraryManager();
   const redirectPath = returnPath(formData);
-  const productTemplateId = textValue(formData, "product_template_id");
-  const materialGroupId = textValue(formData, "material_group_id");
-  const selectionMode = selectionModeValue(formData);
-  const selectedMaterialIds = selectedMaterialIdsValue(formData);
-  const selectedMaterialCategories = selectedMaterialCategoriesValue(formData);
-  const payload = {
-    product_template_id: productTemplateId,
-    material_group_id: materialGroupId,
-    selection_mode: selectionMode,
-    label_override: optionalTextValue(formData, "label_override"),
-    is_required: boolValue(formData, "is_required"),
-    allow_multiple: true,
-    show_in_specification: boolValue(formData, "show_in_specification"),
-    show_in_quotation: boolValue(formData, "show_in_quotation"),
-    sort_order: Math.trunc(numberValue(formData, "sort_order", 0)),
-    is_active: true,
-  };
-
-  if (!productTemplateId || !materialGroupId) {
-    redirectWithMessageToPath(redirectPath, "Select a product template and material group.");
-  }
-
   const supabase = await createClient();
-  if (selectionMode === "selected_items" && selectedMaterialIds.length === 0) {
-    redirectWithMessageToPath(redirectPath, "Select at least one finish for selected finishes only.");
-  }
-  if (selectionMode === "selected_categories" && selectedMaterialCategories.length === 0) {
-    redirectWithMessageToPath(redirectPath, "Select at least one category for Select by category.");
-  }
+  const result = await saveTemplateMaterialGroupLink(supabase, materialGroupLinkInput(formData));
 
-  const { data: existingLink, error: existingLinkError } = await supabase
-    .from("product_template_material_groups")
-    .select("id,is_active")
-    .eq("product_template_id", productTemplateId)
-    .eq("material_group_id", materialGroupId)
-    .maybeSingle();
-
-  if (existingLinkError) {
-    console.error("TEMPLATE MATERIAL GROUP EXISTING LOOKUP ERROR", existingLinkError.message);
-    redirectWithMessageToPath(redirectPath, "Material group link could not be checked.");
-  }
-
-  if (existingLink?.id && existingLink.is_active) {
-    redirectWithMessageToPath(
-      redirectPath,
-      "This material group is already linked. Edit the existing linked group card instead of adding it again.",
-    );
-  }
-
-  const { data: link, error } = existingLink?.id
-    ? await supabase
-      .from("product_template_material_groups")
-      .update(payload)
-      .eq("id", existingLink.id)
-      .select("id")
-      .single()
-    : await supabase
-      .from("product_template_material_groups")
-      .insert(payload)
-      .select("id")
-      .single();
-
-  if (error) {
-    console.error("TEMPLATE MATERIAL GROUP CREATE ERROR", error.message);
-    redirectWithMessageToPath(redirectPath, "Material group could not be linked.");
-  }
-
-  if (link?.id) {
-    const { error: deleteError } = await supabase
-      .from("product_template_material_group_items")
-      .delete()
-      .eq("product_template_material_group_id", link.id);
-
-    if (deleteError) {
-      console.error("TEMPLATE MATERIAL GROUP ITEMS CLEAR ERROR", deleteError.message);
-      redirectWithMessageToPath(redirectPath, "Material group finishes could not be saved.");
-    }
-
-    if (selectionMode !== "full_group") {
-      const { data: groupMaterials, error: materialsError } = await supabase
-        .from("brand_materials")
-        .select("id,material_category,material_collection")
-        .eq("material_group_id", materialGroupId)
-        .eq("is_active", true);
-
-      if (materialsError) {
-        console.error("TEMPLATE MATERIAL GROUP ITEMS VALIDATE ERROR", materialsError.message);
-        redirectWithMessageToPath(redirectPath, "Selected finishes could not be validated.");
-      }
-
-      const rows = (groupMaterials ?? [])
-        .filter((material) => {
-          if (selectionMode === "selected_categories") {
-            return selectedMaterialCategories.includes(materialCategoryLabel(material));
-          }
-
-          return selectedMaterialIds.includes(material.id);
-        })
-        .map((material, index) => ({
-          product_template_material_group_id: link.id,
-          brand_material_id: material.id,
-          sort_order: index,
-          is_active: true,
-        }));
-
-      if (!rows.length) {
-        redirectWithMessageToPath(
-          redirectPath,
-          selectionMode === "selected_categories"
-            ? "Select at least one active finish category from the chosen group."
-            : "Select at least one active finish from the chosen group.",
-        );
-      }
-
-      const { error: itemsError } = await supabase
-        .from("product_template_material_group_items")
-        .insert(rows);
-
-      if (itemsError) {
-        console.error("TEMPLATE MATERIAL GROUP ITEMS CREATE ERROR", itemsError.message);
-        redirectWithMessageToPath(redirectPath, "Selected finishes could not be saved.");
-      }
-    }
+  if (!result.ok) {
+    redirectWithMessageToPath(redirectPath, result.message);
   }
 
   revalidatePath("/products/templates");
   revalidatePath(splitRelativePath(redirectPath).pathname);
   redirectWithMessageToPath(redirectPath, "Material group linked.");
+}
+
+// For the quotation product popup: returns the saved link instead of redirecting. No revalidatePath, so the
+// open builder is not re-rendered; the product setup pages are dynamic and read the link on their next load.
+export async function linkProductTemplateMaterialGroup(formData: FormData): Promise<TemplateMaterialGroupLinkResult> {
+  await requireProductLibraryManager();
+  const supabase = await createClient();
+  return saveTemplateMaterialGroupLink(supabase, materialGroupLinkInput(formData));
 }
 
 export async function updateProductTemplateMaterialGroup(formData: FormData) {

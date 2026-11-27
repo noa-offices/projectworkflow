@@ -43,6 +43,7 @@ import {
   type ProductTemplateMaterialGroupItemLink,
   type ProductTemplateMaterialGroupLink,
 } from "@/components/quotations/finish-selections-editor";
+import { mergeMaterialGroupLinks, type SavedMaterialGroupLink } from "@/components/quotations/link-material-group-picker";
 import { getWorkspaceDocument, saveWorkspaceDocument } from "@/lib/local/quotation-db";
 import { acknowledgePublication, beginPublication, publicationMetadata, validateWorkspace, withPublication, type PublicationAttempt } from "@/lib/local/quotation-publication";
 import { fetchServerVersion, requestPublication } from "@/lib/local/quotation-publication-request";
@@ -1772,8 +1773,8 @@ export function LocalQuotationBuilder({
   projectName,
   supplierPresentations = null,
   supplierLoadState = "unavailable",
-  templateMaterialGroupItems,
-  templateMaterialGroups,
+  templateMaterialGroupItems: loadedMaterialGroupItems,
+  templateMaterialGroups: loadedMaterialGroups,
 }: {
   canManageProductLibrary: boolean;
   canWriteQuotation?: boolean;
@@ -1803,6 +1804,13 @@ export function LocalQuotationBuilder({
     })),
     [baseProductTemplates, supplierPresentations, supplierLoadState],
   );
+  // Links saved from the product popup, shown without reloading the page.
+  const [addedMaterialLinks, setAddedMaterialLinks] = useState<SavedMaterialGroupLink[]>([]);
+  const { links: templateMaterialGroups, items: templateMaterialGroupItems } = useMemo(
+    () => mergeMaterialGroupLinks(loadedMaterialGroups, loadedMaterialGroupItems, addedMaterialLinks),
+    [loadedMaterialGroups, loadedMaterialGroupItems, addedMaterialLinks],
+  );
+  const keepMaterialLink = (saved: SavedMaterialGroupLink) => setAddedMaterialLinks((current) => [...current, saved]);
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [reconfiguring, setReconfiguring] = useState<ReconfigureTarget | null>(null);
   const [historyPast, setHistoryPast] = useState<LocalQuotationWorkspace[]>([]);
@@ -5600,6 +5608,7 @@ export function LocalQuotationBuilder({
                   <ProductLibrarySelector
                               brands={productBrands}
                               canManageProductLibrary={canManageProductLibrary}
+                              onMaterialGroupLinked={keepMaterialLink}
                               categories={productCategories}
                               clientHistory={{ clientId: workspace.client_id ?? null, clientName: currentClientName === "-" ? "" : currentClientName, quoteCurrency: workspace.currency }}
                               components={productComponents}
@@ -5716,6 +5725,7 @@ export function LocalQuotationBuilder({
                   <ProductLibrarySelector
                     brands={productBrands}
                     canManageProductLibrary={canManageProductLibrary}
+                    onMaterialGroupLinked={keepMaterialLink}
                     categories={productCategories}
                     clientHistory={{ clientId: workspace.client_id ?? null, clientName: currentClientName === "-" ? "" : currentClientName, quoteCurrency: workspace.currency }}
                     components={productComponents}

@@ -6,6 +6,8 @@ import { ManualPriceLinesButton } from "./manual-price-lines-button";
 import { SupplierPriceLinesAction } from "./supplier-price-lines-popup";
 import { Fragment, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useTransition, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
+import { linkProductTemplateMaterialGroup } from "@/app/products/templates/actions";
+import type { SavedMaterialGroupLink } from "./link-material-group-picker";
 import { SaveToMyCollectionButton } from "./save-to-my-collection-button";
 import type { LinkedFinishChoice, SavedSetupPlainState } from "@/lib/products/saved-setups/recipe";
 import { defaultSetupName } from "@/lib/products/saved-setups/default-name";
@@ -1064,6 +1066,7 @@ export function ProductLibrarySelector({
   materialGroups,
   materials,
   onAddLocalItem,
+  onMaterialGroupLinked,
   pricingRule,
   reconfigure,
   quotationId,
@@ -1085,6 +1088,8 @@ export function ProductLibrarySelector({
   materialGroups: FinishMaterialGroup[];
   materials: FinishMaterial[];
   onAddLocalItem?: (item: LocalQuotationItem) => void;
+  /** Keeps a material group linked from this popup. Omitted => no "Link material group" button. */
+  onMaterialGroupLinked?: (saved: SavedMaterialGroupLink) => void;
   /** The quotation's pricing rule. Without one the item is priced by the legacy rule. */
   pricingRule?: PricingRule;
   reconfigure?: {
@@ -5414,6 +5419,7 @@ export function ProductLibrarySelector({
                               brands={finishBrands}
                               initialBrandId={template.brand_id}
                               initialFinishes={selectedFinishes}
+                              linkMaterialGroup={canManageProductLibrary && onMaterialGroupLinked ? { productTemplateId: template.id, brandId: template.brand_id, save: linkProductTemplateMaterialGroup, onLinked: onMaterialGroupLinked } : undefined}
                               materialGroups={materialGroups}
                               materials={materials}
                               onChange={(nextFinishes) =>

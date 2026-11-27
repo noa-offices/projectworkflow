@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ClipboardEvent, ChangeEvent, ComponentProps } from "react";
 import { FinishImagePreview } from "@/components/quotations/finish-image-uploader";
+import { LinkMaterialGroupDialog, type LinkMaterialGroupControls } from "@/components/quotations/link-material-group-picker";
 import type { LinkedFinishChoice } from "@/lib/products/saved-setups/recipe";
 import { materialDisplayCategory } from "@/lib/products/material-classification";
 import { clearSection, formatSelectionSummary, groupMaterialsByGroup, groupMaterialsIntoSections, selectAllInSection, selectionSummary } from "@/lib/quotations/finish-material-groups";
@@ -614,6 +615,7 @@ export function FinishSelectionsEditor({
   initialFinishes,
   linkedOnly = false,
   itemId,
+  linkMaterialGroup,
   materialGroups,
   materials,
   onChange,
@@ -627,6 +629,7 @@ export function FinishSelectionsEditor({
   initialFinishes: FinishSelectionEditorRow[];
   linkedOnly?: boolean;
   itemId?: string | null;
+  linkMaterialGroup?: LinkMaterialGroupControls;
   materialGroups?: FinishMaterialGroup[];
   materials?: FinishMaterial[];
   onChange?: (finishes: FinishSelectionEditorRow[]) => void;
@@ -645,6 +648,7 @@ export function FinishSelectionsEditor({
   const [activeOnly, setActiveOnly] = useState(true);
   const [openSections, setOpenSections] = useState<Set<string>>(() => new Set());
   const [linkedSearch, setLinkedSearch] = useState("");
+  const [linkingGroup, setLinkingGroup] = useState(false);
   const validationInputRef = useRef<HTMLInputElement | null>(null);
   const onChangeRef = useRef<typeof onChange>(onChange);
   const isEditing = editingIndex !== null;
@@ -985,7 +989,19 @@ export function FinishSelectionsEditor({
 
       {activeTab === "linked" ? (
         <div className="mt-3 grid gap-3">
-          <p className="text-xs font-semibold text-zinc-600">Recommended finishes for this product</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-zinc-600">Recommended finishes for this product</p>
+            {linkMaterialGroup ? <button type="button" onClick={() => setLinkingGroup(true)} className="border border-emerald-900 bg-white px-2.5 py-1 text-xs font-bold text-emerald-900 hover:bg-emerald-50">Link material group</button> : null}
+          </div>
+          {linkMaterialGroup && linkingGroup ? (
+            <LinkMaterialGroupDialog
+              controls={linkMaterialGroup}
+              groups={materialGroups ?? []}
+              linkedGroupIds={new Set(linkedGroups.map((link) => link.material_group_id))}
+              materials={availableMaterials}
+              onClose={() => setLinkingGroup(false)}
+            />
+          ) : null}
           <div className="flex flex-wrap items-center gap-3">
             <input value={linkedSearch} onChange={(event) => setLinkedSearch(event.target.value)} placeholder="Find by code or name" className="h-8 w-56 border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800" />
             <button type="button" onClick={() => setOpenSections(new Set(linkedGroups.flatMap((link) => groupMaterialsIntoSections(linkedGroupMaterials(link), new Set<string>()).map((section) => `linked:${link.id}|${section.key}`))))} className="text-xs font-semibold text-emerald-900 hover:text-emerald-700">Expand all</button>
