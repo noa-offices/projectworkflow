@@ -12,6 +12,7 @@ import {
 import { DEFAULT_QUOTATION_NOTES } from "@/lib/quotations/quotation-pdf-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrencyRateSettings } from "@/lib/products/gallery/currency-default-rates-actions";
+import { getProductLibraryRateSettings } from "@/lib/products/product-library-default-rates-actions";
 import { CurrencyRatesCard } from "./currency-rates-card";
 
 type CompanySettingsSectionProps = {
@@ -116,6 +117,7 @@ export async function CompanySettingsSection({
     : "border-emerald-200 bg-emerald-50 text-emerald-950";
   const isCompany = section === "company";
   const currencyRates = isCompany ? await getCurrencyRateSettings() : null;
+  const libraryRates = isCompany ? await getProductLibraryRateSettings() : null;
 
   return (
     <ErpAppShell
@@ -263,6 +265,7 @@ export async function CompanySettingsSection({
           </section>
         )}
         {currencyRates ? <CurrencyRatesCard rates={currencyRates} /> : null}
+        {libraryRates ? <CurrencyRatesCard rates={libraryRates} library /> : null}
       </div>
     </ErpAppShell>
   );

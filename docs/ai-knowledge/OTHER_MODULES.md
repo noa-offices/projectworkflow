@@ -16,7 +16,7 @@ Project contract value is read through [project-contract-total](../../lib/projec
 
 ## Settings and other active areas
 
-Company Settings includes [Currency rates](../../components/settings/currency-rates-card.tsx) for Product Gallery AED estimates. The [session actions](../../lib/products/gallery/currency-default-rates-actions.ts) use the database edit capability before an owner or admin manager can save or remove a default rate.
+Company Settings includes [Currency rates](../../components/settings/currency-rates-card.tsx) for Product Gallery AED estimates. The [session actions](../../lib/products/gallery/currency-default-rates-actions.ts) use the database edit capability before an owner or admin manager can save or remove a default rate. The same page and card also manage the separate Product Library default rates through [their session actions](../../lib/products/product-library-default-rates-actions.ts), which owners, admin managers and procurement managers can edit.
 
 Commission detail/list and profile cards read the separate [D2 variation adjustment ledger](COMMISSION_VARIATION_ADJUSTMENTS_D2.md). Draft adjustments need maker-checker approval before entering net/earned totals; original commissions remain separate. The guide records list/profile period limits and migration deployment order.
 
